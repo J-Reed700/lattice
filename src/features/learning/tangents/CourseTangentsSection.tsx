@@ -67,7 +67,7 @@ export function CourseTangentsSection({ onOpenDestination }: CourseTangentsSecti
           <div className="text-[10px] font-semibold uppercase tracking-[.16em] text-accent">
             Side conversations & deep dives
           </div>
-          <h2 className="mt-1 font-serif text-2xl text-text-primary">Course Tangents</h2>
+          <h2 className="mt-1 font-sans text-xl font-semibold tracking-[-0.025em] text-text-primary">Course Tangents</h2>
         </div>
         <div className="text-xs text-text-muted">
           {tangents.length} {tangents.length === 1 ? 'tangent' : 'tangents'} across your courses
@@ -78,15 +78,15 @@ export function CourseTangentsSection({ onOpenDestination }: CourseTangentsSecti
         {courseGroups.map((group) => (
           <div
             key={group.programId}
-            className="rounded-2xl border border-border bg-surface p-5 shadow-xs"
+            className="rounded-xl border border-border-subtle bg-surface p-5 shadow-sm"
           >
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 pb-3.5">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border-subtle pb-3.5">
               <div className="flex items-center gap-2">
                 <GitBranch className="h-4 w-4 text-accent" aria-hidden="true" />
-                <h3 className="font-serif text-lg font-medium text-text-primary">
+                <h3 className="font-sans text-base font-semibold tracking-[-0.02em] text-text-primary">
                   {group.programTitle}
                 </h3>
-                <span className="rounded-full bg-accent/10 px-2 py-0.5 text-xs font-semibold text-accent">
+                <span className="rounded-full bg-accent-muted px-2 py-0.5 text-xs font-semibold text-accent">
                   {group.tangents.length}
                 </span>
               </div>
@@ -110,13 +110,13 @@ export function CourseTangentsSection({ onOpenDestination }: CourseTangentsSecti
                 return (
                   <div
                     key={t.conversationId}
-                    className="flex flex-col justify-between rounded-xl border border-border bg-bg p-4 text-left transition hover:border-accent/40"
+                    className="flex flex-col justify-between rounded-xl border border-border-subtle bg-bg p-4 text-left transition hover:border-border-default"
                   >
                     <div>
                       <div className="truncate text-[10px] font-medium text-text-muted">
                         {breadcrumb}
                       </div>
-                      <h4 className="mt-1 line-clamp-1 font-serif text-base font-medium text-text-primary">
+                      <h4 className="mt-1 line-clamp-1 font-sans text-sm font-semibold tracking-[-0.015em] text-text-primary">
                         {t.title}
                       </h4>
                       <p className="mt-1.5 line-clamp-2 font-serif text-xs leading-relaxed text-text-muted">

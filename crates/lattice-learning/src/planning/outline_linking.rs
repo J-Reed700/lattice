@@ -532,9 +532,26 @@ impl Answered for OutlineLinking {
         Ok(says)
     }
 
-    fn accept(_input: &Input, choice: &Choice) -> std::result::Result<(), Refusal> {
+    fn accept_for(
+        input: &Input,
+        of: &Picked<Item>,
+        choice: &Choice,
+    ) -> std::result::Result<(), Refusal> {
         if choice.reason.trim().is_empty() {
             return Err(Refusal("Give the reason for this choice in reason.".into()));
+        }
+        if let Some(candidate) = &choice.candidate {
+            let allowed = input
+                .items
+                .iter()
+                .find(|item| item.at == of.reference)
+                .is_some_and(|item| item.candidates.value().contains(&candidate.reference));
+            if !allowed {
+                return Err(Refusal(
+                    "Choose only among the candidate passages listed for this item, or none."
+                        .into(),
+                ));
+            }
         }
         Ok(())
     }

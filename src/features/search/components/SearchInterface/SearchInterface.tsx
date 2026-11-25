@@ -479,9 +479,9 @@ function SearchInterfaceBody({
                 />
               )
             ) : filteredResults.length === 0 ? (
-              <div className="flex max-w-[760px] items-center justify-between gap-4 rounded-xl border border-border-subtle bg-surface px-5 py-4">
+              <div className="flex max-w-[760px] items-center justify-between gap-4 rounded-xl border border-border-subtle bg-surface px-5 py-4 shadow-sm">
                 <div>
-                  <p className="text-sm font-medium text-text-primary">
+                  <p className="font-sans text-sm font-semibold tracking-[-0.01em] text-text-primary">
                     No results match the selected filters.
                   </p>
                   <p className="mt-0.5 text-xs text-text-secondary">

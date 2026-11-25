@@ -186,6 +186,10 @@ pub struct GroundedRequest {
     /// reasoning model writing long structured output is not cut off by an
     /// estimate. `output_tokens` is then the least it is promised.
     pub(super) output_fills_window: bool,
+    /// Tokens kept free at the top of the window when `output_fills_window` is
+    /// set, so a follow-up step that carries this reply (such as Step 2 after a
+    /// prose draft) still fits beside it.
+    pub(super) output_headroom: usize,
     /// Constrains the answer to this schema.
     pub(super) schema: Option<Schema>,
     pub call: CallOptions,
@@ -206,6 +210,7 @@ impl GroundedRequest {
             output_tokens: 0,
             output_scale: 1,
             output_fills_window: false,
+            output_headroom: 0,
             schema: None,
             call: CallOptions::default(),
         }
@@ -253,6 +258,10 @@ impl GroundedRequest {
 
     pub fn output_fills_window(&self) -> bool {
         self.output_fills_window
+    }
+
+    pub fn output_headroom(&self) -> usize {
+        self.output_headroom
     }
 
     /// The schema the answer is held to.

@@ -186,6 +186,29 @@ export function RelevanceMeter({
   );
 }
 
+export function getSearchTypeTone(typeLabel: string): string {
+  const lower = typeLabel.toLowerCase();
+  if (lower === 'web' || lower === 'html') {
+    return 'bg-sky-500/10 text-sky-700 ring-1 ring-inset ring-sky-500/15 dark:bg-sky-400/15 dark:text-sky-300 dark:ring-sky-400/20';
+  }
+  if (lower === 'markdown' || lower === 'md') {
+    return 'bg-accent-muted text-accent ring-1 ring-inset ring-accent/15';
+  }
+  if (lower === 'pdf') {
+    return 'bg-rose-500/10 text-rose-700 ring-1 ring-inset ring-rose-500/15 dark:bg-rose-400/15 dark:text-rose-300 dark:ring-rose-400/20';
+  }
+  if (lower === 'code' || lower === 'json') {
+    return 'bg-teal-500/10 text-teal-700 ring-1 ring-inset ring-teal-500/15 dark:bg-teal-400/15 dark:text-teal-300 dark:ring-teal-400/20';
+  }
+  if (lower === 'spreadsheet' || lower === 'csv') {
+    return 'bg-emerald-500/10 text-emerald-700 ring-1 ring-inset ring-emerald-500/15 dark:bg-emerald-400/15 dark:text-emerald-300 dark:ring-emerald-400/20';
+  }
+  if (lower === 'word' || lower === 'docx' || lower === 'epub') {
+    return 'bg-amber-500/10 text-amber-700 ring-1 ring-inset ring-amber-500/15 dark:bg-amber-400/15 dark:text-amber-300 dark:ring-amber-400/20';
+  }
+  return 'bg-slate-500/10 text-slate-700 ring-1 ring-inset ring-slate-500/15 dark:bg-slate-400/15 dark:text-slate-300 dark:ring-slate-400/20';
+}
+
 function SearchResultComponent({
   result,
   query,
@@ -221,32 +244,26 @@ function SearchResultComponent({
   return (
     <div
       className={cn(
-        'group relative border-b border-border-subtle transition-colors duration-fast',
+        'group relative border-b border-border-subtle transition-colors duration-fast last:border-b-0',
         isSelected
-          ? 'bg-surface'
-          : 'hover:bg-[hsl(var(--text-primary)/0.025)]'
+          ? 'bg-accent-muted/45'
+          : 'row-hover'
       )}
     >
-      {isSelected && (
-        <span
-          aria-hidden="true"
-          className="absolute inset-y-2.5 left-0 w-0.5 rounded-full bg-accent"
-        />
-      )}
       <div className="flex items-start gap-1">
         <button
           type="button"
-          className="min-w-0 flex-1 rounded-xl px-3.5 py-3.5 text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          className="min-w-0 flex-1 px-4 py-3.5 text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           onClick={handleClick}
           onFocus={handleSelect}
         >
           <div className="flex items-start gap-3">
             <div className="min-w-0 flex-1">
-              <div className="truncate text-[15px] font-medium tracking-[-0.005em] text-text-primary">
+              <div className="truncate font-sans text-[15px] font-semibold tracking-[-0.015em] text-text-primary">
                 {meta.displayTitle}
               </div>
-              <div className="mt-0.5 flex items-center gap-1.5 text-xs text-text-muted">
-                <span className="inline-flex shrink-0 items-center rounded bg-[hsl(var(--text-primary)/0.06)] px-1.5 py-px text-[10.5px] font-medium text-text-secondary">
+              <div className="mt-1 flex items-center gap-1.5 text-xs text-text-muted">
+                <span className={cn('inline-flex shrink-0 items-center rounded-md px-1.5 py-0.5 text-[10.5px] font-semibold', getSearchTypeTone(meta.typeLabel))}>
                   {meta.typeLabel}
                 </span>
                 {meta.location && (

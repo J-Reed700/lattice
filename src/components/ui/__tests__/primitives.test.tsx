@@ -3,7 +3,9 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 
 import { Button } from '../button';
+import { Card } from '../card';
 import { Input } from '../input';
+import { PageHeader } from '../PageHeader';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../tabs';
 
 describe('Button', () => {
@@ -19,6 +21,10 @@ describe('Button', () => {
   it('supports outline, secondary, ghost, destructive, and link variants', () => {
     const { rerender } = render(<Button variant="outline">Outline</Button>);
     expect(screen.getByRole('button').className).toContain('border-border-default');
+    expect(screen.getByRole('button').className).toContain('shadow-control');
+
+    rerender(<Button variant="secondary">Secondary</Button>);
+    expect(screen.getByRole('button').className).toContain('shadow-control');
 
     rerender(<Button variant="destructive">Delete</Button>);
     expect(screen.getByRole('button').className).toContain('bg-danger');
@@ -69,7 +75,11 @@ describe('Tabs variants', () => {
 
     const tablist = screen.getByRole('tablist');
     expect(tablist).toHaveAttribute('data-variant', 'pill');
-    expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute('data-variant', 'pill');
+    const generalTrigger = screen.getByRole('tab', { name: 'General' });
+    expect(generalTrigger).toHaveAttribute('data-variant', 'pill');
+    expect(generalTrigger.className).toContain('data-[state=active]:bg-surface');
+    expect(generalTrigger.className).toContain('data-[state=active]:shadow-sm');
+    expect(generalTrigger.className).toContain('data-[state=active]:ring-1');
     expect(screen.getByText('General content')).toBeInTheDocument();
 
     await user.click(screen.getByRole('tab', { name: 'Models' }));
@@ -105,5 +115,23 @@ describe('Tabs variants', () => {
 
     expect(screen.getByRole('tablist')).toHaveAttribute('data-variant', 'underline');
     expect(screen.getByRole('tab', { name: 'One' })).toHaveAttribute('data-variant', 'underline');
+  });
+});
+
+describe('Card and PageHeader Option A styling', () => {
+  it('renders Card with bg-surface, border-border-subtle, and shadow-sm', () => {
+    render(<Card data-testid="card">Card body</Card>);
+    const card = screen.getByTestId('card');
+    expect(card.className).toContain('bg-surface');
+    expect(card.className).toContain('border-border-subtle');
+    expect(card.className).toContain('shadow-sm');
+  });
+
+  it('renders PageHeader title with crisp architectural sans typography', () => {
+    render(<PageHeader title="Library" meta="3 documents" />);
+    const heading = screen.getByRole('heading', { level: 1, name: 'Library' });
+    expect(heading.className).toContain('font-sans');
+    expect(heading.className).toContain('font-semibold');
+    expect(heading.className).toContain('tracking-[-0.025em]');
   });
 });

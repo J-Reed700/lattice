@@ -16,7 +16,7 @@ export const SECONDARY_BUTTON_CLASS =
 export const GHOST_BUTTON_CLASS =
   'pressable inline-flex h-8 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-ui font-medium text-text-secondary transition-[background-color,color,scale] duration-fast ease-out hover:bg-[hsl(var(--text-primary)/0.06)] hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45';
 
-/** Standardized primary CTA using Lattice 2.0 `--action` tokens (deep ink / warm alabaster). */
+/** Standardized primary CTA using Option A `--action` tokens (deep slate ink / crisp porcelain). */
 export const PRIMARY_BUTTON_CLASS =
   'pressable inline-flex h-8 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg bg-action px-3 text-ui font-medium text-action-fg shadow-action transition-[background-color,box-shadow,scale] duration-fast ease-out hover:bg-action-hover focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:cursor-not-allowed disabled:opacity-45';
 
@@ -29,6 +29,6 @@ export const CHECKBOX_CLASS =
 
 /**
  * Ensure unchecked Switch tracks remain clearly legible against both light
- * warm-stone and dark warm-obsidian page grounds.
+ * architectural porcelain and dark obsidian-slate page grounds.
  */
 export const SWITCH_CLASS = 'data-[state=unchecked]:bg-border-default';

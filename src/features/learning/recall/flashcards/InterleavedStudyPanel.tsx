@@ -160,13 +160,13 @@ export function InterleavedStudyPanel({ decks }: InterleavedStudyPanelProps) {
 
   return (
     <div className="space-y-4">
-      <div className="rounded-xl border border-border-default bg-surface px-4 py-3 shadow-2xs flex flex-wrap items-center justify-between gap-3">
+      <div className="rounded-xl border border-border-subtle bg-surface px-4 py-3 shadow-sm flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent/10 text-accent">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent-muted text-accent">
             <Shuffle size={15} />
           </span>
           <div>
-            <h3 className="font-serif text-sm font-semibold text-text-primary">
+            <h3 className="font-sans text-sm font-semibold tracking-[-0.015em] text-text-primary">
               Interleaved Topic Practice
             </h3>
             <p className="text-xs text-text-muted">
@@ -199,7 +199,7 @@ export function InterleavedStudyPanel({ decks }: InterleavedStudyPanelProps) {
                 <Shuffle size={13} />
                 <span>Interleaving · Cross-Topic Practice</span>
               </div>
-              <h3 className="mt-1 font-serif text-xl font-medium text-text-primary">
+              <h3 className="mt-1 font-sans text-lg font-semibold tracking-[-0.02em] text-text-primary">
                 Interleaved Multi-Deck Study Session
               </h3>
             </div>

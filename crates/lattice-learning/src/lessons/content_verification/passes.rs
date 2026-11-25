@@ -124,7 +124,22 @@ pub(super) async fn extract(
         "Checking executable examples",
     );
     let removed = checks.removed.clone();
-    let executions: Vec<_> = execution::observe(runtimes, candidate)
+    let observed_candidate = if removed.is_empty() {
+        candidate.clone()
+    } else {
+        let mut filtered = candidate.clone();
+        if let Some(blocks) = filtered.get_mut("blocks").and_then(Value::as_array_mut) {
+            for (index, block) in blocks.iter_mut().enumerate() {
+                if removed.contains(index) {
+                    if let Some(object) = block.as_object_mut() {
+                        object.insert("body".into(), Value::String(String::new()));
+                    }
+                }
+            }
+        }
+        filtered
+    };
+    let executions: Vec<_> = execution::observe(runtimes, &observed_candidate)
         .await?
         .into_iter()
         .filter(|run| run.unit.is_none_or(|unit| !removed.contains(unit)))

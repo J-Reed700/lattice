@@ -1,6 +1,7 @@
 /*
- * Editorial writing canvas for Journal — warm-stone in light mode,
- * warm-obsidian in dark mode, driven purely by Lattice design tokens.
+ * Editorial writing canvas for Journal — Option A · Crisp Neutral
+ * architectural porcelain (light) & deep obsidian slate (dark),
+ * driven purely by Lattice design tokens.
  */
 
 .journal-editorial-sheet {
@@ -22,7 +23,7 @@
 }
 
 .journal-editorial-prose blockquote {
-  border-left: 2px solid hsl(var(--accent) / 0.55);
+  border-left: 2px solid hsl(var(--accent) / 0.5);
   font-style: italic;
   color: hsl(var(--text-secondary));
 }

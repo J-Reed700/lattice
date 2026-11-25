@@ -2,8 +2,8 @@ import { Skeleton } from '@/components/Skeleton';
 
 const ListCardSkeleton = ({ rows }: { rows: number }) => (
   <section>
-    <Skeleton width="7rem" height="1rem" className="mb-2" />
-    <div className="rounded-xl border border-border-subtle bg-surface/55 p-2">
+    <Skeleton width="7rem" height="1rem" className="mb-2.5" />
+    <div className="rounded-xl border border-border-subtle bg-surface p-2 shadow-sm">
       {Array.from({ length: rows }, (_, i) => (
         <div key={i} className="flex items-start gap-3 px-2 py-2.5">
           <Skeleton width="1.75rem" height="1.75rem" className="rounded-lg" />
@@ -26,7 +26,7 @@ export const DashboardSkeleton = () => (
         <Skeleton width="13rem" height="2rem" className="mt-2" />
       </header>
 
-      <Skeleton width="100%" height="2.75rem" className="mb-3 rounded-xl" />
+      <Skeleton width="100%" height="2.75rem" className="mb-3.5 rounded-xl" />
 
       <div className="mb-8 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5">
         {Array.from({ length: 5 }, (_, i) => (
@@ -37,15 +37,21 @@ export const DashboardSkeleton = () => (
       <div className="grid gap-x-8 gap-y-8 lg:grid-cols-[minmax(0,1.42fr)_minmax(0,1fr)]">
         <div className="space-y-7">
           <section>
-            <Skeleton width="8.5rem" height="1rem" className="mb-2" />
-            <div className="rounded-xl border border-border-subtle bg-surface p-4">
-              <div className="flex justify-between">
-                <Skeleton width="4.5rem" height="1.15rem" className="rounded-full" />
-                <Skeleton width="6rem" height="0.8rem" />
+            <Skeleton width="8.5rem" height="1rem" className="mb-2.5" />
+            <div className="rounded-xl border border-border-subtle bg-surface p-5 shadow-sm">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1">
+                  <Skeleton width="8rem" height="1.15rem" className="rounded-md" />
+                  <Skeleton width="16rem" height="1.35rem" className="mt-3" />
+                  <Skeleton width="20rem" height="0.8rem" className="mt-2" />
+                </div>
+                <Skeleton width="2.875rem" height="2.875rem" className="rounded-full" />
               </div>
-              <Skeleton width="16rem" height="1.35rem" className="mt-3" />
-              <Skeleton width="20rem" height="0.8rem" className="mt-2" />
-              <Skeleton width="100%" height="0.375rem" className="mt-4 rounded-full" />
+              <Skeleton width="100%" height="1px" className="mt-4" />
+              <div className="mt-3.5 flex items-center justify-between">
+                <Skeleton width="6rem" height="0.8rem" />
+                <Skeleton width="7.5rem" height="2rem" className="rounded-lg" />
+              </div>
             </div>
           </section>
           <ListCardSkeleton rows={1} />
@@ -55,8 +61,8 @@ export const DashboardSkeleton = () => (
         <div className="space-y-7">
           <ListCardSkeleton rows={3} />
           <section>
-            <Skeleton width="5rem" height="1rem" className="mb-2" />
-            <div className="rounded-xl border border-border-subtle bg-surface/70 p-4">
+            <Skeleton width="5rem" height="1rem" className="mb-2.5" />
+            <div className="rounded-xl border border-border-subtle bg-surface p-5 shadow-sm">
               <div className="grid grid-cols-2 gap-x-4 gap-y-4">
                 {Array.from({ length: 4 }, (_, i) => (
                   <div key={i}>

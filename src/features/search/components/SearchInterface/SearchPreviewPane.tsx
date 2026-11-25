@@ -3,11 +3,13 @@ import { useMemo } from 'react';
 import { BookOpen, FileText, Globe, MessageSquare } from 'lucide-react';
 
 import { Button } from '@/components/ui';
+import { cn } from '@/lib/utils';
 import type { SearchResult as SearchResultType } from '@/types';
 
 import {
   getQueryTerms,
   getSearchResultDisplayMeta,
+  getSearchTypeTone,
   RelevanceMeter,
   renderHighlightedExcerpt,
 } from '../SearchResult/SearchResult';
@@ -44,11 +46,11 @@ export function SearchPreviewPane({
   return (
     <aside
       aria-label="Quick preview"
-      className="sticky top-6 rounded-xl border border-border-subtle bg-surface p-5 shadow-control"
+      className="sticky top-6 rounded-xl border border-border-subtle bg-surface p-5 shadow-sm"
     >
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-1.5 text-xs text-text-muted">
-          <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-[hsl(var(--text-primary)/0.06)] px-2 py-0.5 text-[11px] font-medium text-text-secondary">
+          <span className={cn('inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold', getSearchTypeTone(meta.typeLabel))}>
             {isWeb ? (
               <Globe className="h-3 w-3" strokeWidth={1.75} aria-hidden="true" />
             ) : (
@@ -69,7 +71,7 @@ export function SearchPreviewPane({
         />
       </div>
 
-      <h2 className="mt-3 font-serif text-[19px] font-normal leading-snug tracking-tight text-text-primary">
+      <h2 className="mt-3 font-sans text-[18px] font-semibold leading-snug tracking-[-0.02em] text-text-primary">
         {meta.displayTitle}
       </h2>
 

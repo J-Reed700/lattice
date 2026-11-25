@@ -107,30 +107,50 @@ export function DisplayTab() {
                     updateSettings.mutate({ category: 'ui', updates: { theme: theme.value } })
                   }
                   className={cn(
-                    'min-w-0 rounded-xl border p-2 text-sm transition-[border-color,background-color,color] duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50',
+                    'min-w-0 rounded-xl border p-2.5 text-sm shadow-sm transition-[border-color,background-color,box-shadow,color] duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50',
                     isActive
-                      ? 'border-accent bg-accent-muted text-accent'
-                      : 'border-border-default bg-surface text-text-secondary hover:border-border-strong hover:text-text-primary',
+                      ? 'border-accent bg-surface text-accent ring-1 ring-accent/25'
+                      : 'border-border-subtle bg-surface text-text-secondary hover:border-border-default hover:text-text-primary',
                   )}
                 >
                   <span className="theme-preview" data-preview={theme.value} aria-hidden="true">
                     {(theme.value === 'system'
                       ? (['light', 'dark'] as const)
                       : [theme.value]
-                    ).map((scene) => (
-                      <span key={scene} className="theme-preview-scene" data-scene={scene}>
-                        <span className="theme-preview-sidebar">
-                          <span />
-                          <span />
-                          <span />
+                    ).map((scene) => {
+                      const isDark = scene === 'dark';
+                      return (
+                        <span
+                          key={scene}
+                          className="theme-preview-scene"
+                          data-scene={scene}
+                          style={{ backgroundColor: isDark ? '#1c1917' : '#faf7f2' }}
+                        >
+                          <span
+                            className="theme-preview-sidebar"
+                            style={{ backgroundColor: isDark ? '#141210' : '#efeae2' }}
+                          >
+                            <span
+                              style={{ backgroundColor: isDark ? '#24211e' : '#ffffff' }}
+                            />
+                            <span />
+                            <span />
+                          </span>
+                          <span className="theme-preview-page">
+                            <span
+                              className="theme-preview-card"
+                              style={{ backgroundColor: isDark ? '#24211e' : '#ffffff' }}
+                            >
+                              <span
+                                style={{ backgroundColor: isDark ? '#d98c6c' : '#9b4431' }}
+                              />
+                              <span />
+                              <span />
+                            </span>
+                          </span>
                         </span>
-                        <span className="theme-preview-page">
-                          <span />
-                          <span />
-                          <span />
-                        </span>
-                      </span>
-                    ))}
+                      );
+                    })}
                   </span>
                   <span className="mt-2 flex flex-wrap items-center justify-center gap-1.5 py-1 text-xs font-medium">
                     <Icon className="h-3.5 w-3.5" aria-hidden="true" />

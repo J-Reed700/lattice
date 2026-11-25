@@ -58,19 +58,20 @@ export function ReferenceReader({
   const showCitations = useCitationDisplayStore((state) => state.visible);
   if (!bookmark) {
     return (
-      <main className="relative flex min-h-0 flex-1 flex-col overflow-y-auto bg-[hsl(var(--bg))]">
-        <div className="mx-auto flex w-full max-w-[clamp(680px,72vw,900px)] flex-1 flex-col items-center justify-center px-6 py-10 text-center">
-          <Bookmark
-            className="h-10 w-10 text-[hsl(var(--text-muted))]"
-            strokeWidth={1.5}
-          />
-          <h1 className="mt-4 font-serif text-xl font-semibold text-[hsl(var(--text-primary))]">
-            Your reference shelf.
-          </h1>
-          <p className="mt-3 max-w-[400px] text-sm text-[hsl(var(--text-tertiary))]">
-            Messages you bookmark in Chat and passages you save while reading
-            collect here.
-          </p>
+      <main className="relative flex min-h-0 flex-1 flex-col overflow-y-auto bg-bg">
+        <div className="mx-auto flex w-full max-w-[clamp(680px,72vw,860px)] flex-1 flex-col items-center justify-center px-6 py-10">
+          <div className="w-full max-w-[440px] rounded-xl border border-border-subtle bg-surface p-8 text-center shadow-sm">
+            <span className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-accent-muted text-accent ring-1 ring-inset ring-accent/12">
+              <Bookmark className="h-5 w-5" strokeWidth={1.65} />
+            </span>
+            <h1 className="mt-4 font-sans text-lg font-semibold tracking-[-0.02em] text-text-primary">
+              Your reference shelf.
+            </h1>
+            <p className="mt-2 text-sm leading-relaxed text-text-secondary">
+              Messages you bookmark in Chat and passages you save while reading
+              collect here.
+            </p>
+          </div>
         </div>
       </main>
     );
@@ -80,47 +81,49 @@ export function ReferenceReader({
   const captureLabel = resolveCaptureLabel(captureDestination);
 
   return (
-    <main className="relative flex min-h-0 flex-1 flex-col overflow-y-auto bg-[hsl(var(--bg))]">
-      <div className="mx-auto flex w-full max-w-[clamp(680px,72vw,900px)] flex-1 flex-col px-6 pt-10 pb-8">
-        <ReferenceHeader
-          bookmark={bookmark}
-          space={space}
-          capture={capture}
-          onOpenConversation={onOpenConversation}
-          onOpenCapturedNote={onOpenCapturedNote}
-        />
-        <div className="mb-4 flex justify-end">
-          <CitationVisibilityToggle />
-        </div>
-        <ReferenceBody
-          bookmark={bookmark}
-          payload={payload}
-          resolutionFailed={resolutionFailed}
-          onViewSource={onViewSource}
-        />
-        {showCitations && sources.length > 0 && (
-          <div className="mt-6">
-            <SourceCitations sources={sources} onViewSource={onViewSource} />
+    <main className="relative flex min-h-0 flex-1 flex-col overflow-y-auto bg-bg">
+      <div className="mx-auto flex w-full max-w-[clamp(680px,72vw,860px)] flex-1 flex-col px-6 py-8">
+        <div className="rounded-xl border border-border-subtle bg-surface p-6 shadow-sm sm:p-8">
+          <ReferenceHeader
+            bookmark={bookmark}
+            space={space}
+            capture={capture}
+            onOpenConversation={onOpenConversation}
+            onOpenCapturedNote={onOpenCapturedNote}
+          />
+          <div className="mb-4 flex justify-end">
+            <CitationVisibilityToggle />
           </div>
-        )}
-        <ReferenceAnnotationStrip
-          id={bookmark.id}
-          title={bookmark.title}
-          note={bookmark.note}
-          onSave={onSaveAnnotations}
-        />
-        <p className="mt-6 text-xs text-[hsl(var(--text-muted))]">
-          Lattice uses your saved references in future answers.
-        </p>
-        <ReferenceActionRail
-          isCaptured={Boolean(capture)}
-          captureDestinationLabel={captureLabel}
-          onOpenInChat={onOpenInChat}
-          onCopy={onCopy}
-          onCapture={onCapture}
-          onOpenCapturedNote={onOpenCapturedNote}
-          onDelete={onDelete}
-        />
+          <ReferenceBody
+            bookmark={bookmark}
+            payload={payload}
+            resolutionFailed={resolutionFailed}
+            onViewSource={onViewSource}
+          />
+          {showCitations && sources.length > 0 && (
+            <div className="mt-6">
+              <SourceCitations sources={sources} onViewSource={onViewSource} />
+            </div>
+          )}
+          <ReferenceAnnotationStrip
+            id={bookmark.id}
+            title={bookmark.title}
+            note={bookmark.note}
+            onSave={onSaveAnnotations}
+          />
+          <p className="mt-6 text-xs text-text-muted">
+            Lattice uses your saved references in future answers.
+          </p>
+          <ReferenceActionRail
+            isCaptured={Boolean(capture)}
+            captureDestinationLabel={captureLabel}
+            onOpenInChat={onOpenInChat}
+            onCopy={onCopy}
+            onCapture={onCapture}
+            onOpenCapturedNote={onOpenCapturedNote}
+            onDelete={onDelete}
+          />
+        </div>
       </div>
     </main>
   );

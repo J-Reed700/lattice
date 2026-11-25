@@ -20,7 +20,7 @@ export function VirtualizedSearchResults({
   onResultOpen,
 }: VirtualizedSearchResultsProps) {
   return (
-    <div className="border-t border-border-subtle">
+    <div className="overflow-hidden rounded-xl border border-border-subtle bg-surface shadow-sm">
       {results.map((result) => (
         <SearchResult
           key={result.id}

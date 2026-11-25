@@ -328,7 +328,7 @@ export const Message = memo(({
           onMouseLeave={isUser || !showCitations ? undefined : handleBodyMouseLeave}
           className={`wrap-break-word wrap-anywhere ${
             isUser
-              ? 'ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-surface px-4 py-2.5 font-sans text-[15px] leading-[1.55] shadow-sheet'
+              ? 'ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-sm border border-border-subtle bg-surface px-4 py-2.5 font-sans text-[15px] leading-[1.55] text-text-primary shadow-sm'
               : 'chat-answer max-w-none font-serif text-[16.5px] leading-[1.7]'
           }`}
         >
@@ -374,7 +374,7 @@ export const Message = memo(({
             {attachmentNames.map((name) => (
               <span
                 key={name}
-                className="inline-flex items-center gap-1 rounded-full bg-surface px-2 py-0.5 text-[11px] text-[hsl(var(--text-secondary))] shadow-sheet"
+                className="inline-flex items-center gap-1 rounded-full border border-border-subtle bg-surface px-2.5 py-0.5 text-[11px] text-text-secondary shadow-sm"
               >
                 <Paperclip className="h-3 w-3" strokeWidth={1.6} />
                 {name}

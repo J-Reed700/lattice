@@ -14,24 +14,10 @@ use zip::ZipArchive;
 /// Extract content from PPTX files.
 pub async fn extract_pptx(
     path: &Path,
-    max_file_size: u64,
+    max_file_size: Option<u64>,
     workers: &ExtractionWorkers,
 ) -> Result<ExtractedContent> {
-    let metadata = tokio::fs::metadata(path)
-        .await
-        .map_err(|e| IndexingError::Io {
-            message: e.to_string(),
-            kind: format!("{:?}", e.kind()),
-        })?;
-
-    let file_size = metadata.len();
-    if file_size > max_file_size {
-        return Err(IndexingError::FileTooLarge {
-            path: path.display().to_string(),
-            size_bytes: file_size,
-            max_size_bytes: max_file_size,
-        });
-    }
+    super::check_file_size(path, max_file_size).await?;
 
     let path_clone = path.to_path_buf();
     let text = run_archive_work(workers, path.to_path_buf(), move || {
@@ -225,7 +211,7 @@ mod tests {
             ("ppt/slides/slide1.xml", TABLE_SLIDE),
         ]);
 
-        let text = extract_pptx(&path, 1 << 20, &ExtractionWorkers::new())
+        let text = extract_pptx(&path, None, &ExtractionWorkers::new())
             .await
             .unwrap()
             .text;

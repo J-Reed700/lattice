@@ -9,7 +9,7 @@ export function JournalLoadError({ error, onRetry }: { error: string; onRetry: (
     <div className="flex h-full items-center justify-center bg-bg p-6">
       <div className="max-w-sm text-center">
         <NotebookPen className="mx-auto mb-5 h-8 w-8 text-text-tertiary" strokeWidth={1.5} />
-        <h1 className="font-serif text-2xl text-text-primary">Your journal couldn’t load</h1>
+        <h1 className="font-sans text-2xl font-semibold tracking-[-0.02em] text-text-primary">Your journal couldn’t load</h1>
         <p className="mt-3 text-sm leading-relaxed text-text-tertiary">Try connecting again to return to your pages.</p>
         <Button type="button" onClick={onRetry} className="mt-6">Try again</Button>
         <details className="mt-5 text-xs text-text-tertiary">
@@ -38,7 +38,7 @@ export function JournalEmptyState({
           className="h-10 w-10 text-text-muted"
           strokeWidth={1.5}
         />
-        <h1 className="font-serif text-xl text-text-primary">
+        <h1 className="font-sans text-xl font-semibold tracking-[-0.02em] text-text-primary">
           Start a journal.
         </h1>
         <p className="text-sm text-text-tertiary">
@@ -73,7 +73,7 @@ export function CollapsedJournalSidebar({
   onNewPage: () => void;
 }) {
   return (
-    <aside className="flex h-full w-12 shrink-0 flex-col items-center gap-1 border-r border-[hsl(var(--border-subtle))] py-2.5">
+    <aside className="flex h-full w-12 shrink-0 flex-col items-center gap-1 border-r border-border-subtle bg-surface-sunken/70 py-2.5">
       <button
         type="button"
         onClick={onExpand}

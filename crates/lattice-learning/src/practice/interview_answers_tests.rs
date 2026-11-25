@@ -36,9 +36,8 @@ impl LLMPort for AnswerModel {
             .push(request.clone());
         if request.schema().is_none() {
             assert_eq!(
-                request.sampling.and_then(|sampling| sampling.temperature),
-                Some(0.0),
-                "Independent solutions and review drafts use deterministic sampling"
+                request.sampling, None,
+                "Independent solutions and review drafts use default sampling"
             );
             let prompt = serde_json::to_string(request.input())?;
             if prompt.contains("Independently solve this interview question before seeing") {

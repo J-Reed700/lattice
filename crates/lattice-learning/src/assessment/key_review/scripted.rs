@@ -26,12 +26,19 @@ fn asked(request: &CompletionRequest) -> Value {
         .unwrap_or_default()
 }
 
-/// Answers every call of `C` with the JSON `reply` makes of the call's task and the number of calls of `C` before it.
+/// Answers every structured call of `C` with the JSON `reply` makes of the call's task and the number of structured calls of `C` before it; prose draft steps get a short draft.
 pub(crate) fn answering<C: Contract>(
     model: ScriptedModel,
     reply: impl Fn(&Value, usize) -> Value + Send + Sync + 'static,
 ) -> ScriptedModel {
-    model.on_request::<C>(move |sent, nth| {
+    let structured = std::sync::atomic::AtomicUsize::new(0);
+    model.on_request::<C>(move |sent, _| {
+        if sent.request.schema().is_none() {
+            return Box::pin(std::future::ready(Ok::<_, AppError>(
+                CompletionResponse::from_text("Draft reasoning."),
+            )));
+        }
+        let nth = structured.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let task = asked(&sent.request);
         let text = reply(&task, nth).to_string();
         Box::pin(std::future::ready(Ok::<_, AppError>(

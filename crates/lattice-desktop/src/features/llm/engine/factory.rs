@@ -347,14 +347,21 @@ async fn create_local_llm_sidecar(
         model_path,
         gguf_info.as_ref(),
     );
+    let supports_thinking = crate::features::llm::engine::gguf_metadata::file_supports_thinking(
+        model_path,
+        gguf_info.as_ref(),
+    );
 
-    let model_thinking =
-        crate::features::llm::engine::thinking_policy::thinking_policy_for(model_path);
+    let model_thinking = crate::features::llm::engine::thinking_policy::thinking_policy_for_info(
+        model_path,
+        gguf_info.as_ref(),
+    );
     let llm = crate::features::llm::llama_cpp::LlamaCppLlm::sidecar(
         handle,
         model_name,
         generation_config,
         supports_tools,
+        supports_thinking,
         model_thinking,
         vision,
     )
@@ -363,6 +370,7 @@ async fn create_local_llm_sidecar(
         binary,
         n_gpu_layers = facts.n_gpu_layers,
         supports_tools,
+        supports_thinking,
         ?model_thinking,
         "Local LLM (sidecar) ready"
     );

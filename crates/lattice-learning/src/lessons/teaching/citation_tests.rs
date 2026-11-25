@@ -393,3 +393,27 @@ fn reanchoring_keeps_a_sentence_whole_across_an_abbreviation() {
         "Most teams pick Rust for their services vs. Go and Python."
     );
 }
+
+#[test]
+fn reanchoring_stays_fast_on_large_reference_excerpts() {
+    let mut excerpt = String::new();
+    for i in 0..2_000 {
+        excerpt.push_str(&format!(
+            "Specification clause {i} documents interoperability rules for subsystem {i}. "
+        ));
+    }
+    let target_sentence =
+        "The US Core Patient profile defines mandatory identifier and name constraints for EHR systems.";
+    excerpt.push_str(target_sentence);
+    let authoring = json!({"sources":[{"sourceIndex":0,"excerpt":excerpt}]});
+    let mut candidate = json!({"blocks":[{"body":"Profile constraints.","sourceIndex":0,"quote":"US Core Patient profile defines mandatory identifier constraints for EHR"}],"questions":[]});
+
+    let started = std::time::Instant::now();
+    assert_eq!(reanchor_lesson_quotes(&mut candidate, &authoring), 1);
+    assert_eq!(candidate["blocks"][0]["quote"], target_sentence);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "reanchoring a 2000-sentence excerpt took {:?}",
+        started.elapsed()
+    );
+}

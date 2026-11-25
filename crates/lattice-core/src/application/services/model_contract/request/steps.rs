@@ -2,7 +2,6 @@
 //! answer step, a correction turn, a larger send.
 
 use super::GroundedRequest;
-use crate::application::ports::llm_port::SamplingOverride;
 use crate::application::services::grounded_generation::HistoryItem;
 
 impl GroundedRequest {
@@ -30,7 +29,6 @@ impl GroundedRequest {
                 content: draft.to_owned(),
             },
         ]);
-        answer.call.sampling = Some(SamplingOverride::deterministic());
         answer
     }
 
@@ -62,6 +60,14 @@ impl GroundedRequest {
     pub fn filling_window(&self, fills: bool) -> Self {
         let mut request = self.clone();
         request.output_fills_window = fills;
+        request
+    }
+
+    /// Tokens left free at the top of the window when filling it, so a follow-up
+    /// step carrying this reply still fits.
+    pub fn leaving_room(&self, tokens: usize) -> Self {
+        let mut request = self.clone();
+        request.output_headroom = tokens;
         request
     }
 

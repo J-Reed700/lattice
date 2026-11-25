@@ -53,6 +53,9 @@ struct Recording {
 #[async_trait::async_trait]
 impl LLMPort for Recording {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        if request.schema().is_none() {
+            return Ok(CompletionResponse::from_text("Draft reasoning."));
+        }
         self.sent.lock().unwrap().push(request.clone());
         let answer = self.answers.lock().unwrap().pop_front().unwrap_or_default();
         Ok(CompletionResponse::from_text(scripted(request, answer)))
@@ -108,6 +111,9 @@ impl LLMPort for SmallWindow {
         &self,
         request: &lattice_core::application::ports::llm_port::CompletionRequest,
     ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+        if request.schema().is_none() {
+            return Ok(CompletionResponse::from_text("Draft reasoning."));
+        }
         let (system, user) = crate::lessons::structured_call::task_messages(request);
         let mut requests = self.requests.lock().unwrap();
         requests.push((system.to_owned(), user.to_owned()));
@@ -548,9 +554,11 @@ fn the_system_prompt_gives_its_rules_in_order_and_cites_only_when_the_lesson_doe
     );
     assert!(at.windows(2).all(|pair| pair[0] < pair[1]), "{at:?}");
     assert!(!rich.contains(words::NO_CITATIONS));
+    assert!(!rich.contains(words::NO_KEYS));
 
     let plain = system(false, false);
     assert!(plain.contains(words::NO_CITATIONS));
+    assert!(plain.contains(words::NO_KEYS));
     assert!(plain.contains(words::EDITING));
     assert!(!plain.contains(words::KEYS));
     assert!(!plain.contains(&citing));

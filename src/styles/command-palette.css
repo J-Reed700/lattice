@@ -108,21 +108,37 @@
   user-select: none;
 }
 
-/* Keyboard selection moves instantly: a palette is a high-frequency path. */
+/* Keyboard selection moves instantly: subtle accent tint + accent icon. */
 .command-item[aria-selected='true'] {
-  background: hsl(var(--text-primary) / 0.07);
+  background: hsl(var(--accent-muted));
 }
 
 .command-item[aria-selected='true'] svg {
-  color: hsl(var(--text-primary));
+  color: hsl(var(--accent));
 }
 
 .command-shortcut {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 18px;
+  padding: 0 5px;
   font-family: var(--font-sans);
-  font-size: 12px;
-  letter-spacing: 0.08em;
-  color: hsl(var(--text-muted));
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  color: hsl(var(--text-tertiary));
+  background: hsl(var(--surface));
+  border-radius: 4px;
+  box-shadow: 0 1px 0 rgb(40 28 16 / 0.12), 0 0 0 1px hsl(var(--border-default));
+}
+
+:is(.dark, [data-theme="dark"]) .command-shortcut {
+  background: hsl(var(--surface-raised));
+  box-shadow: inset 0 1px 0 rgb(255 245 230 / 0.08), 0 1px 1px rgb(0 0 0 / 0.35), 0 0 0 1px hsl(var(--border-default));
 }
 
 .command-empty {
@@ -137,7 +153,7 @@
   gap: 16px;
   padding: 9px 16px;
   border-top: 1px solid hsl(var(--border-subtle));
-  background: hsl(var(--text-primary) / 0.025);
+  background: hsl(var(--surface-sunken) / 0.65);
   font-size: 11px;
   color: hsl(var(--text-muted));
 }
@@ -150,14 +166,22 @@
 
 .command-footer-hint kbd {
   font-family: var(--font-sans);
-  font-size: 11px;
-  min-width: 18px;
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1;
+  min-width: 19px;
   height: 18px;
-  padding: 0 4px;
+  padding: 0 4.5px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 4px;
-  background: hsl(var(--text-primary) / 0.07);
+  background: hsl(var(--surface));
   color: hsl(var(--text-tertiary));
+  box-shadow: 0 1px 0 rgb(40 28 16 / 0.12), 0 0 0 1px hsl(var(--border-default));
+}
+
+:is(.dark, [data-theme="dark"]) .command-footer-hint kbd {
+  background: hsl(var(--surface-raised));
+  box-shadow: inset 0 1px 0 rgb(255 245 230 / 0.08), 0 1px 1px rgb(0 0 0 / 0.35), 0 0 0 1px hsl(var(--border-default));
 }

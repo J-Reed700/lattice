@@ -254,6 +254,10 @@ impl LLMPort for ScheduledLlm {
         self.inner.thinking(&CompletionRequest::probe()).is_on()
     }
 
+    fn supports_native_thinking(&self) -> bool {
+        self.inner.supports_native_thinking()
+    }
+
     fn vision(&self) -> Option<VisionGeometry> {
         self.inner.vision()
     }

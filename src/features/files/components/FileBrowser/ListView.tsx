@@ -139,15 +139,20 @@ export const ListView = memo(({
   const selectionActive = selectedDocumentIds.size > 0;
 
   return (
-    <div ref={parentRef} className="h-full overflow-y-auto border-t border-border-subtle">
+    <div
+      ref={parentRef}
+      className="min-h-0 max-h-full overflow-y-auto rounded-xl border border-border-subtle bg-surface shadow-sm"
+    >
       <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }}>
         {rowVirtualizer.getVirtualItems().map((virtualRow) => {
           const item = items[virtualRow.index];
           if (!item) return null;
+          const isLast = virtualRow.index === items.length - 1;
 
           return (
             <div
               key={virtualRow.key}
+              className={!isLast ? 'border-b border-border-subtle' : undefined}
               style={{
                 position: 'absolute',
                 top: 0,
@@ -158,10 +163,12 @@ export const ListView = memo(({
             >
               {item.type === 'header' ? (
                 <div
-                  className="flex items-end border-b border-border-subtle px-3 pb-1"
+                  className="flex items-end bg-surface-sunken/55 px-3.5 pb-1.5"
                   style={{ height: HEADER_HEIGHT }}
                 >
-                  <span className="text-xs font-medium text-text-secondary">{item.label}</span>
+                  <span className="text-xs font-semibold tracking-[-0.01em] text-text-secondary">
+                    {item.label}
+                  </span>
                 </div>
               ) : (
                 <CorpusRow

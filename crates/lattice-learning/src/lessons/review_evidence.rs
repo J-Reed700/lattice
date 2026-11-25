@@ -574,8 +574,10 @@ pub async fn check(
         &call,
     )?;
     // Each finding's search gets an equal share of the room the request
-    // leaves for reference passages.
-    let share = room / issues.len().max(1);
+    // leaves for reference passages, capped so large context windows do not
+    // pack hundreds of low-relevance passages for one or two findings.
+    const MAX_REVIEW_EVIDENCE_ISSUE_TOKENS: usize = 6_000;
+    let share = (room / issues.len().max(1)).min(MAX_REVIEW_EVIDENCE_ISSUE_TOKENS);
     let shown_as = |at: usize, passage: &ReferencePassage| {
         let source = references
             .sources
@@ -629,7 +631,7 @@ pub async fn check(
         &Asking {
             progress,
             reasoning: Some(ReasonFirst {
-                kind: CallKind::Classifier,
+                kind: CallKind::Authoring,
                 subject: "the review-finding check",
                 brief: DRAFT_BRIEF,
             }),

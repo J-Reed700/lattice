@@ -119,16 +119,12 @@ export function PageList({
                       setRenamingId(page.id);
                     }}
                     aria-current={isActive ? 'page' : undefined}
-                    className={`relative flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-left ${
-                      isActive ? 'bg-accent-muted' : 'row-hover'
+                    className={`relative flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-left transition-[background-color,box-shadow,color] duration-fast ${
+                      isActive
+                        ? 'bg-surface font-medium text-text-primary shadow-sm ring-1 ring-border-subtle dark:bg-surface-overlay'
+                        : 'row-hover'
                     }`}
                   >
-                    {isActive && (
-                      <span
-                        className="absolute inset-y-2 left-0 w-[2.5px] rounded-full bg-accent"
-                        aria-hidden="true"
-                      />
-                    )}
                     <span
                       className={`min-w-0 flex-1 truncate text-ui ${
                         isActive ? 'font-medium text-text-primary' : 'text-text-secondary'
@@ -145,7 +141,7 @@ export function PageList({
 
                 {/* Row actions — overlay, reserves no width. */}
                 {!isRenaming && (onRenamePage || onDeletePage) ? (
-                  <div className="pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-surface-overlay pl-1 opacity-0 shadow-control transition-opacity duration-fast group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
+                  <div className="pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-surface pl-1 opacity-0 shadow-sm ring-1 ring-border-subtle transition-opacity duration-fast group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100">
                     {onRenamePage ? (
                       <IconButton
                         label="Rename page"

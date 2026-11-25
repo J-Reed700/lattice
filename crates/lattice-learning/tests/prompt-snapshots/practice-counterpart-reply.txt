@@ -70,25 +70,6 @@ Parts of the learner's work you may point at, each under its handle:
             "kind"
           ],
           "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "properties": {
-            "kind": {
-              "type": "string",
-              "enum": [
-                "from"
-              ]
-            },
-            "which": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "which"
-          ],
-          "additionalProperties": false
         }
       ]
     }

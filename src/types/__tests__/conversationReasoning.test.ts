@@ -13,10 +13,9 @@ describe('reasoning step events', () => {
     expect(TurnStepSchema.parse(step).reasoning).toBeUndefined();
   });
 
-  it('matches the backend character limit for non-BMP text', () => {
-    expect(TurnStepSchema.safeParse({ ...step, reasoning: '🧠'.repeat(24_000) }).success).toBe(true);
-    expect(TurnStepSchema.safeParse({ ...step, reasoning: '🧠'.repeat(24_001) }).success).toBe(false);
-    expect(TurnStepSchema.safeParse({ ...step, reasoning: 'a'.repeat(24_001) }).success).toBe(false);
+  it('accepts long reasoning traces without an arbitrary character cap', () => {
+    expect(TurnStepSchema.safeParse({ ...step, reasoning: '🧠'.repeat(24_001) }).success).toBe(true);
+    expect(TurnStepSchema.safeParse({ ...step, reasoning: 'a'.repeat(50_000) }).success).toBe(true);
   });
 
   it('retains streamed reasoning when the running step is replaced and completed', () => {

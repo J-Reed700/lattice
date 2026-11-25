@@ -52,10 +52,21 @@ fn task(sent: &Asked) -> Value {
 fn scripted(answer: impl Fn(&Value, usize) -> Vec<Value> + Send + Sync + 'static) -> ScriptedModel {
     let asked = AtomicUsize::new(0);
     ScriptedModel::new().on_request::<TeachingRepair>(move |sent, _| {
+        if sent.request.schema().is_none() {
+            return reply("Draft reasoning.".into());
+        }
         let earlier = asked.fetch_add(1, Ordering::SeqCst);
         let task = task_of(&sent.prompt()).unwrap_or(Value::Null);
         reply(json!({"entries": answer(&task, earlier)}).to_string())
     })
+}
+
+fn structured_sent(model: &ScriptedModel) -> Vec<Asked> {
+    model
+        .sent()
+        .into_iter()
+        .filter(|sent| sent.request.schema().is_some())
+        .collect()
 }
 
 fn edits(replace: Vec<Value>) -> Value {
@@ -234,7 +245,7 @@ async fn an_entry_outside_its_findings_part_is_asked_for_again_alone_and_then_ap
     assert_eq!(made.outcomes, [Outcome::Applied, Outcome::Applied]);
     assert_eq!(body_of(&made, 0), format!("{STOVE} The lid is shut."));
     assert_eq!(body_of(&made, 1), format!("{ROPE} The knot is loose."));
-    let sent = model.sent();
+    let sent = structured_sent(&model);
     assert_eq!(sent.len(), 2);
     assert_eq!(finding_labels(&task(&sent[1])).len(), 1);
     let again = sent[1].prompt();
@@ -704,7 +715,7 @@ async fn a_key_of_a_question_outside_the_findings_part_is_refused_by_the_reach()
     let made = mended(&model, &findings, Keeps::Anything, &quiz_material()).await?;
     assert_ne!(made.outcomes, [Outcome::Applied]);
     assert_eq!(made.candidate["questions"][1]["correctIndex"], json!(0));
-    let again = model.sent()[1].prompt();
+    let again = structured_sent(&model)[1].prompt();
     assert!(
         again.contains("outside this finding's part (/questions/0)"),
         "{again}"

@@ -82,7 +82,7 @@ export function Passage({
 function ResolutionChip({ claim }: { claim: LearningClaimEvidenceDto }) {
   const text = resolutionText(claim);
   if (claim.resolution === 'not_verified' || claim.resolution === 'source_removed') {
-    return <span className="rounded-full border border-amber-600/40 px-2 py-1 text-[10px] font-medium text-text-primary">{text}</span>;
+    return <span className="rounded-full border border-warning/40 bg-warning-muted/40 px-2 py-1 text-[10px] font-medium text-text-primary">{text}</span>;
   }
   if (claim.resolution === 'confirmed_by_you') {
     return <span className="rounded-full border border-border bg-bg px-2 py-1 text-[10px] font-medium text-text-secondary">{text}</span>;
@@ -231,12 +231,12 @@ export function LessonEvidencePanel({
               <p className="text-sm leading-6 text-text-secondary">
                 {evidenceSummary(data)} · {data.executedExamples} examples executed. These checks reduce errors; they do not guarantee that a lesson is correct or complete.
               </p>
-              {sourceRemovedCount(data) > 0 && <p role="status" className="rounded-lg border border-amber-600/30 p-3 text-sm text-text-primary">{sourceRemovedCount(data)} {sourceRemovedCount(data) === 1 ? 'statement lost its source' : 'statements lost their source'} — use Review to look at {sourceRemovedCount(data) === 1 ? 'it' : 'them'}.</p>}
+              {sourceRemovedCount(data) > 0 && <p role="status" className="rounded-lg border border-warning/30 bg-warning-muted/35 p-3 text-sm text-text-primary">{sourceRemovedCount(data)} {sourceRemovedCount(data) === 1 ? 'statement lost its source' : 'statements lost their source'} — use Review to look at {sourceRemovedCount(data) === 1 ? 'it' : 'them'}.</p>}
               <p className="text-xs leading-5 text-text-muted">
                 {data.retrievalMode === 'hybrid' ? 'Semantic and keyword retrieval' : data.retrievalMode === 'lexical' ? 'Keyword retrieval — references were not searched by meaning' : data.retrievalMode === 'partial' ? 'Semantic and keyword retrieval over the embedded references; keyword retrieval for the rest — embedding was not finished' : 'Earlier verification method'} · Checked {new Date(data.checkedAt).toLocaleString()} · {data.checkerModel}
               </p>
-              {data.unexecutedLanguages.length > 0 && <p className="rounded-lg bg-amber-500/10 p-3 text-sm text-text-secondary">Examples in {data.unexecutedLanguages.join(', ')} were checked against references but were not compiled or executed.</p>}
-              {!data.sourcesCurrent && <p role="status" className="rounded-lg bg-amber-500/10 p-3 text-sm text-text-secondary">The reference collection has changed since this check. The citations below still open the exact source versions used for this saved lesson.</p>}
+              {data.unexecutedLanguages.length > 0 && <p className="rounded-lg border border-border-subtle bg-surface-sunken/70 p-3 text-sm text-text-secondary">Examples in {data.unexecutedLanguages.join(', ')} were checked against references but were not compiled or executed.</p>}
+              {!data.sourcesCurrent && <p role="status" className="rounded-lg border border-border-subtle bg-surface-sunken/70 p-3 text-sm text-text-secondary">The reference collection has changed since this check. The citations below still open the exact source versions used for this saved lesson.</p>}
               <details>
                 <summary className="cursor-pointer text-xs text-text-muted">Verification details</summary>
                 <dl className="mt-2 space-y-1 break-all text-xs text-text-secondary">

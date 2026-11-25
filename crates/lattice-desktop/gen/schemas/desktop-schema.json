@@ -5421,6 +5421,12 @@
           "markdownDescription": "Enables the prepare_learning_lesson command without any pre-configured scope."
         },
         {
+          "description": "Enables the prepare_learning_lessons command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-prepare-learning-lessons",
+          "markdownDescription": "Enables the prepare_learning_lessons command without any pre-configured scope."
+        },
+        {
           "description": "Enables the prepare_learning_module command without any pre-configured scope.",
           "type": "string",
           "const": "learning:allow-prepare-learning-module",
@@ -5449,6 +5455,12 @@
           "type": "string",
           "const": "learning:allow-preview-learning-pack-import",
           "markdownDescription": "Enables the preview_learning_pack_import command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the prioritize_learning_generation_job command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-prioritize-learning-generation-job",
+          "markdownDescription": "Enables the prioritize_learning_generation_job command without any pre-configured scope."
         },
         {
           "description": "Enables the reassess_learning_source_trust command without any pre-configured scope.",
@@ -5515,6 +5527,12 @@
           "type": "string",
           "const": "learning:allow-request-learning-tutor-response",
           "markdownDescription": "Enables the request_learning_tutor_response command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the reset_learning_lesson_preparation command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:allow-reset-learning-lesson-preparation",
+          "markdownDescription": "Enables the reset_learning_lesson_preparation command without any pre-configured scope."
         },
         {
           "description": "Enables the resolve_learning_claim command without any pre-configured scope.",
@@ -6471,6 +6489,12 @@
           "markdownDescription": "Denies the prepare_learning_lesson command without any pre-configured scope."
         },
         {
+          "description": "Denies the prepare_learning_lessons command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-prepare-learning-lessons",
+          "markdownDescription": "Denies the prepare_learning_lessons command without any pre-configured scope."
+        },
+        {
           "description": "Denies the prepare_learning_module command without any pre-configured scope.",
           "type": "string",
           "const": "learning:deny-prepare-learning-module",
@@ -6499,6 +6523,12 @@
           "type": "string",
           "const": "learning:deny-preview-learning-pack-import",
           "markdownDescription": "Denies the preview_learning_pack_import command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the prioritize_learning_generation_job command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-prioritize-learning-generation-job",
+          "markdownDescription": "Denies the prioritize_learning_generation_job command without any pre-configured scope."
         },
         {
           "description": "Denies the reassess_learning_source_trust command without any pre-configured scope.",
@@ -6565,6 +6595,12 @@
           "type": "string",
           "const": "learning:deny-request-learning-tutor-response",
           "markdownDescription": "Denies the request_learning_tutor_response command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the reset_learning_lesson_preparation command without any pre-configured scope.",
+          "type": "string",
+          "const": "learning:deny-reset-learning-lesson-preparation",
+          "markdownDescription": "Denies the reset_learning_lesson_preparation command without any pre-configured scope."
         },
         {
           "description": "Denies the resolve_learning_claim command without any pre-configured scope.",

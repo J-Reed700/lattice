@@ -83,11 +83,11 @@ export function ColumnEditor({ value, onChange, onSubmit, isRunning }: ColumnEdi
   };
 
   return (
-    <div className="mb-8 border-t border-border-subtle pt-6">
+    <div className="mb-6 rounded-xl border border-border-subtle bg-surface p-5 shadow-sm">
       <div className="flex items-baseline justify-between gap-2">
         <label
           htmlFor="compare-columns"
-          className="block text-xs font-medium uppercase tracking-[0.06em] text-text-muted"
+          className="block font-sans text-xs font-semibold tracking-[-0.01em] text-text-secondary"
         >
           Columns
         </label>

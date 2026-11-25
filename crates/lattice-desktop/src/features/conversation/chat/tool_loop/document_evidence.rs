@@ -1,4 +1,4 @@
-//! Bounded evidence of document excerpts delivered during this turn.
+//! Evidence of document excerpts delivered during this turn.
 //!
 //! This is prompt deduplication, not a source cache: callers must execute the
 //! scoped read first. A digest of the fresh result detects changes even outside
@@ -9,15 +9,15 @@
 use crate::features::conversation::chat::retrieval::Rendered;
 use lattice_core::application::contracts::tools::FunctionResult;
 use sha2::{Digest, Sha256};
-use std::collections::VecDeque;
+use std::collections::HashSet;
 
-const MAX_ENTRIES: usize = 8;
 const REUSE_NOTICE: &str = "This document read is unchanged. The exact excerpt is already in an earlier tool result in your current context; use that evidence. This does not imply the whole document was read.";
 
 #[derive(Default)]
 pub(super) struct DocumentEvidence {
-    // Fixed-size fingerprints only: document text stays in the existing prompt.
-    recent: VecDeque<([u8; 32], [u8; 32])>,
+    // Fixed-size 64-byte fingerprints only (per-turn lifetime): document text
+    // stays in the existing prompt.
+    seen: HashSet<([u8; 32], [u8; 32])>,
 }
 
 impl DocumentEvidence {
@@ -41,12 +41,7 @@ impl DocumentEvidence {
             Sha256::digest(bytes).into(),
             Sha256::digest(output.text.as_bytes()).into(),
         );
-        let remembered = self.recent.contains(&fingerprint);
-        self.recent.retain(|entry| entry != &fingerprint);
-        self.recent.push_back(fingerprint);
-        while self.recent.len() > MAX_ENTRIES {
-            self.recent.pop_front();
-        }
+        let remembered = !self.seen.insert(fingerprint);
         if remembered && visible(&output.text) {
             Rendered::from(REUSE_NOTICE.to_string())
         } else {
@@ -134,26 +129,39 @@ mod tests {
     }
 
     #[test]
-    fn rolling_window_is_bounded_and_does_not_claim_an_evicted_read() {
+    fn all_reads_within_a_turn_remain_deduplicated_while_visible() {
         let mut memo = DocumentEvidence::default();
         let excerpt = "Exact document excerpt. ".repeat(30);
         for page in 0..100 {
-            render(
-                &mut memo,
-                "get_document",
-                &result(page, "text"),
-                excerpt.clone(),
-                |_| true,
+            assert_eq!(
+                render(
+                    &mut memo,
+                    "get_document",
+                    &result(page, "text"),
+                    excerpt.clone(),
+                    |_| true,
+                ),
+                excerpt
             );
-            assert!(memo.recent.len() <= MAX_ENTRIES);
         }
+        assert_eq!(memo.seen.len(), 100);
         assert_eq!(
             render(
                 &mut memo,
                 "get_document",
                 &result(0, "text"),
                 excerpt.clone(),
-                |_| { true }
+                |_| true,
+            ),
+            REUSE_NOTICE
+        );
+        assert_eq!(
+            render(
+                &mut memo,
+                "get_document",
+                &result(0, "text"),
+                excerpt.clone(),
+                |_| false,
             ),
             excerpt
         );
@@ -163,7 +171,7 @@ mod tests {
                 "get_document",
                 &result(99, "text"),
                 excerpt.clone(),
-                |_| { true }
+                |_| true,
             ),
             REUSE_NOTICE
         );

@@ -155,7 +155,7 @@ function FolderCard({
           {renaming ? (
             <RenameField name={folder.name} onDone={onRename} />
           ) : (
-            <div className={cn('truncate text-[14.5px] font-medium leading-snug', missing ? 'text-text-tertiary' : 'text-text-primary')}>
+            <div className={cn('truncate font-sans text-[14.5px] font-semibold leading-snug tracking-[-0.02em]', missing ? 'text-text-tertiary' : 'text-text-primary')}>
               {folder.name}
             </div>
           )}
@@ -186,10 +186,10 @@ function FolderCard({
   return (
     <li
       className={cn(
-        'group relative flex flex-col rounded-xl border transition-[border-color,background-color,box-shadow] duration-fast',
+        'group relative flex flex-col rounded-xl border transition-[transform,border-color,background-color,box-shadow] duration-base',
         missing
           ? 'border-border-subtle bg-surface/50'
-          : 'border-border-subtle bg-surface shadow-control hover:border-border-default hover:bg-surface-raised'
+          : 'border-border-subtle bg-surface shadow-sm hover:-translate-y-px hover:border-border-default hover:shadow-md'
       )}
     >
       {renaming ? (

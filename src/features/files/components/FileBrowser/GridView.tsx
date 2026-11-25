@@ -129,7 +129,7 @@ export const GridView = memo(({ onFileOpen, onContextMenu, onAddFolder }: GridVi
     <div
       ref={parentRef}
       data-grid-columns={columns}
-      className="h-full overflow-y-auto border-t border-border-subtle pt-3"
+      className="h-full overflow-y-auto pt-1"
     >
       <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, position: 'relative' }}>
         {rowVirtualizer.getVirtualItems().map((virtualRow) => {
@@ -149,7 +149,7 @@ export const GridView = memo(({ onFileOpen, onContextMenu, onAddFolder }: GridVi
               }}
             >
               <div
-                className="grid gap-3 px-0.5"
+                className="grid gap-3 px-0.5 py-0.5"
                 style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}
               >
                 {rowDocs.map((doc) => (
@@ -202,15 +202,15 @@ const FileCard = memo(({ doc, isSelected, onClick, onDoubleClick, onContextMenu 
           onDoubleClick();
         }
       }}
-      className={`group flex h-[104px] cursor-pointer flex-col justify-between rounded-xl border p-3.5 transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring ${
+      className={`group flex h-[104px] cursor-pointer flex-col justify-between rounded-xl border p-3.5 transition-[transform,border-color,background-color,box-shadow] duration-base focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring ${
         isSelected
-          ? 'border-border-default bg-surface-raised shadow-control'
-          : 'border-border-subtle bg-surface/50 hover:border-border-default hover:bg-surface'
+          ? 'border-border-default bg-surface-raised shadow-sm ring-1 ring-accent/25'
+          : 'border-border-subtle bg-surface shadow-sm hover:-translate-y-px hover:border-border-default hover:shadow-md'
       }`}
     >
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
-          <FileIcon file={doc} size={17} className="shrink-0" />
+          <FileIcon file={doc} size={16} className="shrink-0" />
           {sourceLocation && (
             <span className="truncate text-[11px] text-text-muted" title={doc.filePath}>
               {sourceLocation}
@@ -228,7 +228,7 @@ const FileCard = memo(({ doc, isSelected, onClick, onDoubleClick, onContextMenu 
         </button>
       </div>
       <div className="min-w-0">
-        <p className="truncate text-sm font-medium text-text-primary" title={doc.fileName}>
+        <p className="truncate font-sans text-sm font-semibold tracking-[-0.015em] text-text-primary" title={doc.fileName}>
           {doc.fileName}
         </p>
         <p className="mt-0.5 truncate text-xs tabular-nums text-text-muted">{metaLine(doc)}</p>

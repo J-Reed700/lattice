@@ -741,12 +741,12 @@ fn an_explorer_turn_searches_the_library_only_when_a_toggle_asks() {
 }
 
 /// The reading depth is what the evidence budget holds at what a passage of
-/// the library measures, capped at the reading shortlist.
+/// the library measures, scaling with the budget without an arbitrary cap.
 #[test]
 fn retrieval_depth_follows_the_evidence_budget() {
     // 90k evidence tokens, 2,000-character passages at four characters a
-    // token: 500 tokens a passage, 180 that fit, and the shortlist reads 40.
-    assert_eq!(reading_depth(90_000, Some(2_000), 4.0), MAX_READ_PASSAGES);
+    // token: 500 tokens a passage, 180 that fit.
+    assert_eq!(reading_depth(90_000, Some(2_000), 4.0), 180);
     assert_eq!(reading_depth(20_000, Some(2_000), 4.0), 40);
     // A small window is not handed passages it would only throw away.
     assert_eq!(reading_depth(3_000, Some(2_000), 4.0), 6);

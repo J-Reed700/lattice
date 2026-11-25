@@ -1,9 +1,9 @@
 .ui-searchable-select { min-width: 0; flex: 1; }
-.ui-searchable-select .ui-searchable-trigger { justify-content: space-between; width: 100%; min-width: 0; height: 38px; border-color: hsl(var(--border-subtle)); box-shadow: none; font-size: 12px; font-weight: 450; }
+.ui-searchable-select .ui-searchable-trigger { justify-content: space-between; width: 100%; min-width: 0; height: 36px; border-color: hsl(var(--border-default)); background: hsl(var(--surface)); box-shadow: var(--shadow-control); font-size: 12px; font-weight: 450; }
 .ui-searchable-value { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .ui-searchable-value > :first-child:not(:last-child) { flex-shrink: 0; }
 .ui-searchable-value > span:last-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.ui-searchable-popover { width: max(300px, var(--radix-popover-trigger-width)); max-width: min(480px, calc(100vw - 32px)); padding: 0; border: 1px solid hsl(var(--border-subtle)); overflow: hidden; }
+.ui-searchable-popover { width: max(300px, var(--radix-popover-trigger-width)); max-width: min(480px, calc(100vw - 32px)); padding: 0; border: none; box-shadow: var(--shadow-lg); overflow: hidden; }
 .ui-searchable-input { display: flex; gap: 9px; align-items: center; border-bottom: 1px solid hsl(var(--border-subtle)); padding: 12px; color: hsl(var(--text-muted)); }
 .ui-searchable-input input { min-width: 0; width: 100%; font-size: 13px; background: transparent; color: hsl(var(--text-primary)); outline: none; }
 .ui-searchable-list { max-height: min(330px, var(--radix-popover-content-available-height)); overflow-y: auto; overscroll-behavior: contain; padding: 5px; scroll-padding: 5px; }
@@ -30,10 +30,10 @@
 .ui-navigation-tab:disabled { opacity: .5; cursor: not-allowed; }
 .ui-navigation-badge { margin-left: 6px; color: hsl(var(--accent)); font-size: 10px; font-variant-numeric: tabular-nums; }
 .ui-navigation-actions { margin-left: auto; align-self: flex-end; }
-.ui-navigation-tabs--segmented { width: fit-content; padding: 3px; border: 1px solid hsl(var(--border-subtle)); border-radius: 7px; background: hsl(var(--surface-sunken)); }
-.ui-navigation-tabs--segmented .ui-navigation-tablist { gap: 3px; }
-.ui-navigation-tabs--segmented .ui-navigation-tab { min-height: 36px; padding: 6px 12px; border-radius: 4px; }
-.ui-navigation-tabs--segmented .ui-navigation-tab[aria-selected='true'] { background: hsl(var(--surface)); box-shadow: var(--shadow-control); color: hsl(var(--accent)); }
+.ui-navigation-tabs--segmented { width: fit-content; padding: 3px; border: 1px solid hsl(var(--border-subtle)); border-radius: 8px; background: hsl(var(--surface-sunken)); }
+.ui-navigation-tabs--segmented .ui-navigation-tablist { gap: 2px; }
+.ui-navigation-tabs--segmented .ui-navigation-tab { min-height: 30px; padding: 5px 12px; border-radius: 6px; }
+.ui-navigation-tabs--segmented .ui-navigation-tab[aria-selected='true'] { background: hsl(var(--surface)); box-shadow: var(--shadow-sm), 0 0 0 1px hsl(var(--border-subtle)); color: hsl(var(--text-primary)); }
 .ui-navigation-tabs--segmented .ui-navigation-tab::after { display: none; }
 
 .ui-resizable-columns { min-width: 0; container-type: inline-size; }
@@ -95,7 +95,7 @@
 .ui-sortable-row[data-drop-target='true']::after { content: ''; position: absolute; left: 0; right: 0; height: 2px; background: hsl(var(--accent)); border-radius: 2px; }
 .ui-sortable-row[data-drop-target='true'][data-drop-position='before']::after { top: -6px; }
 .ui-sortable-row[data-drop-target='true'][data-drop-position='after']::after { bottom: -6px; }
-.ui-sortable-ghost { position: fixed; display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid; border-radius: 7px; box-shadow: 0 12px 36px hsl(0 0% 0% / .2); font-size: 13px; line-height: 1.65; pointer-events: none; z-index: 1000; }
+.ui-sortable-ghost { position: fixed; display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid hsl(var(--border-default)); border-radius: 8px; background: hsl(var(--surface-overlay)); box-shadow: var(--shadow-lg); font-size: 13px; line-height: 1.65; pointer-events: none; z-index: 1000; }
 .ui-sortable-ghost > svg { flex-shrink: 0; opacity: .6; }
 .ui-sortable-ghost > span:nth-child(2) { font: 11px var(--font-mono); opacity: .7; }
 .ui-sortable-ghost > span:last-child { overflow-wrap: anywhere; min-width: 0; }

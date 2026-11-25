@@ -12,17 +12,17 @@ interface CompareTableProps {
  */
 export function CompareTable({ table, onOpenCitation }: CompareTableProps) {
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto rounded-xl border border-border-subtle bg-surface shadow-sm">
       <table className="w-full border-collapse text-sm">
         <thead>
-          <tr>
-            <th className="border-b border-border-subtle pb-2 pr-6 text-left font-medium text-text-secondary">
+          <tr className="bg-surface-sunken/55">
+            <th className="border-b border-border-subtle px-4 py-2.5 text-left font-sans text-xs font-semibold tracking-[-0.01em] text-text-secondary">
               Document
             </th>
             {table.columns.map((column) => (
               <th
                 key={column}
-                className="border-b border-border-subtle pb-2 pr-6 text-left font-medium text-text-secondary"
+                className="border-b border-border-subtle px-4 py-2.5 text-left font-sans text-xs font-semibold tracking-[-0.01em] text-text-secondary"
               >
                 {column}
               </th>
@@ -31,8 +31,8 @@ export function CompareTable({ table, onOpenCitation }: CompareTableProps) {
         </thead>
         <tbody>
           {table.rows.map((row) => (
-            <tr key={row.documentId}>
-              <td className="min-w-[180px] border-b border-border-subtle py-3 pr-6 align-top font-medium text-text-primary">
+            <tr key={row.documentId} className="group border-b border-border-subtle last:border-b-0">
+              <td className="min-w-[180px] px-4 py-3.5 align-top font-sans font-semibold tracking-[-0.01em] text-text-primary">
                 {row.title}
                 {row.error ? (
                   <span className="mt-1 block text-xs font-normal text-text-muted">
@@ -53,7 +53,7 @@ export function CompareTable({ table, onOpenCitation }: CompareTableProps) {
                 return (
                   <td
                     key={column}
-                    className="border-b border-border-subtle py-3 pr-6 align-top"
+                    className="px-4 py-3.5 align-top"
                   >
                     {hasValue ? (
                       <>

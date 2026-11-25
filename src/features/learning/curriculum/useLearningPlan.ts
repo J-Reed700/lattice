@@ -3,7 +3,12 @@ import { useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
-import { LEARNING_PROGRAMS_KEY, learningPlanKey, learningProgramKey } from '@/features/learning/api/learningQueryKeys';
+import {
+  LEARNING_CLAIM_REVIEW_ROOT,
+  LEARNING_PROGRAMS_KEY,
+  learningPlanKey,
+  learningProgramKey,
+} from '@/features/learning/api/learningQueryKeys';
 import type VaultAPI from '@/lib/api';
 import type {
   LearningCurriculumRevisionActionRequestDto,
@@ -14,8 +19,10 @@ import type {
   LearningGenerationJob,
   LearningDiagnosticAttemptDto,
   PreviewLearningCurriculumRevisionRequestDto,
+  ResetLearningLessonPreparationRequestDto,
   SkipLearningDiagnosticRequestDto,
   StartLearningDiagnosticRequestDto,
+  StartLearningLessonsJobsRequestDto,
   SubmitLearningDiagnosticRequestDto,
 } from '@/lib/bindings';
 import { unwrapApiResult as unwrap, type ApiResult } from '@/types/api/result';
@@ -106,4 +113,32 @@ export const useCancelLearningGenerationJob = () => {
 export const useRetryLearningGenerationJob = () => {
   const api = useApi();
   return usePlanRefreshMutation<LearningGenerationJobActionRequestDto, LearningGenerationJob>(api.retryLearningGenerationJob);
+};
+export const usePrioritizeLearningGenerationJob = () => {
+  const api = useApi();
+  return usePlanRefreshMutation<LearningGenerationJobActionRequestDto, LearningGenerationJob>(api.prioritizeLearningGenerationJob);
+};
+export const usePrepareLearningLessons = () => {
+  const api = useApi();
+  return usePlanRefreshMutation<StartLearningLessonsJobsRequestDto, LearningGenerationJob[]>(api.prepareLearningLessons);
+};
+export const useResetLearningLessonPreparation = () => {
+  const api = useApi();
+  const client = useQueryClient();
+  return useMutation({
+    retry: false,
+    mutationFn: async (request: ResetLearningLessonPreparationRequestDto) =>
+      unwrap(await api.resetLearningLessonPreparation(request)),
+    onSuccess: async (result, request) => {
+      client.setQueryData<LearningPlanDto>(learningPlanKey(request.programId), (prev) =>
+        prev ? { ...prev, programRevision: Math.max(prev.programRevision, result.programRevision) } : prev,
+      );
+      await Promise.all([
+        client.invalidateQueries({ queryKey: learningPlanKey(request.programId) }),
+        client.invalidateQueries({ queryKey: learningProgramKey(request.programId) }),
+        client.invalidateQueries({ queryKey: LEARNING_PROGRAMS_KEY }),
+        client.invalidateQueries({ queryKey: LEARNING_CLAIM_REVIEW_ROOT }),
+      ]);
+    },
+  });
 };

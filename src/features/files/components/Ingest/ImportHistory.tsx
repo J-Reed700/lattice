@@ -164,7 +164,7 @@ export const ImportHistory: FC<ImportHistoryProps> = ({ onRefresh }) => {
       {!listError && jobs.length === 0 && <p className="text-sm text-text-muted">No imports yet.</p>}
       {jobs.length > 0 && <>
         <div className="flex items-center justify-between pb-2">
-          <h2 className="text-base font-medium text-text-primary">{jobs.length} {jobs.length === 1 ? 'import' : 'imports'}</h2>
+          <h2 className="font-sans text-base font-semibold tracking-[-0.02em] text-text-primary">{jobs.length} {jobs.length === 1 ? 'import' : 'imports'}</h2>
           <button type="button" disabled={hasActiveJobs || busy.size > 0} onClick={() => { void clearHistory(); }} className="text-xs text-text-tertiary hover:text-text-primary disabled:opacity-50">Clear all</button>
         </div>
         <p className="pb-3 text-xs text-text-muted">Retrying a file updates its original import.</p>

@@ -91,7 +91,6 @@ struct Decoder {
     events: Box<dyn EventDecoder>,
     buffer: Vec<u8>,
     data: String,
-    received: usize,
 }
 
 /// Joins a reasoning summary's parts with a blank line between them.
@@ -120,9 +119,6 @@ pub(super) fn invalid(detail: &str) -> AppError {
 }
 
 impl Decoder {
-    const MAX_EVENT_BYTES: usize = 4 * 1024 * 1024;
-    const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
-
     fn new(protocol: &'static dyn CompletionProtocol) -> Self {
         Self {
             #[cfg(test)]
@@ -130,7 +126,6 @@ impl Decoder {
             events: protocol.event_decoder(),
             buffer: Vec::new(),
             data: String::new(),
-            received: 0,
         }
     }
 
@@ -140,10 +135,6 @@ impl Decoder {
         on_text: Callback<'_>,
         on_reasoning: Callback<'_>,
     ) -> Result<()> {
-        self.received = self.received.saturating_add(bytes.len());
-        if self.received > Self::MAX_RESPONSE_BYTES {
-            return Err(invalid("response exceeds size limit"));
-        }
         self.buffer.extend_from_slice(bytes);
         while let Some(end) = self.buffer.iter().position(|byte| *byte == b'\n') {
             let line: Vec<_> = self.buffer.drain(..=end).collect();
@@ -151,9 +142,6 @@ impl Decoder {
             if self.events.is_complete() {
                 break;
             }
-        }
-        if self.buffer.len().saturating_add(self.data.len()) > Self::MAX_EVENT_BYTES {
-            return Err(invalid("event exceeds size limit"));
         }
         Ok(())
     }
@@ -175,9 +163,6 @@ impl Decoder {
                 self.data.push('\n');
             }
             self.data.push_str(data.strip_prefix(' ').unwrap_or(data));
-            if self.data.len() > Self::MAX_EVENT_BYTES {
-                return Err(invalid("event exceeds size limit"));
-            }
         }
         Ok(())
     }

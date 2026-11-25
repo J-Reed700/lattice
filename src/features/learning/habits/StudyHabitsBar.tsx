@@ -443,7 +443,7 @@ export function StudyHabitsBar({ onSelectFramework, onNavigate, className, compa
                 aria-label={movementDone ? 'Aerobic movement completed' : 'Movement pending'}
               />
               <Coffee
-                className={cn('size-2.5', focusDone ? 'text-amber-500 font-bold' : 'opacity-40')}
+                className={cn('size-2.5', focusDone ? 'text-accent font-bold' : 'opacity-40')}
                 aria-label={focusDone ? 'Focused block completed' : 'Focused block pending'}
               />
             </span>

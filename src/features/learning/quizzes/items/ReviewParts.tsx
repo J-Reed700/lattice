@@ -8,10 +8,10 @@ import type { LearningAssessmentItemResultDto } from '@/lib/bindings';
 export type PartState = 'right' | 'wrong' | 'missed' | 'unknown';
 
 const partStyle: Record<PartState, { icon: ReactNode; className: string }> = {
-  right: { icon: <Check size={13} aria-hidden="true" />, className: 'bg-emerald-500/12 text-emerald-800 dark:text-emerald-200' },
-  wrong: { icon: <X size={13} aria-hidden="true" />, className: 'bg-rose-500/12 text-rose-800 dark:text-rose-200' },
-  missed: { icon: <CircleDashed size={13} aria-hidden="true" />, className: 'bg-amber-500/12 text-amber-800 dark:text-amber-200' },
-  unknown: { icon: null, className: 'bg-bg text-text-secondary' },
+  right: { icon: <Check size={13} aria-hidden="true" />, className: 'bg-success-muted text-success-fg' },
+  wrong: { icon: <X size={13} aria-hidden="true" />, className: 'bg-danger-muted text-danger-fg' },
+  missed: { icon: <CircleDashed size={13} aria-hidden="true" />, className: 'bg-warning-muted text-warning-fg' },
+  unknown: { icon: null, className: 'bg-surface-sunken text-text-secondary' },
 };
 
 /** A small verdict chip for one part of an answer: an icon and words, never colour alone. */

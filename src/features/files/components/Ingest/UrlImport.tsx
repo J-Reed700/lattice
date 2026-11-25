@@ -147,11 +147,11 @@ export const UrlImport: React.FC<UrlImportProps> = ({ onImport, onImportComplete
   return (
     <div className="space-y-5">
       <div className="flex items-start gap-3.5">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-muted text-accent">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-muted text-accent ring-1 ring-inset ring-accent/12">
           <Globe className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
         </span>
         <div className="min-w-0">
-          <h2 className="text-[15px] font-medium text-text-primary">Save a web page</h2>
+          <h2 className="font-sans text-[15px] font-semibold tracking-[-0.02em] text-text-primary">Save a web page</h2>
           <p className="mt-0.5 text-sm leading-relaxed text-text-secondary">
             Paste a link to archive a clean, offline-readable copy and index it for search and chat.
           </p>

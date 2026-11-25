@@ -75,9 +75,9 @@ export function NeighborhoodPanel({
   const data = query.data;
 
   return (
-    <aside className="flex w-[260px] shrink-0 flex-col gap-6 overflow-y-auto border-l border-border-subtle py-4 pl-4">
+    <aside className="flex h-full w-[264px] shrink-0 flex-col gap-6 overflow-y-auto border-l border-border-subtle bg-surface-sunken/70 px-4 py-5">
       <div className="flex h-7 items-center justify-between">
-        <h3 className="truncate text-xs font-medium text-text-secondary">Related</h3>
+        <h3 className="truncate font-sans text-xs font-semibold tracking-[-0.01em] text-text-secondary">Related</h3>
         <IconButton label="Hide related" tooltipSide="left" onClick={onClose}>
           <PanelRight strokeWidth={1.75} />
         </IconButton>

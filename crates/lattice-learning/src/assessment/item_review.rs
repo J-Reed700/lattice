@@ -7,7 +7,7 @@ use crate::assessment_engine::{
     LearningAssessmentCandidate as Item, LearningAssessmentKey as Key, LearningTextKey,
 };
 use crate::key_review::{self, Answer, KeyVerdict, Solution};
-use crate::lessons::structured_call::Asking;
+use crate::lessons::structured_call::{Asking, CallKind, ReasonFirst};
 use crate::model_call;
 use lattice_core::application::services::model_contract::ask::{
     ask_each, Alone, Answered, Refusal, Says, Settled,
@@ -472,7 +472,11 @@ pub(crate) async fn review(
             llm,
             &Asking {
                 progress: None,
-                reasoning: None,
+                reasoning: Some(ReasonFirst {
+                    kind: CallKind::Authoring,
+                    subject: "the quiz question review",
+                    brief: "Inspect each question with its key, explanation, passage and independent solution. Note any concrete defects and any held or sibling questions that ask for the same decision.",
+                }),
             },
             &mut Scope::for_question(),
             &items,

@@ -110,7 +110,7 @@ export function JournalPickerMenu({
                 <span className="flex min-w-0 items-center gap-2.5 text-left">
                   <span
                     aria-hidden="true"
-                    className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border-subtle bg-surface text-sm text-text-secondary shadow-control"
+                    className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border-subtle bg-surface text-sm text-text-secondary shadow-sm"
                   >
                     {currentJournal.icon ? (
                       <span>{currentJournal.icon}</span>
@@ -119,13 +119,13 @@ export function JournalPickerMenu({
                     )}
                     {currentJournal.accentColor ? (
                       <span
-                        className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-bg"
+                        className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-surface"
                         style={{ backgroundColor: currentJournal.accentColor }}
                       />
                     ) : null}
                   </span>
                   <span className="min-w-0">
-                    <span className="block truncate font-serif text-[16px] font-medium leading-tight tracking-[-0.01em] text-text-primary">
+                    <span className="block truncate font-sans text-[14px] font-semibold leading-tight tracking-[-0.015em] text-text-primary">
                       {currentJournal.name}
                     </span>
                     {meta ? <span className="mt-0.5 block truncate text-[11px] text-text-muted">{meta}</span> : null}
@@ -209,7 +209,7 @@ export function JournalPickerMenu({
                 type="button"
                 onClick={startRename}
                 disabled={!currentJournal}
-                className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-ui text-text-primary transition-colors duration-fast hover:bg-surface disabled:opacity-40"
+                className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-ui text-text-primary transition-colors duration-fast hover:bg-surface-sunken disabled:opacity-40"
               >
                 <Pencil className="h-3.5 w-3.5 text-text-tertiary" strokeWidth={1.75} />
                 Rename journal
@@ -220,7 +220,7 @@ export function JournalPickerMenu({
                   onCreate();
                   setIsMoreOpen(false);
                 }}
-                className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-ui text-text-primary transition-colors duration-fast hover:bg-surface"
+                className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-ui text-text-primary transition-colors duration-fast hover:bg-surface-sunken"
               >
                 <Plus className="h-3.5 w-3.5 text-text-tertiary" strokeWidth={1.75} />
                 New journal…

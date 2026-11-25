@@ -312,6 +312,24 @@ pub async fn prepare_learning_module(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn prepare_learning_lessons(
+    request: StartLearningLessonsJobsRequestDto,
+    container: State<'_, Container>,
+) -> Result<Vec<LearningGenerationJob>, ApiError> {
+    let jobs = crate::features::learning::curriculum_repository::LearningCurriculumRepository::new(
+        container.database().clone(),
+    )
+    .start_selected_lesson_jobs(&request)
+    .await
+    .map_err(ApiError::from)?;
+    for job in &jobs {
+        container.jobs().submitted(&job.id).await;
+    }
+    Ok(jobs)
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn prepare_learning_ahead(
     request: PrepareLearningAheadRequestDto,
     container: State<'_, Container>,

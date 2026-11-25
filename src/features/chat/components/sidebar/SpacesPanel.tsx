@@ -149,12 +149,12 @@ export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPane
           <div className={`${SPACES_MODAL_LAYER_CLASSES.content} flex h-full flex-col overflow-hidden`}>
             <div className={`flex h-12 shrink-0 items-center justify-between border-b border-border-subtle px-4 ${SPACES_MODAL_LAYER_CLASSES.section}`}>
               <DialogTitle asChild>
-                <h3 className="font-serif text-base font-medium text-text-primary">Spaces</h3>
+                <h3 className="font-sans text-sm font-semibold tracking-[-0.015em] text-text-primary">Spaces</h3>
               </DialogTitle>
               <button
                 type="button"
                 onClick={() => onClose()}
-                className="rounded-lg p-1.5 text-text-muted transition-colors duration-fast hover:bg-surface hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+                className="rounded-lg p-1.5 text-text-muted transition-colors duration-fast hover:bg-surface-sunken hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                 aria-label="Close spaces panel"
                 title="Close"
               >
@@ -205,7 +205,7 @@ export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPane
                       onClick={() => setNewSpaceKindDraft('standard')}
                       className={`h-full flex-1 rounded-md text-xs font-medium transition-colors duration-fast ${
                         newSpaceKindDraft === 'standard'
-                          ? 'bg-surface-overlay text-text-primary shadow-control'
+                          ? 'bg-surface text-text-primary shadow-sm ring-1 ring-border-subtle dark:bg-surface-overlay'
                           : 'text-text-tertiary hover:text-text-primary'
                       }`}
                     >
@@ -216,7 +216,7 @@ export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPane
                       onClick={() => setNewSpaceKindDraft('journal')}
                       className={`h-full flex-1 rounded-md text-xs font-medium transition-colors duration-fast ${
                         newSpaceKindDraft === 'journal'
-                          ? 'bg-surface-overlay text-text-primary shadow-control'
+                          ? 'bg-surface text-text-primary shadow-sm ring-1 ring-border-subtle dark:bg-surface-overlay'
                           : 'text-text-tertiary hover:text-text-primary'
                       }`}
                     >
@@ -259,16 +259,12 @@ export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPane
                   <button
                     type="button"
                     onClick={handleAsyncEvent(() => handleSpaceSelect(null))}
-                    className={`relative w-full rounded-lg px-3 py-2 text-left transition-colors duration-fast ${
-                      selectedSpaceId === null ? 'bg-surface shadow-control' : 'hover:bg-surface/70'
+                    className={`relative w-full rounded-lg px-3 py-2 text-left transition-[background-color,box-shadow] duration-fast ${
+                      selectedSpaceId === null
+                        ? 'bg-surface shadow-sm ring-1 ring-border-subtle dark:bg-surface-overlay'
+                        : 'row-hover'
                     }`}
                   >
-                    {selectedSpaceId === null && (
-                      <span
-                        className="absolute inset-y-2 left-0 w-[2.5px] rounded-full bg-accent"
-                        aria-hidden="true"
-                      />
-                    )}
                     <div className="flex items-start gap-2.5">
                       <div className="flex h-6 w-6 shrink-0 items-center justify-center text-text-tertiary">
                         <MessageSquare className="h-4 w-4" />
@@ -297,18 +293,13 @@ export function SpacesPanel({ anchorRef, onClose, editor, newSpace }: SpacesPane
                         key={space.id}
                         type="button"
                         onClick={handleAsyncEvent(() => handleSpaceSelect(space.id))}
-                        className={`relative w-full rounded-lg px-3 py-2 text-left transition-colors duration-fast ${
-                          isSelected ? 'bg-surface shadow-control' : 'hover:bg-surface/70'
+                        className={`relative w-full rounded-lg px-3 py-2 text-left transition-[background-color,box-shadow] duration-fast ${
+                          isSelected
+                            ? 'bg-surface shadow-sm ring-1 ring-border-subtle dark:bg-surface-overlay'
+                            : 'row-hover'
                         }`}
                         title={space.description ?? space.name}
                       >
-                        {isSelected && (
-                          <span
-                            className={`absolute inset-y-2 left-0 w-[2.5px] rounded-full ${accent ? '' : 'bg-accent'}`}
-                            style={accent ? { backgroundColor: accent } : undefined}
-                            aria-hidden="true"
-                          />
-                        )}
                         <div className="flex items-start gap-2.5">
                           <div className="flex h-6 w-6 shrink-0 items-center justify-center text-sm text-text-tertiary">
                             {space.icon || (

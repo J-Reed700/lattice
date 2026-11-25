@@ -1,6 +1,5 @@
 import { useState } from 'react';
 
-import { motion, useReducedMotion } from 'framer-motion';
 import { Pencil, Pin, PinOff, Trash2 } from 'lucide-react';
 
 import { IconButton, Input } from '@/components/ui';
@@ -45,7 +44,6 @@ export function EntryListItem({
   onRenameDraftChange,
   onDelete,
 }: EntryListItemProps) {
-  const prefersReducedMotion = useReducedMotion();
   const [isHovering, setIsHovering] = useState(false);
 
   return (
@@ -65,25 +63,12 @@ export function EntryListItem({
           onSelect();
         }
       }}
-      className={`group relative mx-2 flex h-8 w-[calc(100%-16px)] cursor-pointer items-center rounded-md px-2.5 ${
-        isActive ? 'bg-[hsl(var(--text-primary)/0.07)]' : 'row-hover'
+      className={`group relative mx-2 flex h-8 w-[calc(100%-16px)] cursor-pointer items-center rounded-lg px-2.5 transition-[background-color,box-shadow,color] duration-fast ${
+        isActive
+          ? 'bg-surface font-medium text-text-primary shadow-sm ring-1 ring-border-subtle dark:bg-surface-overlay'
+          : 'row-hover'
       }`}
     >
-      {isActive &&
-        (prefersReducedMotion ? (
-          <span
-            className="absolute inset-y-2 left-0 w-[2.5px] rounded-full bg-accent"
-            aria-hidden="true"
-          />
-        ) : (
-          <motion.span
-            layoutId="journal-sidebar-active-bar"
-            className="absolute inset-y-2 left-0 w-[2.5px] rounded-full bg-accent"
-            aria-hidden="true"
-            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-          />
-        ))}
-
       <div className="flex min-w-0 flex-1 items-center gap-2">
         {isPinned && (
           <Pin
@@ -132,7 +117,7 @@ export function EntryListItem({
       {/* Hover-revealed actions — overlay, reserves no width */}
       {!isRenaming && (
         <div
-          className={`absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-surface-overlay pl-1 shadow-control transition-opacity duration-fast ${
+          className={`absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-md bg-surface pl-1 shadow-sm ring-1 ring-border-subtle transition-opacity duration-fast ${
             isHovering ? 'opacity-100' : 'pointer-events-none opacity-0'
           }`}
           onClick={(e) => e.stopPropagation()}

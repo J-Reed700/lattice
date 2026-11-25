@@ -140,6 +140,54 @@ fn handles_schema(prefix: &str, showing: &Showing<'_>, pointers: Held) -> Value 
     array(point_schema(prefix, Among::Shown, &[], showing, pointers))
 }
 
+fn shown_written(prefix: &str, among: Among, showing: &Showing<'_>) -> Vec<String> {
+    match among {
+        Among::Shown => showing.written(prefix),
+        Among::Own => showing.written_under(prefix),
+    }
+}
+
+/// Whether `field` can be satisfied under `showing`: a required pointer with no
+/// `"none"` fallback cannot be satisfied when nothing of its kind is shown.
+fn field_satisfiable(field: &Field, showing: &Showing<'_>) -> bool {
+    match field {
+        Field::Point {
+            prefix,
+            among,
+            none: false,
+        }
+        | Field::Cite {
+            prefix,
+            among,
+            some: true,
+        } => !shown_written(prefix, *among, showing).is_empty(),
+        Field::Word(list) => !list.is_empty(),
+        Field::Group(form) => form_satisfiable(form, showing),
+        Field::List {
+            form,
+            count: Some(count),
+        } => showing
+            .asked(count)
+            .is_none_or(|(least, _)| least == 0 || form_satisfiable(form, showing)),
+        Field::OneOf(forms) => forms
+            .iter()
+            .any(|(_, form)| form_satisfiable(form, showing)),
+        _ => true,
+    }
+}
+
+fn form_satisfiable(form: &Form, showing: &Showing<'_>) -> bool {
+    form.fields
+        .iter()
+        .all(|(_, field)| field_satisfiable(field, showing))
+}
+
+fn branch_object(tag: &str, form: &Form, showing: &Showing<'_>, pointers: Held) -> Value {
+    let mut properties = vec![("kind".to_owned(), words(&[tag]))];
+    properties.extend(form_properties(form, showing, pointers));
+    closed(properties)
+}
+
 /// A pointer: the `enum` of the handles it may hold and the extra words, or a
 /// plain string where nothing is shown to enumerate or the backend takes none.
 fn point_schema(
@@ -149,10 +197,7 @@ fn point_schema(
     showing: &Showing<'_>,
     pointers: Held,
 ) -> Value {
-    let shown = match among {
-        Among::Shown => showing.written(prefix),
-        Among::Own => showing.written_under(prefix),
-    };
+    let shown = shown_written(prefix, among, showing);
     if pointers == Held::Plain {
         let words = extra.join(" or ");
         let description = match (shown.first(), words.is_empty()) {
@@ -173,6 +218,14 @@ fn point_schema(
         return json!({ "type": "string" });
     }
     json!({ "type": "string", "enum": members })
+}
+
+fn array_or_empty(items: Value, allowed: bool, pointers: Held) -> Value {
+    if !allowed && pointers == Held::Counts {
+        json!({ "type": "array", "items": items, "maxItems": 0 })
+    } else {
+        array(items)
+    }
 }
 
 fn field_schema(field: &Field, showing: &Showing<'_>, pointers: Held) -> Value {
@@ -198,7 +251,9 @@ fn field_schema(field: &Field, showing: &Showing<'_>, pointers: Held) -> Value {
                 Among::Own => showing.written_under(prefix),
             };
             let items = point_schema(prefix, *among, &[], showing, pointers);
-            if *some && !shown.is_empty() {
+            if shown.is_empty() && !*some && pointers == Held::Counts {
+                json!({ "type": "array", "items": items, "maxItems": 0 })
+            } else if *some && !shown.is_empty() {
                 json!({ "type": "array", "items": items, "minItems": 1 })
             } else {
                 array(items)
@@ -207,10 +262,10 @@ fn field_schema(field: &Field, showing: &Showing<'_>, pointers: Held) -> Value {
         Field::Order { prefix } => handles_schema(prefix, showing, pointers),
         Field::Group(form) => form_object(form, showing, pointers),
         Field::List { form, count } => {
-            let list = array(form_object(form, showing, pointers));
+            let item_schema = form_object(form, showing, pointers);
             match count {
-                Some(count) => asked_length(list, count, showing, pointers),
-                None => list,
+                Some(count) => asked_length(array(item_schema), count, showing, pointers),
+                None => array_or_empty(item_schema, form_satisfiable(form, showing), pointers),
             }
         }
         Field::EachOwn { prefix, form } => {
@@ -219,13 +274,18 @@ fn field_schema(field: &Field, showing: &Showing<'_>, pointers: Held) -> Value {
                 point_schema(prefix, Among::Own, &[], showing, pointers),
             )];
             properties.extend(form_properties(form, showing, pointers));
-            array(closed(properties))
+            let allowed =
+                !showing.written_under(prefix).is_empty() && form_satisfiable(form, showing);
+            array_or_empty(closed(properties), allowed, pointers)
         }
         Field::Change {
             prefix,
             with,
             start,
         } => {
+            let has_shown = !showing.written(prefix).is_empty();
+            let has_anchor = has_shown || *start;
+            let with_ok = field_satisfiable(with, showing);
             let at = point_schema(prefix, Among::Shown, &[], showing, pointers);
             let begin: &[&str] = if *start { &["start"] } else { &[] };
             let anchor = point_schema(prefix, Among::Shown, begin, showing, pointers);
@@ -233,37 +293,57 @@ fn field_schema(field: &Field, showing: &Showing<'_>, pointers: Held) -> Value {
             closed(vec![
                 (
                     "replace".to_owned(),
-                    array(closed(vec![
-                        ("at".to_owned(), at.clone()),
-                        ("with".to_owned(), with.clone()),
-                    ])),
+                    array_or_empty(
+                        closed(vec![
+                            ("at".to_owned(), at.clone()),
+                            ("with".to_owned(), with.clone()),
+                        ]),
+                        has_shown && with_ok,
+                        pointers,
+                    ),
                 ),
                 (
                     "insert".to_owned(),
-                    array(closed(vec![
-                        ("after".to_owned(), anchor.clone()),
-                        ("with".to_owned(), with),
-                    ])),
+                    array_or_empty(
+                        closed(vec![
+                            ("after".to_owned(), anchor.clone()),
+                            ("with".to_owned(), with),
+                        ]),
+                        has_anchor && with_ok,
+                        pointers,
+                    ),
                 ),
-                ("remove".to_owned(), array(at.clone())),
+                (
+                    "remove".to_owned(),
+                    array_or_empty(at.clone(), has_shown, pointers),
+                ),
                 (
                     "move".to_owned(),
-                    array(closed(vec![
-                        ("at".to_owned(), at),
-                        ("after".to_owned(), anchor),
-                    ])),
+                    array_or_empty(
+                        closed(vec![("at".to_owned(), at), ("after".to_owned(), anchor)]),
+                        has_shown && has_anchor,
+                        pointers,
+                    ),
                 ),
             ])
         }
         Field::OneOf(forms) => {
-            let branches: Vec<Value> = forms
+            let mut branches: Vec<Value> = forms
                 .iter()
-                .map(|(tag, form)| {
-                    let mut properties = vec![("kind".to_owned(), words(&[*tag]))];
-                    properties.extend(form_properties(form, showing, pointers));
-                    closed(properties)
-                })
+                .filter(|(_, form)| form_satisfiable(form, showing))
+                .map(|(tag, form)| branch_object(tag, form, showing, pointers))
                 .collect();
+            if branches.is_empty() {
+                branches = forms
+                    .iter()
+                    .map(|(tag, form)| branch_object(tag, form, showing, pointers))
+                    .collect();
+            }
+            if branches.len() == 1 {
+                if let Some(only) = branches.pop() {
+                    return only;
+                }
+            }
             json!({ "anyOf": branches })
         }
     }

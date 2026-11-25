@@ -33,12 +33,101 @@ pub fn plain_sentence_context(field_text: &str, quote: &str) -> (String, String,
     let quote = plain_text(quote);
     if !quote.is_empty() {
         for paragraph in paragraphs(field_text) {
+            if let Some(found) = table_row_context(&paragraph, &quote) {
+                return found;
+            }
             if let Some(found) = split_at_quote(&plain_lines(&paragraph), &quote) {
                 return found;
             }
         }
     }
     (String::new(), quote, String::new())
+}
+
+/// Whether `line` is a Markdown table alignment separator row (`| :--- | --- |`).
+fn is_table_separator(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.contains('|')
+        && trimmed.contains('-')
+        && trimmed
+            .chars()
+            .all(|c| matches!(c, '|' | '-' | ':' | ' ' | '\t'))
+}
+
+/// Cleaned cells of a Markdown pipe table row (`| a | b |`), or `None` when
+/// `line` is not a table row.
+fn table_cells(line: &str, require_outer_pipes: bool) -> Option<Vec<String>> {
+    let trimmed = line.trim();
+    if is_table_separator(trimmed) || !trimmed.contains('|') {
+        return None;
+    }
+    let has_outer = trimmed.starts_with('|') && trimmed.ends_with('|') && trimmed.len() >= 2;
+    if require_outer_pipes && !has_outer {
+        return None;
+    }
+    if !has_outer && trimmed.matches('|').count() < 2 {
+        return None;
+    }
+    let inner = trimmed.strip_prefix('|').unwrap_or(trimmed);
+    let inner = inner.strip_suffix('|').unwrap_or(inner);
+    let cells: Vec<String> = inner
+        .split('|')
+        .map(|cell| normalize_whitespace(&clean_inline(cell)))
+        .collect();
+    (!cells.is_empty()).then_some(cells)
+}
+
+/// When `paragraph` holds a Markdown table and `plain_quote` matches one of its
+/// data rows, return `(lead_before_table, header_paired_row, "")` so the review
+/// UI shows a readable labeled row instead of flattened `| :--- |` pipe syntax.
+fn table_row_context(paragraph: &str, plain_quote: &str) -> Option<(String, String, String)> {
+    let lines: Vec<&str> = paragraph.lines().collect();
+    let sep = lines.iter().position(|line| is_table_separator(line))?;
+    let header_idx = sep.checked_sub(1)?;
+    let headers = table_cells(lines.get(header_idx)?, false)?;
+    for &line in lines.get(sep + 1..)? {
+        let Some(cells) = table_cells(line, false) else {
+            continue;
+        };
+        let joined = cells
+            .iter()
+            .filter(|cell| !cell.is_empty())
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(" · ");
+        if joined.is_empty() || !joined.contains(plain_quote) {
+            continue;
+        }
+        let paired: Vec<String> = cells
+            .iter()
+            .enumerate()
+            .filter(|(_, cell)| !cell.is_empty())
+            .map(
+                |(col, cell)| match headers.get(col).filter(|h| !h.is_empty()) {
+                    Some(header) => format!("{header}: {cell}"),
+                    None => cell.clone(),
+                },
+            )
+            .collect();
+        let before = lines
+            .get(..header_idx)
+            .unwrap_or_default()
+            .iter()
+            .map(|line| plain_text(line))
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
+        return Some((before, paired.join(" · "), String::new()));
+    }
+    None
+}
+
+/// Inline Markdown (`[text](url)`, `[1]` citations, emphasis, backticks)
+/// stripped from a single line or table cell.
+fn clean_inline(text: &str) -> String {
+    let text = replace(&LINK, text, "$1");
+    let text = replace(&CITATION_MARKER, &text, "");
+    without_emphasis(&text)
 }
 
 /// The paragraph's sentences before, holding, and after `quote`.
@@ -92,15 +181,25 @@ fn paragraphs(text: &str) -> Vec<String> {
 }
 
 /// `markdown` as plain text, line breaks kept so sentences still end at
-/// them.
+/// them. Markdown table alignment rows are dropped and pipe-delimited rows
+/// become readable `·`-separated cells.
 fn plain_lines(markdown: &str) -> String {
     markdown
         .split('\n')
-        .map(|line| {
+        .filter_map(|line| {
+            if is_table_separator(line) {
+                return None;
+            }
+            if let Some(cells) = table_cells(line, true) {
+                let row = cells
+                    .into_iter()
+                    .filter(|cell| !cell.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(" · ");
+                return Some(row);
+            }
             let line = replace(&LINE_MARKER, line, "");
-            let line = replace(&LINK, &line, "$1");
-            let line = replace(&CITATION_MARKER, &line, "");
-            without_emphasis(&line)
+            Some(clean_inline(&line))
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -211,5 +310,28 @@ mod tests {
             plain_sentence_context("Water boils at 100 °C.", "The *Nile* floods [1]"),
             (String::new(), "The Nile floods".to_owned(), String::new())
         );
+    }
+
+    #[test]
+    fn markdown_table_rows_render_with_column_headers_and_without_separator_pipes() {
+        let field = concat!(
+            "Side-by-Side Comparison:\n",
+            "| Feature | Patient | Encounter |\n",
+            "| :--- | :--- | :--- |\n",
+            "| **Role** | Persistent Identity | Temporary Context |\n",
+            "| **Stability** | High (changes rarely) | Low (starts/ends with visits) |"
+        );
+        let (before, sentence, after) = plain_sentence_context(
+            field,
+            "| **Role** | Persistent Identity | Temporary Context |",
+        );
+        assert_eq!(before, "Side-by-Side Comparison:");
+        assert_eq!(
+            sentence,
+            "Feature: Role · Patient: Persistent Identity · Encounter: Temporary Context"
+        );
+        assert_eq!(after, "");
+        assert!(!plain_text(field).contains(":---"));
+        assert!(!plain_text(field).contains('|'));
     }
 }

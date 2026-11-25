@@ -114,7 +114,7 @@ export const IngestHub: FC<IngestHubProps> = ({
             ))}
           </TabsList>
 
-          <div className="mt-5 rounded-xl border border-border-subtle bg-surface p-6 shadow-control">
+          <div className="mt-5 rounded-xl border border-border-subtle bg-surface p-6 shadow-sm">
             <TabsContent value="single-url" className="mt-0 outline-hidden">
               <UrlImport
                 onImport={() => {}}

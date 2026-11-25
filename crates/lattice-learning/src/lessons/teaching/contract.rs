@@ -8,15 +8,18 @@ use crate::lessons::content_verification::{unit_fields, Protected};
 use crate::lessons::structured_call::{Asking, CallKind, ReasonFirst};
 use crate::review_findings::{subject_of, FindingSite, PlanCheck, ReviewFinding};
 use asks::{
-    About, Course, Decides, Finding, Input, Mark, Planned, Reported, ReportsInput, Taught, Verdict,
+    About, Course, Decides, DeltaInput, DeltaMode, Finding, Input, LessonContractFindDelta, Mark,
+    Planned, Reported, ReportsInput, Taught, Verdict,
 };
 use lattice_core::application::services::model_contract::ask::{ask_each, ask_new, Settled};
 use lattice_core::application::services::model_contract::shown::Picked;
 use lattice_core::application::services::model_contract::shown::{Scope, Told};
 use lattice_core::application::services::model_contract::units::{Texts, Unit, UnitRef};
 use lattice_core::{
-    application::ports::LLMPort, protocol, shared::error::Result, shared::protocol::Protocol,
+    application::ports::LLMPort, protocol, shared::error::Result, shared::hash::sha256_hex,
+    shared::protocol::Protocol,
 };
+use receipts::{sentence_digest, FindPlan, PartDigest};
 use sentence::{Lesson, Whose};
 use serde_json::{json, Value};
 
@@ -80,7 +83,7 @@ macro_rules! used_check {
 /// What the check decides about a lesson that contradicts itself.
 macro_rules! clash_check {
     () => {
-        "contradictions: two statements that cannot both be true, including an example or an answer that shows what another statement says cannot happen."
+        "contradictions: two statements that cannot both be true, including an example or an answer that shows what another statement says cannot happen. A question's wrong options (indices other than correctIndex) are deliberate distractors, not statements the lesson endorses, so never report a wrong option as a contradiction."
     };
 }
 
@@ -121,20 +124,54 @@ pub(crate) const REPORTS_TASK: &str = "Rule on what a review reported";
 pub(crate) const PLANNED_SYSTEM: &str = concat!(intro!(), "Run one check over the whole lesson.\n1. ", planned_check!(), " Cite in units the sentences that teach it, by the names they are shown under; units is empty when the item is not taught.\nReport nothing about style, wording or length.");
 
 /// The ask what the lesson uses before it teaches it, says against itself, or points at without showing.
-pub(crate) const FIND_SYSTEM: &str = concat!(intro!(), "Run three checks, each over the whole lesson.\n1. ", used_check!(), " Give one entry of kind usedBeforeTaught for each such thing, however many parts use it: in what, its name, a noun phrase, never a sentence; in uses, cite every sentence that asks the learner to use it before the lesson has taught it; in taughtLater, cite the sentences with which the lesson first teaches it after those places, empty when it never does.\n2. ", clash_check!(), " Give one entry of kind contradiction with both statements, each cited as the sentence it is.\n3. ", unseen_check!(), " Give one entry of kind unseen with the sentence, what it points at, and in neverShown whether the learner never sees it.\nReport nothing about style, wording or length. Give no entries when nothing applies.");
+pub(crate) const FIND_SYSTEM: &str = concat!(intro!(), "Run three checks, each over the whole lesson.\n1. ", used_check!(), " Give one entry of kind usedBeforeTaught for each such thing, however many parts use it: in what, its name, a noun phrase, never a sentence; in uses, cite every sentence that asks the learner to use it before the lesson has taught it; in taughtLater, cite the sentences with which the lesson first teaches it after those places, empty when it never does.\n2. ", clash_check!(), " Give one entry of kind contradiction with both statements, each cited as the sentence it is.\n3. ", unseen_check!(), " Give one entry of kind unseen with the sentence, what it points at, and in neverShown whether the learner never sees it.\nThink and report only about genuine defects — skip already-taught items, consistent pairs, and clean parts. Report nothing about style, wording or length. Give no entries when nothing applies.");
+
+/// Scoped `LessonContractFind` instructions when only deletions occurred on a previously clean lesson.
+pub(crate) const FIND_DELETION_SYSTEM: &str = concat!(intro!(), "A prior check found no defects in this lesson before sentences or parts were removed. Removing text cannot introduce a contradiction, so skip contradictions completely and return no entries of kind contradiction.\nRun only checks 1 and 3:\n1. ", used_check!(), " Check only the parts in focusParts (whose sentences are listed in focusSentences; if focusParts is empty, skip check 1); read earlier parts only as context for what the lesson has already taught. Give one entry of kind usedBeforeTaught for each such thing used in focusParts, however many parts use it: in what, its name, a noun phrase, never a sentence; in uses, cite every sentence in focusSentences that asks the learner to use it before the lesson has taught it; in taughtLater, cite the sentences with which the lesson first teaches it after those places, empty when it never does.\n3. ", unseen_check!(), " Check whether any remaining sentence now points at text above or below, an example, table, or step number that was removed. Give one entry of kind unseen with the sentence, what it points at, and in neverShown whether the learner never sees it.\nThink and report only about genuine defects — skip already-taught items and clean parts. Report nothing about style, wording or length. Give no entries when nothing applies.");
+
+/// Scoped `LessonContractFind` instructions when a subset of sentences was added or edited on a previously clean lesson.
+pub(crate) const FIND_EDITED_SYSTEM: &str = concat!(intro!(), "A prior check found no defects in the unchanged parts of this lesson. Scope these three checks to what changed:\n1. ", used_check!(), " Check only parts in focusParts (whose sentences are listed in focusSentences), reading earlier parts as context for what the lesson has already taught. Give one entry of kind usedBeforeTaught for each such thing used in focusParts: in what, its name, a noun phrase, never a sentence; in uses, cite every sentence in focusSentences that asks the learner to use it before the lesson has taught it; in taughtLater, cite the sentences with which the lesson first teaches it after those places, empty when it never does.\n2. ", clash_check!(), " Check ONLY whether any changed sentence listed in changedSentences contradicts any sentence in the lesson (pairs where neither sentence is in changedSentences were already verified). Give one entry of kind contradiction with both statements, each cited as the sentence it is.\n3. ", unseen_check!(), " Check the changed parts listed in changedParts and whether any remaining sentence now points at text, an example, table, or step number that was removed during the edit. Give one entry of kind unseen with the sentence, what it points at, and in neverShown whether the learner never sees it.\nThink and report only about genuine defects — skip already-taught items, consistent pairs, and clean parts. Report nothing about style, wording or length. Give no entries when nothing applies.");
 
 /// The ask which of a review's reports are of a kind the check decides.
 pub(crate) const REPORTS_SYSTEM: &str = concat!(intro!(), "Run four checks, each over the whole lesson.\n1. ", planned_check!(), "\n2. ", used_check!(), "\n3. ", clash_check!(), "\n4. ", unseen_check!(), "\nReport nothing about style, wording or length. reported lists defects a review of this lesson described, each with its id. A report is a pointer where to read again, not evidence. Read the parts each one names again. For every report give in about decided when the defect it describes is of a kind these four checks decide, whether or not it holds; other when it is of any other kind.");
 
 /// Said after `FIND_SYSTEM` when a review's reports are given.
-const REPORTED: &str = " reported lists defects a review of this lesson described. A report is a pointer where to read again, not evidence. Read the parts each one names again. Rule on each report whose defect is of a kind these checks decide, by the rules above: when it holds, give it as an entry exactly as any other; when it does not hold by these rules, leave it out.";
+const REPORTED: &str = " reported lists defects a review of this lesson described. A report is a pointer where to read again, not evidence. Read the parts each one names again. Rule ONLY on each report whose defect is of a kind these checks decide, by the rules above, without re-auditing unrelated parts: when it holds, give it as an entry exactly as any other; when it does not hold by these rules, leave it out.";
 
-/// Said after `FIND_BRIEF` when a review's reports are given.
-const REPORTED_FIND_BRIEF: &str = " For each report whose defect is of a kind these checks decide, say whether it holds by their rules.";
+/// Brief for the reasoning draft when a review's reports are given.
+const REPORTED_FIND_BRIEF: &str = concat!(
+    "For each report whose defect is of a kind these three checks decide (1. usedBeforeTaught, requiring ",
+    shown!(),
+    "; 2. contradictions; 3. unseen), read only the parts it names again and say whether it holds by their rules, with the exact sentence ids if it does — do not re-audit unrelated parts of the lesson."
+);
 
 const PLANNED_BRIEF: &str = "Go through the lesson part by part in order. For each planned item, find the words that teach it or note that there are none.";
 
-const FIND_BRIEF: &str = concat!("Go through the lesson part by part in order. For each thing a part asks the learner to do or use that they need to be shown how to do, each variant of it, and each step its practice deliverable needs, including how the learner records or saves the work anywhere but their own notes, say where the lesson, the earlier lessons or the learner's prior knowledge taught it: an earlier part, or the same part up to and including the words that ask for it, and whether that place says ", shown!(), ". Compare statements that may conflict, including every example and every answer. Note each reference to something the learner cannot see. Note every place that uses a thing before it is taught, and where the lesson teaches it afterwards if it does.");
+const FIND_BRIEF: &str = concat!(
+    "Check the lesson part by part in order against all three checks, but write down only actual defects — never list items that are already taught, sentence pairs that are consistent, or parts with no defect (if a check has no findings, just write \"None\"). ",
+    "1. For anything a part asks the learner to do or use that they need to be shown how to do, each variant of it, and each step its practice deliverable needs, including how the learner records or saves the work anywhere but their own notes, check whether the lesson, the earlier lessons or the learner's prior knowledge taught it — an earlier part, or the same part up to and including the words that ask for it, and whether that place says ",
+    shown!(),
+    "; record only the ones used before taught, with their exact sentence ids and where the lesson teaches them afterwards if it does. ",
+    "2. Check for genuine contradictions across statements, examples and answers; record only real contradictions with both exact sentence ids. ",
+    "3. Record only references to something the learner cannot see, with their exact sentence ids."
+);
+
+pub(super) const FIND_DELETION_BRIEF: &str = concat!(
+    "Sentences or parts were removed from an otherwise verified lesson, so skip contradictions completely. Record only actual defects (or write \"None\" if nothing applies): ",
+    "1. If focusParts is non-empty, check usedBeforeTaught only for focusParts / focusSentences (earlier parts are context for what was already taught, with ",
+    shown!(),
+    " as the standard for teaching). ",
+    "3. Check whether any remaining sentence now points at removed text, steps, or parts (unseen)."
+);
+
+pub(super) const FIND_EDITED_BRIEF: &str = concat!(
+    "Only the parts in changedParts and sentences in changedSentences were edited on a previously verified lesson. Record only actual defects (or write \"None\" if nothing applies): ",
+    "1. Check usedBeforeTaught only for focusParts / focusSentences (using earlier parts as context, with ",
+    shown!(),
+    " as the teaching standard). ",
+    "2. Check contradictions ONLY between each sentence in changedSentences and the lesson. ",
+    "3. Check unseen in changedParts and for any dangling references to removed text."
+);
 
 const REPORTS_BRIEF: &str =
     "For each report, say whether the defect it describes is of a kind these four checks decide.";
@@ -726,9 +763,9 @@ async fn ask_findings(
     reports: &[Reported],
 ) -> Result<Vec<Finding>> {
     let brief = if reports.is_empty() {
-        FIND_BRIEF.to_owned()
+        FIND_BRIEF
     } else {
-        format!("{FIND_BRIEF}{REPORTED_FIND_BRIEF}")
+        REPORTED_FIND_BRIEF
     };
     let input = Input {
         course: course.clone(),
@@ -738,7 +775,7 @@ async fn ask_findings(
     };
     let found = ask_new::<LessonContractFind>(
         llm,
-        &asking("the check of the lesson against itself", &brief),
+        &asking("the check of the lesson against itself", brief),
         &mut Scope::for_question(),
         input,
         |_| None,
@@ -746,6 +783,117 @@ async fn ask_findings(
     )
     .await?;
     Ok(found.items)
+}
+
+/// Incremental `LessonContractFindDelta` call scoped to deletions or changed sentences.
+async fn ask_findings_delta(
+    llm: &dyn LLMPort,
+    course: &Course,
+    lesson: &Lesson,
+    brief: &str,
+    mode: DeltaMode,
+) -> Result<Vec<Finding>> {
+    let delta_input = DeltaInput {
+        input: Input {
+            course: course.clone(),
+            lesson: lesson.clone(),
+            planned: Vec::new(),
+            reported: Vec::new(),
+        },
+        mode,
+    };
+    let found = ask_new::<LessonContractFindDelta>(
+        llm,
+        &asking("the check of the lesson against itself", brief),
+        &mut Scope::for_question(),
+        delta_input,
+        |_| None,
+        &crate::model_call::answer_options(),
+    )
+    .await?;
+    Ok(found.items)
+}
+
+fn part_labels<'a>(parts: impl Iterator<Item = &'a Part>) -> Vec<Told<String>> {
+    parts.map(|part| Told(part.site.label())).collect()
+}
+
+async fn ask_findings_for_plan(
+    llm: &dyn LLMPort,
+    course: &Course,
+    lesson: &Lesson,
+    reports: &[Reported],
+    parts: &[Part],
+    plan: &FindPlan,
+) -> Result<Vec<Finding>> {
+    match plan {
+        FindPlan::Skip => Ok(Vec::new()),
+        FindPlan::Full => ask_findings(llm, course, lesson, reports).await,
+        FindPlan::DeletionOnly { from_part_order } => {
+            let focus_part_labels = part_labels(parts.iter().skip(*from_part_order));
+            ask_findings_delta(
+                llm,
+                course,
+                lesson,
+                FIND_DELETION_BRIEF,
+                DeltaMode::DeletionOnly {
+                    from_part_order: *from_part_order,
+                    focus_part_labels,
+                },
+            )
+            .await
+        }
+        FindPlan::Edited {
+            from_part_order,
+            changed_parts,
+            delta_by_part,
+        } => {
+            let focus_part_labels = part_labels(parts.iter().skip(*from_part_order));
+            let changed_part_labels =
+                part_labels(changed_parts.iter().filter_map(|index| parts.get(*index)));
+            ask_findings_delta(
+                llm,
+                course,
+                lesson,
+                FIND_EDITED_BRIEF,
+                DeltaMode::Edited {
+                    from_part_order: *from_part_order,
+                    focus_part_labels,
+                    changed_part_labels,
+                    delta_by_part: delta_by_part.clone(),
+                },
+            )
+            .await
+        }
+    }
+}
+
+fn part_digests(parts: &[Part], texts: &Texts<Whose>) -> Vec<PartDigest> {
+    let mut sentences_by_part: Vec<Vec<String>> = vec![Vec::new(); parts.len()];
+    for (whose, units) in texts.iter() {
+        let Whose::Lesson { part, .. } = whose else {
+            continue;
+        };
+        let Some(bucket) = sentences_by_part.get_mut(*part) else {
+            continue;
+        };
+        for unit in units.units() {
+            bucket.push(sentence_digest(unit.text()));
+        }
+    }
+    parts
+        .iter()
+        .zip(sentences_by_part)
+        .map(|(part, sentences)| PartDigest {
+            id: part.id.clone(),
+            correct_index: part.shown.get("correctIndex").and_then(Value::as_u64),
+            sentences,
+        })
+        .collect()
+}
+
+fn course_digest(course: &Course) -> String {
+    sha256_hex(serde_json::to_string(course).unwrap_or_default())
 }
 
 /// Whether each of `reports` describes a defect of a kind the check decides.
@@ -790,34 +938,39 @@ fn outside_of(ruled: &[Settled<About>]) -> Vec<usize> {
         .collect()
 }
 
-/// The findings of holding `candidate`, a lesson, to the course plan and
-/// priorKnowledge in `authoring_context`, the writer's prompt. An item the
-/// `receipts` still hold taught is not asked again; the ones found taught
-/// now are added to them. `reported` are defects a review described: a
-/// pointer where to read again.
-pub(super) async fn check(
+async fn check_with(
     llm: &dyn LLMPort,
     authoring_context: &Value,
     candidate: &Value,
     protected: &[Protected],
-    receipts: &mut Receipts,
+    mut receipts: Option<&mut Receipts>,
     reported: &[&ReviewFinding],
+    check_planned: bool,
 ) -> Result<Ruled> {
     let parts = parts_of(candidate);
     if parts.is_empty() {
         return Ok(Ruled::default());
     }
-    receipts.lapse(&parts);
+    if let Some(receipts) = receipts.as_deref_mut() {
+        receipts.lapse(&parts);
+    }
     let plan = authoring_context
         .pointer("/courseSequence/coursePlan")
         .and_then(Value::as_array);
     let this = at_position(plan, "this").next();
-    let items: Vec<Item> = this
-        .map(items_of)
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|item| !receipts.holds(item))
-        .collect();
+    let items: Vec<Item> = if check_planned {
+        this.map(items_of)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|item| {
+                receipts
+                    .as_deref()
+                    .is_none_or(|receipts| !receipts.holds(item))
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let earlier: Vec<Value> = at_position(plan, "earlier")
         .map(|entry| json!({"title":entry.get("title"),"actions":entry.get("actions"),"terms":entry.get("terms")}))
         .collect();
@@ -862,6 +1015,16 @@ pub(super) async fn check(
         outline: Told(Value::Array(outline)),
     };
     let lesson = Lesson::of(&parts, parts.len(), |_| false);
+    let texts = lesson.texts();
+    let current_course_digest = course_digest(&course);
+    let current_parts = part_digests(&parts, &texts);
+    let find_plan = if reported.is_empty() {
+        receipts.as_deref().map_or(FindPlan::Full, |receipts| {
+            receipts.find_plan(&current_course_digest, &current_parts)
+        })
+    } else {
+        FindPlan::Full
+    };
     let planned: Vec<Planned> = items.iter().map(Planned::of).collect();
     let reports: Vec<Reported> = reported
         .iter()
@@ -873,12 +1036,22 @@ pub(super) async fn check(
     } else {
         "Checking what the review reported against the course plan"
     });
-    let (taught, found, ruled) = futures::try_join!(
-        ask_planned(llm, &course, &lesson, &planned),
-        ask_findings(llm, &course, &lesson, &reports),
-        ask_reports(llm, &lesson, &reports),
-    )?;
-    let (reading, unseen) = read(&items, taught, &found, &parts, &lesson.texts());
+    let (taught, found, ruled) = if llm.keeps_read_prompts() {
+        // Local llama-server shares one unified KV pool: run sequentially so
+        // planned, findings, and reports do not evict each other's prefix caches.
+        let taught = ask_planned(llm, &course, &lesson, &planned).await?;
+        let found =
+            ask_findings_for_plan(llm, &course, &lesson, &reports, &parts, &find_plan).await?;
+        let ruled = ask_reports(llm, &lesson, &reports).await?;
+        (taught, found, ruled)
+    } else {
+        futures::try_join!(
+            ask_planned(llm, &course, &lesson, &planned),
+            ask_findings_for_plan(llm, &course, &lesson, &reports, &parts, &find_plan),
+            ask_reports(llm, &lesson, &reports),
+        )?
+    };
+    let (reading, unseen) = read(&items, taught, &found, &parts, &texts);
     let settled = confirm::settle(
         llm,
         reading,
@@ -887,13 +1060,71 @@ pub(super) async fn check(
         &earlier,
     )
     .await?;
-    for (item, hits) in &settled.taught {
-        receipts.record(item, hits);
+    if let Some(receipts) = receipts {
+        for (item, hits) in &settled.taught {
+            receipts.record(item, hits);
+        }
+        if reported.is_empty()
+            && settled.uses.is_empty()
+            && settled.clashes.is_empty()
+            && unseen.is_empty()
+        {
+            receipts.record_find(current_course_digest, current_parts);
+        }
     }
     Ok(Ruled {
         findings: findings(&unseen, &settled, candidate, protected),
         outside: outside_of(&ruled),
     })
+}
+
+/// The findings of holding `candidate`, a lesson, to the course plan and
+/// priorKnowledge in `authoring_context`, the writer's prompt. An item the
+/// `receipts` still hold taught is not asked again; the ones found taught
+/// now are added to them. `reported` are defects a review described: a
+/// pointer where to read again.
+pub(super) async fn check(
+    llm: &dyn LLMPort,
+    authoring_context: &Value,
+    candidate: &Value,
+    protected: &[Protected],
+    receipts: &mut Receipts,
+    reported: &[&ReviewFinding],
+) -> Result<Ruled> {
+    check_with(
+        llm,
+        authoring_context,
+        candidate,
+        protected,
+        Some(receipts),
+        reported,
+        true,
+    )
+    .await
+}
+
+/// Rules on defects another review left to the plan check (`reported`) without
+/// re-checking planned items (`ask_planned`).
+pub(super) async fn rule_on_reports(
+    llm: &dyn LLMPort,
+    authoring_context: &Value,
+    candidate: &Value,
+    protected: &[Protected],
+    reported: &[&ReviewFinding],
+) -> Result<Ruled> {
+    if reported.is_empty() {
+        return Ok(Ruled::default());
+    }
+    check_with(
+        llm,
+        authoring_context,
+        candidate,
+        protected,
+        None,
+        reported,
+        false,
+    )
+    .await
 }
 
 #[cfg(test)]

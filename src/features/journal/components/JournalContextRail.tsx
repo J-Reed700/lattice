@@ -54,7 +54,7 @@ export function JournalContextRail({
   return (
     <aside
       aria-label="Beside this page"
-      className="flex h-full w-[320px] shrink-0 flex-col border-l border-border-subtle bg-bg max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:z-20 max-lg:shadow-xl 2xl:w-[360px]"
+      className="flex h-full w-[320px] shrink-0 flex-col border-l border-border-subtle bg-surface-sunken/60 max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:z-20 max-lg:bg-bg max-lg:shadow-xl 2xl:w-[360px]"
     >
       <Tabs
         variant="pill"

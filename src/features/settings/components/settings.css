@@ -65,33 +65,108 @@
   border-radius: var(--radius-md);
 }
 
-/* A miniature of the app (sidebar + page). The System card stacks the light and
-   dark miniatures and clips the dark one to the right half, so the split is a
-   clean vertical line over identical layouts. */
+/* A miniature of the app (sidebar + warm canvas + elevated card).
+   Light depicts Lattice warm stone (#efeae2 / #ffffff) + copper (#9b4431);
+   Dark depicts Lattice warm obsidian (#141210 / #24211e) + copper (#d98c6c).
+   The System card stacks both and clips the dark one to the right half. */
 .theme-preview {
   position: relative;
   display: block;
   height: 5.5rem;
   overflow: hidden;
-  border: 1px solid hsl(30 18% 18% / 0.12);
-  border-radius: 6px;
+  border: 1px solid hsl(var(--border-default));
+  border-radius: var(--radius-lg);
   isolation: isolate;
 }
-.theme-preview-scene { position: absolute; inset: 0; display: flex; background: hsl(40 26% 96.5%); }
-.theme-preview-sidebar { width: 27%; padding: 0.6rem 0.3rem; background: hsl(38 18% 90%); }
-.theme-preview-page { flex: 1; min-width: 0; padding: 0.75rem 0.6rem; }
-.theme-preview-sidebar span, .theme-preview-page span { display: block; height: 4px; margin-bottom: 7px; border-radius: 2px; background: hsl(30 8% 26% / 0.2); }
-.theme-preview-page span:first-child { width: 55%; height: 6px; margin-bottom: 12px; background: hsl(12 52% 40%); }
-.theme-preview-page span:last-child { width: 75%; }
-.theme-preview-scene[data-scene='dark'] { background: hsl(30 5% 13%); }
-.theme-preview-scene[data-scene='dark'] .theme-preview-sidebar { background: hsl(30 6% 7.5%); }
-.theme-preview-scene[data-scene='dark'] span span { background: hsl(36 18% 91% / 0.22); }
-.theme-preview-scene[data-scene='dark'] .theme-preview-page span:first-child { background: hsl(22 58% 72%); }
+.theme-preview-scene {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  background: #faf7f2;
+}
+.theme-preview-sidebar {
+  width: 28%;
+  padding: 0.55rem 0.32rem;
+  background: #efeae2;
+  border-right: 1px solid rgb(40 28 16 / 0.09);
+}
+.theme-preview-sidebar > span {
+  display: block;
+  height: 4px;
+  margin-bottom: 6px;
+  border-radius: 2px;
+  background: rgb(72 64 56 / 0.22);
+}
+.theme-preview-sidebar > span:first-child {
+  height: 7px;
+  margin-bottom: 7px;
+  border-radius: 3px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgb(40 28 16 / 0.08), 0 0 0 1px rgb(40 28 16 / 0.08);
+}
+.theme-preview-page {
+  flex: 1;
+  min-width: 0;
+  padding: 0.55rem;
+  display: flex;
+  align-items: stretch;
+}
+.theme-preview-card {
+  flex: 1;
+  display: block;
+  padding: 0.5rem 0.5rem 0.4rem;
+  border-radius: 6px;
+  background: #ffffff;
+  border: 1px solid rgb(40 28 16 / 0.08);
+  box-shadow: 0 1px 2px rgb(40 28 16 / 0.05);
+}
+.theme-preview-card > span {
+  display: block;
+  height: 4px;
+  margin-bottom: 6px;
+  border-radius: 2px;
+  background: rgb(72 64 56 / 0.16);
+}
+.theme-preview-card > span:first-child {
+  width: 56%;
+  height: 6px;
+  margin-bottom: 10px;
+  border-radius: 3px;
+  background: #9b4431;
+}
+.theme-preview-card > span:last-child {
+  width: 74%;
+  margin-bottom: 0;
+}
+.theme-preview-scene[data-scene='dark'] {
+  background: #1c1917;
+}
+.theme-preview-scene[data-scene='dark'] .theme-preview-sidebar {
+  background: #141210;
+  border-right-color: rgb(245 239 230 / 0.08);
+}
+.theme-preview-scene[data-scene='dark'] .theme-preview-sidebar > span {
+  background: rgb(196 188 178 / 0.22);
+}
+.theme-preview-scene[data-scene='dark'] .theme-preview-sidebar > span:first-child {
+  background: #24211e;
+  box-shadow: inset 0 1px 0 rgb(255 245 230 / 0.08), 0 0 0 1px rgb(245 239 230 / 0.1);
+}
+.theme-preview-scene[data-scene='dark'] .theme-preview-card {
+  background: #24211e;
+  border-color: rgb(245 239 230 / 0.08);
+  box-shadow: inset 0 1px 0 rgb(255 245 230 / 0.05), 0 4px 10px -4px rgb(0 0 0 / 0.6);
+}
+.theme-preview-scene[data-scene='dark'] .theme-preview-card > span {
+  background: rgb(245 239 230 / 0.16);
+}
+.theme-preview-scene[data-scene='dark'] .theme-preview-card > span:first-child {
+  background: #d98c6c;
+}
 /* Each half is clipped to its side (the light one 1px past the seam, under the
    dark) so neither scene's antialiased edge bleeds around the other. */
 .theme-preview[data-preview='system'] .theme-preview-scene[data-scene='light'] { clip-path: inset(0 calc(50% - 1px) 0 0); }
 .theme-preview[data-preview='system'] .theme-preview-scene[data-scene='dark'] { clip-path: inset(0 0 0 50%); }
-.dark .theme-preview { border-color: hsl(36 18% 91% / 0.14); }
 
 @container settings-content (max-width: 42rem) {
   .downloaded-model-actions { width: 100%; padding-left: 3rem; }

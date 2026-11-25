@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
  *
  * Accessible minimalist range slider backed by a native `<input type="range">`
  * so keyboard navigation, assistive technology, and pointer dragging work
- * consistently across platforms. Uses copper `--accent` for the active track
+ * consistently across platforms. Uses `--accent` for the active track
  * and tactile thumb border.
  */
 
@@ -161,7 +161,7 @@ const Slider = forwardRef<HTMLInputElement, SliderProps>(
             aria-hidden="true"
             className="pointer-events-none relative h-1.5 w-full overflow-hidden rounded-full bg-[hsl(var(--text-primary)/0.12)]"
           >
-            {/* Active copper progress fill */}
+            {/* Active accent progress fill */}
             <div
               data-slot="slider-fill"
               className="h-full rounded-full bg-accent transition-[width] duration-instant ease-out"

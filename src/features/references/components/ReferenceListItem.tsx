@@ -1,6 +1,5 @@
 import { useState } from 'react';
 
-import { motion, useReducedMotion } from 'framer-motion';
 import { ArrowUpRight, Bookmark, Check, Copy, Trash2 } from 'lucide-react';
 
 import { IconButton } from '@/components/ui/IconButton';
@@ -27,7 +26,7 @@ function formatTime(iso: string): string {
 
 /**
  * Single reference row: title on one line, an "Origin · time" meta line, and a
- * one-line preview. Hover actions overlay the row and reserve no width.
+ * one-line preview. Active item uses Option A's crisp raised card pill.
  */
 export function ReferenceListItem({
   bookmark,
@@ -39,7 +38,6 @@ export function ReferenceListItem({
   onCopy,
   onDelete,
 }: ReferenceListItemProps) {
-  const prefersReducedMotion = useReducedMotion();
   const [isHovering, setIsHovering] = useState(false);
   const [isFocusWithin, setIsFocusWithin] = useState(false);
   // Hidden actions must not be tab stops, but a keyboard user still has to be
@@ -71,25 +69,12 @@ export function ReferenceListItem({
           onSelect();
         }
       }}
-      className={`group relative w-full cursor-pointer px-4 py-2.5 transition-colors duration-fast ${
-        isActive ? 'bg-surface-raised' : 'hover:bg-surface-raised'
+      className={`group relative w-full cursor-pointer rounded-xl px-3 py-2.5 transition-[background-color,box-shadow] duration-fast ${
+        isActive
+          ? 'bg-surface shadow-sm ring-1 ring-border-subtle'
+          : 'hover:bg-surface/65'
       }`}
     >
-      {isActive &&
-        (prefersReducedMotion ? (
-          <span
-            className="absolute inset-y-0 left-0 w-0.5 bg-accent"
-            aria-hidden="true"
-          />
-        ) : (
-          <motion.span
-            layoutId="references-sidebar-active-bar"
-            className="absolute inset-y-0 left-0 w-0.5 bg-accent"
-            aria-hidden="true"
-            transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-          />
-        ))}
-
       <div className="flex items-center gap-1.5">
         {isCaptured ? (
           <Check
@@ -99,15 +84,15 @@ export function ReferenceListItem({
           />
         ) : (
           <Bookmark
-            className="h-3 w-3 shrink-0 text-text-muted"
+            className={`h-3 w-3 shrink-0 ${isActive ? 'text-accent' : 'text-text-muted'}`}
             strokeWidth={1.75}
             aria-hidden="true"
           />
         )}
         <span
-          className={`min-w-0 flex-1 truncate text-ui ${
+          className={`min-w-0 flex-1 truncate font-sans text-ui tracking-[-0.01em] ${
             hasTitle
-              ? `text-text-primary${isActive ? ' font-medium' : ''}`
+              ? `text-text-primary${isActive ? ' font-semibold' : ' font-medium'}`
               : 'italic text-text-muted'
           }`}
           title={displayTitle}
@@ -121,7 +106,9 @@ export function ReferenceListItem({
       {preview && <p className="mt-0.5 truncate text-xs text-text-tertiary">{preview}</p>}
 
       <div
-        className={`absolute right-2 top-1.5 flex items-center gap-0.5 rounded-md bg-surface-raised pl-2 transition-opacity duration-fast ${
+        className={`absolute right-1.5 top-1.5 flex items-center gap-0.5 rounded-lg pl-1.5 transition-opacity duration-fast ${
+          isActive ? 'bg-surface/95' : 'bg-surface-raised/95'
+        } ${
           showActions ? 'opacity-100' : 'pointer-events-none opacity-0'
         }`}
         onClick={(e) => e.stopPropagation()}
@@ -135,7 +122,7 @@ export function ReferenceListItem({
         <IconButton
           label="Delete reference"
           tabIndex={showActions ? 0 : -1}
-          className="hover:text-[hsl(var(--danger-fg))]"
+          className="hover:text-danger-fg"
           onClick={onDelete}
         >
           <Trash2 />

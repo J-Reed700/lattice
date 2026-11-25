@@ -3,7 +3,7 @@
 Review instructional quality.
 Answer with items. Each item holds one entry, and the entry's kind says what it is. An entry of kind issue is a defect of the whole material, as the issues described above: its note says what is wrong, and continues is the id of the open finding it continues, or none. An entry of kind sectionDefect is a defect in a section in review, as the sectionDefects described above: passageId is the passage where it shows, finding says what is wrong, and continues is as for an issue. An entry of kind resolved gives in openFinding the id of an open finding whose defect is no longer in the candidate; an open finding that no entry names stays open.
 
-Answer in two steps. Step 1, now: work through the task in prose. Go through the candidate part by part: for a lesson, every section whose inReview is true and every question; for an outline, every module. Solve each exercise and question yourself and check each worked example against its stated premises and result. For each part say what you checked, what you found and whether it has a material defect. For each entry of openFindings, read the part it names as the candidate now has it, whether or not that part is in review. Find the words of that part that still show the defect, or, for something left out, the words it should follow. When no words of the part show it any more, the finding is resolved. An open finding's id is never used for a different defect: report that as a new issue. Write out everything the final answer needs, in full. Step 2 is requested separately and turns this draft into the final answer.
+Answer in two steps. Step 1, now: work through the task in prose. Inspect the candidate part by part: for a lesson, every section whose inReview is true and every question; for an outline, every module. Solve each exercise and question yourself and check each worked example against its stated premises and result. Record only actual material defects (with their passage id or part, concern, and why) — skip parts that pass cleanly instead of writing confirmations for them. If no material defects exist, state that clearly. For each entry of openFindings, read the part it names as the candidate now has it, whether or not that part is in review. Find the words of that part that still show the defect, or, for something left out, the words it should follow. When no words of the part show it any more, the finding is resolved. An open finding's id is never used for a different defect: report that as a new issue. Write out everything the final answer needs, in full. Step 2 is requested separately and turns this draft into the final answer.
 
 === input 2: message (user) ===
 {"priorKnowledge":"The learner has seen a map of the town.","candidate":{"blocks":[{"inReview":true,"label":"Section 1","bodyPassages":[{"text":"Alpha holds the line.","id":"p1"}]},{"inReview":false,"label":"Section 2","bodyPassages":[{"text":"Beta holds another."}]}]},"openFindings":[{"id":"f1","part":"Section 1","passageId":"p1","note":"Alpha 1 fails."},{"id":"f2","part":"Section 1","passageId":"p1","note":"Alpha 2 fails."}]}
@@ -19,14 +19,14 @@ Answer in two steps. Step 1, now: work through the task in prose. Go through the
   "stop": [],
   "want_logprobs": false,
   "priority": "background",
-  "cache_key": null
+  "cache_key": "reason-first-draft-v1:9d688efbd7752a442b0cd6a47c0913543581d6dad650b7d00702807d5f41863a"
 }
 ######## request 2 of 2 ########
 === input 1: message (system) ===
 Review instructional quality.
 Answer with items. Each item holds one entry, and the entry's kind says what it is. An entry of kind issue is a defect of the whole material, as the issues described above: its note says what is wrong, and continues is the id of the open finding it continues, or none. An entry of kind sectionDefect is a defect in a section in review, as the sectionDefects described above: passageId is the passage where it shows, finding says what is wrong, and continues is as for an issue. An entry of kind resolved gives in openFinding the id of an open finding whose defect is no longer in the candidate; an open finding that no entry names stays open.
 
-Answer in two steps. Step 1, now: work through the task in prose. Go through the candidate part by part: for a lesson, every section whose inReview is true and every question; for an outline, every module. Solve each exercise and question yourself and check each worked example against its stated premises and result. For each part say what you checked, what you found and whether it has a material defect. For each entry of openFindings, read the part it names as the candidate now has it, whether or not that part is in review. Find the words of that part that still show the defect, or, for something left out, the words it should follow. When no words of the part show it any more, the finding is resolved. An open finding's id is never used for a different defect: report that as a new issue. Write out everything the final answer needs, in full. Step 2 is requested separately and turns this draft into the final answer.
+Answer in two steps. Step 1, now: work through the task in prose. Inspect the candidate part by part: for a lesson, every section whose inReview is true and every question; for an outline, every module. Solve each exercise and question yourself and check each worked example against its stated premises and result. Record only actual material defects (with their passage id or part, concern, and why) — skip parts that pass cleanly instead of writing confirmations for them. If no material defects exist, state that clearly. For each entry of openFindings, read the part it names as the candidate now has it, whether or not that part is in review. Find the words of that part that still show the defect, or, for something left out, the words it should follow. When no words of the part show it any more, the finding is resolved. An open finding's id is never used for a different defect: report that as a new issue. Write out everything the final answer needs, in full. Step 2 is requested separately and turns this draft into the final answer.
 
 === input 2: message (user) ===
 {"priorKnowledge":"The learner has seen a map of the town.","candidate":{"blocks":[{"inReview":true,"label":"Section 1","bodyPassages":[{"text":"Alpha holds the line.","id":"p1"}]},{"inReview":false,"label":"Section 2","bodyPassages":[{"text":"Beta holds another."}]}]},"openFindings":[{"id":"f1","part":"Section 1","passageId":"p1","note":"Alpha 1 fails."},{"id":"f2","part":"Section 1","passageId":"p1","note":"Alpha 2 fails."}]}
@@ -142,16 +142,11 @@ Step 2: give the final answer from your draft. Keep its content, wording, number
   "reasoning_effort": "low",
   "tool_choice": null,
   "include_reasoning": false,
-  "sampling": {
-    "temperature": 0.0,
-    "top_p": 1.0,
-    "top_k": 1,
-    "presence_penalty": 0.0
-  },
+  "sampling": null,
   "thinking": "off",
   "max_output_tokens": 6000,
   "stop": [],
   "want_logprobs": false,
   "priority": "background",
-  "cache_key": null
+  "cache_key": "reason-first-draft-v1:9d688efbd7752a442b0cd6a47c0913543581d6dad650b7d00702807d5f41863a"
 }

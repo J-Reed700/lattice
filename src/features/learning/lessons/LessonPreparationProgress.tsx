@@ -62,7 +62,7 @@ function HeldLessonLine({ programId, lessonId, title, onReview }: { programId: s
  * line, the progress bar, Pause/Resume, and everything else behind Details.
  * A lesson held for review is a line that leads to the review screen.
  */
-export function LessonPreparationStatus({ job, queuedMore = 0, failedJobs = [], pending, programId, revision, error, expanded: heldExpanded, onExpandedChange, lessonTitles, onReview }: {
+export function LessonPreparationStatus({ job, queuedMore = 0, failedJobs = [], pending, programId, revision, error, expanded: heldExpanded, onExpandedChange, lessonTitles, onReview, onManageQueue }: {
   job?: LearningGenerationJob; pending: boolean; programId: string; revision: number; error?: string;
   /** Lesson jobs waiting behind this one. */
   queuedMore?: number;
@@ -74,6 +74,8 @@ export function LessonPreparationStatus({ job, queuedMore = 0, failedJobs = [], 
   lessonTitles?: Record<string, string>;
   /** Opens a held lesson's review screen. */
   onReview?: ReviewOpener;
+  /** Opens the Lesson Preparation Control Center drawer. */
+  onManageQueue?: () => void;
 }) {
   const cancel = useCancelLearningGenerationJob();
   const retry = useRetryLearningGenerationJob();
@@ -101,6 +103,11 @@ export function LessonPreparationStatus({ job, queuedMore = 0, failedJobs = [], 
     return <section aria-label="Lesson preparation" className="my-3 rounded-xl border border-accent/30 bg-accent/5 px-4 py-3">
       <ul className="space-y-2">{held.map((lessonId) => <HeldLessonLine key={lessonId} programId={programId} lessonId={lessonId}
         title={lessonTitles?.[lessonId] ?? (held.length === 1 ? activity?.lessonTitle : null) ?? 'A lesson'} onReview={onReview} />)}</ul>
+      {onManageQueue && (
+        <div className="mt-2.5 flex justify-end">
+          <button type="button" onClick={onManageQueue} className="min-h-8 rounded-full border border-accent/40 bg-bg px-3 text-xs font-medium text-text-primary">Manage queue</button>
+        </div>
+      )}
     </section>;
   }
   if (!active && (!job || job.status === 'completed') && failedJobs.length === 0) return null;
@@ -136,6 +143,7 @@ export function LessonPreparationStatus({ job, queuedMore = 0, failedJobs = [], 
           cancel.reset(); retry.reset();
           if (active) cancel.mutate(request()); else retry.mutate(request());
         }} className="min-h-9 rounded-full border border-accent/40 bg-bg px-3 text-xs font-medium text-text-primary disabled:opacity-50">{cancel.isPending ? 'Pausing…' : retry.isPending ? paused ? 'Resuming…' : 'Retrying…' : active ? 'Pause lesson preparation' : paused ? 'Resume lesson preparation' : 'Retry lesson preparation'}</button>
+        {onManageQueue && <button type="button" onClick={onManageQueue} className="min-h-9 rounded-full border border-accent/40 bg-bg px-3 text-xs font-medium text-text-primary">Manage queue</button>}
         <button type="button" aria-expanded={expanded} aria-controls={detailsId} onClick={() => setExpanded(!expanded)} className="inline-flex min-h-9 items-center gap-1 rounded-full px-3 text-xs font-medium text-text-secondary hover:bg-bg">Details<ChevronDown size={14} className={expanded ? 'rotate-180' : ''} aria-hidden="true" /></button>
       </div>}
     </div>
@@ -181,7 +189,7 @@ export function LessonPreparationStatus({ job, queuedMore = 0, failedJobs = [], 
     </>}
     {failedJobs.length > 0 && (
       <div className={showPrimary ? 'mt-3 space-y-2 border-t border-accent/15 pt-3' : 'space-y-2'}>
-        {failedJobs.map((failedJob) => {
+        {failedJobs.map((failedJob, index) => {
           const failedTitle = failedJob.activity?.lessonTitle ?? lessonTitles?.[failedJob.lessonIds?.[0] ?? ''];
           return (
             <div key={failedJob.id} className="flex flex-wrap items-start justify-between gap-2 text-sm">
@@ -193,18 +201,23 @@ export function LessonPreparationStatus({ job, queuedMore = 0, failedJobs = [], 
                   ? <PlainError error={jobErrorToError(failedJob)} className="mt-1 text-sm leading-6 text-rose-700" />
                   : <p role="alert" className="mt-1 text-sm leading-6 text-rose-700">Preparation stopped. Your draft and completed checkpoints remain saved.</p>}
               </div>
-              <button
-                type="button"
-                disabled={cancel.isPending || retry.isPending || Boolean(waitsForIndex)}
-                onClick={() => {
-                  cancel.reset();
-                  retry.reset();
-                  retry.mutate(request(failedJob.id));
-                }}
-                className="min-h-9 rounded-full border border-accent/40 bg-bg px-3 text-xs font-medium text-text-primary disabled:opacity-50"
-              >
-                {retry.isPending ? 'Retrying…' : 'Retry lesson preparation'}
-              </button>
+              <div className="flex items-center gap-2">
+                {!showPrimary && index === 0 && onManageQueue && (
+                  <button type="button" onClick={onManageQueue} className="min-h-9 rounded-full border border-accent/40 bg-bg px-3 text-xs font-medium text-text-primary">Manage queue</button>
+                )}
+                <button
+                  type="button"
+                  disabled={cancel.isPending || retry.isPending || Boolean(waitsForIndex)}
+                  onClick={() => {
+                    cancel.reset();
+                    retry.reset();
+                    retry.mutate(request(failedJob.id));
+                  }}
+                  className="min-h-9 rounded-full border border-accent/40 bg-bg px-3 text-xs font-medium text-text-primary disabled:opacity-50"
+                >
+                  {retry.isPending ? 'Retrying…' : 'Retry lesson preparation'}
+                </button>
+              </div>
             </div>
           );
         })}

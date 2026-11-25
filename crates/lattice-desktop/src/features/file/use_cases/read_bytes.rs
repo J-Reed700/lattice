@@ -8,8 +8,13 @@ use lattice_core::application::ports::FileStoragePort;
 use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 
-/// Maximum file size for reading bytes (10 MB)
-const MAX_FILE_SIZE_BYTES: u64 = 10 * 1024 * 1024; // 10 MB
+/// Maximum file size for reading raw bytes over IPC (100 MiB).
+///
+/// `read_file_bytes` materializes the full file and serializes `Vec<u8>` over
+/// Tauri JSON IPC (as a JSON number array) into WebView memory. A 100 MiB
+/// ceiling protects the backend and WebView from OOM (CWE-400 / CWE-770) on
+/// multi-gigabyte binaries while supporting large local PDFs and office files.
+const MAX_FILE_SIZE_BYTES: u64 = lattice_core::shared::constants::MAX_FILE_SIZE_BYTES;
 
 /// Use case for reading file content as bytes.
 ///
@@ -104,6 +109,12 @@ mod tests {
             self.files.push((path.to_string(), content.to_vec(), size));
             self
         }
+
+        fn with_sized_file(mut self, path: &str, content: &[u8], reported_size: u64) -> Self {
+            self.files
+                .push((path.to_string(), content.to_vec(), reported_size));
+            self
+        }
     }
 
     #[async_trait]
@@ -194,5 +205,45 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), b"hello".to_vec());
+    }
+
+    #[tokio::test]
+    async fn test_read_file_bytes_allows_files_over_ten_mib_and_rejects_above_limit() {
+        let temp_root = std::env::temp_dir().canonicalize().unwrap();
+        let large_pdf = temp_root.join("textbook.pdf");
+        let huge_bin = temp_root.join("huge.bin");
+        let storage = MockFileStorage::new()
+            .with_sized_file(
+                large_pdf.to_string_lossy().as_ref(),
+                b"%PDF-1.7",
+                25 * 1024 * 1024,
+            )
+            .with_sized_file(
+                huge_bin.to_string_lossy().as_ref(),
+                b"",
+                MAX_FILE_SIZE_BYTES + 1,
+            );
+        let access_config = Arc::new(FileAccessConfig::new(vec![temp_root]));
+        let use_case = ReadFileBytesUseCase::new(Arc::new(storage), access_config);
+
+        let allowed = use_case
+            .execute(ReadFileBytesRequestDto {
+                path: large_pdf.to_string_lossy().into_owned(),
+            })
+            .await;
+        assert_eq!(allowed.unwrap(), b"%PDF-1.7".to_vec());
+
+        let rejected = use_case
+            .execute(ReadFileBytesRequestDto {
+                path: huge_bin.to_string_lossy().into_owned(),
+            })
+            .await;
+        assert!(matches!(
+            rejected,
+            Err(AppError::FileTooLarge {
+                max_size_bytes,
+                ..
+            }) if max_size_bytes == MAX_FILE_SIZE_BYTES
+        ));
     }
 }

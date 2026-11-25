@@ -627,7 +627,7 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
 
       {files.length > 0 && (
         <div className="mt-8">
-          <h2 className="pb-2 text-base font-medium text-text-primary">
+          <h2 className="pb-2 font-sans text-base font-semibold tracking-[-0.02em] text-text-primary">
             {files.length} {files.length === 1 ? 'file' : 'files'}{sourceGroup?.ordered ? ' · reading order' : ''}
           </h2>
           <div className="flex items-center gap-2">

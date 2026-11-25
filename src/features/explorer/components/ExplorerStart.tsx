@@ -54,13 +54,13 @@ export function ExplorerStart({ opening, onChoose, onOpen }: ExplorerStartProps)
         />
 
         {!hasFolders && (
-          <div className="rounded-xl border border-border-subtle bg-surface p-6 shadow-control">
+          <div className="rounded-xl border border-border-subtle bg-surface p-6 shadow-sm">
             <div className="flex items-start gap-4">
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-surface-sunken text-text-secondary ring-1 ring-inset ring-border-subtle">
-                <FolderTree className="h-5 w-5" strokeWidth={1.6} aria-hidden="true" />
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent-muted text-accent ring-1 ring-inset ring-accent/12">
+                <FolderTree className="h-5 w-5" strokeWidth={1.65} aria-hidden="true" />
               </span>
               <div className="min-w-0 flex-1">
-                <h2 className="text-[15px] font-medium text-text-primary">
+                <h2 className="font-sans text-[15px] font-semibold tracking-[-0.02em] text-text-primary">
                   Open a local folder workspace
                 </h2>
                 <p className="mt-1.5 text-sm leading-relaxed text-text-secondary">

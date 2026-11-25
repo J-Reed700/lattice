@@ -9,6 +9,7 @@ import { EntryFromConversation } from '@/features/journal/components/EntryFromCo
 import { EntryHeader } from '@/features/journal/components/EntryHeader';
 import { EntryHighlightsStrip } from '@/features/journal/components/EntryHighlightsStrip';
 import { JournalContextRail } from '@/features/journal/components/JournalContextRail';
+import { JournalFormattingPill, useDomTiptapEditor } from '@/features/journal/components/JournalFormattingPill';
 import type { SynthesisScope, WeekCandidateCounts } from '@/features/journal/components/SynthesizePopover';
 import type { JournalEntrySummary } from '@/features/journal/hooks/useJournalEntries';
 import type { JournalSourceSummary } from '@/features/journal/hooks/useJournalSources';
@@ -126,6 +127,12 @@ export function EntryEditor({
   openContextRequest = 0,
 }: EntryEditorProps) {
   const editorContainerRef = useRef<HTMLDivElement | null>(null);
+  const [editorContainer, setEditorContainer] = useState<HTMLDivElement | null>(null);
+  const handleEditorContainerRef = useCallback((node: HTMLDivElement | null) => {
+    editorContainerRef.current = node;
+    setEditorContainer(node);
+  }, []);
+  const tiptapEditor = useDomTiptapEditor(editorContainer, activeNote?.id ?? null);
   const [railOpen, setRailOpen] = useState(readRailOpen);
   const [seenOpenRequest, setSeenOpenRequest] = useState(openContextRequest);
   if (seenOpenRequest !== openContextRequest) {
@@ -251,11 +258,11 @@ export function EntryEditor({
     <main className="relative flex min-h-0 min-w-0 flex-1 bg-bg">
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto [scrollbar-gutter:stable]">
-          <div className="journal-editorial-sheet mx-auto flex w-full max-w-[740px] flex-1 flex-col px-8 pb-16 pt-8 lg:px-14">
+          <div className="journal-editorial-sheet flex w-full flex-1 flex-col pb-16">
             {loadError ? (
-              <p className="text-sm text-danger-fg">{loadError}</p>
+              <p className="mx-auto w-full max-w-[740px] px-8 pt-8 text-sm text-danger-fg lg:px-14">{loadError}</p>
             ) : isLoadingNote || !activeNote ? (
-              <p className="text-sm text-text-muted">Loading journal…</p>
+              <p className="mx-auto w-full max-w-[740px] px-8 pt-8 text-sm text-text-muted lg:px-14">Loading journal…</p>
             ) : (
               <>
                 <EntryHeader
@@ -271,6 +278,7 @@ export function EntryEditor({
                   isSaving={isSaving}
                   saveError={saveError}
                   onRetrySave={onSaveNow}
+                  toolbar={<JournalFormattingPill editor={tiptapEditor} />}
                   actions={
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -282,8 +290,8 @@ export function EntryEditor({
                           className={cn(
                             'pressable inline-flex h-7 items-center gap-1.5 rounded-lg border px-2 text-xs font-medium transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
                             railOpen
-                              ? 'border-border-default bg-surface-raised text-text-primary shadow-control'
-                              : 'border-transparent text-text-tertiary hover:border-border-subtle hover:bg-surface hover:text-text-primary',
+                              ? 'border-accent/30 bg-accent-muted text-accent shadow-sm'
+                              : 'border-border-subtle bg-surface text-text-secondary shadow-sm hover:border-border-default hover:text-text-primary',
                           )}
                         >
                           {railOpen ? (
@@ -309,8 +317,8 @@ export function EntryEditor({
                   }
                 />
                 <div
-                  ref={editorContainerRef}
-                  className="journal-editorial-prose min-h-[52vh] flex-1 font-serif text-[17px] leading-[1.85] text-text-primary"
+                  ref={handleEditorContainerRef}
+                  className="journal-editorial-prose mx-auto min-h-[52vh] w-full max-w-[740px] flex-1 px-8 font-serif text-[17px] leading-[1.85] text-text-primary lg:px-14"
                 >
                   <TiptapEditor
                     value={activeNote.content ?? ''}
@@ -329,7 +337,7 @@ export function EntryEditor({
 
         {ready && activeNote ? (
           <div className="shrink-0 border-t border-border-subtle bg-bg/95 backdrop-blur-xs">
-            <div className="mx-auto w-full max-w-[740px] px-8 py-2.5 lg:px-14">
+            <div className="w-full px-6 py-2.5 lg:px-8">
               <EntryActionRail
                 selectedEntryId={selectedEntry?.id ?? null}
                 pinnedCount={pinnedEntryCount}

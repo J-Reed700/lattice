@@ -117,7 +117,7 @@ pub(super) async fn run_kb_retrieval(
 
     let repository = container.chat_records();
     // How deep to read: as many passages as the evidence budget can carry, at
-    // what a passage of this library actually measures, up to the shortlist.
+    // what a passage of this library actually measures.
     // Overlap cold embedding load with the mean-chunk-chars query so an empty
     // space or focus-blocked turn never wakes the embedding model.
     let (embedding_result, passage_chars_result) = tokio::join!(
@@ -295,10 +295,7 @@ pub(super) async fn run_kb_retrieval(
         Err(error) => {
             warn!(%error, "Document retrieval failed");
             search_step.failed(Some(error.to_string()));
-            (
-                super::empty_search_response(),
-                Some(unavailable_reason(&error.to_string())),
-            )
+            (super::empty_search_response(), Some(error.to_string()))
         }
     };
     let (mut search_response, mut reranked) = rerank_pass(
@@ -446,7 +443,6 @@ pub(super) async fn run_kb_retrieval(
     {
         warn!(%error, "Could not read the hits' section context");
     }
-    search_response.results.truncate(super::MAX_READ_PASSAGES);
     search_response.total = search_response.results.len();
     // RRF scores are ranks, not probabilities. A cosine cutoff must never be
     // applied to them or used to claim the documents are unavailable.
@@ -530,17 +526,6 @@ fn bound_leading_structural(results: &mut Vec<SearchResultDto>, evidence_limit: 
         let unpinned: Vec<_> = results.drain(pinned..leading).collect();
         results.extend(unpinned);
     }
-}
-
-/// The retrieval trace carries at most this many characters of the search
-/// failure; the frontend schema caps `unavailableReason` at the same length.
-const UNAVAILABLE_REASON_MAX_CHARS: usize = 400;
-
-/// Clip a search failure for the retrieval trace. A longer reason would fail
-/// the frontend's trace schema and drop the "search unavailable" notice on
-/// exactly the turn that needs it.
-fn unavailable_reason(error: &str) -> String {
-    lattice_core::shared::text::safe_truncate(error, UNAVAILABLE_REASON_MAX_CHARS)
 }
 
 fn passage_count_line(results: &[SearchResultDto]) -> String {

@@ -40,7 +40,7 @@ import {
 const FALLBACK_DOT_COLORS = [
   '#b45309',
   '#0f766e',
-  '#4338ca',
+  '#4b6584',
   '#be123c',
   '#4d7c0f',
   '#0369a1',
@@ -556,7 +556,7 @@ export function RailSpacesSection({ compact, isOnChat }: RailSpacesSectionProps)
                           'group relative flex h-8 w-full items-center justify-center gap-2.5 rounded-lg px-2.5 transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
                           wide('xl:justify-start'),
                           isActivePill
-                            ? 'bg-accent-muted text-text-primary shadow-[inset_0_0_0_1px_hsl(var(--accent)/0.16)]'
+                            ? 'bg-surface text-text-primary shadow-sm ring-1 ring-border-subtle dark:bg-surface-overlay'
                             : isSelected
                               ? 'text-text-primary'
                               : 'text-text-tertiary hover:text-text-primary',

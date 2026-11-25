@@ -25,13 +25,13 @@ export function LibraryViewActions({
       <div
         role="group"
         aria-label="View mode"
-        className="inline-flex h-8 items-center gap-0.5 rounded-lg bg-[hsl(var(--text-primary)/0.06)] p-[3px]"
+        className="inline-flex h-8 items-center gap-0.5 rounded-lg border border-border-subtle bg-surface-sunken/70 p-[3px]"
       >
         <IconButton
           label="List view"
           active={viewMode === 'list'}
           onClick={() => setViewMode('list')}
-          className={viewMode === 'list' ? 'h-full w-7 rounded-md bg-surface-overlay shadow-control' : 'h-full w-7 rounded-md'}
+          className={viewMode === 'list' ? 'h-full w-7 rounded-md bg-surface shadow-sm ring-1 ring-border-subtle' : 'h-full w-7 rounded-md'}
         >
           <List strokeWidth={1.75} />
         </IconButton>
@@ -39,7 +39,7 @@ export function LibraryViewActions({
           label="Grid view"
           active={viewMode === 'grid'}
           onClick={() => setViewMode('grid')}
-          className={viewMode === 'grid' ? 'h-full w-7 rounded-md bg-surface-overlay shadow-control' : 'h-full w-7 rounded-md'}
+          className={viewMode === 'grid' ? 'h-full w-7 rounded-md bg-surface shadow-sm ring-1 ring-border-subtle' : 'h-full w-7 rounded-md'}
         >
           <LayoutGrid strokeWidth={1.75} />
         </IconButton>
@@ -47,7 +47,7 @@ export function LibraryViewActions({
           label="Tree view"
           active={viewMode === 'tree'}
           onClick={() => setViewMode('tree')}
-          className={viewMode === 'tree' ? 'h-full w-7 rounded-md bg-surface-overlay shadow-control' : 'h-full w-7 rounded-md'}
+          className={viewMode === 'tree' ? 'h-full w-7 rounded-md bg-surface shadow-sm ring-1 ring-border-subtle' : 'h-full w-7 rounded-md'}
         >
           <ListTree strokeWidth={1.75} />
         </IconButton>

@@ -71,7 +71,7 @@ export function SelectionBar({
 
   return (
     <div
-      className="mb-3 flex min-h-11 flex-wrap items-center gap-1.5 rounded-xl border border-border-subtle bg-surface px-3 py-1.5 shadow-control"
+      className="mb-3 flex min-h-11 flex-wrap items-center gap-1.5 rounded-xl border border-border-subtle bg-surface px-3 py-1.5 shadow-sm"
       aria-label="Document selection actions"
     >
       <span className="mr-1.5 text-ui font-medium tabular-nums text-text-primary">

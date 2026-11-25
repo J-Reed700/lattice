@@ -2,15 +2,12 @@ use super::rescan::ghost_sweep_block_reason;
 use super::*;
 
 #[tokio::test]
-async fn oversized_vault_note_is_rejected_without_reading_the_whole_file() {
+async fn vault_note_larger_than_four_mib_is_read_in_full() {
     let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("oversized.md");
-    let file = std::fs::File::create(&path).unwrap();
-    file.set_len(MAX_NOTE_BYTES + 1024).unwrap();
-    assert_eq!(
-        read_note(&path).await.unwrap_err().kind(),
-        std::io::ErrorKind::InvalidData
-    );
+    let path = directory.path().join("large.md");
+    let body = "a".repeat(5 * 1024 * 1024);
+    std::fs::write(&path, &body).unwrap();
+    assert_eq!(read_note(&path).await.unwrap().len(), body.len());
 }
 
 fn note(id: &str) -> String {

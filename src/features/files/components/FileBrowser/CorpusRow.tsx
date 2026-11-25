@@ -2,7 +2,7 @@ import { useState } from 'react';
 
 import { Edit3, MoreHorizontal, Trash2 } from 'lucide-react';
 
-import { formatDisplayPath, metaLine } from '@/features/files/model/documentMetadata';
+import { formatDisplayPath, metaLine, typeLabel } from '@/features/files/model/documentMetadata';
 import { type DocumentMetadata } from '@/types/fileBrowser';
 
 import { FileIcon } from './FileIcon';
@@ -43,7 +43,8 @@ export function CorpusRow({
   const [isHovering, setIsHovering] = useState(false);
   const showCheckbox = selectionActive || isHovering || isSelected;
   const sourceLocation = formatDisplayPath(doc.filePath);
-  const detailsLine = [sourceLocation, metaLine(doc)].filter(Boolean).join(' · ');
+  const detailsLine = [sourceLocation, metaLine(doc, { includeType: false })].filter(Boolean).join(' · ');
+  const formatBadge = doc.typeBucket || typeLabel(doc);
 
   return (
     <div
@@ -68,8 +69,8 @@ export function CorpusRow({
           onToggleSelect();
         }
       }}
-      className={`group flex cursor-pointer items-center gap-3 rounded-lg pr-3 ${
-        isSelected ? 'bg-accent-muted' : 'row-hover'
+      className={`group flex cursor-pointer items-center gap-3 pr-3.5 transition-colors duration-fast ${
+        isSelected ? 'bg-accent-muted/70' : 'row-hover'
       }`}
       style={{ height: ROW_HEIGHT, paddingLeft: 12 + indent }}
     >
@@ -82,10 +83,10 @@ export function CorpusRow({
           event.stopPropagation();
           onToggleSelect();
         }}
-        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-[3px] border transition-opacity duration-fast ${
+        className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border transition-opacity duration-fast ${
           showCheckbox ? 'opacity-100' : 'opacity-0'
         } ${
-          isSelected ? 'border-accent bg-accent' : 'border-border-default bg-transparent'
+          isSelected ? 'border-accent bg-accent' : 'border-border-default bg-surface'
         }`}
       >
         {isSelected ? (
@@ -105,7 +106,9 @@ export function CorpusRow({
       <FileIcon file={doc} size={16} className="shrink-0" />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-ui font-medium text-text-primary">{doc.fileName}</span>
+        <span className="truncate font-sans text-ui font-semibold tracking-[-0.01em] text-text-primary">
+          {doc.fileName}
+        </span>
         <span className="truncate text-xs tabular-nums text-text-muted" title={doc.filePath}>
           {detailsLine}
         </span>
@@ -123,12 +126,20 @@ export function CorpusRow({
           </RowAction>
         ) : null}
       </div>
+      {formatBadge ? (
+        <span
+          aria-hidden="true"
+          className="hidden h-6 shrink-0 items-center rounded-full border border-border-subtle bg-surface-sunken/70 px-2.5 text-[11px] font-medium text-text-secondary sm:inline-flex"
+        >
+          {formatBadge}
+        </span>
+      ) : null}
       <button
         type="button"
         aria-label={`Actions for ${doc.fileName}`}
         onClick={event => { event.stopPropagation(); onContextMenu(event); }}
         onDoubleClick={event => event.stopPropagation()}
-        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-text-muted hover:bg-surface-raised hover:text-text-primary"
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors duration-fast hover:bg-surface-raised hover:text-text-primary"
       >
         <MoreHorizontal className="h-4 w-4" />
       </button>

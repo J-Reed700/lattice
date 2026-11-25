@@ -1706,3 +1706,29 @@ async fn a_job_dto_carries_the_revision() -> Result<()> {
     assert_eq!(JobDto::from(&record).revision, record.revision);
     Ok(())
 }
+
+#[tokio::test]
+async fn set_rank_in_updates_rank_and_due_orders_lowest_rank_first() -> Result<()> {
+    let db = database().await;
+    let store = JobStore::new(db.clone());
+    let first = store
+        .submit_ranked(&new_job(KIND, "op-due-1", Some("subject")), 5)
+        .await?
+        .id;
+    let second = store
+        .submit_ranked(&new_job(KIND, "op-due-2", Some("subject")), 10)
+        .await?
+        .id;
+    let unranked = store
+        .submit(&new_job(KIND, "op-due-3", Some("subject")))
+        .await?
+        .id;
+
+    let mut tx = db.begin_write().await?;
+    JobStore::set_rank_in(&mut tx, &second, 1).await?;
+    tx.commit().await?;
+
+    let due_ids: Vec<String> = store.due(KIND).await?.into_iter().map(|j| j.id).collect();
+    assert_eq!(due_ids, vec![second, first, unranked]);
+    Ok(())
+}

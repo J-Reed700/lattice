@@ -320,6 +320,9 @@ pub struct LearningGenerationJob {
     /// The lessons the job finished by holding them for review.
     #[serde(default)]
     pub held_lesson_ids: Vec<String>,
+    /// Queue rank for ranked job kinds (lower runs first).
+    #[serde(default)]
+    pub rank: Option<i64>,
     pub retry_of_job_id: Option<String>,
     pub created_at: i64,
     pub started_at: Option<i64>,

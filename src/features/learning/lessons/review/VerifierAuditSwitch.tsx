@@ -42,10 +42,10 @@ export function VerifierAuditSwitch({ programId }: { programId: string }) {
   };
 
   return (
-    <section aria-label="Verifier audit" className="rounded-2xl border border-border bg-surface p-5">
+    <section aria-label="Verifier audit" className="rounded-xl border border-border-subtle bg-surface p-5 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="flex items-center gap-2 font-serif text-xl text-text-primary"><ShieldCheck size={18} className="text-accent" aria-hidden="true" />Audit lessons with your Verifier</h3>
+          <h3 className="flex items-center gap-2 font-sans text-lg font-semibold tracking-[-0.02em] text-text-primary"><ShieldCheck size={18} className="text-accent" aria-hidden="true" />Audit lessons with your Verifier</h3>
           <p id={helpId} className="mt-2 max-w-2xl text-xs leading-5 text-text-secondary">
             {data.destination
               ? `Before a lesson becomes ready, its full text, its statements and the exact cited passages are sent to ${data.destination} for a second check. A disputed statement waits for your review; the audit never edits the lesson.`
@@ -57,7 +57,7 @@ export function VerifierAuditSwitch({ programId }: { programId: string }) {
           {data.on ? 'On' : 'Off'}
         </button>
       </div>
-      {data.blocked && <p role="status" className="mt-3 rounded-lg border border-amber-600/30 p-3 text-xs leading-5 text-text-primary">{data.blocked}
+      {data.blocked && <p role="status" className="mt-3 rounded-lg border border-warning/30 bg-warning-muted/35 p-3 text-xs leading-5 text-text-primary">{data.blocked}
         {provider && data.on && <button type="button" onClick={() => { setWebSearch(data.webSearch); setConsentOpen(true); }} className="ml-2 font-semibold underline">Confirm again</button>}
       </p>}
       {data.on && <p className="mt-3 text-xs text-text-muted">{data.webSearch ? 'The Verifier may search the web for this course. ' : ''}You can turn this off at any time; audits already running stop at the next batch.</p>}

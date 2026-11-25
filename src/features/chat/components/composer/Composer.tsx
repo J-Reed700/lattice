@@ -94,7 +94,7 @@ export function Composer({
 
       <form onSubmit={handleAsyncEvent(composer.handleSubmit)} className="chat-column chat-beside-margin mx-auto w-full px-6 pb-5 pt-1">
         {/* One object: the page you write on, with its tools along the bottom edge. */}
-        <div className="rounded-2xl border border-border-default bg-surface shadow-sheet transition-[border-color,box-shadow] duration-base focus-within:border-accent/55 focus-within:shadow-[var(--shadow-sheet),0_0_0_3px_hsl(var(--accent)/0.14)]">
+        <div className="rounded-2xl border border-border-default bg-surface shadow-md transition-shadow duration-base focus-within:border-accent/45 focus-within:ring-2 focus-within:ring-ring/20">
           {chips}
           <FocusChips
             documents={focusDocuments}
@@ -278,7 +278,7 @@ export function Composer({
                 onClick={onCancel}
                 aria-label="Stop generating response"
                 title="Stop"
-                className="pressable inline-flex h-8 w-8 items-center justify-center rounded-full bg-[hsl(var(--text-primary))] text-[hsl(var(--bg))] transition-[scale,opacity] duration-fast hover:opacity-90"
+                className="pressable inline-flex h-8 w-8 items-center justify-center rounded-full bg-action text-action-fg shadow-action transition-[background-color,scale,opacity] duration-fast hover:bg-action-hover"
               >
                 <Square className="h-3 w-3 fill-current" />
               </button>
@@ -289,7 +289,7 @@ export function Composer({
                 aria-label="Cancel attaching files"
                 aria-busy="true"
                 title="Cancel attaching files"
-                className="pressable inline-flex h-8 w-8 items-center justify-center rounded-full bg-[hsl(var(--text-primary))] text-[hsl(var(--bg))] transition-[scale,opacity] duration-fast hover:opacity-90"
+                className="pressable inline-flex h-8 w-8 items-center justify-center rounded-full bg-action text-action-fg shadow-action transition-[background-color,scale,opacity] duration-fast hover:bg-action-hover"
               >
                 <Square className="h-3 w-3 fill-current" />
               </button>

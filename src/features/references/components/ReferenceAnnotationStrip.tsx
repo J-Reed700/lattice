@@ -79,7 +79,7 @@ export function ReferenceAnnotationStrip({
   };
 
   return (
-    <div className="mt-8 space-y-3 rounded-xl border border-border-subtle bg-surface/60 p-4">
+    <div className="mt-6 space-y-3 rounded-xl border border-border-subtle bg-surface-sunken/50 p-4">
       {/* Title row */}
       <div className="flex items-start gap-4">
         {/* A span, not a label: the control it would name only exists in edit

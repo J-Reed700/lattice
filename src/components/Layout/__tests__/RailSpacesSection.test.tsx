@@ -242,7 +242,7 @@ describe('RailSpacesSection', () => {
     const { rerender } = renderSpaces({ isOnChat: false });
     const offChatBtn = await screen.findByRole('button', { name: 'Space: Research' });
     expect(offChatBtn).toHaveAttribute('aria-pressed', 'true');
-    expect(offChatBtn).not.toHaveClass('bg-accent-muted');
+    expect(offChatBtn).not.toHaveClass('bg-surface');
 
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     rerender(
@@ -256,6 +256,6 @@ describe('RailSpacesSection', () => {
       </QueryClientProvider>,
     );
     const onChatBtn = await screen.findByRole('button', { name: 'Space: Research' });
-    expect(onChatBtn).toHaveClass('bg-accent-muted');
+    expect(onChatBtn).toHaveClass('bg-surface', 'shadow-sm', 'ring-1', 'ring-border-subtle');
   });
 });

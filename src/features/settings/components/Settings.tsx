@@ -298,7 +298,7 @@ export function Settings() {
   return (
     <div className="settings-workspace flex h-full min-w-0 bg-bg">
       {/* Sidebar */}
-      <aside className="settings-navigation flex w-[236px] shrink-0 flex-col border-r border-border-subtle bg-surface-sunken">
+      <aside className="settings-navigation flex w-[236px] shrink-0 flex-col border-r border-border-subtle bg-surface-sunken/70">
         <SidebarHeader title="Settings" />
 
         {/* Instant Settings search */}
@@ -347,7 +347,7 @@ export function Settings() {
             ) : (
               <kbd
                 aria-hidden="true"
-                className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded-sm border border-border-subtle bg-surface-sunken px-1.5 py-0.5 font-mono text-[10px] leading-none text-text-muted"
+                className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded border border-border-default bg-surface-sunken px-1.5 py-0.5 font-sans text-[10px] font-medium leading-none text-text-tertiary"
               >
                 /
               </kbd>
@@ -374,9 +374,9 @@ export function Settings() {
                     onClick={() => handleDomainClick(domain.id)}
                     aria-current={isActive ? 'page' : undefined}
                     className={cn(
-                      'group relative flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-ui transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
+                      'group relative flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-ui transition-[background-color,box-shadow,color] duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
                       isActive
-                        ? 'bg-[hsl(var(--text-primary)/0.07)] font-medium text-text-primary'
+                        ? 'bg-surface font-semibold text-text-primary shadow-sm ring-1 ring-border-subtle'
                         : 'text-text-secondary hover:bg-[hsl(var(--text-primary)/0.045)] hover:text-text-primary',
                     )}
                   >
@@ -451,7 +451,7 @@ export function Settings() {
             <section aria-label="Settings search results">
               <div className="mb-6 flex items-baseline justify-between gap-4 border-b border-border-subtle pb-4">
                 <div>
-                  <h1 className="font-display text-2xl font-normal tracking-tight text-text-primary">
+                  <h1 className="font-sans text-2xl font-semibold tracking-[-0.025em] text-text-primary">
                     Search results
                   </h1>
                   <p className="mt-1 text-sm text-text-tertiary">

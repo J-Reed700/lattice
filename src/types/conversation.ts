@@ -476,8 +476,8 @@ export const TurnStepSchema = z.object({
   durationMs: z.number().int().min(0).nullable().optional(),
   /** What it produced: "8 passages from 3 files", "not enough support: …". */
   result: z.string().nullable().optional(),
-  /** The backend caps Unicode characters, not JavaScript UTF-16 code units. */
-  reasoning: z.string().max(48_000).refine(text => [...text].length <= 24_000).nullable().optional(),
+  /** Full reasoning trace emitted for the step, when present. */
+  reasoning: z.string().nullable().optional(),
   /**
    * For a search, the pages it found; for a page read, the page. A read knows
    * its address from the start and a search only at the end, so either event

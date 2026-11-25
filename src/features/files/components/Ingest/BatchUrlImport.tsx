@@ -181,7 +181,7 @@ export const BatchUrlImport: FC<BatchUrlImportProps> = ({ onImportComplete }) =>
       {items.length > 0 && (
         <div className="mt-6">
           <div className="flex items-center justify-between pb-2">
-            <h2 className="text-base font-medium text-text-primary">
+            <h2 className="font-sans text-base font-semibold tracking-[-0.02em] text-text-primary">
               {items.length} {items.length === 1 ? 'URL' : 'URLs'}
             </h2>
             <button

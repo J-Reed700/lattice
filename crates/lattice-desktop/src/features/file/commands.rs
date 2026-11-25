@@ -151,7 +151,7 @@ pub async fn get_indexing_activities(
 ///
 /// # Security
 /// - Path validation prevents directory traversal (CWE-22)
-/// - File size limited to 10MB to prevent DoS (CWE-770)
+/// - File size bounded by `read_content::MAX_FILE_SIZE_BYTES` to prevent WebView/IPC OOM (CWE-770)
 pub async fn read_file_content_impl(
     container: &Container,
     path: String,
@@ -162,8 +162,13 @@ pub async fn read_file_content_impl(
 
     match result {
         Ok(dto) => Ok(dto.content),
-        Err(AppError::FileTooLarge { size_bytes, .. }) => Err(AppError::InvalidInput(format!(
-            "File too large to preview (max 10MB, file is {} bytes)",
+        Err(AppError::FileTooLarge {
+            size_bytes,
+            max_size_bytes,
+            ..
+        }) => Err(AppError::InvalidInput(format!(
+            "File too large to preview (max {} MiB, file is {} bytes)",
+            max_size_bytes / (1024 * 1024),
             size_bytes
         ))),
         Err(e) => Err(e),
@@ -174,7 +179,7 @@ pub async fn read_file_content_impl(
 ///
 /// # Security
 /// - Path validation prevents directory traversal (CWE-22)
-/// - File size limited to prevent DoS (CWE-770)
+/// - File size bounded by `read_bytes::MAX_FILE_SIZE_BYTES` to prevent WebView/IPC OOM (CWE-770)
 pub async fn read_file_bytes_impl(
     container: &Container,
     path: String,
@@ -185,8 +190,13 @@ pub async fn read_file_bytes_impl(
 
     match result {
         Ok(bytes) => Ok(bytes),
-        Err(AppError::FileTooLarge { size_bytes, .. }) => Err(AppError::InvalidInput(format!(
-            "File too large to preview (max 10MB, file is {} bytes)",
+        Err(AppError::FileTooLarge {
+            size_bytes,
+            max_size_bytes,
+            ..
+        }) => Err(AppError::InvalidInput(format!(
+            "File too large to preview (max {} MiB, file is {} bytes)",
+            max_size_bytes / (1024 * 1024),
             size_bytes
         ))),
         Err(e) => Err(e),

@@ -1,7 +1,7 @@
-import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ArrowRight, ChevronDown, PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ChevronDown, PanelRightClose, PanelRightOpen, SlidersHorizontal } from 'lucide-react';
 
 import { PlainError } from '@/components/PlainError';
 import { Button } from '@/components/ui/button';
@@ -22,8 +22,10 @@ import { StartingPointPanel } from '@/features/learning/curriculum/StartingPoint
 import { useLearningPlan } from '@/features/learning/curriculum/useLearningPlan';
 import { StudyHabitsBar, type FrameworkAction } from '@/features/learning/habits';
 import { LessonCard } from '@/features/learning/lessons/LessonCard';
+import { LessonPreparationControlCenter } from '@/features/learning/lessons/LessonPreparationControlCenter';
 import { LessonPreparationLine } from '@/features/learning/lessons/LessonPreparationLine';
 import { LessonPreparationStatus } from '@/features/learning/lessons/LessonPreparationProgress';
+import { buildPreparationControlModel } from '@/features/learning/lessons/preparationControlModel';
 import { coursePreparation, coursePreparationLine, paceLine, preparationPaceMinutes, preparationQueue, queuedLesson, unqueuedLessons } from '@/features/learning/lessons/preparationQueue';
 import { currentPreparationJobs, heldLessonIds } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { NotebookPanel, RecallPanel } from '@/features/learning/memory/MemoryPanels';
@@ -85,6 +87,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
     onReaderContextChange?.(`${tab}:${tab === 'tutor' ? (tutorChatId ?? '') : ''}`);
   }, [onReaderContextChange, tab, tutorChatId]);
   const [preparationExpanded, setPreparationExpanded] = useState(false);
+  const [controlCenterOpen, setControlCenterOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [goalOpen, setGoalOpen] = useState(false);
   const [moduleDetailsOpen, setModuleDetailsOpen] = useState(false);
@@ -207,6 +210,11 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   const theme = useEffectiveTheme();
   const currentModule = program.modules.find((m) => m.id === moduleId) ?? program.modules[0];
   const planJobs = preparationPlan.data?.jobs ?? [];
+  const preparationAttentionCount = useMemo(() => {
+    if (!activeProgram) return 0;
+    const { counts } = buildPreparationControlModel(program, preparationPlan.data?.jobs ?? []);
+    return counts.active + counts.paused + counts.failed + counts.needs_review;
+  }, [activeProgram, program, preparationPlan.data?.jobs]);
   const unqueuedInModule = unqueuedLessons(currentModule?.lessons ?? [], planJobs);
   const courseLine = coursePreparationLine(coursePreparation(allLessons.map(({ lesson }) => lesson), planJobs));
   const paceMinutes = preparationPaceMinutes(planJobs);
@@ -377,7 +385,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
     >
       <div className="studio-workspace pb-12">
         <div className="studio-ws-header">
-          {/* Row 1 (~44px): Back link, serif course title, inline progress pill, primary CTA & compact utilities */}
+          {/* Row 1 (~44px): Back link, crisp sans course title, inline progress pill, primary CTA & compact utilities */}
           <header className="studio-header-row-1">
             <div className="studio-header-identity">
               <button
@@ -392,13 +400,13 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
               <span aria-hidden="true" className="h-4 w-px shrink-0 bg-border-subtle" />
               {program.summary.status === 'draft' ? (
                 <>
-                  <span className="shrink-0 rounded-full bg-accent-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-accent">Draft outline</span>
+                  <span className="shrink-0 rounded-md bg-accent-muted px-2 py-0.5 text-[11px] font-semibold text-accent">Draft outline</span>
                   <h1 className="sr-only">{title || 'Untitled program'}</h1>
                   <label className="sr-only" htmlFor="program-title">Program title</label>
                   <input id="program-title" aria-label="Program title" value={title} onChange={(e) => setTitle(e.target.value)} className="studio-course-title-input" />
                 </>
               ) : (
-                <h1 className="studio-course-title" title={program.summary.title}>{program.summary.title}</h1>
+                <h1 className="studio-course-title font-sans font-semibold tracking-[-0.025em]" title={program.summary.title}>{program.summary.title}</h1>
               )}
               {showGoal && (
                 <details
@@ -572,6 +580,23 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
               />
             </div>
             <div className="studio-context-strip-right">
+              {activeProgram && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setControlCenterOpen(true)}
+                  className="gap-1.5"
+                >
+                  <SlidersHorizontal size={13} aria-hidden="true" />
+                  <span>Preparation</span>
+                  {preparationAttentionCount > 0 && (
+                    <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-accent-muted px-1 text-[10px] font-semibold tabular-nums text-accent">
+                      {preparationAttentionCount}
+                    </span>
+                  )}
+                </Button>
+              )}
               {activeProgram && onPrepareModule && currentModule && unqueuedInModule.length > 0 && (
                 <Button type="button" variant="outline" size="sm" disabled={preparePending || Boolean(waitsForIndex)} onClick={() => onPrepareModule(currentModule)}>
                   Prepare all lessons
@@ -627,8 +652,8 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
         <CourseIndexNotice programId={program.summary.id} />
         {/* The full panel belongs to Lessons; elsewhere one line keeps the tab's own content in view. */}
         {activeProgram && (tab === 'lessons'
-          ? <LessonPreparationStatus job={preparationJob} queuedMore={queuedMore} failedJobs={failedPreparationJobs} pending={preparePending} programId={program.summary.id} revision={program.summary.revision} error={prepareError?.message} expanded={preparationExpanded} onExpandedChange={setPreparationExpanded} lessonTitles={lessonTitles} onReview={openReview} />
-          : <LessonPreparationLine job={preparationJob} queuedMore={queuedMore} failedCount={failedPreparationJobs.length} pending={preparePending} programId={program.summary.id} error={prepareError?.message} onView={() => selectTab('lessons')} />)}
+          ? <LessonPreparationStatus job={preparationJob} queuedMore={queuedMore} failedJobs={failedPreparationJobs} pending={preparePending} programId={program.summary.id} revision={program.summary.revision} error={prepareError?.message} expanded={preparationExpanded} onExpandedChange={setPreparationExpanded} lessonTitles={lessonTitles} onReview={openReview} onManageQueue={() => setControlCenterOpen(true)} />
+          : <LessonPreparationLine job={preparationJob} queuedMore={queuedMore} failedCount={failedPreparationJobs.length} pending={preparePending} programId={program.summary.id} error={prepareError?.message} onView={() => selectTab('lessons')} onManageQueue={() => setControlCenterOpen(true)} />)}
         {activeProgram && preparationPlan.isError && preparePending && <p role="alert" className="my-3 text-sm text-danger-fg">Progress could not be loaded. <button type="button" className="underline" onClick={() => void preparationPlan.refetch()}>Retry progress</button></p>}
         {tab === 'lessons' && <div className="studio-lessons">{activeProgram && hasUnpreparedLessons && <CoursePlanStatus programId={program.summary.id} />}{!currentModule?.lessons.length ? <p className="rounded-lg bg-surface p-6 text-sm text-text-muted">This module has no lessons in its outline.</p> : currentModule.lessons.map((lesson, index) => <LessonCard key={lesson.id} lesson={lesson} number={`${program.modules.indexOf(currentModule) + 1}.${index + 1}`} moduleId={currentModule.id} outlineEvidence={visibleOutlineEvidence} program={program} selected={lesson.id === lessonId} isCurrent={lesson.id === program.summary.currentLessonId || (lesson.id === resume?.lesson.id && !program.summary.currentLessonId)} pending={completePending || (lesson.preparation === 'outline' && preparePending)} onPrepare={() => onPrepare(lesson)} onComplete={() => onComplete(lesson)} onSelect={() => afterNotebookSave(() => setLessonId(lesson.id))} onPractice={() => void afterNotebookSave(() => { setLessonId(lesson.id); setTab('workbench'); practiceView.openHome(); })} onReview={openReview} contextVisible={contextVisible} onSources={() => selectTab('sources')} topics={activeProgram ? <LessonTopics entry={topicsOf(lesson.id)} /> : undefined}
           notebook={activeProgram && lesson.id === lessonId ? <NotebookPanel compact enabled program={program} lessonId={lesson.id} memory={memoryQuery.data} memoryLoading={memoryQuery.isLoading} memoryError={memoryQuery.error?.message} onRetryMemory={() => void memoryQuery.refetch()} drafts={notebookDrafts} setDraft={(key, draft) => setNotebookDrafts((current) => ({ ...current, [key]: draft }))} onOpenNotebook={() => selectTab('notebook')} /> : undefined}
@@ -735,6 +760,19 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
       <section className="rounded-xl border border-border-subtle bg-bg p-4"><h3 className="text-sm font-medium text-text-primary">Course authorship</h3><p className="mt-2 text-sm leading-5 text-text-secondary">Generated with {program.modelName || 'the selected model'}{program.sources.length ? ' using your chosen sources' : ' from general knowledge'}. {!program.sources.length ? 'Topic-based course — add references in Sources to ground future lessons. ' : ''}The outline is saved before review. Corrections are rechecked and unresolved findings remain available for repair. Lesson material receives its own review and source checks. Lesson answer keys are model-authored and shown after submission.</p></section></div></details>
     </div>
   </div>
+  {activeProgram && (
+    <LessonPreparationControlCenter
+      open={controlCenterOpen}
+      onOpenChange={setControlCenterOpen}
+      program={program}
+      planJobs={planJobs}
+      programRevision={Math.max(program.summary.revision, preparationPlan.data?.programRevision ?? program.summary.revision)}
+      waitsForIndex={waitsForIndex}
+      paceMinutes={paceMinutes}
+      onOpenLesson={openLesson}
+      onReview={openReview}
+    />
+  )}
   </ProgramTangents>
   );
 }

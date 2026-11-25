@@ -183,7 +183,38 @@ async fn the_find_ask_with_reports_is_told_how_to_rule_on_them() -> Result<()> {
     assert!(
         drafting
             .iter()
-            .any(|said| said.contains(&format!("{FIND_BRIEF}{REPORTED_FIND_BRIEF}"))),
+            .any(|said| said.contains(REPORTED_FIND_BRIEF) && !said.contains(FIND_BRIEF)),
+        "{drafting:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn rule_on_reports_skips_ask_planned_and_whole_lesson_audit_while_preserving_reports_and_outside(
+) -> Result<()> {
+    let (first, second) = two();
+    let model = Asked::new(vec![true, false]);
+    let authoring = json!({
+        "courseSequence": {
+            "coursePlan": [
+                {"title": "Heating", "position": "this", "ideas": ["Heat rises"], "terms": [], "actions": [], "contrast": ""}
+            ]
+        }
+    });
+    let candidate = json!({
+        "blocks": [{"kind": "explanation", "title": "Heating", "body": "The kettle is full."}],
+        "questions": []
+    });
+    let ruled = rule_on_reports(&model, &authoring, &candidate, &[], &[&first, &second]).await?;
+    assert!(model.of(Ask::Planned).is_empty());
+    assert_eq!(model.of(Ask::Find).len(), 1);
+    assert_eq!(model.of(Ask::Reports).len(), 1);
+    assert_eq!(ruled.outside, [1]);
+    let drafting = model.drafting.lock().unwrap();
+    assert!(
+        drafting
+            .iter()
+            .any(|said| said.contains(REPORTED_FIND_BRIEF) && !said.contains(FIND_BRIEF)),
         "{drafting:?}"
     );
     Ok(())

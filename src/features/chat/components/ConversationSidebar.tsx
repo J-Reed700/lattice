@@ -156,7 +156,7 @@ export function ConversationSidebar({ onCollapse }: ConversationSidebarProps = {
   return (
     <div
       ref={sidebarRef}
-      className={`relative flex h-full w-[280px] max-w-full shrink-0 flex-col overflow-hidden border-r border-border-subtle bg-bg ${isSpacesOpen ? SPACES_MODAL_LAYER_CLASSES.root : ''
+      className={`relative flex h-full w-[280px] max-w-full shrink-0 flex-col overflow-hidden border-r border-border-subtle bg-surface-sunken/70 ${isSpacesOpen ? SPACES_MODAL_LAYER_CLASSES.root : ''
         }`}
     >
       <SidebarHeader
@@ -245,7 +245,7 @@ export function ConversationSidebar({ onCollapse }: ConversationSidebarProps = {
                   }}
                   className={`flex h-full min-w-0 flex-1 items-center justify-center whitespace-nowrap rounded-md px-2 text-xs font-medium transition-[background-color,color,box-shadow] duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring ${
                     isActive
-                      ? 'bg-surface-overlay text-text-primary shadow-control'
+                      ? 'bg-surface text-text-primary shadow-sm ring-1 ring-border-subtle dark:bg-surface-overlay'
                       : 'text-text-tertiary hover:text-text-primary'
                   }`}
                 >
@@ -264,8 +264,8 @@ export function ConversationSidebar({ onCollapse }: ConversationSidebarProps = {
                 title="Archived & Referenced"
                 className={`inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-lg border px-2 text-xs font-medium transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring ${
                   activeOverflowOption
-                    ? 'border-accent/35 bg-accent-muted text-accent'
-                    : 'border-transparent bg-[hsl(var(--text-primary)/0.06)] text-text-tertiary hover:text-text-primary'
+                    ? 'border-accent/35 bg-accent-muted text-accent shadow-xs'
+                    : 'border-border-subtle/70 bg-surface/60 text-text-tertiary hover:bg-surface hover:text-text-primary'
                 }`}
               >
                 {activeOverflowOption ? (
@@ -293,7 +293,7 @@ export function ConversationSidebar({ onCollapse }: ConversationSidebarProps = {
                         setIsFilterOverflowOpen(false);
                         void handleFilterSelect(option.id);
                       }}
-                      className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-ui transition-colors duration-fast hover:bg-surface ${
+                      className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-ui transition-colors duration-fast hover:bg-surface-sunken ${
                         isActive ? 'font-medium text-text-primary' : 'text-text-secondary'
                       }`}
                     >

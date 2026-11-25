@@ -1,4 +1,4 @@
-import { ArrowRight, BookOpenCheck, Clock } from 'lucide-react';
+import { ArrowRight, BookOpenCheck } from 'lucide-react';
 
 import type { DashboardCourseSummary } from '@/features/dashboard/hooks/useDashboardQuery';
 import { cn } from '@/lib/utils';
@@ -27,7 +27,7 @@ function courseStatusInfo(course: DashboardCourseSummary): {
       label: 'Draft',
       cta: 'Review outline',
       shortCta: 'Outline',
-      pillClass: 'bg-surface-raised text-text-tertiary',
+      pillClass: 'bg-surface-sunken text-text-secondary ring-1 ring-inset ring-border-subtle',
     };
   }
   if (course.lessonCount > 0 && course.completedLessons >= course.lessonCount) {
@@ -54,6 +54,9 @@ function courseStatusInfo(course: DashboardCourseSummary): {
   };
 }
 
+const RING_RADIUS = 19;
+const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+
 export interface ContinueLearningSectionProps {
   courses: readonly DashboardCourseSummary[];
   onNavigate: (path: string) => void;
@@ -65,12 +68,12 @@ export function ContinueLearningSection({ courses, onNavigate }: ContinueLearnin
 
   return (
     <section>
-      <div className="mb-2 flex items-baseline justify-between px-1">
-        <h2 className="text-ui font-medium text-text-tertiary">Continue learning</h2>
+      <div className="mb-2.5 flex items-baseline justify-between px-0.5">
+        <h2 className="text-ui font-medium tracking-[-0.01em] text-text-secondary">Continue learning</h2>
         <button
           type="button"
           onClick={() => onNavigate('/studio')}
-          className="text-xs text-text-muted transition-colors duration-fast hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+          className="text-xs font-medium text-text-muted transition-colors duration-fast hover:text-accent focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
         >
           Open studio
         </button>
@@ -80,20 +83,20 @@ export function ContinueLearningSection({ courses, onNavigate }: ContinueLearnin
         <button
           type="button"
           onClick={() => onNavigate('/studio?new=1')}
-          className="pressable group flex w-full items-center gap-3.5 rounded-xl border border-border-subtle bg-surface/60 px-4 py-3.5 text-left transition-[background-color,border-color,scale] duration-fast hover:border-border-default hover:bg-surface focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+          className="pressable group flex w-full items-center gap-3.5 rounded-xl border border-border-subtle bg-surface px-4 py-3.5 text-left shadow-sm transition-[transform,border-color,box-shadow,scale] duration-base hover:-translate-y-px hover:border-border-default hover:shadow-md focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-muted text-accent">
-            <BookOpenCheck className="h-[17px] w-[17px]" strokeWidth={1.6} />
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-muted text-accent ring-1 ring-inset ring-accent/12">
+            <BookOpenCheck className="h-[17px] w-[17px]" strokeWidth={1.65} />
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block text-ui font-medium text-text-primary">
+            <span className="block font-sans text-ui font-semibold tracking-[-0.015em] text-text-primary">
               Start a course in Studio
             </span>
             <span className="mt-0.5 block truncate text-xs text-text-muted">
               Turn your documents and notes into structured lessons, practice, and recall.
             </span>
           </span>
-          <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-accent">
+          <span className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-accent">
             New course
             <ArrowRight className="h-3.5 w-3.5 transition-transform duration-fast group-hover:translate-x-0.5" strokeWidth={1.75} />
           </span>
@@ -105,82 +108,117 @@ export function ContinueLearningSection({ courses, onNavigate }: ContinueLearnin
             const hasLessons = primary.lessonCount > 0;
             const pct = coursePercent(primary);
             const status = courseStatusInfo(primary);
+            const dashOffset = RING_CIRCUMFERENCE * (1 - pct / 100);
             return (
               <button
                 type="button"
                 onClick={() => onNavigate(buildCourseResumePath(primary))}
-                className="pressable group block w-full rounded-xl border border-border-subtle bg-surface p-4 text-left shadow-xs transition-[border-color,box-shadow,scale] duration-base hover:border-border-default hover:shadow-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+                className="pressable group block w-full rounded-xl border border-border-subtle bg-surface p-5 text-left shadow-sm transition-[transform,border-color,box-shadow,scale] duration-base hover:-translate-y-px hover:border-border-default hover:shadow-md focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <div className="flex items-center justify-between gap-3">
-                  <span
-                    className={cn(
-                      'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium',
-                      status.pillClass,
-                    )}
-                  >
-                    {status.label}
-                  </span>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <span
+                        className={cn(
+                          'inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-semibold tracking-[-0.01em]',
+                          status.pillClass,
+                        )}
+                      >
+                        {status.label}
+                      </span>
+                      {hasLessons ? (
+                        <span className="text-xs tabular-nums text-text-muted">
+                          {primary.completedLessons} of {primary.lessonCount}{' '}
+                          {primary.lessonCount === 1 ? 'lesson' : 'lessons'} · {pct}%
+                        </span>
+                      ) : null}
+                    </div>
+
+                    <h3 className="mt-2.5 truncate font-sans text-[19px] font-semibold leading-snug tracking-[-0.025em] text-text-primary">
+                      {primary.title}
+                    </h3>
+
+                    {primary.currentLessonTitle ? (
+                      <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs">
+                        {primary.currentModuleTitle ? (
+                          <span className="min-w-0 max-w-full truncate text-text-muted">
+                            {primary.currentModuleTitle}
+                          </span>
+                        ) : null}
+                        {primary.currentModuleTitle ? (
+                          <span aria-hidden="true" className="shrink-0 text-text-disabled">·</span>
+                        ) : null}
+                        <span className="min-w-0 max-w-full truncate font-semibold text-text-primary">
+                          {primary.currentLessonTitle}
+                        </span>
+                      </div>
+                    ) : primary.goal ? (
+                      <p className="mt-1 line-clamp-1 text-xs text-text-muted">{primary.goal}</p>
+                    ) : null}
+                  </div>
+
                   {hasLessons ? (
-                    <span className="text-xs tabular-nums text-text-muted">
-                      {primary.completedLessons} of {primary.lessonCount}{' '}
-                      {primary.lessonCount === 1 ? 'lesson' : 'lessons'} · {pct}%
-                    </span>
+                    <div
+                      role="progressbar"
+                      aria-label={`${primary.title} progress`}
+                      aria-valuenow={pct}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      className="relative flex h-[46px] w-[46px] shrink-0 items-center justify-center"
+                    >
+                      <svg
+                        viewBox="0 0 46 46"
+                        className="h-[46px] w-[46px] -rotate-90"
+                        aria-hidden="true"
+                      >
+                        <circle
+                          cx="23"
+                          cy="23"
+                          r={RING_RADIUS}
+                          fill="none"
+                          strokeWidth="3.5"
+                          className="stroke-[hsl(var(--text-primary)/0.09)]"
+                        />
+                        <circle
+                          cx="23"
+                          cy="23"
+                          r={RING_RADIUS}
+                          fill="none"
+                          strokeWidth="3.5"
+                          strokeLinecap="round"
+                          strokeDasharray={RING_CIRCUMFERENCE}
+                          strokeDashoffset={dashOffset}
+                          className="stroke-accent transition-[stroke-dashoffset] duration-slow ease-out"
+                        />
+                      </svg>
+                      <span
+                        aria-hidden="true"
+                        className="absolute font-sans text-[11px] font-semibold tabular-nums tracking-[-0.02em] text-text-primary"
+                      >
+                        {pct}%
+                      </span>
+                    </div>
                   ) : null}
                 </div>
 
-                <h3 className="mt-2.5 truncate font-serif text-[19px] font-medium leading-snug tracking-[-0.015em] text-text-primary">
-                  {primary.title}
-                </h3>
-
-                {primary.currentLessonTitle ? (
-                  <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs">
-                    {primary.currentModuleTitle ? (
-                      <span className="min-w-0 max-w-full truncate text-text-muted">
-                        {primary.currentModuleTitle}
-                      </span>
-                    ) : null}
-                    {primary.currentModuleTitle ? (
-                      <span aria-hidden="true" className="shrink-0 text-text-disabled">·</span>
-                    ) : null}
-                    <span className="min-w-0 max-w-full truncate font-medium text-text-secondary">
-                      {primary.currentLessonTitle}
+                <div className="mt-4 flex items-center justify-between gap-3 border-t border-border-subtle pt-3.5 text-xs">
+                  <span className="inline-flex items-center gap-1.5 tabular-nums text-text-muted">
+                    <span>
+                      {primary.moduleCount} {primary.moduleCount === 1 ? 'module' : 'modules'}
                     </span>
                     {primary.currentLessonMinutes ? (
-                      <span className="inline-flex shrink-0 items-center gap-1 tabular-nums text-text-muted">
-                        <Clock className="h-3 w-3" strokeWidth={1.6} />
-                        {primary.currentLessonMinutes}m
-                      </span>
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <span>~{primary.currentLessonMinutes}m remaining</span>
+                      </>
                     ) : null}
-                  </div>
-                ) : primary.goal ? (
-                  <p className="mt-1 line-clamp-1 text-xs text-text-muted">{primary.goal}</p>
-                ) : null}
-
-                {hasLessons ? (
-                  <div
-                    role="progressbar"
-                    aria-label={`${primary.title} progress`}
-                    aria-valuenow={pct}
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    className="mt-3.5 h-1.5 w-full overflow-hidden rounded-full bg-[hsl(var(--text-primary)/0.075)]"
-                  >
-                    <div
-                      className="h-full rounded-full bg-accent transition-[width] duration-base"
-                      style={{ width: `${Math.max(pct, primary.completedLessons > 0 ? 4 : 0)}%` }}
-                    />
-                  </div>
-                ) : null}
-
-                <div className="mt-3 flex items-center justify-between gap-2 text-xs">
-                  <span className="tabular-nums text-text-muted">
-                    {primary.moduleCount} {primary.moduleCount === 1 ? 'module' : 'modules'}
                   </span>
-                  <span className="inline-flex items-center gap-1 font-medium text-accent">
+                  <span className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-action px-3.5 text-xs font-semibold text-action-fg shadow-action transition-colors duration-fast group-hover:bg-action-hover">
                     {status.cta}
                     <ArrowRight
                       className="h-3.5 w-3.5 transition-transform duration-fast group-hover:translate-x-0.5"
-                      strokeWidth={1.75}
+                      strokeWidth={2}
+                      aria-hidden="true"
                     />
                   </span>
                 </div>
@@ -200,11 +238,11 @@ export function ContinueLearningSection({ courses, onNavigate }: ContinueLearnin
                     key={course.id}
                     type="button"
                     onClick={() => onNavigate(buildCourseResumePath(course))}
-                    className="pressable group flex flex-col justify-between rounded-xl border border-border-subtle bg-surface/65 p-3.5 text-left transition-[background-color,border-color,scale] duration-fast hover:border-border-default hover:bg-surface focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+                    className="pressable group flex flex-col justify-between rounded-xl border border-border-subtle bg-surface p-4 text-left shadow-sm transition-[transform,border-color,box-shadow,scale] duration-base hover:-translate-y-px hover:border-border-default hover:shadow-md focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     <div>
                       <div className="flex items-center justify-between gap-2">
-                        <span className="truncate text-ui font-medium text-text-primary">
+                        <span className="truncate font-sans text-ui font-semibold tracking-[-0.02em] text-text-primary">
                           {course.title}
                         </span>
                         {hasLessons ? (
@@ -232,7 +270,7 @@ export function ContinueLearningSection({ courses, onNavigate }: ContinueLearnin
                           aria-valuenow={pct}
                           aria-valuemin={0}
                           aria-valuemax={100}
-                          className="h-1 flex-1 overflow-hidden rounded-full bg-[hsl(var(--text-primary)/0.075)]"
+                          className="h-1.5 flex-1 overflow-hidden rounded-full bg-[hsl(var(--text-primary)/0.08)]"
                         >
                           <div
                             className="h-full rounded-full bg-accent"
@@ -246,7 +284,7 @@ export function ContinueLearningSection({ courses, onNavigate }: ContinueLearnin
                             : 'Outline draft'}
                         </span>
                       )}
-                      <span className="shrink-0 text-[11px] font-medium text-accent opacity-80 transition-opacity duration-fast group-hover:opacity-100">
+                      <span className="shrink-0 text-[11px] font-semibold text-accent opacity-85 transition-opacity duration-fast group-hover:opacity-100">
                         {status.shortCta} →
                       </span>
                     </div>

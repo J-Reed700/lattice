@@ -14,25 +14,10 @@ use zip::ZipArchive;
 /// Extract content from DOCX files.
 pub async fn extract_docx(
     path: &Path,
-    max_file_size: u64,
+    max_file_size: Option<u64>,
     workers: &ExtractionWorkers,
 ) -> Result<ExtractedContent> {
-    let metadata = tokio::fs::metadata(path)
-        .await
-        .map_err(|e| IndexingError::Io {
-            message: e.to_string(),
-            kind: format!("{:?}", e.kind()),
-        })?;
-
-    let file_size = metadata.len();
-
-    if file_size > max_file_size {
-        return Err(IndexingError::FileTooLarge {
-            path: path.display().to_string(),
-            size_bytes: file_size,
-            max_size_bytes: max_file_size,
-        });
-    }
+    super::check_file_size(path, max_file_size).await?;
 
     let path_clone = path.to_path_buf();
 
@@ -147,7 +132,7 @@ mod tests {
         zip.write_all(DOCUMENT_XML.as_bytes()).unwrap();
         zip.finish().unwrap();
 
-        let content = extract_docx(&path, 1 << 20, &ExtractionWorkers::new())
+        let content = extract_docx(&path, None, &ExtractionWorkers::new())
             .await
             .unwrap();
         assert!(content.text.starts_with("Cover Letter\n"));

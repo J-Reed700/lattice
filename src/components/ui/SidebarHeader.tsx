@@ -92,7 +92,7 @@ export function SidebarTabs<T extends string>({ value, onChange, options, classN
             }}
             className={cn(
               'font-medium transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
-              variant === 'segmented' ? cn('rounded-md px-3 py-1.5', isActive ? 'bg-surface text-accent shadow-sm' : 'text-text-tertiary hover:text-text-primary') : cn('-mb-px border-b-[1.5px] pb-1.5', isActive
+              variant === 'segmented' ? cn('rounded-md px-3 py-1.5', isActive ? 'bg-surface text-text-primary shadow-sm ring-1 ring-border-subtle' : 'text-text-tertiary hover:text-text-primary') : cn('-mb-px border-b-[1.5px] pb-1.5', isActive
                 ? 'border-accent text-text-primary'
                 : 'border-transparent text-text-tertiary hover:text-text-primary'),
             )}

@@ -127,7 +127,7 @@ const DialogTitle = React.forwardRef<
     asChild={asChild}
     // With `asChild` the element passed in is the title, styled as it is.
     className={asChild ? className : cn(
-      "font-serif text-xl font-medium leading-snug tracking-[-0.015em] text-[hsl(var(--text-primary))]",
+      "font-sans text-lg font-semibold leading-snug tracking-[-0.02em] text-text-primary",
       className
     )}
     {...props}

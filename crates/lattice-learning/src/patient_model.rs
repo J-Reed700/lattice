@@ -166,6 +166,9 @@ impl LLMPort for PatientModel<'_> {
     fn thinks_before_answering(&self) -> bool {
         self.inner.thinks_before_answering()
     }
+    fn supports_native_thinking(&self) -> bool {
+        self.inner.supports_native_thinking()
+    }
     fn pace(&self) -> Option<lattice_core::application::ports::llm_port::Pace> {
         self.inner.pace()
     }

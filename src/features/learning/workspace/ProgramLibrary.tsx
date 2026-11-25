@@ -36,7 +36,7 @@ function OutlineGenerationBanner({ generation }: { generation: OutlineGeneration
   const stageInfo = describeOutlineStage(stage);
   const stopping = Boolean(generation.cancelling && stage !== 'saving' && stage !== 'completed');
 
-  return <section role="region" aria-label="Course generation in progress" className="mb-5 rounded-xl border border-accent/30 bg-accent-muted/40 p-4 sm:p-5">
+  return <section role="region" aria-label="Course generation in progress" className="mb-5 rounded-xl border border-border-default bg-surface p-4 shadow-sm sm:p-5">
     <div className="flex flex-col items-start justify-between gap-3 sm:flex-row">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 text-sm font-semibold text-text-primary" role="status">
@@ -81,11 +81,59 @@ function OutlineGenerationBanner({ generation }: { generation: OutlineGeneration
   </section>;
 }
 
+const PROGRESS_RING_SIZE = 44;
+const PROGRESS_RING_STROKE = 3.25;
+const PROGRESS_RING_RADIUS = (PROGRESS_RING_SIZE - PROGRESS_RING_STROKE) / 2;
+const PROGRESS_RING_CIRCUMFERENCE = 2 * Math.PI * PROGRESS_RING_RADIUS;
+
+function CourseProgressRing({ percent, active }: { percent: number; active: boolean }) {
+  const clamped = active ? Math.max(0, Math.min(100, percent)) : 0;
+  const dashOffset = PROGRESS_RING_CIRCUMFERENCE * (1 - clamped / 100);
+  const center = PROGRESS_RING_SIZE / 2;
+
+  return (
+    <span aria-hidden="true" className="relative inline-grid h-11 w-11 shrink-0 place-items-center">
+      <svg
+        width={PROGRESS_RING_SIZE}
+        height={PROGRESS_RING_SIZE}
+        viewBox={`0 0 ${PROGRESS_RING_SIZE} ${PROGRESS_RING_SIZE}`}
+        className="-rotate-90"
+      >
+        <circle
+          cx={center}
+          cy={center}
+          r={PROGRESS_RING_RADIUS}
+          fill="none"
+          strokeWidth={PROGRESS_RING_STROKE}
+          className="stroke-border-default"
+        />
+        {clamped > 0 && (
+          <circle
+            cx={center}
+            cy={center}
+            r={PROGRESS_RING_RADIUS}
+            fill="none"
+            strokeWidth={PROGRESS_RING_STROKE}
+            strokeLinecap="round"
+            strokeDasharray={PROGRESS_RING_CIRCUMFERENCE}
+            strokeDashoffset={dashOffset}
+            className="stroke-accent transition-[stroke-dashoffset] duration-300 ease-out motion-reduce:transition-none"
+          />
+        )}
+      </svg>
+      <span className="absolute font-sans text-[11px] font-semibold tabular-nums leading-none text-text-primary">
+        {active ? `${clamped}%` : '0%'}
+      </span>
+    </span>
+  );
+}
+
 function Progress({ program }: { program: LearningProgramSummaryDto }) {
-  const percent = program.lessonCount ? Math.min(100, Math.round(program.completedLessons / program.lessonCount * 100)) : 0;
+  const active = program.status === 'active';
+  const percent = program.lessonCount ? Math.min(100, Math.round((program.completedLessons / program.lessonCount) * 100)) : 0;
   return <div className="studio-program-progress">
-    <span>{program.status === 'active' ? `${program.completedLessons} / ${program.lessonCount} complete` : 'Draft outline'}</span>
-    <div className="studio-progress-track" aria-hidden="true"><span style={{ width: `${program.status === 'active' ? percent : 0}%` }} /></div>
+    <span className="studio-program-progress-label">{active ? `${program.completedLessons} / ${program.lessonCount} complete` : 'Draft outline'}</span>
+    {program.lessonCount > 0 && <CourseProgressRing percent={percent} active={active} />}
   </div>;
 }
 
@@ -109,7 +157,7 @@ function PortabilityBanner({ onOpen, onImport, onExport }: {
 
   return <div className="mb-5 space-y-3">
     {showExport && (
-      <section role="region" aria-label="Course export status" className="rounded-xl border border-accent/30 bg-accent-muted/40 p-4">
+      <section role="region" aria-label="Course export status" className="rounded-xl border border-border-default bg-surface p-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0 flex-1">
             {exportAll.pending ? (
@@ -143,7 +191,7 @@ function PortabilityBanner({ onOpen, onImport, onExport }: {
       </section>
     )}
     {showImport && (
-      <section role="region" aria-label="Course import status" className="rounded-xl border border-accent/30 bg-accent-muted/40 p-4">
+      <section role="region" aria-label="Course import status" className="rounded-xl border border-border-default bg-surface p-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0 flex-1">
             {importFlow.pendingAction === 'apply' ? (
@@ -251,11 +299,11 @@ export function ProgramLibrary({ programs, loading, error, onRetry, onOpen, onBu
             const isFeatured = program.id === continuing?.id;
             const created = new Date(program.createdAt);
             const createdLabel = Number.isNaN(created.getTime()) ? 'date unavailable' : created.toLocaleDateString();
-            return <button type="button" key={program.id} onClick={() => onOpen(program.id)} className={`studio-program-row ${isFeatured ? 'studio-program-row--featured' : ''}`}>
+            return <button type="button" key={program.id} onClick={() => onOpen(program.id)} className={`studio-program-row border border-border-subtle bg-surface shadow-sm ${isFeatured ? 'studio-program-row--featured' : ''}`}>
               <span className="studio-program-cover" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
               <span className="studio-program-copy">
                 {isFeatured && <span className="studio-program-badge">Continue studying</span>}
-                <span className="studio-program-title">{program.title}</span>
+                <span className="studio-program-title font-sans font-semibold tracking-[-0.025em]">{program.title}</span>
                 <span className="studio-program-description">{program.goal}</span>
                 <span className="studio-program-meta">{program.moduleCount} {program.moduleCount === 1 ? 'module' : 'modules'} · {program.lessonCount} {program.lessonCount === 1 ? 'lesson' : 'lessons'} · {program.status === 'active' ? 'Active' : 'Review outline'}<span className="studio-program-created"> · created {createdLabel}</span></span>
               </span>

@@ -40,8 +40,28 @@ use std::sync::Arc;
 use tokio::io::AsyncRead;
 use tokio::sync::Semaphore;
 
-/// Default maximum file size: 50 MB
-const DEFAULT_MAX_FILE_SIZE_BYTES: u64 = 50 * 1024 * 1024;
+/// Validate file readability and enforce an optional caller-configured size limit.
+pub(super) async fn check_file_size(path: &Path, max_file_size: Option<u64>) -> Result<()> {
+    let metadata = tokio::fs::metadata(path)
+        .await
+        .map_err(|e| IndexingError::Io {
+            message: e.to_string(),
+            kind: format!("{:?}", e.kind()),
+        })?;
+
+    if let Some(limit) = max_file_size {
+        let file_size = metadata.len();
+        if file_size > limit {
+            return Err(IndexingError::FileTooLarge {
+                path: path.display().to_string(),
+                size_bytes: file_size,
+                max_size_bytes: limit,
+            });
+        }
+    }
+
+    Ok(())
+}
 
 /// Admission for the blocking parsers that can hold a whole document in
 /// memory: PDFs and office archives each run at most two at a time.
@@ -72,12 +92,14 @@ impl Default for ExtractionWorkers {
     }
 }
 
-/// Main content extractor with configurable size limits.
+/// Main content extractor with optional caller-configured size limits.
 ///
 /// The extractor automatically detects file types and routes to the
-/// appropriate extraction module.
+/// appropriate extraction module. By default (`ContentExtractor::new()`), local
+/// user documents have no arbitrary file-size ceiling; callers that render into
+/// bounded UI/IPC surfaces can opt into a ceiling with [`Self::with_max_size`].
 pub struct ContentExtractor {
-    max_file_size: u64,
+    max_file_size: Option<u64>,
     /// Consulted for scanned PDF pages. `None` leaves those pages in
     /// `ExtractedContent::needs_ocr` and indexes the rest of the document.
     ocr: Option<Arc<dyn OcrPort>>,
@@ -86,15 +108,19 @@ pub struct ContentExtractor {
 }
 
 impl ContentExtractor {
-    /// Create a new extractor with default settings.
+    /// Create a new extractor with no arbitrary file-size cap on local files.
     pub fn new() -> Self {
-        Self::with_max_size(DEFAULT_MAX_FILE_SIZE_BYTES)
+        Self {
+            max_file_size: None,
+            ocr: None,
+            workers: ExtractionWorkers::new(),
+        }
     }
 
     /// Create an extractor with a custom maximum file size.
     pub fn with_max_size(max_file_size: u64) -> Self {
         Self {
-            max_file_size,
+            max_file_size: Some(max_file_size),
             ocr: None,
             workers: ExtractionWorkers::new(),
         }
@@ -302,5 +328,27 @@ mod tests {
             ),
             "{error:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn default_extractor_has_no_fifty_mib_file_size_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("large.txt");
+        let file = std::fs::File::create(&path).unwrap();
+        file.set_len(60 * 1024 * 1024).unwrap();
+
+        assert!(
+            check_file_size(&path, ContentExtractor::new().max_file_size)
+                .await
+                .is_ok()
+        );
+        assert!(matches!(
+            check_file_size(
+                &path,
+                ContentExtractor::with_max_size(50 * 1024 * 1024).max_file_size
+            )
+            .await,
+            Err(IndexingError::FileTooLarge { .. })
+        ));
     }
 }

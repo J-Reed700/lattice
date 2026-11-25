@@ -205,7 +205,7 @@ export function EntryList({
   const counts = `${pages.length} ${pages.length === 1 ? 'page' : 'pages'}`;
 
   return (
-    <aside className="flex h-full w-[264px] shrink-0 flex-col border-r border-border-subtle bg-bg 2xl:w-[288px]">
+    <aside className="flex h-full w-[264px] shrink-0 flex-col border-r border-border-subtle bg-surface-sunken/70 2xl:w-[288px]">
       {/* The notebook: its name and the way to another one. */}
       <div className="shrink-0 px-2.5 pb-2 pt-2.5">
         <JournalPickerMenu

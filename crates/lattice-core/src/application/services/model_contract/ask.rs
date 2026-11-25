@@ -850,18 +850,41 @@ async fn alone<C: Answered, P>(
     let asked = request.clone();
     let mut sent = match transport.send(llm, request).await {
         Ok(sent) => sent,
-        Err(error)
-            if C::ALONE == Alone::Pending && ErrorClass::of(&error) == ErrorClass::DoesNotFit =>
-        {
-            trace::<C>(handle, reason(&Why::NoRoom));
-            return Ok(Settled::Unanswered(Why::NoRoom));
+        Err(error) => {
+            if matches!(
+                ErrorClass::of(&error),
+                ErrorClass::Unusable | ErrorClass::DoesNotFit
+            ) {
+                transport.unanswered(llm, &asked).await?;
+            }
+            if C::ALONE == Alone::Pending && ErrorClass::of(&error) == ErrorClass::DoesNotFit {
+                trace::<C>(handle, reason(&Why::NoRoom));
+                return Ok(Settled::Unanswered(Why::NoRoom));
+            }
+            return Err(error);
         }
-        Err(error) => return Err(error),
     };
     let mut settled = settle::<C, P>(&sent, handle, &read, &accept);
     if matches!(settled, Settled::Unanswered(Why::CutOff)) {
         if let Some(larger) = larger_if_room(llm, &sent).await {
-            sent = transport.follow(llm, larger).await?;
+            sent = match transport.follow(llm, larger).await {
+                Ok(sent) => sent,
+                Err(error) => {
+                    if matches!(
+                        ErrorClass::of(&error),
+                        ErrorClass::Unusable | ErrorClass::DoesNotFit
+                    ) {
+                        transport.unanswered(llm, &asked).await?;
+                    }
+                    if C::ALONE == Alone::Pending
+                        && ErrorClass::of(&error) == ErrorClass::DoesNotFit
+                    {
+                        trace::<C>(handle, reason(&Why::NoRoom));
+                        return Ok(Settled::Unanswered(Why::NoRoom));
+                    }
+                    return Err(error);
+                }
+            };
             settled = settle::<C, P>(&sent, handle, &read, &accept);
         }
     }
@@ -872,7 +895,24 @@ async fn alone<C: Answered, P>(
         };
         if let Some(due) = due {
             if let Some(again) = correction_for(llm, &sent, &due).await {
-                let reply = transport.follow(llm, again).await?;
+                let reply = match transport.follow(llm, again).await {
+                    Ok(reply) => reply,
+                    Err(error) => {
+                        if matches!(
+                            ErrorClass::of(&error),
+                            ErrorClass::Unusable | ErrorClass::DoesNotFit
+                        ) {
+                            transport.unanswered(llm, &asked).await?;
+                        }
+                        if C::ALONE == Alone::Pending
+                            && ErrorClass::of(&error) == ErrorClass::DoesNotFit
+                        {
+                            trace::<C>(handle, reason(&Why::NoRoom));
+                            return Ok(Settled::Unanswered(Why::NoRoom));
+                        }
+                        return Err(error);
+                    }
+                };
                 settled = settle::<C, P>(&reply, handle, &read, &accept);
             }
         }

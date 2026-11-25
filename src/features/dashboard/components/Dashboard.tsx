@@ -87,13 +87,13 @@ const TYPE_BAR_OPACITY = [0.9, 0.62, 0.42, 0.28, 0.18];
 
 function SectionTitle({ children, action }: { children: string; action?: { label: string; run: () => void } }) {
   return (
-    <div className="mb-2 flex items-baseline justify-between px-1">
-      <h2 className="text-ui font-medium text-text-tertiary">{children}</h2>
+    <div className="mb-2.5 flex items-baseline justify-between px-0.5">
+      <h2 className="text-ui font-medium tracking-[-0.01em] text-text-secondary">{children}</h2>
       {action ? (
         <button
           type="button"
           onClick={action.run}
-          className="text-xs text-text-muted transition-colors duration-fast hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+          className="text-xs font-medium text-text-muted transition-colors duration-fast hover:text-accent focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
         >
           {action.label}
         </button>
@@ -106,11 +106,13 @@ function RowGlyph({ icon: Icon, accent = false }: { icon: typeof FileText; accen
   return (
     <span
       className={cn(
-        'mt-px flex h-7 w-7 shrink-0 items-center justify-center rounded-lg',
-        accent ? 'bg-accent-muted text-accent' : 'bg-[hsl(var(--text-primary)/0.055)] text-text-tertiary',
+        'mt-px flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset',
+        accent
+          ? 'bg-accent-muted text-accent ring-accent/12'
+          : 'bg-surface-sunken text-text-tertiary ring-border-subtle',
       )}
     >
-      <Icon className="h-[15px] w-[15px]" strokeWidth={1.6} />
+      <Icon className="h-[15px] w-[15px]" strokeWidth={1.65} />
     </span>
   );
 }
@@ -217,16 +219,16 @@ export const Dashboard = () => {
       <div className="mx-auto w-full max-w-[1080px] px-8 pb-16 pt-9 lg:px-12">
         <header className="mb-6">
           <p className="mb-1.5 text-xs font-medium tracking-[0.01em] text-text-muted">{formatTodayLabel()}</p>
-          <h1 className="font-serif text-[32px] font-normal leading-[1.12] tracking-[-0.028em] text-text-primary">{greeting()}</h1>
+          <h1 className="font-sans text-[32px] font-semibold leading-[1.12] tracking-[-0.025em] text-text-primary">{greeting()}</h1>
         </header>
 
         {/* The palette is the universal front door. */}
         <button
           type="button"
           onClick={() => window.dispatchEvent(new Event(OPEN_PALETTE_EVENT))}
-          className="group mb-3 flex h-11 w-full items-center gap-3 rounded-xl border border-border-subtle bg-surface px-4 text-left shadow-xs transition-[border-color,box-shadow] duration-base hover:border-border-default hover:shadow-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+          className="group mb-3.5 flex h-11 w-full items-center gap-3 rounded-xl border border-border-subtle bg-surface px-4 text-left shadow-sm transition-[transform,border-color,box-shadow] duration-base hover:-translate-y-px hover:border-border-default hover:shadow-md focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <Search className="h-4 w-4 text-text-tertiary transition-colors duration-fast group-hover:text-accent" strokeWidth={1.6} />
+          <Search className="h-4 w-4 text-text-tertiary transition-colors duration-fast group-hover:text-accent" strokeWidth={1.7} />
           <span className="flex-1 text-sm text-text-muted">Find a document, an idea, a connection…</span>
           <kbd className="kbd">⌘K</kbd>
         </button>
@@ -237,14 +239,14 @@ export const Dashboard = () => {
               key={label}
               type="button"
               onClick={run}
-              className="pressable group flex items-center gap-2.5 rounded-xl border border-border-subtle bg-surface/60 px-3 py-2.5 text-left transition-[background-color,border-color,scale] duration-fast hover:border-border-default hover:bg-surface focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+              className="pressable group flex items-center gap-2.5 rounded-xl border border-border-subtle bg-surface px-3.5 py-3 text-left shadow-sm transition-[transform,border-color,box-shadow,scale] duration-base hover:-translate-y-px hover:border-border-default hover:shadow-md focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
             >
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-accent-muted text-accent">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-accent-muted text-accent ring-1 ring-inset ring-accent/12">
                 <Icon className="h-3.5 w-3.5" strokeWidth={1.65} />
               </span>
               <span className="min-w-0 flex-1">
                 <span className="flex items-center justify-between gap-1">
-                  <span className="truncate text-ui font-medium text-text-primary">{label}</span>
+                  <span className="truncate font-sans text-ui font-semibold tracking-[-0.015em] text-text-primary">{label}</span>
                   <kbd className="hidden font-sans text-[10px] tabular-nums text-text-muted opacity-0 transition-opacity duration-fast group-hover:opacity-100 sm:inline">
                     {shortcut}
                   </kbd>
@@ -267,10 +269,10 @@ export const Dashboard = () => {
                 <button
                   type="button"
                   onClick={goToJournal}
-                  className="pressable group w-full rounded-xl border border-border-subtle bg-surface p-4 text-left shadow-xs transition-[border-color,box-shadow,scale] duration-base hover:border-border-default hover:shadow-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+                  className="pressable group w-full rounded-xl border border-border-subtle bg-surface p-5 text-left shadow-sm transition-[transform,border-color,box-shadow,scale] duration-base hover:-translate-y-px hover:border-border-default hover:shadow-md focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <div className="flex items-baseline justify-between gap-3">
-                    <div className="truncate font-serif text-[18px] font-medium tracking-[-0.015em] text-text-primary">
+                    <div className="truncate font-sans text-[17px] font-semibold tracking-[-0.025em] text-text-primary">
                       {todayEntry.title || 'Untitled entry'}
                     </div>
                     <div className="shrink-0 text-xs tabular-nums text-text-muted">
@@ -278,17 +280,17 @@ export const Dashboard = () => {
                     </div>
                   </div>
                   {todayEntry.lastMessagePreview?.trim() ? (
-                    <p className="mt-2 line-clamp-3 font-serif text-[15px] leading-relaxed text-text-secondary">
+                    <p className="mt-1.5 line-clamp-3 text-sm leading-relaxed text-text-secondary">
                       {truncate(todayEntry.lastMessagePreview, 240)}
                     </p>
                   ) : null}
-                  <div className="mt-3 text-xs font-medium text-accent">Continue writing →</div>
+                  <div className="mt-3 text-xs font-semibold text-accent">Continue writing →</div>
                 </button>
               ) : (
-                <div className="rounded-xl border border-border-subtle bg-surface/55 p-1">
+                <div className="rounded-xl border border-border-subtle bg-surface p-1.5 shadow-sm">
                   <button type="button" onClick={goToJournal} className={cn(rowClass, 'items-center')}>
                     <RowGlyph icon={NotebookPen} accent />
-                    <div className="text-ui font-medium text-text-primary">Start today&rsquo;s entry</div>
+                    <div className="font-sans text-ui font-semibold tracking-[-0.01em] text-text-primary">Start today&rsquo;s entry</div>
                   </button>
                 </div>
               )}
@@ -298,11 +300,11 @@ export const Dashboard = () => {
             {showWeeklySynthesis ? (
               <section>
                 <SectionTitle>This week</SectionTitle>
-                <div className="rounded-xl border border-border-subtle bg-surface/70 p-1">
+                <div className="rounded-xl border border-border-subtle bg-surface p-1.5 shadow-sm">
                   <button type="button" onClick={goToWeeklySynthesis} className={rowClass}>
                     <RowGlyph icon={Combine} accent />
                     <div className="min-w-0 flex-1">
-                      <div className="text-ui font-medium text-text-primary">Synthesize last week</div>
+                      <div className="font-sans text-ui font-semibold tracking-[-0.01em] text-text-primary">Synthesize last week</div>
                       <div className="mt-0.5 truncate text-xs tabular-nums text-text-muted">{weeklyParts}</div>
                     </div>
                   </button>
@@ -313,7 +315,7 @@ export const Dashboard = () => {
             {/* Continue conversations */}
             <section>
               <SectionTitle action={{ label: 'All conversations', run: () => navigate('/chat') }}>Continue</SectionTitle>
-              <div className="rounded-xl border border-border-subtle bg-surface/55 p-1">
+              <div className="rounded-xl border border-border-subtle bg-surface p-1.5 shadow-sm">
                 {recentConversations.length === 0 ? (
                   <EmptyRow>Your conversations will appear here. Start one above to explore an idea.</EmptyRow>
                 ) : (
@@ -323,7 +325,7 @@ export const Dashboard = () => {
                       <button key={conv.id} type="button" onClick={() => goToConversation(conv.id)} className={rowClass}>
                         <RowGlyph icon={MessageSquare} />
                         <div className="min-w-0 flex-1">
-                          <div className="truncate text-ui font-medium text-text-primary">
+                          <div className="truncate font-sans text-ui font-semibold tracking-[-0.01em] text-text-primary">
                             {conv.title || 'Untitled conversation'}
                           </div>
                           {preview ? <div className="mt-0.5 truncate text-xs text-text-muted">{preview}</div> : null}
@@ -344,7 +346,7 @@ export const Dashboard = () => {
             {/* Saved references — elevated above the fold */}
             <section>
               <SectionTitle action={{ label: 'All references', run: () => navigate('/references') }}>Saved</SectionTitle>
-              <div className="rounded-xl border border-border-subtle bg-surface/55 p-1">
+              <div className="rounded-xl border border-border-subtle bg-surface p-1.5 shadow-sm">
                 {recentReferences.length === 0 ? (
                   <EmptyRow>Nothing saved yet. Bookmark a message to keep it here.</EmptyRow>
                 ) : (
@@ -354,9 +356,9 @@ export const Dashboard = () => {
                       bookmark.title?.trim() || bookmark.note?.trim() || bookmark.messagePreview?.trim() || '';
                     return (
                       <button key={bookmark.id} type="button" onClick={() => goToReference(bookmark)} className={rowClass}>
-                        <RowGlyph icon={Bookmark} />
+                        <RowGlyph icon={Bookmark} accent />
                         <div className="min-w-0 flex-1">
-                          {excerpt ? <div className="truncate text-ui font-medium text-text-primary">{excerpt}</div> : null}
+                          {excerpt ? <div className="truncate font-sans text-ui font-semibold tracking-[-0.01em] text-text-primary">{excerpt}</div> : null}
                           <div className="mt-0.5 truncate text-xs text-text-muted">
                             {isJournal ? 'Journal' : 'Chat'}
                             <span> · </span>
@@ -374,18 +376,18 @@ export const Dashboard = () => {
             {/* Library readout */}
             <section>
               <SectionTitle action={{ label: 'Open library', run: () => navigate('/files') }}>Library</SectionTitle>
-              <div className="rounded-xl border border-border-subtle bg-surface/70 p-4">
+              <div className="rounded-xl border border-border-subtle bg-surface p-5 shadow-sm">
                 <div className="grid grid-cols-2 gap-x-4 gap-y-4">
                   {tiles.map((tile) => (
                     <div key={tile.label}>
-                      <div className="text-[21px] font-medium leading-none tracking-[-0.02em] tabular-nums text-text-primary">{tile.value}</div>
+                      <div className="font-sans text-[22px] font-semibold leading-none tracking-[-0.025em] tabular-nums text-text-primary">{tile.value}</div>
                       <div className="mt-1.5 text-xs text-text-muted">{tile.label}</div>
                     </div>
                   ))}
                 </div>
                 {typeTotal > 0 ? (
                   <div className="mt-4 border-t border-border-subtle pt-3.5">
-                    <div className="flex h-1.5 gap-px overflow-hidden rounded-full" aria-hidden="true">
+                    <div className="flex h-1.5 gap-px overflow-hidden rounded-full bg-[hsl(var(--text-primary)/0.06)]" aria-hidden="true">
                       {fileTypes.map((entry, index) => (
                         <span
                           key={entry.label}
@@ -418,7 +420,7 @@ export const Dashboard = () => {
             {/* Recently indexed */}
             <section>
               <SectionTitle>Recently indexed</SectionTitle>
-              <div className="rounded-xl border border-border-subtle bg-surface/55 p-1">
+              <div className="rounded-xl border border-border-subtle bg-surface p-1.5 shadow-sm">
                 {recentDocuments.length === 0 ? (
                   <EmptyRow>Add your first files to make your library searchable.</EmptyRow>
                 ) : (
@@ -430,7 +432,7 @@ export const Dashboard = () => {
                       className={cn(rowClass, 'items-center py-2')}
                     >
                       <FileText className="h-4 w-4 shrink-0 text-text-muted" strokeWidth={1.6} />
-                      <div className="min-w-0 flex-1 truncate text-ui text-text-primary">
+                      <div className="min-w-0 flex-1 truncate text-ui font-medium text-text-primary">
                         {doc.documentName || doc.documentPath || 'Untitled'}
                       </div>
                       <div className="shrink-0 text-xs tabular-nums text-text-muted">

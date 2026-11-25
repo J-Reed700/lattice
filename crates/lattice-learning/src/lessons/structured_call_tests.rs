@@ -4,7 +4,7 @@
 use super::*;
 use crate::lesson_drafts::tests::lesson_job;
 use lattice_core::application::ports::llm_port::{
-    CompletionInput, CompletionRequest, CompletionResponse,
+    CompletionInput, CompletionRequest, CompletionResponse, ThinkingMode,
 };
 use lattice_core::application::services::grounded_generation;
 use lattice_core::application::services::model_contract::ask::{Alone, Answered, Says};
@@ -50,8 +50,11 @@ struct Recorder {
     exact: bool,
     /// Whether it thinks before every answer, as Claude does.
     thinks: bool,
+    /// Whether it supports on-demand native thinking (`ThinkingMode::On`).
+    native_thinking: bool,
     draft: CompletionResponse,
     answer: Option<&'static str>,
+    answer_error: Option<fn() -> AppError>,
     first_answers: Mutex<Vec<&'static str>>,
     sent: Mutex<Vec<CompletionRequest>>,
 }
@@ -62,8 +65,10 @@ impl Recorder {
             window,
             exact: false,
             thinks: false,
+            native_thinking: false,
             draft: CompletionResponse::from_text(DRAFT),
             answer: Some(ANSWER),
+            answer_error: None,
             first_answers: Mutex::new(Vec::new()),
             sent: Mutex::new(Vec::new()),
         }
@@ -101,6 +106,9 @@ impl LLMPort for Recorder {
         {
             return Ok(CompletionResponse::from_text(first));
         }
+        if let Some(error) = self.answer_error {
+            return Err(error());
+        }
         self.answer
             .map(CompletionResponse::from_text)
             .ok_or_else(|| AppError::Network("fixture connection dropped".into()))
@@ -126,6 +134,9 @@ impl LLMPort for Recorder {
     }
     fn thinks_before_answering(&self) -> bool {
         self.thinks
+    }
+    fn supports_native_thinking(&self) -> bool {
+        self.thinks || self.native_thinking
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
@@ -243,9 +254,10 @@ async fn the_draft_is_answered_from_under_the_schema_with_no_format_named() -> R
             ("user", answer_step.as_str()),
         ]
     );
-    let sampling = structured.sampling.unwrap_or_default();
-    assert_eq!(sampling.temperature, Some(0.0));
-    assert_eq!(sampling.top_k, Some(1));
+    assert!(
+        structured.sampling.is_none(),
+        "the answer step inherits the request's sampling profile"
+    );
     for request in [draft, structured] {
         for (_, content) in messages(request) {
             for demand in FORMAT_DEMANDS {
@@ -1179,5 +1191,223 @@ async fn an_unanswered_request_lets_its_saved_draft_go() -> Result<()> {
             "unanswered: {unanswered}"
         );
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_unusable_answer_step_clears_the_saved_draft_while_a_network_error_keeps_it(
+) -> Result<()> {
+    struct Case {
+        label: &'static str,
+        answer_error: fn() -> AppError,
+        expected_retry_drafts: usize,
+    }
+    let cases = [
+        Case {
+            label: "unusable",
+            answer_error: || AppError::ModelAnswerUnusable("answer could not be used".into()),
+            expected_retry_drafts: 1,
+        },
+        Case {
+            label: "network",
+            answer_error: || AppError::Network("fixture connection dropped".into()),
+            expected_retry_drafts: 0,
+        },
+    ];
+    for case in cases {
+        let Case {
+            label,
+            answer_error,
+            expected_retry_drafts,
+        } = case;
+        let (database, jobs, job_id, lesson) = lesson_job().await?;
+        let transport = asking(authoring());
+
+        let mut failing = Recorder::new(32_000);
+        failing.answer_error = Some(answer_error);
+        let first = lesson_drafts::run(
+            &database,
+            &jobs,
+            &job_id,
+            &lesson,
+            ask::Transport::send(&transport, &failing, first_request()),
+        )
+        .await;
+        assert!(first.is_err(), "{label}: expected answer step error");
+        assert_eq!(
+            failing.sent().len(),
+            2,
+            "{label}: one draft and one failed answer step"
+        );
+
+        let retried = Recorder::new(32_000);
+        let sent = lesson_drafts::run(
+            &database,
+            &jobs,
+            &job_id,
+            &lesson,
+            ask::Transport::send(&transport, &retried, first_request()),
+        )
+        .await?;
+        assert_eq!(sent.text, ANSWER);
+        assert_eq!(
+            draft_requests(&retried.sent()),
+            expected_retry_drafts,
+            "{label}: unexpected draft count on retry"
+        );
+        assert_eq!(
+            retried.sent().len(),
+            expected_retry_drafts + 1,
+            "{label}: unexpected total requests on retry"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn streamed_draft_step_uses_the_window_leaving_only_step_two_headroom() -> Result<()> {
+    let llm = Recorder::new(32_000);
+    let progress = OutlineProgress::default();
+    let request = model_call::structured(SYSTEM, PROMPT.into(), schema(), 1000);
+    let transport = Asking {
+        progress: Some(&progress),
+        reasoning: authoring(),
+    };
+    let sent = ask::Transport::send(&transport, &llm, request).await?;
+    assert_eq!(sent.text, ANSWER);
+
+    let requests = llm.sent();
+    assert_eq!(requests.len(), 2, "one prose draft, one structured answer");
+    let draft_cap = requests[0].max_output_tokens().unwrap() as usize;
+    let answer_cap = requests[1].max_output_tokens().unwrap() as usize;
+    assert!(
+        draft_cap > 20_000,
+        "streamed draft should fill the Step-2-fitting window instead of capping at 1000, got {draft_cap}"
+    );
+    assert!(
+        draft_cap < answer_cap,
+        "draft ({draft_cap}) should leave Step 2's answer reservation and framing headroom below answer ({answer_cap})"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_non_empty_cut_off_draft_in_steps_is_kept_for_step_two() -> Result<()> {
+    let mut llm = Recorder::new(32_000);
+    let partial_draft = "Sunlight scatters off air molecules, and blue light";
+    llm.draft = CompletionResponse {
+        text: partial_draft.into(),
+        finish_reason: "length".into(),
+        ..Default::default()
+    };
+    let sent = ask::Transport::send(&asking(authoring()), &llm, first_request()).await?;
+    assert_eq!(sent.text, ANSWER);
+
+    let requests = llm.sent();
+    assert_eq!(
+        requests.len(),
+        3,
+        "the draft, the draft retried with twice the room, and Step 2 using the partial draft"
+    );
+    assert!(is_draft_request(&requests[0]) && is_draft_request(&requests[1]));
+    assert!(!is_draft_request(&requests[2]));
+    assert!(messages(&requests[2]).contains(&("assistant", partial_draft)));
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_empty_cut_off_draft_in_steps_falls_back_to_one_step() -> Result<()> {
+    let mut llm = Recorder::new(32_000);
+    llm.draft = CompletionResponse {
+        text: "   ".into(),
+        finish_reason: "length".into(),
+        ..Default::default()
+    };
+    let sent = ask::Transport::send(&asking(authoring()), &llm, first_request()).await?;
+    assert_eq!(sent.text, ANSWER);
+
+    let requests = llm.sent();
+    assert_eq!(
+        requests.len(),
+        3,
+        "the draft, the draft retried with twice the room, then one-step fallback"
+    );
+    assert_eq!(
+        messages(&requests[2]),
+        vec![("system", SYSTEM), ("user", PROMPT)]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_model_with_native_thinking_sends_one_request_with_thinking_on() -> Result<()> {
+    let mut llm = Recorder::new(32_000);
+    llm.native_thinking = true;
+
+    let sent = ask::Transport::send(&asking(authoring()), &llm, first_request()).await?;
+    assert_eq!(sent.text, ANSWER);
+
+    let requests = llm.sent();
+    assert_eq!(requests.len(), 1, "no separate prose draft step");
+    assert_eq!(
+        requests[0].schema().map(|schema| schema.as_json()),
+        Some(&schema())
+    );
+    assert_eq!(requests[0].thinking, ThinkingMode::On);
+    assert_eq!(
+        messages(&requests[0]),
+        vec![("system", SYSTEM), ("user", PROMPT)]
+    );
+
+    // Same behavior through `complete_reasoned_json` (`complete_checked_request`).
+    let mut llm_direct = Recorder::new(32_000);
+    llm_direct.native_thinking = true;
+    assert_eq!(call(&llm_direct, CallKind::Authoring).await?, ANSWER);
+    let direct_requests = llm_direct.sent();
+    assert_eq!(direct_requests.len(), 1);
+    assert_eq!(direct_requests[0].thinking, ThinkingMode::On);
+
+    // A classifier or non-reasoning call does not force ThinkingMode::On.
+    let mut llm_plain = Recorder::new(32_000);
+    llm_plain.native_thinking = true;
+    ask::Transport::send(&asking(None), &llm_plain, first_request()).await?;
+    assert_eq!(llm_plain.sent()[0].thinking, ThinkingMode::Off);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_model_without_native_thinking_keeps_two_step_prose_draft() -> Result<()> {
+    let llm = Recorder::new(32_000);
+    assert!(!llm.thinks_before_answering());
+    assert!(!llm.supports_native_thinking());
+
+    let sent = ask::Transport::send(&asking(authoring()), &llm, first_request()).await?;
+    assert_eq!(sent.text, ANSWER);
+
+    let requests = llm.sent();
+    assert_eq!(requests.len(), 2, "one prose draft, one structured answer");
+    assert!(is_draft_request(&requests[0]));
+    assert!(!is_draft_request(&requests[1]));
+    assert_eq!(requests[0].thinking, ThinkingMode::Off);
+    assert_eq!(requests[1].thinking, ThinkingMode::Off);
+    Ok(())
+}
+
+#[tokio::test]
+async fn two_step_calls_share_a_per_call_cache_key_across_steps() -> Result<()> {
+    let llm = Recorder::new(32_000);
+    let request_a = model_call::structured(SYSTEM, "Task A".into(), schema(), 1000);
+    let request_b = model_call::structured(SYSTEM, "Task B".into(), schema(), 1000);
+
+    ask::Transport::send(&asking(authoring()), &llm, request_a).await?;
+    ask::Transport::send(&asking(authoring()), &llm, request_b).await?;
+
+    let requests = llm.sent();
+    assert_eq!(requests.len(), 4);
+    assert!(requests[0].cache_key.is_some());
+    assert_eq!(requests[0].cache_key, requests[1].cache_key);
+    assert!(requests[2].cache_key.is_some());
+    assert_eq!(requests[2].cache_key, requests[3].cache_key);
+    assert_ne!(requests[0].cache_key, requests[2].cache_key);
     Ok(())
 }

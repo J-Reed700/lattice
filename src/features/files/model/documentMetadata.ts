@@ -74,14 +74,19 @@ export const formatFolderDisplayName = (folderPath: string): string => {
 };
 
 /** "9,800 words · 1h ago · PDF" */
-export const metaLine = (doc: DocumentMetadata): string =>
-  [
+export const metaLine = (
+  doc: DocumentMetadata,
+  options: { includeType?: boolean } = {},
+): string => {
+  const { includeType = true } = options;
+  return [
     doc.wordCount > 0 ? `${doc.wordCount.toLocaleString()} words` : null,
     formatRelativeTime(doc.modifiedAt),
-    typeLabel(doc),
+    includeType ? typeLabel(doc) : null,
   ]
     .filter(Boolean)
     .join(' · ');
+};
 
 export const pathBasename = (value: string): string => {
   const segments = value.replace(/\\/g, '/').split('/').filter(Boolean);

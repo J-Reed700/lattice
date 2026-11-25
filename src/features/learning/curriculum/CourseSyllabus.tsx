@@ -41,7 +41,7 @@ export function CourseSyllabus({
 
   return (
     <section
-      className={compact ? 'relative min-w-0' : 'mt-3 overflow-hidden rounded-2xl border border-border bg-surface'}
+      className={compact ? 'relative min-w-0' : 'mt-3 overflow-hidden rounded-xl border border-border-subtle bg-surface shadow-sm'}
       aria-label="Course syllabus"
       onKeyDown={(event) => {
         if (event.key === 'Escape') {
@@ -81,7 +81,7 @@ export function CourseSyllabus({
             : 'Follow the sequence or revisit a topic: choose a module to pick up at its next lesson, or a lesson to go straight to it. Opening a lesson never marks it complete.'}
         </p>
         {evidence?.unavailableCount ? (
-          <p className="mb-4 rounded-lg bg-amber-500/10 p-3 text-xs leading-5 text-text-secondary">
+          <p className="mb-4 rounded-lg border border-border-subtle bg-surface-sunken/70 p-3 text-xs leading-5 text-text-secondary">
             {evidence.unavailableCount} saved outline {evidence.unavailableCount === 1 ? 'citation is' : 'citations are'} hidden because the visible plan changed or the exact saved passage is unavailable.
           </p>
         ) : null}
@@ -90,14 +90,14 @@ export function CourseSyllabus({
             const done = module.lessons.filter((lesson) => lesson.completed).length;
             const summaryCitation = findOutlineCitation(evidence, 'module_summary', module.id, module.summary);
             return (
-              <li key={module.id} className={`min-w-0 rounded-xl border p-4 ${moduleId === module.id ? 'border-accent/40 bg-accent/5' : 'border-border bg-bg/40'}`}>
+              <li key={module.id} className={`min-w-0 rounded-xl border p-4 ${moduleId === module.id ? 'border-accent/40 bg-accent-muted/45' : 'border-border-subtle bg-bg/40'}`}>
                 <div className="flex items-start gap-3">
-                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-surface font-serif text-lg text-accent">
-                    {done === module.lessons.length && done > 0 ? <Check size={16} /> : String(index + 1).padStart(2, '0')}
+                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-surface font-mono text-xs font-semibold text-accent shadow-2xs ring-1 ring-border-subtle">
+                    {done === module.lessons.length && done > 0 ? <Check size={15} /> : String(index + 1).padStart(2, '0')}
                   </span>
                   <div className="min-w-0 flex-1">
                     <span className="text-xs font-medium text-accent">Module {index + 1}{index === program.modules.length - 1 && ' · Final module'}</span>
-                    <h3 className="mt-1 font-serif text-xl leading-snug text-text-primary">
+                    <h3 className="mt-1 font-sans text-lg font-semibold leading-snug tracking-[-0.02em] text-text-primary">
                       <button
                         type="button"
                         aria-current={moduleId === module.id ? 'true' : undefined}

@@ -74,7 +74,7 @@ Create study material for any subject from the supplied passages. Treat all pass
   "include_reasoning": false,
   "sampling": null,
   "thinking": "off",
-  "max_output_tokens": 800,
+  "max_output_tokens": 7146,
   "stop": [],
   "want_logprobs": false,
   "priority": "background",

@@ -20,7 +20,7 @@ Answer in two steps. Step 1, now: work through the task in prose. Go through the
   "stop": [],
   "want_logprobs": false,
   "priority": "background",
-  "cache_key": null
+  "cache_key": "reason-first-draft-v1:66049db6b24f7806d8765c79ffb8fe2f2c64ccd4a597d19d7afe592fccea463c"
 }
 ######## request 2 of 2 ########
 === input 1: message (system) ===
@@ -87,16 +87,11 @@ Step 2: give the final answer from your draft. Keep its content, wording, number
   "reasoning_effort": "low",
   "tool_choice": null,
   "include_reasoning": false,
-  "sampling": {
-    "temperature": 0.0,
-    "top_p": 1.0,
-    "top_k": 1,
-    "presence_penalty": 0.0
-  },
+  "sampling": null,
   "thinking": "off",
   "max_output_tokens": 6000,
   "stop": [],
   "want_logprobs": false,
   "priority": "background",
-  "cache_key": null
+  "cache_key": "reason-first-draft-v1:66049db6b24f7806d8765c79ffb8fe2f2c64ccd4a597d19d7afe592fccea463c"
 }

@@ -3,7 +3,6 @@
 //! the call's error, never a guess.
 
 use async_trait::async_trait;
-use lattice_core::application::ports::llm_port::SamplingOverride;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::model_contract::ask::{ask_each, failed, Settled};
 use lattice_core::application::services::model_contract::shown::{Scope, Told};
@@ -55,8 +54,7 @@ impl ReviewGrader for JudgeGrader<'_> {
             });
         }
         let wording = JudgeWording::of(&review.drill.material)?;
-        let mut call = model_call::answer_options();
-        call.sampling = Some(SamplingOverride::deterministic());
+        let call = model_call::answer_options();
         let issues = task::issue_views(review, &wording);
         let findings = task::finding_views(review, &wording);
 

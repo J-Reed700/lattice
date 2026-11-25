@@ -7,7 +7,7 @@ import { isAnswered, type FormItem, type ItemDraft } from '@/features/learning/q
 import { moveRoving } from '@/features/learning/quizzes/items/roving';
 import type { SaveState } from '@/features/learning/quizzes/useQuizAutosave';
 
-export const parchmentBand = 'border-b border-border-subtle bg-surface-raised/60';
+export const parchmentBand = 'border-border-subtle bg-surface shadow-sm';
 export const eyebrow = 'text-[10px] font-semibold uppercase tracking-[.15em] text-accent';
 export const primaryPill = 'pressable inline-flex h-9 items-center justify-center gap-2 rounded-lg bg-action px-4 text-ui font-medium text-action-fg shadow-action transition-[background-color,scale] duration-fast hover:bg-action-hover focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:cursor-not-allowed disabled:opacity-45';
 export const quietPill = 'pressable inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-border-default bg-surface px-3.5 text-ui font-medium text-text-secondary shadow-control transition-[background-color,border-color,color,scale] duration-fast hover:border-border-strong hover:bg-surface-raised hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-45';
@@ -55,7 +55,7 @@ export function ConfirmDialog({ open, title, body, confirmLabel, pending, onConf
 }) {
   return <Dialog open={open} onOpenChange={(next) => { if (!next) onCancel(); }}>
     {open && <DialogContent role="alertdialog" hideClose overlayClassName="bg-black/45" className="block max-w-md rounded-2xl border border-border bg-surface p-6 shadow-2xl" onInteractOutside={(event) => event.preventDefault()}>
-      <DialogTitle asChild><h3 className="font-serif text-xl text-text-primary">{title}</h3></DialogTitle>
+      <DialogTitle asChild><h3 className="font-sans text-lg font-semibold tracking-[-0.02em] text-text-primary">{title}</h3></DialogTitle>
       <DialogDescription asChild><p className="mt-2 text-sm leading-6 text-text-secondary">{body}</p></DialogDescription>
       <div className="mt-5 flex justify-end gap-2">
         <button type="button" autoFocus onClick={onCancel} className={quietPill}>Keep working</button>

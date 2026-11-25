@@ -4,7 +4,7 @@ import { GENERAL_SPACE_ID, normalizeHexColor } from '@/features/spaces/model/spa
 import { cn } from '@/lib/utils';
 import { useOptionalConversationsStore } from '@/shared/conversations/conversationsStore';
 
-const FALLBACK_COLORS = ['#b45309', '#0f766e', '#4338ca', '#be123c', '#4d7c0f', '#0369a1'] as const;
+const FALLBACK_COLORS = ['#b45309', '#0f766e', '#4b6584', '#be123c', '#4d7c0f', '#0369a1'] as const;
 const MAX_HOME_SPACES = 6;
 
 function dotColor(space: DashboardSpaceSummary, index: number): string {
@@ -38,18 +38,18 @@ export function ActiveSpacesSection({ spaces, onNavigate }: ActiveSpacesSectionP
 
   return (
     <section>
-      <div className="mb-2 flex items-baseline justify-between px-1">
-        <h2 className="text-ui font-medium text-text-tertiary">Spaces</h2>
+      <div className="mb-2.5 flex items-baseline justify-between px-0.5">
+        <h2 className="text-ui font-medium tracking-[-0.01em] text-text-secondary">Spaces</h2>
         <button
           type="button"
           onClick={() => openSpace(null)}
-          className="text-xs text-text-muted transition-colors duration-fast hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+          className="text-xs font-medium text-text-muted transition-colors duration-fast hover:text-accent focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
         >
           All spaces
         </button>
       </div>
 
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap gap-2">
         {visible.map((space, index) => {
           const isActive = selectedSpaceId === space.id;
           return (
@@ -58,10 +58,10 @@ export function ActiveSpacesSection({ spaces, onNavigate }: ActiveSpacesSectionP
               type="button"
               onClick={() => openSpace(space.id)}
               className={cn(
-                'pressable inline-flex h-8 max-w-full items-center gap-2 rounded-lg border px-2.5 text-xs transition-[background-color,border-color,color,scale] duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
+                'pressable inline-flex h-7 max-w-full items-center gap-2 rounded-full border px-3 text-xs transition-[transform,background-color,border-color,color,box-shadow,scale] duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
                 isActive
-                  ? 'border-accent/35 bg-accent-muted font-medium text-text-primary'
-                  : 'border-border-subtle bg-surface/70 text-text-secondary hover:border-border-default hover:bg-surface hover:text-text-primary',
+                  ? 'border-accent/35 bg-accent-muted font-semibold text-text-primary shadow-xs'
+                  : 'border-border-subtle bg-surface font-medium text-text-secondary shadow-xs hover:-translate-y-px hover:border-border-default hover:text-text-primary hover:shadow-sm',
               )}
             >
               {space.icon?.trim() ? (
@@ -83,7 +83,7 @@ export function ActiveSpacesSection({ spaces, onNavigate }: ActiveSpacesSectionP
           <button
             type="button"
             onClick={() => openSpace(null)}
-            className="inline-flex h-8 items-center rounded-lg border border-dashed border-border-subtle px-2.5 text-xs tabular-nums text-text-muted transition-colors duration-fast hover:border-border-default hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+            className="inline-flex h-7 items-center rounded-full border border-dashed border-border-default bg-surface/60 px-3 text-xs font-medium tabular-nums text-text-muted transition-colors duration-fast hover:border-border-strong hover:bg-surface hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
           >
             +{spaces.length - MAX_HOME_SPACES} more
           </button>

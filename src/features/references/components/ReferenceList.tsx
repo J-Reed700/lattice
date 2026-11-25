@@ -157,7 +157,7 @@ export function ReferenceList({
   const handleOriginChange = (value: OriginFilter) => setOriginFilter(value);
 
   return (
-    <aside className="flex h-full w-[280px] shrink-0 flex-col border-r border-border-subtle bg-bg">
+    <aside className="flex h-full w-[280px] shrink-0 flex-col border-r border-border-subtle bg-surface-sunken/70">
       <SidebarHeader
         title="References"
         actions={
@@ -193,55 +193,55 @@ export function ReferenceList({
             {isFilteredEmpty ? 'No references match.' : 'No references yet.'}
           </p>
         ) : (
-          <div className="pb-2">
+          <div className="py-2">
             {/* One list loaded and the other did not: what is shown is not all that is saved. */}
             {listLoadFailed && (
               <LoadFailure message="Couldn't load all references." onRetry={retryLoad} isRetrying={isRetryingLoad} />
             )}
             {groups.map((group, groupIndex) => (
               <div key={group.key}>
-                {/* REFERENCE-REDESIGN-SPEC §4.3: serif italic, not an
-                    uppercase tracked label. */}
                 <h3
-                  className={`px-4 py-2 font-serif text-xs italic text-text-tertiary ${
-                    groupIndex > 0 ? 'mt-4' : ''
+                  className={`px-4 py-1.5 font-sans text-[11px] font-semibold tracking-[0.01em] text-text-muted ${
+                    groupIndex > 0 ? 'mt-3' : ''
                   }`}
                 >
                   {group.label}
                 </h3>
-                {group.items.map((item) => {
-                  if (item.kind === 'passage') {
-                    const { passage } = item;
+                <div className="space-y-1 px-2">
+                  {group.items.map((item) => {
+                    if (item.kind === 'passage') {
+                      const { passage } = item;
+                      return (
+                        <PassageListItem
+                          key={passage.id}
+                          passage={passage}
+                          isActive={selectedId === passage.id}
+                          onSelect={() => setSelectedId(passage.id)}
+                          onOpenSource={() => onOpenPassageSource(passage)}
+                          onCopy={() => onCopyPassage(passage)}
+                          onDelete={() => onDeletePassage(passage)}
+                        />
+                      );
+                    }
+                    const { bookmark } = item;
+                    const key = chatReferenceKey(bookmark.conversationId, bookmark.messageId);
+                    const isCaptured = capturedIndex.has(key);
+                    const isJournalOrigin = journalsById.has(bookmark.spaceId);
                     return (
-                      <PassageListItem
-                        key={passage.id}
-                        passage={passage}
-                        isActive={selectedId === passage.id}
-                        onSelect={() => setSelectedId(passage.id)}
-                        onOpenSource={() => onOpenPassageSource(passage)}
-                        onCopy={() => onCopyPassage(passage)}
-                        onDelete={() => onDeletePassage(passage)}
+                      <ReferenceListItem
+                        key={bookmark.id}
+                        bookmark={bookmark}
+                        isActive={selectedId === bookmark.id}
+                        isCaptured={isCaptured}
+                        isJournalOrigin={isJournalOrigin}
+                        onSelect={() => setSelectedId(bookmark.id)}
+                        onOpenInOrigin={() => onOpenInOrigin(bookmark)}
+                        onCopy={() => onCopy(bookmark)}
+                        onDelete={() => onDelete(bookmark)}
                       />
                     );
-                  }
-                  const { bookmark } = item;
-                  const key = chatReferenceKey(bookmark.conversationId, bookmark.messageId);
-                  const isCaptured = capturedIndex.has(key);
-                  const isJournalOrigin = journalsById.has(bookmark.spaceId);
-                  return (
-                    <ReferenceListItem
-                      key={bookmark.id}
-                      bookmark={bookmark}
-                      isActive={selectedId === bookmark.id}
-                      isCaptured={isCaptured}
-                      isJournalOrigin={isJournalOrigin}
-                      onSelect={() => setSelectedId(bookmark.id)}
-                      onOpenInOrigin={() => onOpenInOrigin(bookmark)}
-                      onCopy={() => onCopy(bookmark)}
-                      onDelete={() => onDelete(bookmark)}
-                    />
-                  );
-                })}
+                  })}
+                </div>
               </div>
             ))}
           </div>

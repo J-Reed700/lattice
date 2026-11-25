@@ -267,6 +267,12 @@ pub trait LLMPort: Send + Sync {
         false
     }
 
+    /// Whether this backend can think natively on demand (`ThinkingMode::On`)
+    /// for structured reasoning calls instead of running a separate prose-draft step.
+    fn supports_native_thinking(&self) -> bool {
+        self.thinks_before_answering()
+    }
+
     /// The provider behind this port (e.g. "ollama", "llamacpp",
     /// "local-sidecar"), for logs and diagnostics.
     ///

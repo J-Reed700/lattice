@@ -6,7 +6,7 @@ import { cn } from '@/lib/utils';
  * Textarea
  *
  * First-class multi-line text input matching Lattice 2.0 `Input` tokens,
- * hairline borders, focus ring, and warm editorial typography.
+ * hairline borders, focus ring, and crisp architectural typography.
  */
 
 export type TextareaResize = 'none' | 'vertical' | 'horizontal' | 'both';

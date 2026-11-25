@@ -54,86 +54,88 @@ export function PassageReader({
 
   return (
     <main className="relative flex min-h-0 flex-1 flex-col overflow-y-auto bg-bg">
-      <div className="mx-auto flex w-full max-w-[clamp(680px,72vw,900px)] flex-1 flex-col px-6 pt-10 pb-8">
-        <header>
-          <span className="inline-flex items-center gap-1.5 rounded-md bg-[hsl(var(--text-primary)/0.055)] px-2 py-0.5 text-[11px] font-medium text-text-secondary">
-            <Quote className="h-3 w-3 text-accent" strokeWidth={1.75} aria-hidden="true" />
-            Saved passage
-          </span>
-          <h1 className="mt-2.5 font-serif text-2xl font-normal tracking-tight text-text-primary">
-            {displayTitle}
-          </h1>
-          <p className="mt-1.5 text-sm text-text-tertiary">
-            From{' '}
-            <button
-              type="button"
-              onClick={onOpenSource}
-              className="text-text-secondary underline-offset-2 transition-colors duration-fast hover:text-accent hover:underline"
-            >
-              {passage.fileName}
-            </button>
-            {locator ? <span> · {locator}</span> : null}
-            {capturedOn ? <span> · {capturedOn}</span> : null}
+      <div className="mx-auto flex w-full max-w-[clamp(680px,72vw,860px)] flex-1 flex-col px-6 py-8">
+        <div className="rounded-xl border border-border-subtle bg-surface p-6 shadow-sm sm:p-8">
+          <header>
+            <span className="inline-flex items-center gap-1.5 rounded-md bg-accent-muted px-2 py-0.5 text-[11px] font-semibold text-accent ring-1 ring-inset ring-accent/12">
+              <Quote className="h-3 w-3" strokeWidth={1.75} aria-hidden="true" />
+              Saved passage
+            </span>
+            <h1 className="mt-3 font-sans text-2xl font-semibold tracking-[-0.02em] text-text-primary">
+              {displayTitle}
+            </h1>
+            <p className="mt-1.5 text-sm text-text-tertiary">
+              From{' '}
+              <button
+                type="button"
+                onClick={onOpenSource}
+                className="font-medium text-text-secondary underline-offset-2 transition-colors duration-fast hover:text-accent hover:underline"
+              >
+                {passage.fileName}
+              </button>
+              {locator ? <span> · {locator}</span> : null}
+              {capturedOn ? <span> · {capturedOn}</span> : null}
+            </p>
+          </header>
+
+          <div className="mt-6 rounded-xl border border-border-subtle bg-surface-sunken/55 p-5">
+            <blockquote className="whitespace-pre-wrap border-l-2 border-accent pl-4 font-serif text-base leading-[1.7] text-text-primary">
+              {passage.text}
+            </blockquote>
+          </div>
+
+          <ReferenceAnnotationStrip
+            id={passage.id}
+            title={passage.title}
+            note={passage.note}
+            onSave={onSaveAnnotations}
+          />
+
+          <p className="mt-6 text-xs text-text-muted">
+            Lattice uses your saved references in future answers.
           </p>
-        </header>
 
-        <div className="mt-6 rounded-xl border border-border-subtle bg-surface p-5 shadow-control">
-          <blockquote className="whitespace-pre-wrap border-l-2 border-accent/60 pl-4 font-serif text-base leading-[1.7] text-text-primary">
-            {passage.text}
-          </blockquote>
-        </div>
-
-        <ReferenceAnnotationStrip
-          id={passage.id}
-          title={passage.title}
-          note={passage.note}
-          onSave={onSaveAnnotations}
-        />
-
-        <p className="mt-6 text-xs text-text-muted">
-          Lattice uses your saved references in future answers.
-        </p>
-
-        <div className="mt-6 flex flex-wrap items-center justify-between gap-2 border-t border-border-subtle pt-4">
-          <div className="flex items-center gap-1">
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-border-subtle pt-4">
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={onOpenSource}
+                title="Open the source document"
+                className="h-8 rounded-lg px-2.5 text-xs text-text-secondary hover:text-text-primary"
+              >
+                <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+                Open source
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => void handleCopy()}
+                title="Copy the saved passage"
+                className="h-8 rounded-lg px-2.5 text-xs text-text-secondary hover:text-text-primary"
+              >
+                {copiedTick ? (
+                  <Check className="h-3.5 w-3.5 text-accent" strokeWidth={2} aria-hidden="true" />
+                ) : (
+                  <Copy className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+                )}
+                Copy
+              </Button>
+            </div>
             <Button
               type="button"
               variant="ghost"
               size="sm"
-              onClick={onOpenSource}
-              title="Open the source document"
-              className="h-8 rounded-lg px-2.5 text-xs text-text-secondary hover:text-text-primary"
+              onClick={onDelete}
+              title="Delete reference"
+              className="h-8 rounded-lg px-2.5 text-xs text-text-muted hover:bg-danger-muted hover:text-danger-fg"
             >
-              <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
-              Open source
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => void handleCopy()}
-              title="Copy the saved passage"
-              className="h-8 rounded-lg px-2.5 text-xs text-text-secondary hover:text-text-primary"
-            >
-              {copiedTick ? (
-                <Check className="h-3.5 w-3.5 text-accent" strokeWidth={2} aria-hidden="true" />
-              ) : (
-                <Copy className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
-              )}
-              Copy
+              <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+              Delete
             </Button>
           </div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={onDelete}
-            title="Delete reference"
-            className="h-8 rounded-lg px-2.5 text-xs text-text-muted hover:bg-danger-muted hover:text-danger-fg"
-          >
-            <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
-            Delete
-          </Button>
         </div>
       </div>
     </main>

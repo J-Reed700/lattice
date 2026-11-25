@@ -45,7 +45,7 @@ const TabsList = React.forwardRef<
         className={cn(
           variant === "underline"
             ? "inline-flex items-center gap-5 border-b border-border-subtle bg-transparent p-0 text-text-tertiary"
-            : "inline-flex h-8 items-center justify-center gap-0.5 rounded-lg bg-[hsl(var(--text-primary)/0.06)] p-[3px] text-text-tertiary",
+            : "inline-flex h-8 items-center justify-center gap-0.5 rounded-lg border border-border-subtle bg-surface-sunken p-[3px] text-text-tertiary",
           className
         )}
         {...props}
@@ -76,7 +76,7 @@ const TabsTrigger = React.forwardRef<
         "inline-flex items-center justify-center gap-1.5 whitespace-nowrap text-ui font-medium focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
         variant === "underline"
           ? "relative -mb-px h-9 rounded-none border-b-2 border-transparent px-0.5 pb-2 pt-1.5 transition-colors duration-fast hover:text-text-primary focus-visible:rounded-sm data-[state=active]:border-accent data-[state=active]:text-text-primary"
-          : "h-full rounded-md px-3 transition-[background-color,color,box-shadow] duration-fast hover:text-text-primary data-[state=active]:bg-surface-overlay data-[state=active]:text-text-primary data-[state=active]:shadow-control",
+          : "h-full rounded-md px-3 transition-[background-color,color,box-shadow] duration-fast hover:text-text-primary data-[state=active]:bg-surface data-[state=active]:text-text-primary data-[state=active]:shadow-sm data-[state=active]:ring-1 data-[state=active]:ring-border-subtle",
         className
       )}
       {...props}
