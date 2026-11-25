@@ -158,9 +158,9 @@ fn uncited_quotations(
     site: FindingSite,
     findings: &mut Vec<ReviewFinding>,
 ) {
-    let Some(path) = site.pointer() else {
+    if site.pointer().is_none() {
         return;
-    };
+    }
     let label = site.note_label();
     let cited: Vec<(&str, &str)> = item
         .get("citations")
@@ -190,7 +190,7 @@ fn uncited_quotations(
         let (summary, note, quote) = if quotes.is_empty() {
             let summary =
                 format!("No source is cited for this sentence: \u{201c}{sentence}\u{201d}");
-            let note = format!("{label} states a specific in \"{sentence}\" without citing it. Cite it when a supplied excerpt holds the wording: add an entry to the citations of {path} with the sentence, the excerpt's sourceIndex and an exact quote of the excerpt that contains the wording. When no supplied excerpt holds it, or the words are not quoted from a source (a misconception, a learner's thought or an example remark), remove the quotation marks and write it as the lesson's own sentence.");
+            let note = format!("{label} states a specific in \"{sentence}\" without citing it. Cite it when a supplied excerpt holds the wording by citing that sentence against the excerpt sentences that contain the wording (in cite or recite). When no supplied excerpt holds it, or the words are not quoted from a source (a misconception, a learner's thought or an example remark), remove the quotation marks and write it as the lesson's own sentence.");
             (summary, note, "")
         } else {
             let (missing, quote) = quotes
@@ -205,7 +205,7 @@ fn uncited_quotations(
                 "The quotation cited for this sentence does not contain {}: \u{201c}{sentence}\u{201d}",
                 join_plain(&missing)
             );
-            let note = format!("{label}: the quote cited for \"{sentence}\" does not contain {}. Cite a quote of a supplied excerpt that does, in an entry of the citations of {path}, or remove the quotation marks and write it as the lesson's own sentence when no excerpt holds the wording.", missing.join(", "));
+            let note = format!("{label}: the quote cited for \"{sentence}\" does not contain {}. Cite the supplied excerpt sentences that contain it (in cite or recite), or remove the quotation marks and write it as the lesson's own sentence when no excerpt holds the wording.", missing.join(", "));
             (summary, note, quote)
         };
         findings.push(citation(
@@ -239,9 +239,9 @@ fn scaffolding(
     site: FindingSite,
     findings: &mut Vec<ReviewFinding>,
 ) {
-    let Some(path) = site.pointer() else {
+    if site.pointer().is_none() {
         return;
-    };
+    }
     let label = site.note_label();
     let mut texts: Vec<&str> = Vec::new();
     for field in fields {
@@ -261,7 +261,7 @@ fn scaffolding(
             let summary = format!(
                 "This line is a citation written into the lesson's text: \u{201c}{line}\u{201d}"
             );
-            let note = format!("{label} has a citation written into its text: \"{line}\". Remove that line from the text and cite the sentence it supports in an entry of the citations of {path}.");
+            let note = format!("{label} has a citation written into its text: \"{line}\". Remove that line from the text and cite the sentence it supports against the supplied excerpt sentences instead.");
             findings.push(citation(
                 Rule::CitationLabel,
                 site,
@@ -280,7 +280,7 @@ fn scaffolding(
             let summary = format!(
                 "This sentence names a source by its number, which learners never see: \u{201c}{sentence}\u{201d}"
             );
-            let note = format!("{label} names a source by its number in \"{sentence}\". Learners never see source numbers: state what the source says as the lesson's own sentence without naming a source, and cite that sentence in the citations list of {path}.");
+            let note = format!("{label} names a source by its number in \"{sentence}\". Learners never see source numbers: state what the source says as the lesson's own sentence without naming a source, and cite that sentence against the supplied excerpt sentences instead.");
             findings.push(citation(
                 Rule::SourceNumber,
                 site,

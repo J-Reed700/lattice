@@ -1,11 +1,13 @@
 import type { ReactNode } from 'react';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ExportAllCourses } from '@/features/learning/portability/ExportAllCourses';
+import { resetPortabilityRunStore } from '@/features/learning/portability/portabilityRunStore';
+import { deferred } from '@/tests/deferred';
 
 const mocks = vi.hoisted(() => ({ exportAll: vi.fn(), showInFolder: vi.fn() }));
 vi.mock('@/lib/api', () => ({ default: { exportAllLearningPacks: mocks.exportAll, showInFolder: mocks.showInFolder } }));
@@ -33,6 +35,7 @@ function renderExport() {
 describe('Exporting every course', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    resetPortabilityRunStore();
     mocks.exportAll.mockResolvedValue(ok(result()));
     mocks.showInFolder.mockResolvedValue(ok(null));
   });
@@ -102,5 +105,39 @@ describe('Exporting every course', () => {
     await waitFor(() => expect(mocks.exportAll).toHaveBeenCalledWith(expect.objectContaining({ options: expect.objectContaining({ includeSourceBodies: true, sourceBodyRedistributionConfirmed: true }) })));
     await user.click(screen.getByLabelText(/Include full source text/));
     expect(screen.queryByLabelText(/I confirm that full source bodies/)).not.toBeInTheDocument();
+  });
+
+  it('preserves running state, completed results, and errors across unmount and remount', async () => {
+    const user = userEvent.setup();
+    const first = deferred<ReturnType<typeof ok>>();
+    mocks.exportAll.mockReturnValueOnce(first.promise);
+    const view1 = renderExport();
+    await user.click(screen.getByRole('button', { name: 'Choose folder and export' }));
+    expect(screen.getByRole('button', { name: 'Exporting courses…' })).toBeDisabled();
+    view1.unmount();
+
+    const view2 = renderExport();
+    expect(screen.getByRole('button', { name: 'Exporting courses…' })).toBeDisabled();
+    view2.unmount();
+
+    await act(async () => {
+      first.resolve(ok(result()));
+    });
+
+    const view3 = renderExport();
+    expect(await screen.findByRole('status')).toHaveTextContent('Exported 2 of 3 courses to /Volumes/USB/Lattice courses.');
+    expect(mocks.exportAll).toHaveBeenCalledTimes(1);
+    view3.unmount();
+
+    resetPortabilityRunStore();
+    mocks.exportAll.mockResolvedValueOnce(fail('Disk full'));
+    const view4 = renderExport();
+    await user.click(screen.getByRole('button', { name: 'Choose folder and export' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Disk full');
+    view4.unmount();
+
+    renderExport();
+    expect(screen.getByRole('alert')).toHaveTextContent('Disk full');
+    expect(screen.getByRole('button', { name: 'Retry same export' })).toBeEnabled();
   });
 });

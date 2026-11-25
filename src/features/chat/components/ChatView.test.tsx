@@ -25,7 +25,10 @@ const h = vi.hoisted(() => ({
   scrollToMessage: vi.fn(),
 }));
 
-vi.mock('@/shared/conversations/conversationsStore', () => ({ useConversationsStore: () => h.store }));
+vi.mock('@/shared/conversations/conversationsStore', () => ({
+  useConversationsStore: <T,>(selector?: (_s: Record<string, unknown>) => T) =>
+    (selector ? selector(h.store) : h.store),
+}));
 vi.mock('@/features/model/hooks/useDownloadedModels', () => ({
   useDownloadedModels: () => ({ fetchDownloadedModels: h.fetchDownloadedModels }),
 }));
@@ -47,8 +50,8 @@ vi.mock('@/features/chat/components/ConversationSpotlight', () => ({
   ConversationSpotlight: ({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) =>
     isOpen ? <div role="dialog" aria-label="Spotlight"><button type="button" onClick={onClose}>Close spotlight</button></div> : null,
 }));
-vi.mock('@/features/chat/components/reader/ChatReaderPane', () => ({
-  ChatReaderPane: ({ rowWidth, availableWidth }: { rowWidth: number; availableWidth: number }) => (
+vi.mock('@/features/reading/components/ReaderPane', () => ({
+  ReaderPane: ({ rowWidth, availableWidth }: { rowWidth: number; availableWidth: number }) => (
     <div data-testid="reader" data-row={rowWidth} data-available={availableWidth} />
   ),
 }));

@@ -2,8 +2,6 @@
 #
 #   Double-click setup.cmd, or in PowerShell:
 #     powershell -ExecutionPolicy Bypass -File .\setup.ps1
-#   Without a checkout (downloads the source to %USERPROFILE%\lattice first):
-#     irm https://raw.githubusercontent.com/J-Reed700/lattice/main/setup.ps1 | iex
 #
 # The Windows counterpart of setup.sh. Each step is skipped when what it
 # installs is already there:
@@ -84,12 +82,29 @@ function Confirm-Step([string]$Question) {
     return (-not $answer) -or ($answer -match '^[Yy]')
 }
 
+$script:ExtraPathDirs = @()
+
+function Add-SessionPathDir([string]$Dir) {
+    if (-not $Dir -or -not (Test-Path $Dir)) { return }
+    if ($script:ExtraPathDirs -notcontains $Dir) { $script:ExtraPathDirs += $Dir }
+    $entries = @($env:Path -split ';' | Where-Object { $_ })
+    if ($entries.Count -eq 0 -or $entries[0] -ine $Dir) {
+        $env:Path = "$Dir;$env:Path"
+    }
+}
+
 function Update-SessionPath {
     $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
     $user = [Environment]::GetEnvironmentVariable('Path', 'User')
     $env:Path = "$machine;$user"
     $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
     if ((Test-Path $cargoBin) -and ($env:Path -notlike "*$cargoBin*")) { $env:Path = "$cargoBin;$env:Path" }
+    foreach ($dir in $script:ExtraPathDirs) {
+        if (Test-Path $dir) {
+            $entries = @($env:Path -split ';' | Where-Object { $_ })
+            if ($entries.Count -eq 0 -or $entries[0] -ine $dir) { $env:Path = "$dir;$env:Path" }
+        }
+    }
 }
 
 function Invoke-Native([string]$What, [scriptblock]$Command) {
@@ -143,16 +158,45 @@ function Confirm-Git {
 
 function Get-Python {
     # Windows PowerShell turns a native command's redirected stderr into
-    # errors, which 'Stop' would make fatal.
+    # errors, which 'Stop' would make fatal. Also avoid quotes inside the -c
+    # argument because Windows PowerShell 5.1 strips inner double quotes when
+    # passing arguments to native programs.
     $ErrorActionPreference = 'Continue'
-    foreach ($candidate in @('py -3', 'python', 'python3')) {
-        $parts = $candidate.Split(' ')
-        if (-not (Test-Command $parts[0])) { continue }
+    $candidates = @(
+        ,@('py', '-3')
+        ,@('python')
+        ,@('python3')
+    )
+    foreach ($base in @(
+        (Join-Path $env:LOCALAPPDATA 'Programs\Python'),
+        $env:ProgramFiles
+    )) {
+        if (-not $base -or -not (Test-Path $base)) { continue }
+        $installs = Get-ChildItem $base -Directory -Filter 'Python3*' -ErrorAction SilentlyContinue |
+            Sort-Object { if ($_.Name -match '^Python3(\d+)$') { [int]$Matches[1] * 2 + 1 } elseif ($_.Name -match '^Python3(\d+)') { [int]$Matches[1] * 2 } else { -1 } } -Descending
+        foreach ($dir in $installs) {
+            $py = Join-Path $dir.FullName 'python.exe'
+            if (Test-Path $py) { $candidates += ,@($py) }
+        }
+    }
+    foreach ($parts in $candidates) {
         $exe = $parts[0]
+        if (-not (Test-Command $exe)) { continue }
         $pre = @($parts | Select-Object -Skip 1)
         # The Microsoft Store alias for python exits non-zero without a real install.
-        $version = & $exe @pre -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>$null
-        if ($LASTEXITCODE -eq 0 -and $version -and ([version]$version -ge [version]'3.9')) { return $version }
+        $lines = @(& $exe @pre -c 'import sys; print(sys.version_info[0], sys.version_info[1], sep=chr(46)); print(sys.executable)' 2>$null)
+        if ($LASTEXITCODE -ne 0 -or $lines.Count -lt 1) { continue }
+        $version = "$($lines[0])".Trim()
+        if ($version -notmatch '^\d+\.\d+$') { continue }
+        if ([version]$version -ge [version]'3.9') {
+            if ($lines.Count -ge 2) {
+                $pyExe = "$($lines[1])".Trim()
+                if ($pyExe -and (Test-Path $pyExe)) {
+                    Add-SessionPathDir (Split-Path -Parent $pyExe)
+                }
+            }
+            return $version
+        }
     }
     return $null
 }

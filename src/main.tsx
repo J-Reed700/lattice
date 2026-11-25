@@ -5,7 +5,10 @@
  * which makes Zustand's persist middleware throw during rehydration and leaves
  * a blank window. This check runs first so the stores always start clean.
  */
-import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
+import { lazy, Suspense, useEffect } from 'react'
+
+import { isTauri } from '@tauri-apps/api/core'
+import { emit } from '@tauri-apps/api/event'
 import ReactDOM from 'react-dom/client'
 
 import App from './App'
@@ -26,15 +29,7 @@ function bootstrapLocalStorage() {
     try {
       const item = localStorage.getItem(key)
       if (!item) return
-      const parsed = JSON.parse(item)
-      const isFrozen =
-        Object.isFrozen(parsed) ||
-        (parsed.state && Object.isFrozen(parsed.state)) ||
-        (parsed.state?.settings && Object.isFrozen(parsed.state.settings))
-      if (isFrozen) {
-        console.warn(`[bootstrap] Cleared frozen localStorage key "${key}"`)
-        localStorage.removeItem(key)
-      }
+      JSON.parse(item)
     } catch (error) {
       console.warn(`[bootstrap] Cleared unreadable localStorage key "${key}":`, error)
       localStorage.removeItem(key)
@@ -56,12 +51,42 @@ if (!rootElement) {
   throw new Error('Root element not found. Ensure index.html contains <div id="root"></div>')
 }
 
+// Reports the first commit. A sibling of the boundary, not a child, so a caught error's
+// fallback still counts as a first screen while a root-level crash (which commits nothing) does not.
+function BootSignal() {
+  useEffect(() => {
+    window.__LATTICE_BOOT__?.markMounted()
+    // Emitted here, not by boot-guard.js, so the native handshake survives that script failing to load.
+    if (isTauri()) {
+      void emit('lattice:boot-mounted').catch(() => {})
+    }
+  }, [])
+  return null
+}
+
+const ReactQueryDevtools = import.meta.env.DEV
+  ? lazy(() =>
+      import('@tanstack/react-query-devtools').then((mod) => ({ default: mod.ReactQueryDevtools }))
+    )
+  : null;
+
 // StrictMode stays off: its double-invoked effects fire IPC commands twice.
 ReactDOM.createRoot(rootElement).render(
-  <RootErrorBoundary>
-    <AppProviders>
-      <App />
-      <ReactQueryDevtools initialIsOpen={false} />
-    </AppProviders>
-  </RootErrorBoundary>,
+  <>
+    <RootErrorBoundary>
+      <AppProviders>
+        <App />
+        {ReactQueryDevtools ? (
+          <Suspense fallback={null}>
+            <ReactQueryDevtools initialIsOpen={false} />
+          </Suspense>
+        ) : null}
+      </AppProviders>
+    </RootErrorBoundary>
+    <BootSignal />
+  </>,
 )
+
+// Last statement: the module graph loaded and evaluated. From here React's boundaries and
+// installGlobalDiagnostics own errors, so the guard stops listening for stray rejections.
+window.__LATTICE_BOOT__?.markLoaded()

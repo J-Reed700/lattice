@@ -53,3 +53,5 @@ export const learningSourceTrustKey = (request: GetLearningSourceTrustRequestDto
 export const LEARNING_SOURCE_TRUST_OVERRIDES_KEY = ['learning-source-trust-overrides'] as const;
 export const LEARNING_SOURCE_TRUST_CALIBRATION_KEY = ['learning-source-trust-calibration'] as const;
 export const learningCoursePlanKey = (programId: string) => ['learning-course-plan', programId] as const;
+export const LEARNING_PORTABILITY_PREFIX = ['learning-portability'] as const;
+export const learningPortabilityKey = (programId: string) => [...LEARNING_PORTABILITY_PREFIX, programId] as const;

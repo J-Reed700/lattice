@@ -197,6 +197,7 @@ impl ConversationRepository {
         &self,
         request: MoveConversationToSpaceRequestDto,
     ) -> Result<RenameConversationResponseDto, AppError> {
+        super::super::conversations::reject_internal_library_snapshots(&request.conversation_id)?;
         let mut tx = self
             .db
             .begin_write()

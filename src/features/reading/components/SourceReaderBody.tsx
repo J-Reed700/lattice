@@ -21,6 +21,7 @@ import {
 import { useCitationTravel } from '@/features/reading/hooks/useCitationTravel';
 import { useFileContent } from '@/features/reading/hooks/useFileContent';
 import { usePassageCapture } from '@/features/reading/hooks/usePassageCapture';
+import { useSavedWebArticle } from '@/features/reading/hooks/useSavedWebArticle';
 import { useSourceUrlImport } from '@/features/reading/hooks/useSourceUrlImport';
 import { passageMatchNotice, sourceHeaderMeta } from '@/features/reading/model/filePreviewMeta';
 import { textFragmentUrl } from '@/features/reading/model/textFragment';
@@ -39,7 +40,6 @@ import { sanitizeFileName } from '@/utils/sanitize';
 import {
   getSourceExternalUrl,
   getSourcePreviewKind,
-  getWebArchiveHtmlPath,
   isCourseSource,
   isHttpUrl,
 } from '@/utils/sourcePreview';
@@ -53,7 +53,7 @@ import {
  * same document with the same passage marked, the same citation travel and the
  * same capture verbs. So the viewers, the rail and the footer live here once,
  * and the caller supplies only the box: `FilePreviewModal` wraps this in a
- * Radix dialog, `ChatReaderPane` in a plain aside.
+ * Radix dialog, `ReaderPane` in a plain aside.
  *
  * `presentation` says which, and that is the only thing this file branches on:
  * `dialog` is the full-screen modal, `reading-pane` the overlay on the right
@@ -91,6 +91,8 @@ export interface SourceReaderBodyProps {
    * the Library, Compare, the reference inbox — and then nothing is marked.
    */
   ownerKey?: string;
+  /** Originating conversation ID when opened from a chat or tangent. */
+  conversationId?: string | null;
   /** Citation-bearing text for surfaces outside a chat message. */
   citationContent?: string;
   /** Which of the answer's marks for this source was clicked, if one was. */
@@ -117,6 +119,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   onCitationIndexChange,
   onLocationResolved,
   ownerKey,
+  conversationId,
   citationContent,
   occurrence = null,
   isFocused = false,
@@ -135,8 +138,8 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   const [resolvedLabel, setResolvedLabel] = useState<string | undefined>(undefined);
   const activeConversationId = useConversationsStore((state) => state.activeConversationId);
 
-  // File size limits (10MB backend limit)
-  const MAX_PREVIEW_SIZE = 10 * 1024 * 1024; // 10MB
+  // File size limits (matches 100MB backend IPC preview limit)
+  const MAX_PREVIEW_SIZE = 100 * 1024 * 1024; // 100MB
   const WARN_SIZE = 5 * 1024 * 1024; // 5MB
 
   const isFileTooLarge = source.fileSizeBytes > MAX_PREVIEW_SIZE;
@@ -144,13 +147,30 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
 
   const mimeType = source.mimeType || '';
   const sourcePreviewKind = getSourcePreviewKind(source);
-  const isExternalWebSource = sourcePreviewKind === 'external-web';
+  const hasDocumentId = Boolean(source.documentId && UUID_PATTERN.test(source.documentId));
+  const looksUpDocumentPath = hasDocumentId && !isHttpUrl(source.filePath);
+  const documentPathQuery = useQuery({
+    queryKey: readingKeys.documentPath(source.documentId ?? ''),
+    queryFn: async () => {
+      const result = await resolveSourcePath(source.documentId!, api);
+      return result.ok ? result.data : null;
+    },
+    enabled: looksUpDocumentPath,
+    retry: false,
+    staleTime: 0,
+  });
+  const archivePath = !looksUpDocumentPath
+    ? source.filePath
+    : documentPathQuery.isPending
+      ? undefined
+      : documentPathQuery.data ?? source.filePath;
+  const { article: savedArticle, deciding } = useSavedWebArticle(source, archivePath);
+  const isWebArchiveArticle = savedArticle !== null;
+  const isExternalWebSource = !isWebArchiveArticle && sourcePreviewKind === 'external-web';
   const normalizedCategory = normalizeCategory(source.category ?? '');
   const isWebCategory =
     normalizedCategory.includes('web article') || normalizedCategory === 'web';
-  const isWebArchiveArticle = sourcePreviewKind === 'archived-web';
   const externalSourceUrl = getSourceExternalUrl(source);
-  const hasDocumentId = Boolean(source.documentId && UUID_PATTERN.test(source.documentId));
   const isWebDocumentId = Boolean(source.documentId?.startsWith('web:'));
   // An HTML file on disk is a page to render, not a web citation to read as
   // text: the sandboxed, theme-aware HTML viewer reads and shows it.
@@ -179,14 +199,23 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     mimeType.startsWith('image/') ||
     mimeType.startsWith('audio/') ||
     isDocx;
-  const webArchiveHtmlPath = getWebArchiveHtmlPath(source.filePath);
   /** A web citation rendered from its saved page text or saved excerpt. */
-  const showsWebArticle = isWebSourceLike && !isWebArchiveArticle;
+  const showsWebArticle = isWebSourceLike && !isWebArchiveArticle && !deciding;
   // A frozen copy belongs to a conversation, so the Page view needs one.
-  const snapshotConversationId = showsWebArticle && openableUrl
-    ? (source.conversationId ?? activeConversationId ?? '')
+  // Course material has no Page view: it would capture the live address, not the version cited.
+  const canShowPage = showsWebArticle && !isCourseSource(source);
+  const resolvedConversationId =
+    source.conversationId !== undefined
+      ? source.conversationId
+      : conversationId !== undefined
+        ? conversationId
+        : presentation === 'dialog'
+          ? null
+          : activeConversationId;
+  const snapshotConversationId = canShowPage && openableUrl
+    ? (resolvedConversationId ?? '')
     : null;
-  const snapshotUrl = showsWebArticle ? openableUrl : null;
+  const snapshotUrl = canShowPage ? openableUrl : null;
   const webPageMode = useWebPageMode(snapshotConversationId, snapshotUrl);
   // The article view scrolls itself and marks its own passages, so it is left
   // alone like the other embedded viewers: an outer scroller and the block
@@ -195,26 +224,19 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   const canShowInFolder = hasDocumentId || (!shouldUseUrlActions && !isHttpUrl(source.filePath ?? ''));
 
   const shouldFetchContent =
+    !deciding &&
     !isFileTooLarge &&
     !isBinaryPreview &&
     !isWebArchiveArticle &&
     !isLocalHtmlFile &&
+    // Course material carries its own text; there is no file behind it to read.
+    !isCourseSource(source) &&
     (hasDocumentId || Boolean(source.filePath && !isHttpUrl(source.filePath)));
   const shouldResolveDocumentPath = hasDocumentId && !isWebSourceLike;
   // Citation metadata can retain the path from when it was indexed. A stable
   // document ID is authoritative when the file has moved; a failed lookup
   // falls back to the cited path.
-  const resolvesFromDocument = shouldResolveDocumentPath && !isHttpUrl(source.filePath);
-  const documentPathQuery = useQuery({
-    queryKey: readingKeys.documentPath(source.documentId ?? ''),
-    queryFn: async () => {
-      const result = await resolveSourcePath(source.documentId!, api);
-      return result.ok ? result.data : null;
-    },
-    enabled: resolvesFromDocument,
-    retry: false,
-    staleTime: 0,
-  });
+  const resolvesFromDocument = shouldResolveDocumentPath && looksUpDocumentPath;
   const isResolvingPreviewPath = resolvesFromDocument && documentPathQuery.isPending;
   const resolvedPreviewPath = !shouldResolveDocumentPath
     ? undefined
@@ -231,7 +253,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     allowUnscopedImport,
     isImportingUrl,
     handleImportSourceUrl,
-  } = useSourceUrlImport(importableUrl, activeConversationId);
+  } = useSourceUrlImport(importableUrl, resolvedConversationId ?? null);
 
   const renderImportScopeSelect = (extraClassName = '') => (
     <ImportScopeSelect
@@ -300,6 +322,18 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
       if (failure !== null) {
         toast.error("Couldn't open URL", { message: failure });
       }
+      return;
+    }
+
+    // A saved article's page opens in the browser; without it, the address it was saved from.
+    if (savedArticle) {
+      const page = savedArticle.pagePath ? await openSourcePath(savedArticle.pagePath, api) : null;
+      if (page?.ok) return;
+      const urlFailure = savedArticle.url
+        ? await whyExternalUrlDidNotOpen(savedArticle.url)
+        : 'It has no saved page or web address.';
+      if (urlFailure === null) return;
+      toast.error("Couldn't open file", { message: page && !page.ok ? page.error : urlFailure });
       return;
     }
 
@@ -375,6 +409,9 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     };
   })();
 
+  const viewerLoading = isLoading || isResolvingPreviewPath || deciding;
+  const viewerContent = isCourseSource(source) ? source.content : content;
+
   const renderViewer = () => (
     <SourceViewer
       source={source}
@@ -382,16 +419,15 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
       isFileTooLarge={isFileTooLarge}
       isFileLarge={isFileLarge}
       maxPreviewSize={MAX_PREVIEW_SIZE}
-      isLoading={isLoading || isResolvingPreviewPath}
-      content={isCourseSource(source) ? source.content : content}
+      isLoading={viewerLoading}
+      content={viewerContent}
       error={error}
       savedCitationText={savedCitationText}
       previewFilePath={previewFilePath}
       initialLocator={initialLocator}
       onLocationResolved={handleLocationResolved}
       onMatch={setMatchTier}
-      isWebArchiveArticle={isWebArchiveArticle}
-      webArchiveHtmlPath={webArchiveHtmlPath}
+      savedArticle={savedArticle}
       webArticle={
         showsWebArticle ? (
           <WebSourceView
@@ -446,7 +482,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
             below 1024px.
           */}
           {matchNotice && (
-            <p className="shrink-0 border-b border-subtle px-7 py-2 text-xs text-[hsl(var(--text-muted))]">
+            <p className="shrink-0 border-b border-border-subtle px-7 py-2 text-xs text-[hsl(var(--text-muted))]">
               {matchNotice}
             </p>
           )}
@@ -463,7 +499,12 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
               locate.
             */}
             {initialLocator && !usesEmbeddedViewer ? (
-              <PassageHighlighter locator={initialLocator} onMatch={setMatchTier}>
+              <PassageHighlighter
+                locator={initialLocator}
+                isLoading={viewerLoading}
+                contentKey={viewerContent}
+                onMatch={setMatchTier}
+              >
                 {renderViewer()}
               </PassageHighlighter>
             ) : (

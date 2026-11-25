@@ -21,12 +21,12 @@ export function RunHistory({
             This activity’s attempts
           </h3>
         </div>
-        <span className="rounded-full bg-background px-3 py-1.5 text-xs text-text-muted">
+        <span className="rounded-full bg-bg px-3 py-1.5 text-xs text-text-muted">
           {runs.length}
         </span>
       </div>
       {runs.length === 0 ? (
-        <p className="mt-3 rounded-xl bg-background p-4 text-xs text-text-muted">
+        <p className="mt-3 rounded-xl bg-bg p-4 text-xs text-text-muted">
           Runs appear here after a local runtime starts. Conversation
           turns are kept separately.
         </p>

@@ -13,25 +13,27 @@
 
 import { useState, type ReactNode } from 'react';
 
-import { PageHeader, SettingsRow, SettingsSection, settingsFieldClass, Switch } from '@/components/ui';
+import { Button, Input, PageHeader, SettingsRow, SettingsSection, Switch } from '@/components/ui';
 import type {
   FinderStatusDto,
   JsonValue,
   KeyStatusDto,
   ReachGroupDto,
+  SourcingAddress,
   SourcingSettingsDto,
 } from '@/lib/bindings';
 import { cn } from '@/lib/utils';
 import { toast } from '@/stores/toastStore';
 import { openExternalUrl } from '@/utils/openExternalUrl';
 
-import { GHOST_BUTTON_CLASS, SECONDARY_BUTTON_CLASS, SWITCH_CLASS } from './settingsStyles';
-import { isContact, isHttpUrl, keyServiceOf, REACH_LABELS, statusLine, type Tone } from './sourcesLabels';
+import { SWITCH_CLASS } from './settingsStyles';
+import { keyServiceOf, REACH_LABELS, statusLine, type Tone } from './sourcesLabels';
 import { useSettingsQuery, useUpdateSettingsMutation } from '../hooks/useSettingsQuery';
 import {
   useRefreshSourcesStatus,
   useSourceKeyMutations,
   useSourcesStatus,
+  useSourcingAddressCheck,
 } from '../hooks/useSourcesStatus';
 
 /** The backend's defaults, shown until the settings load. */
@@ -60,7 +62,11 @@ export function SourcesTab() {
   const sourcing = settings?.sourcing ?? DEFAULT_SOURCING;
   const busy = isLoading || updateMutation.isPending;
 
-  const updateSourcing = (updates: Record<string, JsonValue>, failure: string, onDone?: () => void) => {
+  const updateSourcing = (
+    updates: Record<string, JsonValue>,
+    failure: string,
+    onDone?: () => void,
+  ) => {
     updateMutation.mutate(
       { category: 'sourcing', updates },
       {
@@ -69,7 +75,7 @@ export function SourcesTab() {
           void refreshStatus();
         },
         onError: (error) => toast.error(failure, { message: error.message }),
-      }
+      },
     );
   };
   const toggleFinder = (finder: FinderStatusDto, enabled: boolean) =>
@@ -96,7 +102,7 @@ export function SourcesTab() {
       />
 
       {statusError ? (
-        <p role="alert" className="mb-6 text-sm text-danger">
+        <p role="alert" className="mb-6 text-sm text-danger-fg">
           Couldn&apos;t read the sources: {statusError.message}
         </p>
       ) : null}
@@ -130,7 +136,7 @@ export function SourcesTab() {
           hint="Your own instance, on this computer, your network or the web, with its JSON output turned on. Lattice sends it nothing until you set one, and asks that address for nothing but searches."
           saved={sourcing.searxngUrl}
           placeholder="https://search.example.org"
-          check={isHttpUrl}
+          field="searxngUrl"
           invalidMessage="Enter an address that starts with http:// or https://"
           disabled={busy}
           onSave={(searxngUrl, done) =>
@@ -154,7 +160,7 @@ export function SourcesTab() {
           }
           saved={sourcing.contact}
           placeholder="you@example.org"
-          check={isContact}
+          field="contact"
           invalidMessage="Enter an email address, or a web address that starts with http:// or https://"
           disabled={busy}
           onSave={(contact, done) => updateSourcing({ contact }, "Couldn't save the contact", done)}
@@ -220,7 +226,7 @@ function keyUse(keyStatus: KeyStatusDto, finders: FinderStatusDto[]): string {
     .map((finder) =>
       finder.needs.kind === 'requiredKey'
         ? `${finder.name} runs only with this key.`
-        : `${finder.name} works without it; a key raises its limits.`
+        : `${finder.name} works without it; a key raises its limits.`,
     )
     .join(' ');
 }
@@ -290,13 +296,15 @@ function KeyField({ keyStatus }: { keyStatus: KeyStatusDto }) {
           setDraft('');
           toast.success(`${keyStatus.name} key saved`);
         },
-        onError: (error) => toast.error(`Couldn't save the ${keyStatus.name} key`, { message: error.message }),
-      }
+        onError: (error) =>
+          toast.error(`Couldn't save the ${keyStatus.name} key`, { message: error.message }),
+      },
     );
   const remove = () =>
     removeKey.mutate(keyStatus.service, {
       onSuccess: () => toast.success(`${keyStatus.name} key removed`),
-      onError: (error) => toast.error(`Couldn't remove the ${keyStatus.name} key`, { message: error.message }),
+      onError: (error) =>
+        toast.error(`Couldn't remove the ${keyStatus.name} key`, { message: error.message }),
     });
 
   return (
@@ -304,51 +312,52 @@ function KeyField({ keyStatus }: { keyStatus: KeyStatusDto }) {
       <label htmlFor={id} className="sr-only">
         {keyStatus.name} key
       </label>
-      <input
-        id={id}
-        type="password"
-        autoComplete="off"
-        spellCheck={false}
-        className={cn(settingsFieldClass, 'min-w-[14rem] flex-1')}
-        value={draft}
-        placeholder={keyStatus.stored ? 'Paste a new key to replace it' : 'Paste your key'}
-        onChange={(event) => setDraft(event.target.value)}
-      />
-      <button
+      <div className="min-w-[14rem] flex-1">
+        <Input
+          id={id}
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          value={draft}
+          placeholder={keyStatus.stored ? 'Paste a new key to replace it' : 'Paste your key'}
+          onChange={(event) => setDraft(event.target.value)}
+        />
+      </div>
+      <Button
         type="button"
-        className={SECONDARY_BUTTON_CLASS}
+        variant="outline"
         disabled={working || !draft.trim()}
         onClick={save}
       >
         {saveKey.isPending ? 'Saving…' : 'Save'}
-      </button>
+      </Button>
       {keyStatus.stored ? (
         <>
           <span className="text-xs text-success-fg">Key saved</span>
-          <button type="button" className={GHOST_BUTTON_CLASS} disabled={working} onClick={remove}>
+          <Button type="button" variant="ghost" disabled={working} onClick={remove}>
             Remove
-          </button>
+          </Button>
         </>
       ) : null}
-      <button
+      <Button
         type="button"
-        className={GHOST_BUTTON_CLASS}
+        variant="ghost"
         onClick={() => void openExternalUrl(keyStatus.keyPageUrl)}
       >
         Get a key
-      </button>
+      </Button>
     </div>
   );
 }
 
-/** An address the backend checks too; Save sends it, or clears it when empty. */
+/** An address the backend checks as it is typed; Save sends it, or clears it when empty. */
 function AddressField({
   id,
   label,
   hint,
   saved,
   placeholder,
-  check,
+  field,
   invalidMessage,
   disabled,
   onSave,
@@ -358,7 +367,7 @@ function AddressField({
   hint: ReactNode;
   saved: string | null;
   placeholder: string;
-  check: (value: string) => boolean;
+  field: SourcingAddress;
   invalidMessage: string;
   disabled: boolean;
   onSave: (value: string | null, done: () => void) => void;
@@ -366,32 +375,35 @@ function AddressField({
   const [draft, setDraft] = useState<string | null>(null);
   const value = draft ?? saved ?? '';
   const trimmed = value.trim();
-  const invalid = trimmed !== '' && !check(trimmed);
+  const accepted = useSourcingAddressCheck(field, trimmed);
+  const invalid = accepted === false;
+  const unanswered = trimmed !== '' && accepted === undefined;
   const changed = trimmed !== (saved ?? '');
   const messageId = `${id}-error`;
 
   return (
     <SettingsRow label={label} hint={hint} htmlFor={id} stacked>
       <div className="flex gap-2">
-        <input
-          id={id}
-          type="text"
-          spellCheck={false}
-          className={settingsFieldClass}
-          value={value}
-          placeholder={placeholder}
-          aria-invalid={invalid}
-          aria-describedby={invalid ? messageId : undefined}
-          onChange={(event) => setDraft(event.target.value)}
-        />
-        <button
+        <div className="min-w-0 flex-1">
+          <Input
+            id={id}
+            type="text"
+            spellCheck={false}
+            value={value}
+            placeholder={placeholder}
+            aria-invalid={invalid}
+            aria-describedby={invalid ? messageId : undefined}
+            onChange={(event) => setDraft(event.target.value)}
+          />
+        </div>
+        <Button
           type="button"
-          className={SECONDARY_BUTTON_CLASS}
-          disabled={disabled || invalid || !changed}
+          variant="outline"
+          disabled={disabled || invalid || unanswered || !changed}
           onClick={() => onSave(trimmed === '' ? null : trimmed, () => setDraft(null))}
         >
           {trimmed === '' && saved ? 'Clear' : 'Save'}
-        </button>
+        </Button>
       </div>
       {invalid ? (
         <p id={messageId} role="alert" className="text-xs text-danger-fg">

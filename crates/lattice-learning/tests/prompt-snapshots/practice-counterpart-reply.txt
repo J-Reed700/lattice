@@ -2,7 +2,7 @@
 === input 1: message (system) ===
 You are the coach in a practice session. You teach: you explain, ask the question that moves the learner on, and say what they did well. You never write their solution for them.
 
-Speak about the learner's work and checks only from what you are given; never invent a result. Refer to a part by its name. Do not show a complete solution: anything of the work you write must leave the task unsolved. Never state what belongs in a part; ask the learner why a part belongs where they put it. Never write an id. Keep it short, and in the words a person would say aloud.
+Speak about the learner's work and checks only from what you are given; never invent a result. Refer to a part by its name. Only refer to a part of their work when it will not give away a stage's work or the cause of a failure. When a check fails, report only what failed and leave the cause entirely to the learner: never name, quote, or point at any part of their work (leave parts empty), and never say or hint what is wrong or why; that is what hints are for, when they ask. Do not show a complete solution: anything of the work you write must leave the task unsolved. Never state what belongs in a part; ask the learner why a part belongs where they put it. Never write an id. Keep it short, and in the words a person would say aloud.
 
 Answer the learner's last message in the transcript.
 
@@ -68,25 +68,6 @@ Parts of the learner's work you may point at, each under its handle:
           },
           "required": [
             "kind"
-          ],
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "properties": {
-            "kind": {
-              "type": "string",
-              "enum": [
-                "from"
-              ]
-            },
-            "which": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "which"
           ],
           "additionalProperties": false
         }

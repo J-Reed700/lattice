@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::practice::session::fake_kind::fake_kind;
-use crate::practice::session::observation::{ClockView, Coverage};
+use crate::practice::session::observation::{CheckView, ClockView, Coverage};
 use lattice_core::domain::learning::practice::work::{Brief, Difficulty, Piece};
 use lattice_core::shared::error::AppError;
 use serde_json::json;
@@ -148,6 +148,7 @@ fn rows() -> Vec<(&'static str, Event, [Option<Cue>; 3])> {
             "shown cases checked",
             Event::Checked {
                 scope: CheckScope::Shown,
+                status: CheckStatus::Failed,
             },
             [
                 Some(Cue::CheckReview(CheckScope::Shown)),
@@ -159,6 +160,7 @@ fn rows() -> Vec<(&'static str, Event, [Option<Cue>; 3])> {
             "own case checked",
             Event::Checked {
                 scope: CheckScope::Own,
+                status: CheckStatus::Passed,
             },
             [
                 Some(Cue::CheckReview(CheckScope::Own)),
@@ -170,12 +172,21 @@ fn rows() -> Vec<(&'static str, Event, [Option<Cue>; 3])> {
             "all cases checked",
             Event::Checked {
                 scope: CheckScope::All,
+                status: CheckStatus::Failed,
             },
             [
                 Some(Cue::CheckReview(CheckScope::All)),
                 Some(Cue::Submitted),
                 Some(Cue::Submitted),
             ],
+        ),
+        (
+            "all cases checked, without an answer",
+            Event::Checked {
+                scope: CheckScope::All,
+                status: CheckStatus::Interrupted,
+            },
+            [None, None, None],
         ),
         (
             "draft paused, changed",
@@ -471,5 +482,221 @@ fn a_kind_with_no_reply_fields_gets_a_format_line_that_ends_after_the_content() 
             system.ends_with("Answer as JSON: content is what you say."),
             "{setting:?}: {system}"
         );
+    }
+}
+
+fn relay(kind: &Kind, observation: &Observation, stage: Stage) -> String {
+    let line = kind
+        .wording
+        .stage_instruction(&observation.brief, observation.form, stage);
+    format!(
+        "The stage asks the learner: \"{line}\" That is the learner's work: do none of it for them."
+    )
+}
+
+#[test]
+fn the_coach_relays_a_stage_as_the_learners_work_and_does_none_of_it() {
+    let kind = kind();
+    for stage in [Stage::Understand, Stage::Plan] {
+        let observation = observation(Setting::Coached, Form::Build, stage);
+        let policy = policy_for(Setting::Coached, &kind, Form::Build);
+        let line = kind
+            .wording
+            .stage_instruction(&observation.brief, Form::Build, stage);
+        let relay = relay(&kind, &observation, stage);
+        let opening = policy.system(&Cue::Opening, &observation);
+        assert!(opening.contains(&relay), "{stage:?}: {opening}");
+        assert!(
+            opening.contains("Do not summarize or restate the task"),
+            "{stage:?}: {opening}"
+        );
+        let opened = policy.system(&Cue::StageOpened(stage), &observation);
+        assert!(opened.contains(&relay), "{stage:?}: {opened}");
+        assert!(
+            opened.contains("Do not suggest an approach or strategy"),
+            "{stage:?}: {opened}"
+        );
+        for system in [&opening, &opened] {
+            assert!(
+                !system.contains(&format!("in your own words: {line}")),
+                "{stage:?}: {system}"
+            );
+        }
+    }
+}
+
+#[test]
+fn every_setting_leaves_the_cause_of_a_failing_check_to_the_learner() {
+    let kind = kind();
+    let sentence = "When a check fails, report only what failed and leave the cause entirely to the learner: never name, quote, or point at any part of their work (leave parts empty), and never say or hint what is wrong or why; that is what hints are for, when they ask.";
+    for setting in SETTINGS {
+        let observation = observation(setting, Form::Build, Stage::Make);
+        let policy = policy_for(setting, &kind, Form::Build);
+        let system = policy.system(&Cue::Reply, &observation);
+        assert!(system.contains(sentence), "{setting:?}: {system}");
+    }
+}
+
+#[test]
+fn failed_check_and_submit_cues_forbid_pointing_or_diagnosing() {
+    let kind = kind();
+    let mut failed = observation(Setting::Coached, Form::Build, Stage::Check);
+    failed.last_check = Some(crate::practice::session::observation::CheckView {
+        id: "chk".to_owned(),
+        scope: CheckScope::All,
+        status: lattice_core::domain::learning::practice::work::CheckStatus::Failed,
+        cases: Vec::new(),
+        detail: serde_json::json!({}),
+    });
+    let coached = policy_for(Setting::Coached, &kind, Form::Build);
+    for scope in SCOPES {
+        let system = coached.system(&Cue::CheckReview(scope), &failed);
+        assert!(!system.contains("what to look at"), "{system}");
+        assert!(
+            system.contains("do not name, quote, or point at any part of their work"),
+            "{system}"
+        );
+        assert!(system.contains("leave parts empty"), "{system}");
+    }
+    let coached_submit = coached.system(&Cue::Submitted, &failed);
+    assert!(
+        !coached_submit.contains("what to look at"),
+        "{coached_submit}"
+    );
+    assert!(
+        coached_submit.contains("leave parts empty"),
+        "{coached_submit}"
+    );
+
+    for setting in [Setting::Mock, Setting::Watched] {
+        let mut obs = failed.clone();
+        obs.setting = setting;
+        let policy = policy_for(setting, &kind, Form::Build);
+        let system = policy.system(&Cue::Submitted, &obs);
+        assert!(
+            system.contains("Speak directly to the candidate"),
+            "{setting:?}: {system}"
+        );
+        assert!(
+            system.contains("Do not name, quote, or point at any part of their work"),
+            "{setting:?}: {system}"
+        );
+        assert!(
+            system.contains("leave parts empty"),
+            "{setting:?}: {system}"
+        );
+    }
+}
+
+fn with_last_check(setting: Setting, scope: CheckScope, status: CheckStatus) -> Observation {
+    let mut state = observation(setting, Form::Build, Stage::Check);
+    state.last_check = Some(CheckView {
+        id: "chk".to_owned(),
+        scope,
+        status,
+        cases: Vec::new(),
+        detail: json!({}),
+    });
+    state
+}
+
+fn check_cues(setting: Setting) -> Vec<Cue> {
+    let mut cues = vec![Cue::Submitted];
+    if setting == Setting::Coached {
+        cues.extend(SCOPES.into_iter().map(Cue::CheckReview));
+    }
+    cues
+}
+
+/// The cues about a check that judges the work: of the shown cases or every case.
+fn verdict_cues(setting: Setting) -> Vec<Cue> {
+    let mut cues = vec![Cue::Submitted];
+    if setting == Setting::Coached {
+        cues.extend([
+            Cue::CheckReview(CheckScope::Shown),
+            Cue::CheckReview(CheckScope::All),
+        ]);
+    }
+    cues
+}
+
+#[test]
+fn a_check_without_an_answer_is_not_reported_as_passing_or_failing() {
+    let kind = kind();
+    let noun = kind.wording.check_noun();
+    let said_failed = format!("the last {noun} failed");
+    let said_passed = format!("the last {noun} passed");
+    for status in [
+        CheckStatus::Pending,
+        CheckStatus::Running,
+        CheckStatus::Cancelled,
+        CheckStatus::Interrupted,
+        CheckStatus::Unavailable,
+    ] {
+        for setting in SETTINGS {
+            let state = with_last_check(setting, CheckScope::All, status);
+            let policy = policy_for(setting, &kind, Form::Build);
+            for cue in check_cues(setting) {
+                let system = policy.system(&cue, &state).to_lowercase();
+                assert!(
+                    !system.contains(&said_failed),
+                    "{setting:?} {status:?} {cue:?}: {system}"
+                );
+                assert!(
+                    !system.contains(&said_passed),
+                    "{setting:?} {status:?} {cue:?}: {system}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_check_with_an_answer_is_reported_by_it_and_a_timeout_as_a_failure() {
+    let kind = kind();
+    let noun = kind.wording.check_noun();
+    for (status, outcome) in [
+        (CheckStatus::Passed, "passed"),
+        (CheckStatus::Failed, "failed"),
+        (CheckStatus::TimedOut, "failed"),
+    ] {
+        let said = format!("the last {noun} {outcome}");
+        for setting in SETTINGS {
+            let state = with_last_check(setting, CheckScope::All, status);
+            let policy = policy_for(setting, &kind, Form::Build);
+            for cue in verdict_cues(setting) {
+                let system = policy.system(&cue, &state).to_lowercase();
+                assert!(
+                    system.contains(&said),
+                    "{setting:?} {status:?} {cue:?}: {system}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_run_of_the_learners_own_input_is_never_reported_as_passing_or_failing() {
+    let kind = kind();
+    let noun = kind.wording.check_noun();
+    let coached = policy_for(Setting::Coached, &kind, Form::Build);
+    for status in [
+        CheckStatus::Passed,
+        CheckStatus::Failed,
+        CheckStatus::TimedOut,
+    ] {
+        let state = with_last_check(Setting::Coached, CheckScope::Own, status);
+        let system = coached
+            .system(&Cue::CheckReview(CheckScope::Own), &state)
+            .to_lowercase();
+        assert!(
+            !system.contains(&format!("the last {noun} passed")),
+            "{status:?}: {system}"
+        );
+        assert!(
+            !system.contains(&format!("the last {noun} failed")),
+            "{status:?}: {system}"
+        );
+        assert!(system.contains("say what it shows"), "{status:?}: {system}");
     }
 }

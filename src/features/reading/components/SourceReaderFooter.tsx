@@ -27,7 +27,7 @@ export const SourceReaderFooter = ({
   primaryActionLabel,
   onOpenPrimary,
 }: SourceReaderFooterProps) => (
-  <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-subtle px-5 py-3">
+  <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-border-subtle px-5 py-3">
     {canShowInFolder && (
       <button
         onClick={onShowInFolder}

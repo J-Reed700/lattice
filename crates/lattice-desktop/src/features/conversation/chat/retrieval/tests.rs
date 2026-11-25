@@ -1,6 +1,8 @@
 use super::*;
 use std::collections::HashSet;
 
+mod lazy_loading;
+mod optimistic_retrieval;
 mod web_fallback;
 
 #[test]
@@ -22,21 +24,47 @@ fn retrieval_plan_does_not_short_circuit_clarify_without_recent_document() {
         clarify_message: None,
         router_may_search: true,
     };
-    let flags = SearchFlags {
-        force_kb_search: false,
-        force_web_search: false,
-        web_fallback: false,
-        force_wiki_search: false,
-        deep_research_mode: false,
-        force_followup_mode: false,
-        closed_book: false,
-    };
+    let flags = SearchFlags::default();
 
     let plan = RetrievalPlan::from_router(&settings, &decision, "test", flags);
 
     assert_eq!(plan.route_action, RouterAction::NewSearch);
     assert!(plan.short_circuit_response.is_none());
     assert!(plan.should_search_kb);
+}
+
+#[test]
+fn retrieval_plan_skips_auto_kb_when_skip_auto_kb_is_set_unless_forced() {
+    let settings = RouterSettingsDto::default();
+    let decision = RouterDecisionOutcome {
+        action: RouterAction::NewSearch,
+        recent_doc_meta: None,
+        clarify_message: None,
+        router_may_search: true,
+    };
+
+    let skipped = RetrievalPlan::from_router(
+        &settings,
+        &decision,
+        "Explain quicksort",
+        SearchFlags {
+            skip_auto_kb: true,
+            ..SearchFlags::default()
+        },
+    );
+    assert!(!skipped.should_search_kb);
+
+    let forced = RetrievalPlan::from_router(
+        &settings,
+        &decision,
+        "Explain quicksort",
+        SearchFlags {
+            force_kb_search: true,
+            skip_auto_kb: true,
+            ..SearchFlags::default()
+        },
+    );
+    assert!(forced.should_search_kb);
 }
 
 #[test]
@@ -62,11 +90,7 @@ fn followup_with_forced_web_prefers_kb_first_without_external_intent() {
     let flags = SearchFlags {
         force_kb_search: true,
         force_web_search: true,
-        web_fallback: false,
-        force_wiki_search: false,
-        deep_research_mode: false,
-        force_followup_mode: false,
-        closed_book: false,
+        ..SearchFlags::default()
     };
     let interpretation = lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
         "Right, I am talking about a scenario with my company",
@@ -82,11 +106,7 @@ fn question_with_forced_web_keeps_web_enabled() {
     let flags = SearchFlags {
         force_kb_search: true,
         force_web_search: true,
-        web_fallback: false,
-        force_wiki_search: false,
-        deep_research_mode: false,
-        force_followup_mode: false,
-        closed_book: false,
+        ..SearchFlags::default()
     };
     let interpretation = lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
         "latest updates?",
@@ -101,11 +121,9 @@ fn flags(kb: bool, web: bool, wiki: bool, followup: bool) -> SearchFlags {
     SearchFlags {
         force_kb_search: kb,
         force_web_search: web,
-        web_fallback: false,
         force_wiki_search: wiki,
-        deep_research_mode: false,
         force_followup_mode: followup,
-        closed_book: false,
+        ..SearchFlags::default()
     }
 }
 
@@ -723,12 +741,12 @@ fn an_explorer_turn_searches_the_library_only_when_a_toggle_asks() {
 }
 
 /// The reading depth is what the evidence budget holds at what a passage of
-/// the library measures, capped at the reading shortlist.
+/// the library measures, scaling with the budget without an arbitrary cap.
 #[test]
 fn retrieval_depth_follows_the_evidence_budget() {
     // 90k evidence tokens, 2,000-character passages at four characters a
-    // token: 500 tokens a passage, 180 that fit, and the shortlist reads 40.
-    assert_eq!(reading_depth(90_000, Some(2_000), 4.0), MAX_READ_PASSAGES);
+    // token: 500 tokens a passage, 180 that fit.
+    assert_eq!(reading_depth(90_000, Some(2_000), 4.0), 180);
     assert_eq!(reading_depth(20_000, Some(2_000), 4.0), 40);
     // A small window is not handed passages it would only throw away.
     assert_eq!(reading_depth(3_000, Some(2_000), 4.0), 6);
@@ -738,4 +756,55 @@ fn retrieval_depth_follows_the_evidence_budget() {
     assert_eq!(reading_depth(0, Some(2_000), 4.0), 1);
     // A library that cannot be measured falls back to the chunker's target.
     assert_eq!(reading_depth(4_800, None, 4.0), 10);
+}
+
+#[test]
+fn retrieval_plan_respects_user_requested_kb_over_intent_force_kb() {
+    let settings = RouterSettingsDto::default();
+    let clarify_decision = RouterDecisionOutcome {
+        action: RouterAction::Clarify,
+        recent_doc_meta: Some(RecentDocumentMetadata {
+            title: "Guide.md".to_string(),
+        }),
+        clarify_message: Some("Did you mean Guide.md?".to_string()),
+        router_may_search: true,
+    };
+    let use_last_decision = RouterDecisionOutcome {
+        action: RouterAction::UseLastDocument,
+        recent_doc_meta: Some(RecentDocumentMetadata {
+            title: "Guide.md".to_string(),
+        }),
+        clarify_message: None,
+        router_may_search: true,
+    };
+
+    // Intent-inferred force_kb_search must not suppress Clarify or force KB on UseLastDocument.
+    let inferred_flags = SearchFlags {
+        force_kb_search: true,
+        user_requested_kb: false,
+        ..SearchFlags::default()
+    };
+    let clarify_plan =
+        RetrievalPlan::from_router(&settings, &clarify_decision, "clarify?", inferred_flags);
+    assert!(clarify_plan.short_circuit_response.is_some());
+    assert!(!clarify_plan.should_search_kb);
+
+    let use_last_plan =
+        RetrievalPlan::from_router(&settings, &use_last_decision, "more?", inferred_flags);
+    assert!(!use_last_plan.should_search_kb);
+
+    // Explicit user_requested_kb overrides Clarify and forces KB search even on UseLastDocument.
+    let explicit_flags = SearchFlags {
+        force_kb_search: true,
+        user_requested_kb: true,
+        ..SearchFlags::default()
+    };
+    let explicit_clarify =
+        RetrievalPlan::from_router(&settings, &clarify_decision, "clarify?", explicit_flags);
+    assert!(explicit_clarify.short_circuit_response.is_none());
+    assert!(explicit_clarify.should_search_kb);
+
+    let explicit_use_last =
+        RetrievalPlan::from_router(&settings, &use_last_decision, "more?", explicit_flags);
+    assert!(explicit_use_last.should_search_kb);
 }

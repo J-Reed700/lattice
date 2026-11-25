@@ -4,7 +4,10 @@
 //!
 //! Every call goes through `model_call`: sized to the model's window (a batch
 //! halves until it fits), never timed. Answer keys stay internal.
-use super::item_review::{self, Context, Entry, Findings, RepeatOf};
+use super::item_review::{
+    self, defect_answer_pickable, defect_option_by_position, defect_source_mentioned,
+    defect_value_missing, Context, Entry, Findings, RepeatOf,
+};
 use crate::assessment_engine::checks::{
     key_length_rule, span, CHOICES_PER_QUESTION, MATCHING_PAIRS, MULTI_SELECT_CORRECT,
     MULTI_SELECT_OPTIONS,
@@ -20,10 +23,6 @@ use crate::grade_rationale::{GraderCriterion, GraderItem, GraderVerdict};
 use crate::lessons::structured_call::Asking;
 use crate::model_call::{self, ErrorClass};
 use crate::reference_collection::ReferenceCollection;
-use crate::review_findings::{
-    defect_answer_pickable, defect_option_by_position, defect_source_mentioned,
-    defect_value_missing,
-};
 use lattice_core::application::services::model_contract::ask::{
     self, Alone, Answered, Says, Settled,
 };

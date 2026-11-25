@@ -50,12 +50,9 @@ fn a_file_that_failed_to_start_is_retried_only_after_it_changes() {
 
 /// A loader over a migrated in-memory database holding `rows`.
 async fn loader_with(rows: &[lattice_core::domain::DownloadedModel]) -> ModelLoader {
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     let models = Arc::new(DownloadedModelRepository::new(Database::new(pool)));
     for row in rows {
         models.save(row).await.unwrap();
@@ -537,10 +534,25 @@ fn a_model_nobody_reports_on_runs_at_the_settings_numbers() {
     assert_eq!(connection.context_window, 90_000);
 }
 
-/// A role's ceiling is its own, and is not raised by the model's.
+/// Utility inherits the standard Settings ceiling and, on cloud models, the
+/// model's own chosen/reported ceiling; callers tighten `max_output_tokens`
+/// per request when they want a smaller reservation.
 #[test]
-fn the_utility_role_keeps_its_own_output_ceiling() {
-    let mut settings = LLMSettingsDto::default();
+fn the_utility_role_inherits_standard_and_model_output_ceilings() {
+    let mut settings = LLMSettingsDto {
+        max_tokens: 65_536,
+        ..Default::default()
+    };
+    assert_eq!(
+        Tuning::Utility.generation(&settings),
+        Tuning::Standard.generation(&settings)
+    );
+    assert_eq!(Tuning::Utility.generation(&settings).max_tokens, 65_536);
+
+    let (_, reported_only) =
+        cloud_connection(&settings, &claude(), Tuning::Utility, &CLAUDE_REPORTS);
+    assert_eq!(reported_only, Some(128_000));
+
     settings.model_windows.insert(
         claude().to_string(),
         ModelWindowDto {
@@ -548,8 +560,25 @@ fn the_utility_role_keeps_its_own_output_ceiling() {
             max_output_tokens: Some(64_000),
         },
     );
-    let (_, known) = cloud_connection(&settings, &claude(), Tuning::Utility, &CLAUDE_REPORTS);
-    assert_eq!(known, Some(8_192));
+    let (_, chosen) = cloud_connection(&settings, &claude(), Tuning::Utility, &CLAUDE_REPORTS);
+    assert_eq!(chosen, Some(64_000));
+}
+
+/// The router role's configured ceiling is its own, and is not raised by the
+/// model's.
+#[test]
+fn the_router_role_keeps_its_own_output_ceiling() {
+    let mut settings = LLMSettingsDto::default();
+    settings.router.max_tokens = 2_048;
+    settings.model_windows.insert(
+        claude().to_string(),
+        ModelWindowDto {
+            context_window: None,
+            max_output_tokens: Some(64_000),
+        },
+    );
+    let (_, known) = cloud_connection(&settings, &claude(), Tuning::Router, &CLAUDE_REPORTS);
+    assert_eq!(known, Some(2_048));
 }
 
 /// The Messages API refuses a request without a ceiling, and Settings' default

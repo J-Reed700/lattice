@@ -43,6 +43,9 @@ pub(crate) trait ModelBackend: Send + Sync {
     fn provider_name(&self) -> &str;
     fn window(&self) -> usize;
     fn thinking(&self, request: &CompletionRequest) -> Thinking;
+    fn supports_native_thinking(&self) -> bool {
+        self.thinking(&CompletionRequest::probe()).is_on()
+    }
     fn output_limits(&self) -> OutputLimits;
     fn supports_tool_calling(&self) -> bool;
     fn vision(&self) -> Option<VisionGeometry>;

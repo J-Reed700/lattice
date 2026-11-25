@@ -245,7 +245,7 @@ fn writer_citation_instructions() -> String {
     use crate::lessons::text_edits::{
         NEVER_SAY_WHERE, OWN_FIGURES, QUOTED_WORDING, UNQUOTED_REMARKS,
     };
-    format!("Cite per sentence. A specific (a figure, date, version, product behaviour, quoted wording, study result) may appear only in a sentence you list in that block's or question's citations: the sentence copied verbatim from the block's or question's text and the handles of the excerpt sentences that state it. A sentence that would state a specific no excerpt contains is written in its general form instead. {OWN_FIGURES} They are not specifics: write them plainly wherever the lesson works a case, and never cite them. {NEVER_SAY_WHERE} State what the excerpt says as the lesson's own sentence and cite that sentence in the citations list. {WRITER_OWN_SENTENCE} A block or question with nothing to cite has an empty citations list. Only explanations, contrasts, recaps and the reasons for choices state what is so: a worked example, a practice or a check works a hypothetical case and has an empty citations list. {QUOTED_WORDING} {UNQUOTED_REMARKS}")
+    format!("Cite per sentence. A specific (a figure, date, version, product behaviour, quoted wording, study result) may appear only in a sentence you list in that block's or question's citations: the sentence copied verbatim from the block's or question's text and the handles of the excerpt sentences that state it. A sentence that would state a specific no excerpt contains is written in its general form instead. {OWN_FIGURES} They are not specifics: write them plainly wherever the lesson works a case, and never cite them. {NEVER_SAY_WHERE} State what the excerpt says as the lesson's own sentence and cite that sentence in the citations list. {WRITER_OWN_SENTENCE} A block or question with nothing to cite has an empty citations list. Only explanations, contrasts, recaps, question explanations and the reasons for wrong choices state what is so: a worked example, a practice or a check works a hypothetical case and has an empty citations list. {QUOTED_WORDING} {UNQUOTED_REMARKS}")
 }
 
 fn lesson_prompt(
@@ -293,27 +293,17 @@ fn requirements(answering: Answering) -> serde_json::Value {
     };
     let choices = match answering {
         Answering::Stored { .. } => format!("Use exactly {CHOICES_PER_QUESTION} distinct choices and one correct index per question; rationales has one entry per choice, in the order of the choices. {}", crate::assessment::assessment_generation::alike_in_form!()),
-        Answering::Writer => format!("Use exactly {CHOICES_PER_QUESTION} distinct choices per question: the right one in right and the other {} in wrong, each with its option and its reason. {}", WRONG_CHOICES, crate::assessment::assessment_generation::alike_in_form!()),
+        Answering::Writer => format!("Use exactly {CHOICES_PER_QUESTION} distinct choices per question: the right one in right and the other {} in wrong, each with its reason. {}", WRONG_CHOICES, crate::assessment::assessment_generation::alike_in_form!()),
     };
     let reasons = match answering {
         Answering::Stored { .. } => "entry in rationales names the misconception it reflects and why it fails, never referring to a choice by its letter or position; the right choice's entry is an empty string.",
         Answering::Writer => "reason names the misconception it reflects and why it fails, never referring to a choice by its letter or position.",
     };
-    let (theirs, right_is, each, names) = match answering {
-        Answering::Stored { .. } => (
-            "its choices, its rationales and its explanation",
-            "The explanation says why the correct answer is right.",
-            "Every rationale and the explanation say",
-            "An explanation",
-        ),
-        Answering::Writer => (
-            "its choices and their reasons",
-            "The right choice's reason says why it is right.",
-            "Every reason says",
-            "A reason",
-        ),
+    let (theirs, each) = match answering {
+        Answering::Stored { .. } => ("its choices, its rationales", "Every rationale"),
+        Answering::Writer => ("its choices and their reasons", "Every reason"),
     };
-    let questions = format!("Every question, {theirs} rest only on what this lesson teaches or on an earlier lesson's planned ideas, terms and actions in coursePlan; a learner who studied only those can answer it. Practice questions test application with feedback; quizzes diagnose common misconceptions; test questions require transfer to new scenarios. Make every wrong choice a specific misconception a learner could plausibly hold, never filler. Each wrong choice's {reasons} {right_is} {each} what is true about this question's own case, using the names and values its prompt gives; never give what a source, an excerpt, a passage or a tutorial says or does not say as the reason. {names} names each choice by its words, never by its number, letter or position, because the choices are shuffled before learners see them.");
+    let questions = format!("Every question, {theirs} and its explanation rest only on what this lesson teaches or on an earlier lesson's planned ideas, terms and actions in coursePlan; a learner who studied only those can answer it. Practice questions test application with feedback; quizzes diagnose common misconceptions; test questions require transfer to new scenarios. Make every wrong choice a specific misconception a learner could plausibly hold, never filler. Each wrong choice's {reasons} The explanation says why the correct answer is right. {each} and the explanation say what is true about this question's own case, using the names and values its prompt gives; never give what a source, an excerpt, a passage or a tutorial says or does not say as the reason. An explanation names each choice by its words, never by its number, letter or position, because the choices are shuffled before learners see them.");
     let (evidence, grounding, citing) = match answering {
         Answering::Stored { grounded } => (
             "evidenceByTopic lists the lesson's topics in teaching order with the sourceIndexes whose excerpts cover each. Teach every topic; a topic with no covering sourceIndex has no evidence.".to_owned(),

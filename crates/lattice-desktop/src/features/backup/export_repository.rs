@@ -56,6 +56,9 @@ pub struct ExportImageRow {
     pub original_name: Option<String>,
 }
 
+/// Internal sentinel row holding standalone web snapshots; never exported as a chat.
+const INTERNAL_LIBRARY_SNAPSHOTS_ID: &str = "__library_snapshots__";
+
 pub struct ExportRepository {
     db: Database,
 }
@@ -72,9 +75,11 @@ impl ExportRepository {
             r#"
             SELECT id, title, model_choice, created_at, updated_at
               FROM conversations
+             WHERE id != ?
              ORDER BY updated_at DESC
             "#,
         )
+        .bind(INTERNAL_LIBRARY_SNAPSHOTS_ID)
         .fetch_all(&mut *read)
         .await
         .map_err(|e| {
@@ -139,5 +144,30 @@ impl ExportRepository {
         })?;
         read.commit().await?;
         Ok(rows)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn list_conversations_excludes_internal_library_snapshots() {
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO conversations (id, title, space_id, created_at, updated_at) VALUES \
+             ('__library_snapshots__', 'Saved Web Snapshots', 'space_general', '2026-10-13T00:00:00Z', '2026-10-13T00:00:00Z'), \
+             ('conv-real', 'Real Chat', 'space_general', '2026-10-13T00:00:00Z', '2026-10-13T00:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let repo = ExportRepository::new(Database::new(pool));
+        let exported = repo.list_conversations().await.unwrap();
+        assert_eq!(exported.len(), 1);
+        assert_eq!(exported[0].id, "conv-real");
     }
 }

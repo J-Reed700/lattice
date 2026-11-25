@@ -201,19 +201,17 @@ async fn protecting_a_claim_protects_its_sentence_and_not_the_passage_it_is_in()
 }
 
 /// What the coverage audit's judge says is missing: the third sentence's
-/// assertion. The mapping before it accounts for every passage.
+/// assertion.
 fn audits(prompt: &str) -> String {
-    if prompt.starts_with("Audit inventory fidelity.") {
-        return json!({
-            "missingAssertions":[{"sentenceId":THIRD_ID,"statement":ABOUT_THIRD}],
-            "reason":"One assertion is absent.",
-        })
-        .to_string();
-    }
-    coverage::scripted_decisions(
-        prompt,
-        |_, claims| json!({"claimIds":claims,"nonFactualReason":"","missingClaims":[]}),
-    )
+    assert!(
+        prompt.starts_with("Audit inventory fidelity."),
+        "unexpected prompt: {prompt}"
+    );
+    json!({
+        "missingAssertions":[{"sentenceId":THIRD_ID,"statement":ABOUT_THIRD}],
+        "reason":"One assertion is absent.",
+    })
+    .to_string()
 }
 
 /// The quotes of the claims the audit adds to an inventory that holds a claim

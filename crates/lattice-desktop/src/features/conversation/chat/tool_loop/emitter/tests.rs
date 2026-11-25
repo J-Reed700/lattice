@@ -153,3 +153,29 @@ fn a_picture_name_of_another_request_streams_as_written() {
     assert!(references(&events).is_empty());
     assert_eq!(text(&events), "Fired.\n\n[i1]\n\nDone.");
 }
+
+#[test]
+fn discarding_a_tool_round_keeps_only_the_subsequent_answer_on_cancel() {
+    let names = names_with_sources(1);
+    let sink: ChatEventSink = Arc::new(|_| Ok(()));
+    let mut emitter = StreamEmitter::new(&sink, "conversation", "request", names, markers(None));
+
+    emitter.content("Let me look that up.").unwrap();
+    emitter.discard_round_partial();
+    assert_eq!(emitter.finish_cancelled(), None);
+
+    let mut emitter2 = StreamEmitter::new(
+        &sink,
+        "conversation",
+        "request",
+        names_with_sources(1),
+        markers(None),
+    );
+    emitter2.content("Let me look that up.").unwrap();
+    emitter2.discard_round_partial();
+    emitter2.content("Partial answer").unwrap();
+    assert_eq!(
+        emitter2.finish_cancelled(),
+        Some("Partial answer".to_string())
+    );
+}

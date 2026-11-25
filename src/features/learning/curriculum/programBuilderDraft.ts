@@ -5,6 +5,8 @@ export const programBuilderDraftKeys = {
   goal: 'course-builder:goal',
   prior: 'course-builder:prior',
   urls: 'course-builder:urls',
+  depth: 'course-builder:depth',
+  minutes: 'course-builder:minutes',
 } as const;
 
 export function clearProgramBuilderDraft(): void {

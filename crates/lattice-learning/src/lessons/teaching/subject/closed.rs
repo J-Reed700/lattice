@@ -12,7 +12,7 @@ use super::{
 };
 use crate::lessons::copied_wording::Wording;
 use crate::model_call::ErrorClass;
-use crate::review_findings::{Held, Lineage, ReviewFinding};
+use crate::review_findings::{Held, ReviewFinding};
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
@@ -43,7 +43,6 @@ fn closed_given(standing: &mut Standing, llm: &dyn LLMPort, authoring: &Value) {
 /// The checks of material that fails closed: the answer keys, then the reviewer.
 async fn closed_find(
     standing: &mut Standing,
-    lineage: &mut Lineage,
     llm: &dyn LLMPort,
     pass: &Pass<'_>,
     wording: &Wording,
@@ -89,7 +88,6 @@ async fn closed_find(
     };
     let mut findings = quotation_findings(pass.quote_checks);
     findings.extend(found);
-    lineage.place(pass.value, &mut findings);
     Ok(Found {
         findings,
         edits: !blocking,
@@ -126,8 +124,6 @@ fn closed_unmade(class: ErrorClass, reason: String) -> Result<Settled> {
 pub(in crate::lessons::teaching) struct MaterialSubject {
     wording: Wording,
     standing: Standing,
-    /// Names the questions of this review only: the material is never cut and nothing is saved.
-    lineage: Lineage,
 }
 
 impl MaterialSubject {
@@ -135,7 +131,6 @@ impl MaterialSubject {
         Self {
             wording: Wording::default(),
             standing: Standing::new(&Held::default()),
-            lineage: Lineage::default(),
         }
     }
 }
@@ -167,14 +162,7 @@ impl Subject for MaterialSubject {
     }
 
     async fn find(&mut self, llm: &dyn LLMPort, pass: &Pass<'_>) -> Result<Found> {
-        closed_find(
-            &mut self.standing,
-            &mut self.lineage,
-            llm,
-            pass,
-            &self.wording,
-        )
-        .await
+        closed_find(&mut self.standing, llm, pass, &self.wording).await
     }
 
     fn decide(

@@ -1,66 +1,65 @@
-//! Provider selection policy. Loading is injected so fallback behavior needs no I/O to test.
+//! How a list of candidate models is tried: the first that loads is used, an
+//! explicit choice never falls back, and when every Auto candidate fails the
+//! error worth reporting is kept.
+
 use std::future::Future;
 
-use crate::application::contracts::settings::LLMProvider;
+use crate::application::services::chat_model_resolution::Candidates;
+use crate::domain::models::model_ref::ModelRef;
 use crate::shared::error::{AppError, Result};
 
-/// Explicit choices never fall back. Auto tries local, configured llama.cpp, then Ollama;
-/// when all of them fail, a local model that failed to load is the error worth
-/// reporting, not "nothing is installed".
-pub async fn select_model<T, Local, LlamaCpp, Remote, LocalFuture, LlamaCppFuture, RemoteFuture>(
-    provider: LLMProvider,
-    local: Local,
-    llama_cpp: LlamaCpp,
-    ollama: Remote,
-) -> Result<T>
+/// The first of `candidates` that loads. `load` gets each model and whether
+/// its server must list it ([`Candidates::must_list`]). An explicit choice
+/// never falls back: its own failure is the error. Under Auto each failure
+/// gives way to the next model, and when all fail, a local model's failure is
+/// the error, else "No LLM available".
+pub async fn first_that_loads<'a, T, F, Fut>(candidates: &'a Candidates, mut load: F) -> Result<T>
 where
-    Local: FnOnce() -> LocalFuture,
-    LlamaCpp: FnOnce() -> LlamaCppFuture,
-    Remote: FnOnce() -> RemoteFuture,
-    LocalFuture: Future<Output = Result<Option<T>>>,
-    LlamaCppFuture: Future<Output = Result<Option<T>>>,
-    RemoteFuture: Future<Output = Result<T>>,
+    F: FnMut(&'a ModelRef, bool) -> Fut,
+    Fut: Future<Output = Result<T>>,
 {
-    match provider {
-        LLMProvider::Local => local().await?.ok_or_else(|| AppError::AiModelsNotInstalled(
-            "No local model available. Download and activate a model in Settings → Model Catalog.".to_string(),
-        )),
-        LLMProvider::Ollama => ollama().await,
-        LLMProvider::Llamacpp
-        | LLMProvider::Openai
-        | LLMProvider::Anthropic
-        | LLMProvider::Google => Err(AppError::InvalidConfig(
-            "Explicit providers must be resolved by their native adapter".into(),
-        )),
-        LLMProvider::Auto => {
-            let local_error = match local().await {
-                Ok(Some(model)) => return Ok(model),
-                Ok(None) => {
-                    tracing::debug!("No active downloaded model configured, trying remote providers");
-                    None
-                }
-                Err(error) => {
-                    tracing::warn!("Failed to load active model: {}, trying remote providers", error);
-                    Some(error)
-                }
-            };
-            match llama_cpp().await {
-                Ok(Some(model)) => return Ok(model),
-                Ok(None) => tracing::debug!("No llama.cpp model configured, trying Ollama"),
-                Err(error) => tracing::warn!("llama.cpp not available: {}, trying Ollama", error),
-            }
-            match ollama().await {
-                Ok(model) => Ok(model),
-                Err(error) => {
-                    tracing::debug!("Ollama not available: {}", error);
-                    Err(local_error.unwrap_or_else(|| AppError::AiModelsNotInstalled(
-                        "No LLM available. Please either:\n\
-                         1. Download and activate a model in Settings → Model Catalog, OR\n\
-                         2. Configure a llama.cpp or Ollama server in Settings → Chat".to_string(),
-                    )))
-                }
-            }
+    let mut failures = AutoFailures::default();
+    for model in &candidates.models {
+        match load(model, candidates.must_list(model)).await {
+            Ok(loaded) => return Ok(loaded),
+            Err(error) if !candidates.auto => return Err(error),
+            Err(error) => failures.record(model, error),
         }
+    }
+    Err(failures.into_error())
+}
+
+/// The failures of an Auto chain: each candidate that fails gives way to the
+/// next, and when all fail a local model's failure (or a configuration error)
+/// is the error worth reporting, not "nothing is installed".
+#[derive(Debug, Default)]
+struct AutoFailures {
+    local: Option<AppError>,
+    invalid_config: Option<AppError>,
+}
+
+impl AutoFailures {
+    /// Logs that `model` failed and keeps the first failure of a local model
+    /// or the first invalid-configuration error.
+    fn record(&mut self, model: &ModelRef, error: AppError) {
+        tracing::warn!(%model, %error, "model not available, trying the next");
+        if matches!(model, ModelRef::Local { .. }) && self.local.is_none() {
+            self.local = Some(error);
+        } else if matches!(error, AppError::InvalidConfig(_)) && self.invalid_config.is_none() {
+            self.invalid_config = Some(error);
+        }
+    }
+
+    /// The kept local failure or configuration error, else "No LLM available".
+    fn into_error(self) -> AppError {
+        self.local.or(self.invalid_config).unwrap_or_else(|| {
+            AppError::AiModelsNotInstalled(
+                "No LLM available. Please either:\n\
+                 1. Download and activate a model in Settings → Model Catalog, OR\n\
+                 2. Configure a llama.cpp or Ollama server in Settings → Chat"
+                    .to_string(),
+            )
+        })
     }
 }
 
@@ -70,146 +69,248 @@ mod tests {
     use std::cell::RefCell;
     use std::future::ready;
 
-    async fn run(
-        provider: LLMProvider,
-        local_result: Result<Option<&'static str>>,
-        remote_result: Result<&'static str>,
-    ) -> (Result<&'static str>, Vec<&'static str>) {
-        run_with_llama_cpp(provider, local_result, Ok(None), remote_result).await
-    }
-
-    async fn run_with_llama_cpp(
-        provider: LLMProvider,
-        local_result: Result<Option<&'static str>>,
-        llama_cpp_result: Result<Option<&'static str>>,
-        remote_result: Result<&'static str>,
-    ) -> (Result<&'static str>, Vec<&'static str>) {
-        let calls = RefCell::new(Vec::new());
-        let result = select_model(
-            provider,
-            || {
-                calls.borrow_mut().push("local");
-                ready(local_result)
-            },
-            || {
-                calls.borrow_mut().push("llamacpp");
-                ready(llama_cpp_result)
-            },
-            || {
-                calls.borrow_mut().push("ollama");
-                ready(remote_result)
-            },
-        )
-        .await;
-        (result, calls.into_inner())
-    }
-
-    #[tokio::test]
-    async fn explicit_local_never_calls_remote() {
-        let (result, calls) = run(LLMProvider::Local, Ok(Some("local")), Ok("remote")).await;
-        assert_eq!(result.unwrap(), "local");
-        assert_eq!(calls, ["local"]);
-        let (result, calls) = run(LLMProvider::Local, Ok(None), Ok("remote")).await;
-        assert!(matches!(result, Err(AppError::AiModelsNotInstalled(_))));
-        assert_eq!(calls, ["local"]);
-    }
-
-    #[tokio::test]
-    async fn explicit_local_preserves_load_failure() {
-        let (result, calls) = run(
-            LLMProvider::Local,
-            Err(AppError::ModelLoadFailed("broken".into())),
-            Ok("remote"),
-        )
-        .await;
-        assert!(matches!(result, Err(AppError::ModelLoadFailed(message)) if message == "broken"));
-        assert_eq!(calls, ["local"]);
-    }
-
-    #[tokio::test]
-    async fn explicit_ollama_never_calls_local() {
-        let (result, calls) = run(LLMProvider::Ollama, Ok(Some("local")), Ok("remote")).await;
-        assert_eq!(result.unwrap(), "remote");
-        assert_eq!(calls, ["ollama"]);
-        let (result, calls) = run(
-            LLMProvider::Ollama,
-            Ok(Some("local")),
-            Err(AppError::ServiceNotAvailable("offline".into())),
-        )
-        .await;
-        assert!(
-            matches!(result, Err(AppError::ServiceNotAvailable(message)) if message == "offline")
-        );
-        assert_eq!(calls, ["ollama"]);
-    }
-
-    #[tokio::test]
-    async fn auto_stops_after_local_success() {
-        let (result, calls) = run(LLMProvider::Auto, Ok(Some("local")), Ok("remote")).await;
-        assert_eq!(result.unwrap(), "local");
-        assert_eq!(calls, ["local"]);
-    }
-
-    #[tokio::test]
-    async fn auto_falls_back_on_absent_or_broken_local_model() {
-        for local in [Ok(None), Err(AppError::ModelLoadFailed("broken".into()))] {
-            let (result, calls) = run(LLMProvider::Auto, local, Ok("remote")).await;
-            assert_eq!(result.unwrap(), "remote");
-            assert_eq!(calls, ["local", "llamacpp", "ollama"]);
+    fn local_model() -> ModelRef {
+        ModelRef::Local {
+            model_id: "ornith-1.5-9b".into(),
         }
     }
 
-    #[tokio::test]
-    async fn auto_reports_no_models_after_both_attempts_fail() {
-        let (result, calls) = run(
-            LLMProvider::Auto,
-            Ok(None),
-            Err(AppError::ServiceNotAvailable("offline".into())),
-        )
+    fn llama_cpp_model() -> ModelRef {
+        ModelRef::LlamaCpp {
+            model: "qwen3.5-27b".into(),
+        }
+    }
+
+    fn ollama_model() -> ModelRef {
+        ModelRef::Ollama {
+            model: "qwen3:8b".into(),
+        }
+    }
+
+    #[test]
+    fn auto_failures_report_the_local_failure_even_when_later_candidates_fail() {
+        let mut failures = AutoFailures::default();
+        failures.record(&local_model(), AppError::ModelLoadFailed("broken".into()));
+        failures.record(&llama_cpp_model(), AppError::Network("offline".into()));
+        failures.record(
+            &ollama_model(),
+            AppError::ServiceNotAvailable("offline".into()),
+        );
+        assert!(
+            matches!(failures.into_error(), AppError::ModelLoadFailed(message) if message == "broken")
+        );
+    }
+
+    #[test]
+    fn auto_failures_keep_the_first_local_failure() {
+        let mut failures = AutoFailures::default();
+        failures.record(&local_model(), AppError::ModelLoadFailed("first".into()));
+        failures.record(&local_model(), AppError::ModelLoadFailed("second".into()));
+        assert!(
+            matches!(failures.into_error(), AppError::ModelLoadFailed(message) if message == "first")
+        );
+    }
+
+    #[test]
+    fn auto_failures_without_a_local_failure_say_no_llm_is_available() {
+        let mut failures = AutoFailures::default();
+        failures.record(&llama_cpp_model(), AppError::Network("offline".into()));
+        failures.record(
+            &ollama_model(),
+            AppError::ServiceNotAvailable("offline".into()),
+        );
+        assert!(matches!(
+            failures.into_error(),
+            AppError::AiModelsNotInstalled(message) if message.starts_with("No LLM available. Please either:")
+        ));
+        assert!(matches!(
+            AutoFailures::default().into_error(),
+            AppError::AiModelsNotInstalled(_)
+        ));
+    }
+
+    /// Walks `models` giving each model tried the next of `results`, and
+    /// returns the outcome with each model tried and whether it had to be
+    /// listed.
+    async fn walk(
+        models: Vec<ModelRef>,
+        auto: bool,
+        results: Vec<Result<&'static str>>,
+    ) -> (Result<&'static str>, Vec<(ModelRef, bool)>) {
+        let candidates = Candidates { models, auto };
+        let results = RefCell::new(results.into_iter());
+        let tried = RefCell::new(Vec::new());
+        let outcome = first_that_loads(&candidates, |model, must_list| {
+            tried.borrow_mut().push((model.clone(), must_list));
+            ready(
+                results
+                    .borrow_mut()
+                    .next()
+                    .expect("a result for every model tried"),
+            )
+        })
         .await;
-        assert!(matches!(result, Err(AppError::AiModelsNotInstalled(_))));
-        assert_eq!(calls, ["local", "llamacpp", "ollama"]);
+        (outcome, tried.into_inner())
+    }
+
+    fn models(tried: &[(ModelRef, bool)]) -> Vec<ModelRef> {
+        tried.iter().map(|(model, _)| model.clone()).collect()
+    }
+
+    fn all_three() -> Vec<ModelRef> {
+        vec![local_model(), llama_cpp_model(), ollama_model()]
     }
 
     #[tokio::test]
-    async fn auto_reports_the_local_failure_when_nothing_else_answers() {
+    async fn an_explicit_choice_never_tries_another_model() {
+        let (outcome, tried) = walk(
+            vec![local_model(), ollama_model()],
+            false,
+            vec![
+                Err(AppError::ModelLoadFailed("broken".into())),
+                Ok("ollama"),
+            ],
+        )
+        .await;
+        assert!(matches!(outcome, Err(AppError::ModelLoadFailed(message)) if message == "broken"));
+        assert_eq!(models(&tried), [local_model()]);
+
+        let (outcome, tried) = walk(
+            vec![local_model(), ollama_model()],
+            false,
+            vec![Ok("local")],
+        )
+        .await;
+        assert_eq!(outcome.unwrap(), "local");
+        assert_eq!(models(&tried), [local_model()]);
+    }
+
+    #[tokio::test]
+    async fn an_explicit_choice_reports_its_own_failure() {
+        let (outcome, _) = walk(
+            vec![ollama_model()],
+            false,
+            vec![Err(AppError::ServiceNotAvailable("offline".into()))],
+        )
+        .await;
+        assert!(
+            matches!(outcome, Err(AppError::ServiceNotAvailable(message)) if message == "offline")
+        );
+    }
+
+    #[tokio::test]
+    async fn auto_stops_at_the_first_model_that_loads() {
+        let (outcome, tried) = walk(all_three(), true, vec![Ok("local")]).await;
+        assert_eq!(outcome.unwrap(), "local");
+        assert_eq!(models(&tried), [local_model()]);
+    }
+
+    #[tokio::test]
+    async fn auto_moves_on_to_the_next_model_after_a_failure() {
+        let (outcome, tried) = walk(
+            all_three(),
+            true,
+            vec![
+                Err(AppError::ModelLoadFailed("broken".into())),
+                Ok("llamacpp"),
+            ],
+        )
+        .await;
+        assert_eq!(outcome.unwrap(), "llamacpp");
+        assert_eq!(models(&tried), [local_model(), llama_cpp_model()]);
+
+        let (outcome, tried) = walk(
+            all_three(),
+            true,
+            vec![
+                Err(AppError::ModelLoadFailed("broken".into())),
+                Err(AppError::Network("offline".into())),
+                Ok("ollama"),
+            ],
+        )
+        .await;
+        assert_eq!(outcome.unwrap(), "ollama");
+        assert_eq!(models(&tried), all_three());
+    }
+
+    #[tokio::test]
+    async fn auto_reports_the_local_failure_when_every_model_fails() {
         for local in [
             AppError::ModelLoadFailed("broken".into()),
             AppError::ServiceNotAvailable("bundled llama-server can't run".into()),
         ] {
             let expected = local.to_string();
-            let (result, calls) = run(
-                LLMProvider::Auto,
-                Err(local),
-                Err(AppError::ServiceNotAvailable("offline".into())),
+            let (outcome, tried) = walk(
+                all_three(),
+                true,
+                vec![
+                    Err(local),
+                    Err(AppError::Network("offline".into())),
+                    Err(AppError::ServiceNotAvailable("offline".into())),
+                ],
             )
             .await;
-            assert_eq!(result.unwrap_err().to_string(), expected);
-            assert_eq!(calls, ["local", "llamacpp", "ollama"]);
+            assert_eq!(outcome.unwrap_err().to_string(), expected);
+            assert_eq!(models(&tried), all_three());
         }
     }
 
     #[tokio::test]
-    async fn auto_prefers_configured_llama_cpp_after_local_failure() {
-        for local in [Ok(None), Err(AppError::ModelLoadFailed("broken".into()))] {
-            let (result, calls) =
-                run_with_llama_cpp(LLMProvider::Auto, local, Ok(Some("llamacpp")), Ok("ollama"))
-                    .await;
-            assert_eq!(result.unwrap(), "llamacpp");
-            assert_eq!(calls, ["local", "llamacpp"]);
-        }
-    }
-
-    #[tokio::test]
-    async fn auto_falls_back_to_ollama_when_llama_cpp_is_unavailable() {
-        let (result, calls) = run_with_llama_cpp(
-            LLMProvider::Auto,
-            Ok(None),
-            Err(AppError::Network("offline".into())),
-            Ok("ollama"),
+    async fn auto_without_a_local_failure_says_no_llm_is_available() {
+        let (outcome, tried) = walk(
+            vec![llama_cpp_model(), ollama_model()],
+            true,
+            vec![
+                Err(AppError::Network("offline".into())),
+                Err(AppError::ServiceNotAvailable("offline".into())),
+            ],
         )
         .await;
-        assert_eq!(result.unwrap(), "ollama");
-        assert_eq!(calls, ["local", "llamacpp", "ollama"]);
+        assert!(matches!(outcome, Err(AppError::AiModelsNotInstalled(_))));
+        assert_eq!(models(&tried), [llama_cpp_model(), ollama_model()]);
+
+        let (outcome, tried) = walk(Vec::new(), true, Vec::new()).await;
+        assert!(matches!(outcome, Err(AppError::AiModelsNotInstalled(_))));
+        assert!(tried.is_empty());
+    }
+
+    #[tokio::test]
+    async fn auto_without_a_local_failure_preserves_invalid_config_errors() {
+        let (outcome, tried) = walk(
+            vec![llama_cpp_model(), ollama_model()],
+            true,
+            vec![
+                Err(AppError::InvalidConfig(
+                    "Set both authentication header fields, or clear both.".into(),
+                )),
+                Err(AppError::ServiceNotAvailable("offline".into())),
+            ],
+        )
+        .await;
+        assert!(matches!(
+            outcome,
+            Err(AppError::InvalidConfig(message))
+                if message == "Set both authentication header fields, or clear both."
+        ));
+        assert_eq!(models(&tried), [llama_cpp_model(), ollama_model()]);
+    }
+
+    #[tokio::test]
+    async fn under_auto_only_a_llama_cpp_server_must_list_its_model() {
+        let (_, tried) = walk(
+            all_three(),
+            true,
+            vec![
+                Err(AppError::ModelLoadFailed("broken".into())),
+                Err(AppError::Network("offline".into())),
+                Ok("ollama"),
+            ],
+        )
+        .await;
+        let must_list: Vec<bool> = tried.iter().map(|(_, must_list)| *must_list).collect();
+        assert_eq!(must_list, [false, true, false]);
+
+        let (_, tried) = walk(vec![llama_cpp_model()], false, vec![Ok("llamacpp")]).await;
+        assert_eq!(tried, [(llama_cpp_model(), false)]);
     }
 }

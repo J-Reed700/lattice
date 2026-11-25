@@ -26,6 +26,7 @@ export function VerificationDetails({
     claimsEvaluated,
     unsupportedCount,
     uncheckedCount,
+    citedOnly,
     contradictedClaims,
     reasonByClaim,
     evidenceByClaim,
@@ -40,10 +41,10 @@ export function VerificationDetails({
     uncheckedClaims,
   } = verification;
   return (
-    <div id={verificationPanelId} role="region" aria-label="Verification details" className="mb-4 rounded-sm border border-subtle bg-surface p-4">
+    <div id={verificationPanelId} role="region" aria-label="Verification details" className="mb-4 rounded-sm border border-border-subtle bg-surface p-4">
       <p className="mb-1 text-sm font-medium text-text-primary">Verification details</p>
       <p className="text-xs text-[hsl(var(--text-muted))]">
-        {verificationSummaryLine(claimsEvaluated, unsupportedCount, uncheckedCount)}
+        {verificationSummaryLine(claimsEvaluated, unsupportedCount, uncheckedCount, citedOnly)}
       </p>
 
       <div className="mt-3 grid gap-4 lg:grid-cols-2">

@@ -36,20 +36,48 @@ pub async fn retry_learning_generation_job(
     request: LearningGenerationJobActionRequestDto,
     container: State<'_, Container>,
 ) -> Result<LearningGenerationJob, ApiError> {
-    retry_generation_job(&container, request).await
-}
-
-/// Saves a new attempt of a stopped job and queues it: the body of `retry_learning_generation_job`.
-pub(crate) async fn retry_generation_job(
-    container: &Container,
-    request: LearningGenerationJobActionRequestDto,
-) -> Result<LearningGenerationJob, ApiError> {
     let repo = crate::features::learning::curriculum_repository::LearningCurriculumRepository::new(
         container.database().clone(),
     );
     let job = repo.retry_job(&request).await.map_err(ApiError::from)?;
     container.jobs().submitted(&job.id).await;
     Ok(job)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn prioritize_learning_generation_job(
+    request: LearningGenerationJobActionRequestDto,
+    container: State<'_, Container>,
+) -> Result<LearningGenerationJob, ApiError> {
+    let repo = crate::features::learning::curriculum_repository::LearningCurriculumRepository::new(
+        container.database().clone(),
+    );
+    let job = repo
+        .prioritize_job(&request)
+        .await
+        .map_err(ApiError::from)?;
+    container.jobs().submitted(&job.id).await;
+    Ok(job)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn reset_learning_lesson_preparation(
+    request: ResetLearningLessonPreparationRequestDto,
+    container: State<'_, Container>,
+) -> Result<ResetLearningLessonPreparationResultDto, ApiError> {
+    let repo = crate::features::learning::curriculum_repository::LearningCurriculumRepository::new(
+        container.database().clone(),
+    );
+    let result = repo
+        .reset_lesson_preparation(&request)
+        .await
+        .map_err(ApiError::from)?;
+    for job_id in &result.cancelled_job_ids {
+        container.jobs().cancelled(job_id).await;
+    }
+    Ok(result)
 }
 
 #[tauri::command]
@@ -76,7 +104,7 @@ pub(super) fn generation_worker(
     crate::features::learning::generation_jobs::LessonGenerationWorker {
         course_setups,
         runtimes,
-        research_web: Some(container.web()),
+        research_web: Some(container.web_service()),
         verifier: Some(super::audit::container_verifier(container)),
         database: container.database().clone(),
         courses: container.course_indexes().cloned(),

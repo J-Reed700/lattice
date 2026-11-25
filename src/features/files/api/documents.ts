@@ -387,6 +387,16 @@ export const documentApi = {
     apiCall('read_file_content', { path }),
 
   /**
+   * Asks the web archive whether the file at `path` is the text of an article
+   * it saved, and where that article's page and metadata are.
+   *
+   * @param path - Absolute path to the file
+   * @returns The saved article, or null when the archive does not hold it
+   */
+  savedWebArticle: async (path: string): Promise<ApiResult<Wire.SavedWebArticleDto | null>> =>
+    apiCall('saved_web_article', { path }),
+
+  /**
    * Reads the raw bytes of a file from disk.
    *
    * @param path - Absolute path to file to read

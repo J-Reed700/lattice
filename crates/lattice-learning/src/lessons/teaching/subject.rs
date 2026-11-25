@@ -118,6 +118,10 @@ const RECHECK_SYSTEM: &str = concat!(
     " For a curriculum outline, exercise data, example code, starter files, detailed scoring rubrics and runner code will be authored at lesson preparation; their absence from an outline is not a defect. ",
     recheck_tail!()
 );
+const RECHECK_NO_OPEN_SYSTEM: &str = concat!(
+    "Review instructional quality. This material was reviewed and then corrected: judge the correction. In issues and sectionDefects report only a concrete factual or mathematical error, an incorrect answer key, an invented citation, or an explicit contradiction that remains or was newly introduced. Report one only when you can identify concrete conflicting statements or a demonstrably incorrect result. Do not turn a new suggestion, possible interpretation, unspecified implementation choice, or stylistic preference into a rejection. For a curriculum outline, exercise data, example code, starter files, detailed scoring rubrics and runner code will be authored at lesson preparation; their absence from an outline is not a defect. ",
+    recheck_tail!()
+);
 /// What the lesson's reviewer is told other checks own.
 const OTHER_CHECKS_OWN: &str = "Other checks own whether a statement is true or supported by its citation, whether the key of a question is right, whether the lesson teaches each item of its plan, whether something is used before it is taught, whether two statements contradict each other, whether words point at something the learner cannot see, repeated sentences, and the wording or length of a question's choices: do not report them.";
 /// Each concern of a lesson's reviewer with what it asks, from its one definition.
@@ -151,6 +155,13 @@ fn lesson_recheck_system() -> String {
         recheck_opening!(),
         concern_list(),
         recheck_judgement!(),
+        recheck_tail!()
+    )
+}
+fn lesson_recheck_no_open_system() -> String {
+    format!(
+        "Review instructional quality. This material was reviewed and then corrected: judge the correction. In issues and sectionDefects report only a defect of one of these concerns, each by its id, that remains or was newly introduced: {} Report one only when you can point to the concrete step, task or promise that fails. Do not turn a new suggestion, possible interpretation, unspecified implementation choice, or stylistic preference into a rejection. {}",
+        concern_list(),
         recheck_tail!()
     )
 }
@@ -227,8 +238,6 @@ pub(super) trait Subject: Send + Sync {
     async fn save(&self, candidate: &str) -> Result<()>;
     /// Brings the candidate's quotations to their sources' exact words; true when it changed.
     fn settle_quotes(&self, candidate: &mut Value, authoring: &Value, attempt: usize) -> bool;
-    /// The quotations were brought to their sources' words: `before` became `after`, part for part.
-    fn fitted(&mut self, _before: &Value, _after: &Value) {}
     /// The quotations that match no saved reference.
     fn quote_checks(&self, candidate: &Value, authoring: &Value) -> Vec<QuoteCheck>;
     /// Every check of one pass.
@@ -280,8 +289,10 @@ fn review_prompt(pass: &Pass<'_>, priority: &str, reference_versions: Vec<Value>
 pub(super) struct ReviewTexts {
     /// The first review.
     pub first: Cow<'static, str>,
-    /// A recheck of a corrected draft.
+    /// A recheck of a corrected draft when open findings remain.
     pub recheck: Cow<'static, str>,
+    /// A recheck of a corrected draft when no reviewer findings are open.
+    pub recheck_no_open: Cow<'static, str>,
     /// What to check in sections when every section is reviewed.
     pub whole: Cow<'static, str>,
     /// What to check in sections when only the changed ones are.
@@ -293,6 +304,7 @@ impl ReviewTexts {
     pub const GENERAL: Self = Self {
         first: Cow::Borrowed(REVIEW_SYSTEM),
         recheck: Cow::Borrowed(RECHECK_SYSTEM),
+        recheck_no_open: Cow::Borrowed(RECHECK_NO_OPEN_SYSTEM),
         whole: Cow::Borrowed(SHARED_CHECKS),
         changed: Cow::Borrowed(CHANGED_CHECKS),
     };
@@ -301,6 +313,7 @@ impl ReviewTexts {
         Self {
             first: Cow::Owned(lesson_review_system()),
             recheck: Cow::Owned(lesson_recheck_system()),
+            recheck_no_open: Cow::Owned(lesson_recheck_no_open_system()),
             whole: Cow::Owned(format!("{}{}", whole_lead!(), lesson_block_checks())),
             changed: Cow::Owned(format!("{}{}", changed_lead!(), lesson_block_checks())),
         }
@@ -311,6 +324,7 @@ impl ReviewTexts {
         [
             &*self.first,
             &*self.recheck,
+            &*self.recheck_no_open,
             &*self.whole,
             &*self.changed,
             CONTINUES,
@@ -323,6 +337,8 @@ impl ReviewTexts {
 fn review_instructions(texts: &ReviewTexts, round: &Round, scope: &str) -> String {
     let system: &str = if round.first {
         &texts.first
+    } else if round.asked.is_empty() {
+        &texts.recheck_no_open
     } else {
         &texts.recheck
     };

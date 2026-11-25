@@ -49,7 +49,8 @@
             "retrievalKind": "vector",
             "trust": null
           },
-          "addedBy": "user"
+          "addedBy": "user",
+          "opening": {"before": "", "quote": "", "after": "", "clippedStart": false, "clippedEnd": false}
         }
       ],
       "supportingQuote": null,
@@ -181,7 +182,8 @@
               "retrievalKind": "vector",
               "trust": null
             },
-            "addedBy": "user"
+            "addedBy": "user",
+            "opening": {"before": "", "quote": "", "after": "", "clippedStart": false, "clippedEnd": false}
           }
         ],
         "at": 1760000000001
@@ -211,10 +213,7 @@
           "outcome": "enough"
         },
         "quote": "pure water boils at 99.97 °C",
-        "quoteSpan": [
-          19,
-          48
-        ],
+        "excerpt": {"before": "", "quote": "pure water boils at 99.97 °C", "after": "", "clippedStart": false, "clippedEnd": false},
         "passage": {
           "sourceVersionId": "v1",
           "title": "Thermodynamics, ch. 4",
@@ -244,7 +243,7 @@
             "reason": "Its date rules it out for this statement."
           },
           "quote": "100 °C at 101.325 kPa",
-          "quoteSpan": null,
+          "excerpt": {"before": "", "quote": "100 °C at 101.325 kPa", "after": "", "clippedStart": false, "clippedEnd": false},
           "passage": {
             "sourceVersionId": "v1",
             "title": "Thermodynamics, ch. 4",
@@ -274,6 +273,7 @@
       },
       "place": null,
       "putBackUnit": null,
+      "putBackBeside": null,
       "rewritten": null
     },
     {
@@ -356,7 +356,8 @@
               "retrievalKind": "vector",
               "trust": null
             },
-            "addedBy": "user"
+            "addedBy": "user",
+            "opening": {"before": "", "quote": "", "after": "", "clippedStart": false, "clippedEnd": false}
           }
         ],
         "at": 1760000400000
@@ -380,6 +381,7 @@
       },
       "place": null,
       "putBackUnit": null,
+      "putBackBeside": null,
       "rewritten": null
     }
   ],

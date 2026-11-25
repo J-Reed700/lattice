@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use tracing::{debug, info, warn};
 
-use crate::features::backup::adapter::roll_back_database;
+use crate::features::backup::adapter::{remove_db_wal_sidecars, roll_back_database};
 use crate::features::backup::database_repository;
 use lattice_core::application::ports::SettingsRepositoryPort;
 use lattice_core::shared::persistence::Database;
@@ -239,6 +239,7 @@ impl ArchiveRestorer {
         self.merge_chat_images(extracted.chat_images_dir.as_deref())
             .await;
         self.swap_database(&extracted.db_path).await?;
+        self.mark_owner_restore_pending().await;
 
         let vault_restored_to = self.restore_vault(extracted.vault_dir.as_deref()).await?;
         self.restore_settings_file(extracted.settings_file.as_deref())
@@ -314,14 +315,15 @@ impl ArchiveRestorer {
         }
     }
 
-    /// Swap the snapshot in, following `BackupAdapter::restore_backup`
-    /// exactly: safety copy, close the database, copy to a temp name, rename,
-    /// roll back if the rename fails.
+    /// Swap the snapshot in, following `BackupAdapter::restore_backup`:
+    /// `VACUUM INTO` safety copy (falling back to file copy if closed), close
+    /// the database, copy to a temp name, delete stale `-wal`/`-shm` sidecars,
+    /// rename, and roll back if the rename fails.
     async fn swap_database(&self, snapshot_path: &Path) -> Result<(), ArchiveError> {
         let safety = self.db_path.with_extension("db.pre_restore");
         // repository-barrier-allow: the live database file is the resource.
         if self.db_path.exists() {
-            tokio::fs::copy(&self.db_path, &safety).await?;
+            self.write_safety_copy(&safety).await?;
             info!(path = %safety.display(), "created safety copy of the live database");
         }
 
@@ -339,7 +341,12 @@ impl ArchiveRestorer {
             return Err(ArchiveError::Io(e));
         }
 
-        match tokio::fs::rename(&temp_path, &self.db_path).await {
+        let swapped = match remove_db_wal_sidecars(&self.db_path).await {
+            Ok(()) => tokio::fs::rename(&temp_path, &self.db_path).await,
+            Err(e) => Err(e),
+        };
+
+        match swapped {
             Ok(()) => {
                 info!("database restored; a restart is required to reconnect");
                 Ok(())
@@ -358,6 +365,39 @@ impl ArchiveRestorer {
                 }
             }
         }
+    }
+
+    async fn write_safety_copy(&self, destination: &Path) -> Result<(), ArchiveError> {
+        if self.database.is_reachable().await {
+            let file_name = destination
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("database.db");
+            let temp_path =
+                destination.with_file_name(format!(".{file_name}.{}.tmp", uuid::Uuid::new_v4()));
+            let temp_str = temp_path.to_string_lossy().to_string();
+            match self.database.vacuum_into(&temp_str).await {
+                Ok(()) => {
+                    if let Err(error) = tokio::fs::rename(&temp_path, destination).await {
+                        let _ = tokio::fs::remove_file(&temp_path).await;
+                        return Err(ArchiveError::Io(error));
+                    }
+                    return Ok(());
+                }
+                Err(error) => {
+                    let _ = tokio::fs::remove_file(&temp_path).await;
+                    if self.database.is_reachable().await {
+                        return Err(ArchiveError::Database(format!(
+                            "failed to create safety copy of live database: {error}"
+                        )));
+                    }
+                    warn!(%error, "database became unreachable during safety copy; falling back to file copy");
+                }
+            }
+        }
+
+        tokio::fs::copy(&self.db_path, destination).await?;
+        Ok(())
     }
 
     /// Copy `files/<sha>/<name>` into the content-addressed library, skipping
@@ -535,6 +575,27 @@ impl ArchiveRestorer {
         match tokio::fs::write(&marker, body.as_bytes()).await {
             Ok(()) => info!(path = %marker.display(), "flagged the corpus for re-embedding"),
             Err(e) => warn!(error = %e, "could not write the re-embed marker"),
+        }
+    }
+
+    /// Tell startup `library_owner` reconciliation that this database was just
+    /// restored from a snapshot whose `library_owner` table was excluded, so an
+    /// existing host `owner` file should be adopted rather than treated as
+    /// belonging to a separate install.
+    async fn mark_owner_restore_pending(&self) {
+        let Some(marker) = format::owner_restore_marker_beside(
+            self.files_root.as_deref(),
+            self.web_archive_root.as_deref(),
+        ) else {
+            debug!("no lattice home root; skipping owner.restore marker");
+            return;
+        };
+        let body = chrono::Utc::now().to_rfc3339();
+        match tokio::fs::write(&marker, body.as_bytes()).await {
+            Ok(()) => {
+                debug!(path = %marker.display(), "marked library_owner for post-restore adoption")
+            }
+            Err(e) => warn!(error = %e, "could not write owner.restore marker"),
         }
     }
 

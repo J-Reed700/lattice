@@ -1103,67 +1103,6 @@ async fn run_with_schema(
     .await
 }
 
-/// `parts_lesson(count)` with the body of section `blank` emptied.
-fn with_blank_body(count: usize, blank: usize) -> Value {
-    let mut lesson = parts_lesson(count);
-    lesson["blocks"][blank]["body"] = json!("");
-    lesson
-}
-
-/// `lesson` with a new section before its first.
-fn opened(mut lesson: Value) -> Value {
-    lesson["blocks"].as_array_mut().unwrap().insert(
-        0,
-        json!({
-            "kind": "explanation",
-            "title": "Opening",
-            "body": "Parcels arrive at the depot each morning.",
-            "rubric": [],
-            "sourceIndex": 0,
-            "quote": EXCERPT,
-        }),
-    );
-    lesson
-}
-
-#[tokio::test]
-async fn a_rewrite_that_puts_a_section_before_an_unchanged_faulty_one_is_told_it_left_that_part_unchanged(
-) -> Result<()> {
-    let model = Answering::new(
-        std::iter::repeat_with(|| parts_review(3, &[]))
-            .take(6)
-            .collect(),
-        |_| Ok(opened(with_blank_body(2, 1)).to_string()),
-    );
-    let reviewed =
-        run_with_schema(&model, with_blank_body(2, 1), &json!({"type": "object"})).await?;
-    let requests = model.requests.lock().unwrap();
-    assert_eq!(requests.len(), 2);
-    assert_eq!(
-        requests[1]["issuesToFix"][0]["lastAttempt"],
-        "The last rewrite left the part this finding is about unchanged."
-    );
-    assert_eq!(reviewed.set_aside.len(), 1);
-    assert_eq!(reviewed.set_aside[0].repairs, 2);
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_rewrite_that_leaves_the_faulty_part_unchanged_is_charged_each_time() -> Result<()> {
-    let model = Answering::new(
-        std::iter::repeat_with(|| parts_review(2, &[]))
-            .take(6)
-            .collect(),
-        |_| Ok(with_blank_body(2, 1).to_string()),
-    );
-    let reviewed =
-        run_with_schema(&model, with_blank_body(2, 1), &json!({"type": "object"})).await?;
-    assert_eq!(model.requests.lock().unwrap().len(), 2);
-    assert_eq!(reviewed.set_aside.len(), 1);
-    assert_eq!(reviewed.set_aside[0].repairs, 2);
-    Ok(())
-}
-
 #[tokio::test]
 async fn a_rewrite_that_cannot_be_used_is_asked_again_whole_not_in_halves() -> Result<()> {
     let schema = json!({
@@ -1316,7 +1255,7 @@ impl lattice_core::application::ports::llm_port::LLMPort for DropsAfterRepair {
             return Err(AppError::Network("the connection dropped".into()));
         }
         let response = self.model.complete(request).await;
-        if asks_for_repair(request) {
+        if asks_for_repair(request) && request.schema().is_some() {
             self.repaired.store(true, Ordering::SeqCst);
         }
         response
@@ -2347,11 +2286,9 @@ async fn keeping_one_finding_leaves_another_finding_in_its_section_repairable() 
     store
         .settle(&program_id, &lesson_id, &[key], TeachingSettleDto::Keep)
         .await?;
-    let mut passes = Passes::new(store.held(&lesson_id, &candidate).await?);
-    let mut placed = [first, plan_at("aaaa000000000002", FindingSite::Section(0))];
-    passes.place(&candidate, &mut placed);
-    let [first, other] = placed;
+    let passes = Passes::new(store.held(&lesson_id, &candidate).await?);
     assert!(!passes.repairable(&first));
+    let other = plan_at("aaaa000000000002", FindingSite::Section(0));
     assert!(passes.repairable(&other));
     Ok(())
 }
@@ -3785,6 +3722,32 @@ async fn of_two_corrections_only_the_one_inside_its_targets_applies() -> Result<
     assert!(told[1].as_deref().is_some_and(
         |told| told.starts_with("The last repair's edits for this finding were applied")
     ));
+    Ok(())
+}
+
+#[test]
+fn a_whole_rewrite_that_changes_a_protected_sentence_changes_nothing_and_charges_every_finding(
+) -> Result<()> {
+    use super::subject::{Settled, Subject};
+    let previous = guarded_lesson();
+    let mut rewritten = previous.clone();
+    rewritten["blocks"][0]["body"] = json!("Alpha comes first. Beta is second. Gamma comes third.");
+    let send = [
+        ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "It is wrong."),
+        ReviewFinding::reviewer(2, Some(FindingSite::Section(0)), "It is vague."),
+    ];
+    let sources = references();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let protected = [gamma_protected()];
+    let mut subject = LessonSubject::new(&references, &sources, &protected, Held::default());
+    let settled = subject.settle_rewrite(&previous, &send, &rewritten.to_string())?;
+    assert!(!matches!(settled, Settled::Changed(_)));
+    for finding in &send {
+        assert_eq!(
+            subject.last_attempt(finding).as_deref(),
+            Some(REFUSED_FOR_GAMMA)
+        );
+    }
     Ok(())
 }
 

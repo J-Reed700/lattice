@@ -35,6 +35,7 @@ export {
   fromJournalSource,
   fromLearningEvidencePassage,
   fromLearningSource,
+  fromLearningSourceVersion,
   fromRecentDocument,
   fromSearchResult,
   fromStudySource,

@@ -237,6 +237,10 @@ pub async fn generate_learning_practical_activity(
                 "Learning lesson not found".into(),
             ))
         })?;
+    let _generation_guard = container
+        .practical_run_registry()
+        .acquire_generation_guard(&request.program_id, &request.lesson_id)
+        .map_err(ApiError::from)?;
     let pin = learning_model(
         &container,
         model_requirements::practice(),
@@ -246,7 +250,7 @@ pub async fn generate_learning_practical_activity(
     let llm = &pin.llm;
     let mut researched_source_ids = Vec::new();
     if let Some(target) = interview_target.as_ref() {
-        let web = container.web();
+        let web = container.web_service();
         let library = source_library(&container);
         let research =
             crate::features::learning::practice::interview_research::research_interview_target(
@@ -301,7 +305,7 @@ pub async fn generate_learning_practical_activity(
         .await
         .map_err(ApiError::from)?;
         let library = source_library(&container);
-        let web = container.web();
+        let web = container.web_service();
         let research = crate::features::learning::interview_research::research_interview_answers(
             llm.as_ref(),
             web.as_ref(),

@@ -7,16 +7,9 @@ use crate::shared::persistence::Database;
 use serde_json::json;
 
 async fn pool() -> sqlx::SqlitePool {
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect(":memory:")
+    crate::shared::testing::sqlite::migrated_in_memory()
         .await
-        .unwrap();
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .unwrap();
-    pool
+        .unwrap()
 }
 
 async fn continued(

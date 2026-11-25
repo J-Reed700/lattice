@@ -238,6 +238,25 @@ async fn an_answer_that_fills_the_window_gets_the_room_the_input_left() {
 }
 
 #[tokio::test]
+async fn an_answer_that_fills_the_window_leaves_requested_followup_headroom() {
+    let llm = Scripted::new(8192, "draft prose");
+    let mut request = legacy::grounded("Work through the task.", "Draft an outline.");
+    let says = legacy::grounded_says(&mut request);
+    *says.output_tokens = 1000;
+    let request = request.filling_window(true).leaving_room(1256);
+
+    let output = generate(&llm, request).await.unwrap();
+
+    let max_output = llm.first_request().max_output_tokens().unwrap() as usize;
+    let margin = output.accounting.safety_margin;
+    assert_eq!(
+        max_output + output.accounting.total_input + margin + 1256,
+        8192
+    );
+    assert!(max_output > 1000);
+}
+
+#[tokio::test]
 async fn streaming_delivers_text_and_retries_through_the_callers_callbacks() {
     let llm = Scripted::new(8192, "partial answer");
     let received = Mutex::new(Vec::new());

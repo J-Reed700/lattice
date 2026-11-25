@@ -59,8 +59,11 @@ pub(in crate::features::conversation) struct BackgroundVerification {
     pub reply: ReplyText,
     pub sources: Vec<SourceDto>,
     /// Only the answer's cited sentences are claims about the sources, as in
-    /// an Explorer turn (`GroundingVerifier::cited_only`).
+    /// an Explorer turn or a hybrid chat turn (`GroundingVerifier::cited_only`).
     pub verifies_cited_only: bool,
+    /// Grounding mode for ordinary chat turns (`Some("hybrid")` or `Some("strict")`),
+    /// persisted on `metadata.verification.groundingMode` so the UI badge reflects it.
+    pub grounding_mode: Option<&'static str>,
     /// Sentences that only run a tutor's session are no claims
     /// (`GroundingVerifier::without_session_talk`).
     pub drops_session_talk: bool,
@@ -159,7 +162,15 @@ impl BackgroundVerification {
             );
         }
 
-        let verification = report.metadata_json();
+        let mut verification = report.metadata_json();
+        if let Some(obj) = verification.as_object_mut() {
+            if self.verifies_cited_only {
+                obj.insert("citedOnly".to_string(), serde_json::json!(true));
+            }
+            if let Some(mode) = self.grounding_mode {
+                obj.insert("groundingMode".to_string(), serde_json::json!(mode));
+            }
+        }
         let turn = self.turn.map(|mut turn| {
             if let Some(step) = turn.steps.iter_mut().find(|step| {
                 step.kind == TurnStepKind::Verify && step.state == TurnStepState::Running
@@ -199,11 +210,19 @@ impl BackgroundVerification {
     }
 
     async fn finish_cancelled(&self) {
-        let verification = serde_json::json!({
+        let mut verification = serde_json::json!({
             "enabled": true,
             "pending": false,
             "interrupted": true,
         });
+        if let Some(obj) = verification.as_object_mut() {
+            if self.verifies_cited_only {
+                obj.insert("citedOnly".to_string(), serde_json::json!(true));
+            }
+            if let Some(mode) = self.grounding_mode {
+                obj.insert("groundingMode".to_string(), serde_json::json!(mode));
+            }
+        }
         let elapsed_ms = u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let turn = self.turn.as_ref().map(|turn| {
             let mut turn = turn.clone();
@@ -296,7 +315,8 @@ mod tests {
                 ..Default::default()
             },
             sources: vec![],
-            verifies_cited_only: false,
+            verifies_cited_only: true,
+            grounding_mode: Some("hybrid"),
             drops_session_talk: false,
             tuning: LLMVerificationSettingsDto::default(),
             chat_llm: Arc::new(MockLLMPort::new()),
@@ -317,6 +337,8 @@ mod tests {
         let ready = event.verification.unwrap();
         assert_eq!(ready.verification["pending"], false);
         assert_eq!(ready.verification["interrupted"], true);
+        assert_eq!(ready.verification["citedOnly"], true);
+        assert_eq!(ready.verification["groundingMode"], "hybrid");
         let verify_step = ready
             .turn
             .unwrap()

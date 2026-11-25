@@ -15,12 +15,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use super::{
-    cancelled_error, AdmissionRequest, InferenceScheduler, PaceEstimator, ServerTokenizer,
-    TokenEstimator,
-};
+use super::{cancelled_error, AdmissionRequest, InferenceScheduler, PaceEstimator, TokenEstimator};
 use crate::features::llm::backend::{ModelBackend, Progress};
 use crate::features::llm::fitting::{fit, prompt_chars, TokenCounter};
+use crate::infrastructure::llama_server::ServerTokenizer;
 use lattice_core::application::ports::llm_port::{
     CacheHold, CompletionInput, CompletionRequest, CompletionResponse, Pace, RequestLoad,
 };
@@ -254,6 +252,10 @@ impl LLMPort for ScheduledLlm {
 
     fn thinks_before_answering(&self) -> bool {
         self.inner.thinking(&CompletionRequest::probe()).is_on()
+    }
+
+    fn supports_native_thinking(&self) -> bool {
+        self.inner.supports_native_thinking()
     }
 
     fn vision(&self) -> Option<VisionGeometry> {

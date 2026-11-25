@@ -1,10 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { open } from '@tauri-apps/plugin-dialog';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 
 import { useExplorerStore } from '@/features/explorer/stores/explorerStore';
+import { useReaderStore } from '@/features/reading/stores/readerStore';
 import VaultAPI from '@/lib/api';
 import { useToastStore } from '@/stores/toastStore';
 
@@ -30,7 +32,8 @@ vi.mock('@/features/explorer/api/queries', () => ({
 }));
 vi.mock('@/features/model/hooks/useDownloadedModels', () => ({ useDownloadedModels: () => ({ fetchDownloadedModels: mocks.fetchDownloadedModels }) }));
 vi.mock('@/shared/conversations/conversationsStore', () => ({
-  useConversationsStore: (select: (state: { loadSpaces: () => void }) => unknown) => select({ loadSpaces: mocks.loadSpaces }),
+  useConversationsStore: (select: (state: { loadSpaces: () => void; conversations: never[]; spaces: never[]; selectedSpaceId: null; activeConversationId: null; loadConversationLinkedDocuments: () => void }) => unknown) =>
+    select({ loadSpaces: mocks.loadSpaces, conversations: [], spaces: [], selectedSpaceId: null, activeConversationId: null, loadConversationLinkedDocuments: vi.fn() }),
 }));
 vi.mock('../../hooks/useExplorerThread', () => ({ useExplorerThread: () => ({ threads: [] }) }));
 vi.mock('../ExplorerChat', () => ({ ExplorerChat: () => <div>chat column</div> }));
@@ -77,7 +80,11 @@ const click = (name: string) => fireEvent.click(screen.getByRole('button', { nam
 
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={client}><ExplorerPage /></QueryClientProvider>);
+  return render(
+    <MemoryRouter>
+      <QueryClientProvider client={client}><ExplorerPage /></QueryClientProvider>
+    </MemoryRouter>,
+  );
 }
 
 beforeEach(() => {
@@ -246,5 +253,88 @@ describe('ExplorerPage with a folder open', () => {
     click('Folder settings');
     await waitFor(() => expect(toasts()).toEqual([{ title: "Couldn't load this folder's settings", message }]));
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('mounts ReaderPane so opening a citation or source in Explorer renders the source reader and resets when the folder changes', async () => {
+    renderPage();
+    expect(screen.queryByLabelText('Source reader')).not.toBeInTheDocument();
+
+    act(() => {
+      useReaderStore.getState().open(
+        'explorer-msg-1',
+        [{
+          documentId: 'doc-1',
+          chunkId: 'chunk-1',
+          content: 'Explorer cited snippet.',
+          score: 0.9,
+          fileName: 'notes.md',
+          filePath: '/notes/history/notes.md',
+          mimeType: 'text/markdown',
+          category: 'Markdown',
+          fileSizeBytes: 120,
+          modifiedAt: '2026-10-01T00:00:00Z',
+          citationId: 1,
+        }],
+        0,
+      );
+    });
+
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog).toHaveTextContent('Source reader');
+    expect(dialog).toHaveTextContent('notes.md');
+
+    act(() => {
+      useExplorerStore.setState({ root: { root: '/notes/physics', name: 'physics' } });
+    });
+
+    await waitFor(() => expect(useReaderStore.getState().session).toBeNull());
+  });
+
+  it('yields chat width when ReaderPane docks so tree + viewer (>= 320) + chat + reader stay within rowWidth', async () => {
+    vi.stubGlobal('ResizeObserver', class { observe = vi.fn(); disconnect = vi.fn(); unobserve() {} });
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1728);
+    localStorage.setItem('explorer.treeWidth', '240');
+    localStorage.setItem('explorer.chatWidth', '700');
+    useReaderStore.setState({ width: 560 });
+
+    renderPage();
+    expect(screen.getByRole('separator', { name: 'Resize chat' })).toHaveAttribute('aria-valuenow', '700');
+
+    act(() => {
+      useReaderStore.getState().open(
+        'explorer-msg-1',
+        [{
+          documentId: 'doc-1',
+          chunkId: 'chunk-1',
+          content: 'Explorer cited snippet.',
+          score: 0.9,
+          fileName: 'notes.md',
+          filePath: '/notes/history/notes.md',
+          mimeType: 'text/markdown',
+          category: 'Markdown',
+          fileSizeBytes: 120,
+          modifiedAt: '2026-10-01T00:00:00Z',
+          citationId: 1,
+        }],
+        0,
+      );
+    });
+
+    const reader = await screen.findByLabelText('Source reader');
+    const readerWidth = Number.parseInt((reader as HTMLElement).style.width, 10);
+    const chatWidth = Number(screen.getByRole('separator', { name: 'Resize chat' }).getAttribute('aria-valuenow'));
+    const treeWidth = Number(screen.getByRole('separator', { name: 'Resize folder tree' }).getAttribute('aria-valuenow'));
+    expect(readerWidth).toBeGreaterThanOrEqual(380);
+    expect(chatWidth).toBeLessThan(700);
+    expect(treeWidth + chatWidth + readerWidth).toBeLessThanOrEqual(1728 - 320);
+
+    // Expanding/focusing the reader yields chat down to 320 so ExplorerFileView still keeps >= 320.
+    click('Expand reader');
+    await waitFor(() =>
+      expect(Number(screen.getByRole('separator', { name: 'Resize chat' }).getAttribute('aria-valuenow'))).toBe(320),
+    );
+    const expandedReaderWidth = Number.parseInt(((await screen.findByLabelText('Source reader')) as HTMLElement).style.width, 10);
+    expect(treeWidth + 320 + expandedReaderWidth).toBeLessThanOrEqual(1728 - 320);
+    vi.unstubAllGlobals();
   });
 });

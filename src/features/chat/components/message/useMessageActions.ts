@@ -1,13 +1,17 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useContext, useState } from 'react';
 
+import { QueryClientContext } from '@tanstack/react-query';
+
+import { useActiveModels } from '@/features/model/hooks/useActiveModels';
 import { useCloudModelCatalogs } from '@/features/model/hooks/useCloudModels';
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import { useSettingsQuery } from '@/features/settings/hooks/useSettingsQuery';
 import type { ChatModelChoice } from '@/lib/bindings';
+import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import type { GenerationOutcome } from '@/shared/conversations/conversationsStore.types';
 import { toast } from '@/stores/toastStore';
-import type { DisplayMessage } from '@/types/conversation';
+import type { ConversationMessage, DisplayMessage } from '@/types/conversation';
 import {
   buildChatModelOptions,
   isUnavailableChatModel,
@@ -26,9 +30,11 @@ import { plainTextOf } from '@/utils/replyPieces';
 const DEFAULT_CHOICE: ChatModelChoice = { kind: 'default' };
 
 function regenerateFailureMessage(
-  outcome: Exclude<GenerationOutcome, 'answered' | 'cancelled'>
+  outcome: Exclude<GenerationOutcome, 'answered' | 'cancelled'>,
+  restoredInThread = false
 ): string {
   if (outcome === 'busy') return 'This conversation is still answering.';
+  if (restoredInThread) return 'Your question stayed in the thread. Check the error below it to try again.';
   return 'Your question is back in the composer.';
 }
 
@@ -52,6 +58,7 @@ export function useMessageActions({
   isMessageBookmarked: boolean;
   normalizedMarkdownContent: string;
 }) {
+  const queryClient = useContext(QueryClientContext);
   const [isEditing, setIsEditing] = useState(false);
   const bookmarkMessage = useConversationsStore((s) => s.bookmarkMessage);
   const unbookmarkMessage = useConversationsStore((s) => s.unbookmarkMessage);
@@ -62,11 +69,26 @@ export function useMessageActions({
   const sendMessage = useConversationsStore((s) => s.sendMessage);
   const createConversation = useConversationsStore((s) => s.createConversation);
   const setConversationModelChoice = useConversationsStore((s) => s.setConversationModelChoice);
+  const conversationMessages = useConversationsStore(
+    (s) => s.conversations.find((conversation) => conversation.id === conversationId)?.messages
+  );
   const modelChoice = useConversationsStore(
     (s) => s.conversations.find((conversation) => conversation.id === conversationId)?.modelChoice
   );
 
+  const isFailedUserInThread = useCallback(
+    (targetId: string) => {
+      const latest =
+        queryClient?.getQueryData<ConversationMessage[]>(conversationKeys.messages(targetId)) ??
+        conversationMessages;
+      const last = latest?.[latest.length - 1];
+      return last?.role === 'user' && last.status === 'failed';
+    },
+    [conversationMessages, queryClient]
+  );
+
   const { downloadedModels } = useDownloadedModels();
+  const { activeModels } = useActiveModels();
   const { catalogs } = useCloudModelCatalogs(false);
   const { data: settings } = useSettingsQuery();
 
@@ -93,10 +115,12 @@ export function useMessageActions({
     if (!conversationId) return;
     const outcome = await regenerateResponse(conversationId);
     if (outcome === 'answered' || outcome === 'cancelled') return;
-    // Only a real failure puts the question back in the composer; saying so
-    // when it did not happen would send the reader looking for it.
-    toast.error("Couldn't regenerate", { message: regenerateFailureMessage(outcome) });
-  }, [conversationId, regenerateResponse]);
+    // Only put-back failures copy text into the composer; when the failed
+    // bubble remained in the thread, point the reader there instead.
+    toast.error("Couldn't regenerate", {
+      message: regenerateFailureMessage(outcome, isFailedUserInThread(conversationId)),
+    });
+  }, [conversationId, isFailedUserInThread, regenerateResponse]);
 
   /**
    * Answer this question again with another model, once. Nothing is switched:
@@ -107,7 +131,7 @@ export function useMessageActions({
   const handleTryWithModel = useCallback(
     async (modelId: string, modelLabel: string) => {
       if (!conversationId) return;
-      const option = buildChatModelOptions(settings?.llm, downloadedModels, catalogs).find((o) => o.id === modelId);
+      const option = buildChatModelOptions(settings?.llm, downloadedModels, catalogs, activeModels).find((o) => o.id === modelId);
       if (!option) {
         toast.error("Couldn't regenerate", {
           message: `${modelLabel} is no longer available. Pick another model.`,
@@ -124,12 +148,14 @@ export function useMessageActions({
         return;
       }
       if (outcome !== 'answered') {
-        toast.error("Couldn't regenerate", { message: regenerateFailureMessage(outcome) });
+        toast.error("Couldn't regenerate", {
+          message: regenerateFailureMessage(outcome, isFailedUserInThread(conversationId)),
+        });
         return;
       }
 
       // Offer to keep it only when it is not what this chat already uses.
-      const current = resolveEffectiveChatOption(modelChoice ?? DEFAULT_CHOICE, settings?.llm, downloadedModels, catalogs);
+      const current = resolveEffectiveChatOption(modelChoice ?? DEFAULT_CHOICE, settings?.llm, downloadedModels, catalogs, activeModels);
       const isChatsModel = current !== null && !isUnavailableChatModel(current) && sameModelRef(current.ref, option.ref);
       toast.success(
         `Answered with ${modelLabel}`,
@@ -151,7 +177,7 @@ export function useMessageActions({
             }
       );
     },
-    [conversationId, downloadedModels, catalogs, modelChoice, regenerateResponse, setConversationModelChoice, settings?.llm]
+    [conversationId, downloadedModels, catalogs, activeModels, isFailedUserInThread, modelChoice, regenerateResponse, setConversationModelChoice, settings?.llm]
   );
 
   const handleBranch = useCallback(async () => {

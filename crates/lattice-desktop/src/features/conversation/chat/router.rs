@@ -42,6 +42,21 @@ impl RouterDecision {
     }
 }
 
+/// What an answer the router is unsure of does. Going back to the last
+/// document on a guess is asked about first; a fresh search loses nothing, so
+/// it goes ahead.
+pub(crate) fn settle_unsure(
+    action: RouterAction,
+    confidence: f32,
+    ambiguity_threshold: f32,
+) -> RouterAction {
+    if action == RouterAction::UseLastDocument && confidence < ambiguity_threshold {
+        RouterAction::Clarify
+    } else {
+        action
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RouterInput {
     pub query: String,
@@ -108,9 +123,11 @@ impl RouterService {
                     decision.action = RouterAction::NewSearch;
                 }
 
-                if decision.confidence < self.settings.ambiguity_threshold {
-                    decision.action = RouterAction::Clarify;
-                }
+                decision.action = settle_unsure(
+                    decision.action,
+                    decision.confidence,
+                    self.settings.ambiguity_threshold,
+                );
 
                 if decision.action == RouterAction::Clarify && !input.has_recent_document {
                     decision.action = RouterAction::NewSearch;

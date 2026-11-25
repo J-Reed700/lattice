@@ -87,10 +87,8 @@ fn a_finding_has_its_own_id_and_keeps_it_whatever_its_note_says() {
         "reviewer/7"
     );
     assert_eq!(
-        ReviewFinding::answer_key(2, KeyDefect::Untrue, "x")
-            .id()
-            .as_str(),
-        "key/untrue/question-2"
+        ReviewFinding::answer_key(2, "x").id().as_str(),
+        "key/question-2"
     );
 
     let broken = |rule: Rule| ReviewFinding::rule(rule, FindingKind::Structure, part, "x");
@@ -155,6 +153,22 @@ fn a_finding_s_words_are_the_whole_sentences_its_passage_lies_in() {
 }
 
 #[test]
+fn a_sentence_the_lesson_already_had_elsewhere_is_not_new() {
+    let lesson = |first: &str| json!({"title":"A lesson","blocks":[{"body":first},{"body":"Check the sum."}],"questions":[]});
+    let previous = lesson("Add two numbers.");
+    let moved = lesson("Add two numbers. Check the sum.");
+    assert!(new_sentences(&previous, &moved).is_empty());
+    let written = lesson("Add two numbers. Say what a sum is.");
+    assert_eq!(
+        new_sentences(&previous, &written),
+        vec![(
+            FindingSite::Section(0),
+            vec!["Say what a sum is.".to_owned()]
+        )]
+    );
+}
+
+#[test]
 fn a_list_reads_as_plain_words() {
     let list =
         |items: &[&str]| join_plain(&items.iter().map(|i| (*i).to_owned()).collect::<Vec<_>>());
@@ -204,7 +218,7 @@ fn a_unit_s_hash_changes_with_its_text_only() {
     let mut changed = candidate.clone();
     changed["blocks"][0]["body"] = json!("Add twice.");
     assert_ne!(unit(&changed, &finding).sha256, before.sha256);
-    let question = ReviewFinding::answer_key(0, KeyDefect::Untrue, "x");
+    let question = ReviewFinding::answer_key(0, "x");
     assert_eq!(
         unit(&candidate, &question).passage.as_deref(),
         Some("What is 2+2?")
@@ -253,7 +267,7 @@ fn each_rule_has_the_remedy_its_fix_needs() {
 #[test]
 fn a_finding_that_is_not_a_broken_rule_is_corrected_by_edits() {
     let reviewer = ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "n");
-    let key = ReviewFinding::answer_key(0, KeyDefect::Untrue, "n");
+    let key = ReviewFinding::answer_key(0, "n");
     let plan = ReviewFinding::plan(PlanCheck::Used, "an idea", FindingSite::Section(0), "n");
     for finding in [reviewer, key, plan] {
         assert_eq!(finding.remedy(), Remedy::Edits);
@@ -359,141 +373,4 @@ fn a_verdict_quote_is_located_as_the_lesson_bytes() {
         part_quote(&candidate, FindingSite::Question(0), "rule"),
         None
     );
-}
-
-fn parcels(prompts: &[&str]) -> Value {
-    let questions: Vec<Value> = prompts
-        .iter()
-        .map(|prompt| json!({"prompt": prompt, "options": ["Left", "Right"]}))
-        .collect();
-    json!({"blocks": [{"title": "Sorting", "body": "A parcel is sorted by weight."}], "questions": questions})
-}
-
-fn key_at(
-    lineage: &mut Lineage,
-    candidate: &Value,
-    question: usize,
-    defect: KeyDefect,
-) -> ReviewFinding {
-    let mut found = vec![ReviewFinding::answer_key(question, defect, "x")];
-    lineage.place(candidate, &mut found);
-    found.remove(0)
-}
-
-#[test]
-fn a_question_keeps_its_id_when_the_ones_before_it_are_cut() {
-    let mut lineage = Lineage::default();
-    let before = parcels(&["Which bin?", "Who signs?", "What is fragile?"]);
-    let last = key_at(&mut lineage, &before, 2, KeyDefect::Untrue);
-    let after = parcels(&["Which bin?", "What is fragile?"]);
-    let moved = key_at(&mut lineage, &after, 1, KeyDefect::Untrue);
-    assert_eq!(last.id(), moved.id());
-    let other = key_at(&mut lineage, &after, 0, KeyDefect::Untrue);
-    assert_ne!(other.id(), moved.id());
-}
-
-#[test]
-fn two_defects_of_one_question_have_two_ids_and_one_defect_of_two_questions_too() {
-    let mut lineage = Lineage::default();
-    let candidate = parcels(&["Which bin?", "Who signs?"]);
-    let first = key_at(&mut lineage, &candidate, 0, KeyDefect::Untrue);
-    let second = key_at(&mut lineage, &candidate, 0, KeyDefect::ReasonMissesWhy);
-    assert_ne!(first.id(), second.id());
-    let other = key_at(&mut lineage, &candidate, 1, KeyDefect::Untrue);
-    assert_ne!(first.id(), other.id());
-}
-
-#[test]
-fn two_questions_with_the_same_text_are_told_apart_only_by_their_order() {
-    let mut lineage = Lineage::default();
-    let twins = parcels(&["Which bin?", "Which bin?"]);
-    let first = key_at(&mut lineage, &twins, 0, KeyDefect::Untrue);
-    let second = key_at(&mut lineage, &twins, 1, KeyDefect::Untrue);
-    assert_ne!(first.id(), second.id());
-    let one_left = parcels(&["Which bin?"]);
-    lineage.carry(&twins, &one_left);
-    let kept = key_at(&mut lineage, &one_left, 0, KeyDefect::Untrue);
-    assert_eq!(
-        kept.id(),
-        first.id(),
-        "whichever twin was cut, the one left takes the first twin's id"
-    );
-}
-
-#[test]
-fn a_question_edited_in_place_keeps_its_id_through_carry() {
-    let mut lineage = Lineage::default();
-    let before = parcels(&["Which bin?", "Who signs?"]);
-    let named = key_at(&mut lineage, &before, 1, KeyDefect::Untrue);
-    let after = parcels(&["Which bin?", "Who signs for it?"]);
-    lineage.carry(&before, &after);
-    assert_eq!(
-        key_at(&mut lineage, &after, 1, KeyDefect::Untrue).id(),
-        named.id()
-    );
-}
-
-#[test]
-fn a_part_an_edit_removed_has_its_id_again_when_its_text_comes_back() {
-    let mut lineage = Lineage::default();
-    let before = parcels(&["Which bin?", "Who signs?"]);
-    let named = key_at(&mut lineage, &before, 1, KeyDefect::Untrue);
-    let after = parcels(&["Which bin?"]);
-    lineage.carry(&before, &after);
-    let again = key_at(&mut lineage, &before, 1, KeyDefect::Untrue);
-    assert_eq!(again.id(), named.id());
-}
-
-#[test]
-fn a_rewrite_hands_an_unchanged_part_its_id_and_a_changed_part_a_new_one() {
-    let mut lineage = Lineage::default();
-    let before = parcels(&["Which bin?", "Who signs?"]);
-    let first = key_at(&mut lineage, &before, 0, KeyDefect::Untrue);
-    let second = key_at(&mut lineage, &before, 1, KeyDefect::Untrue);
-    let after = parcels(&["Which bin, then?", "Who signs?", "Where is it kept?"]);
-    lineage.carry_rewrite(&before, &after);
-    let changed = key_at(&mut lineage, &after, 0, KeyDefect::Untrue);
-    assert_ne!(changed.id(), first.id());
-    assert_ne!(changed.id(), second.id());
-    assert_eq!(
-        key_at(&mut lineage, &after, 1, KeyDefect::Untrue).id(),
-        second.id()
-    );
-    let added = key_at(&mut lineage, &after, 2, KeyDefect::Untrue);
-    assert_ne!(added.id(), first.id());
-    assert_ne!(added.id(), second.id());
-}
-
-#[test]
-fn a_finding_names_its_unit_in_its_id_and_the_id_gives_it_back() {
-    let mut lineage = Lineage::default();
-    let candidate = parcels(&["Which bin?"]);
-    let finding = key_at(&mut lineage, &candidate, 0, KeyDefect::Untrue);
-    let unit = finding.unit.clone().unwrap();
-    assert_eq!(finding.id().unit(), Some(unit.clone()));
-    assert_eq!(
-        finding.id().as_str(),
-        format!("key/untrue/{}", unit.as_str())
-    );
-    for not_a_unit in [
-        "reviewer/3",
-        "plan/planned/action-1",
-        "key/untrue/question-2",
-        "rule/schema/section-1",
-    ] {
-        assert_eq!(
-            FindingId::stored(not_a_unit.to_owned()).unit(),
-            None,
-            "{not_a_unit}"
-        );
-    }
-}
-
-#[test]
-fn a_finding_at_the_whole_lesson_has_no_unit() {
-    let mut lineage = Lineage::default();
-    let candidate = parcels(&["Which bin?"]);
-    let mut found = vec![ReviewFinding::reviewer(1, None, "x")];
-    lineage.place(&candidate, &mut found);
-    assert_eq!(found[0].unit, None);
 }

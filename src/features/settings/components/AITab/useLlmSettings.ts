@@ -20,12 +20,16 @@ import type { JsonValue, RemoteAuthStatusDto, RemoteServer } from '@/lib/binding
 import { toast } from '@/stores/toastStore';
 import type { LLMSettings as ApiLLMSettings } from '@/types/api/settings';
 
+export type RemoteAuthStatusState = 'loading' | 'error' | 'ready';
+
 export type LlmSettingsContextValue = {
   llmSettings: ApiLLMSettings | null;
   isLoading: boolean;
   saveLlmUpdates: (updates: Partial<ApiLLMSettings>) => Promise<boolean>;
   /** Whether the keyring holds an auth header value for each remote server. */
   authValueSet: RemoteAuthStatusDto;
+  /** Whether `authValueSet` is still loading, failed to load, or resolved cleanly. */
+  authValueStatus: RemoteAuthStatusState;
   /** Store (or with null, delete) a remote server's auth header value. Write-only: `authValueSet` reports whether one is set. */
   saveAuthHeaderValue: (server: RemoteServer, value: string | null) => Promise<boolean>;
   /** Re-read the settings after a failed load. Backs the "Retry" affordance. */
@@ -39,7 +43,18 @@ export function useLlmSettingsProvider(): LlmSettingsContextValue {
   const { data, isPending, error, refetch } = useSettingsQuery();
   const { mutateAsync } = useUpdateSettingsMutation();
   const queryClient = useContext(QueryClientContext);
-  const { data: authValueSet = NO_REMOTE_AUTH } = useRemoteAuthStatus();
+  const {
+    data: authData,
+    isPending: isAuthPending,
+    isError: isAuthError,
+    refetch: refetchAuthStatus,
+  } = useRemoteAuthStatus();
+  const authValueSet = authData ?? NO_REMOTE_AUTH;
+  const authValueStatus: RemoteAuthStatusState = isAuthPending
+    ? 'loading'
+    : isAuthError || !authData
+      ? 'error'
+      : 'ready';
 
   const llmSettings = data?.llm ?? null;
 
@@ -54,7 +69,8 @@ export function useLlmSettingsProvider(): LlmSettingsContextValue {
 
   const reload = useCallback(() => {
     void refetch();
-  }, [refetch]);
+    void refetchAuthStatus();
+  }, [refetch, refetchAuthStatus]);
 
   const saveLlmUpdates = useCallback(
     async (updates: Partial<ApiLLMSettings>): Promise<boolean> => {
@@ -91,8 +107,16 @@ export function useLlmSettingsProvider(): LlmSettingsContextValue {
   );
 
   return useMemo(
-    () => ({ llmSettings, isLoading: isPending, authValueSet, saveLlmUpdates, saveAuthHeaderValue, reload }),
-    [llmSettings, isPending, authValueSet, saveLlmUpdates, saveAuthHeaderValue, reload]
+    () => ({
+      llmSettings,
+      isLoading: isPending,
+      authValueSet,
+      authValueStatus,
+      saveLlmUpdates,
+      saveAuthHeaderValue,
+      reload,
+    }),
+    [llmSettings, isPending, authValueSet, authValueStatus, saveLlmUpdates, saveAuthHeaderValue, reload]
   );
 }
 

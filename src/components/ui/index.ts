@@ -4,15 +4,47 @@
  * Reusable primitive components following design system standards
  */
 
-export { Button } from './button';
+export { Button, buttonVariants } from './button';
+export type { ButtonProps } from './button';
 export { Input } from './input';
-export { Card, CardHeader, CardTitle, CardDescription, CardContent } from './card';
+export type { InputProps, InputSize } from './input';
+export { Textarea } from './textarea';
+export type { TextareaProps, TextareaResize } from './textarea';
+export { Slider } from './slider';
+export type { SliderProps } from './slider';
+export { NumberStepper } from './number-stepper';
+export type { NumberStepperProps, NumberStepperSize } from './number-stepper';
+export { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from './card';
 export { Switch } from './switch';
-export { Select } from './select';
+export {
+  Select,
+  SelectGroup,
+  SelectValue,
+  SelectTrigger,
+  SelectContent,
+  SelectLabel,
+  SelectItem,
+  SelectSeparator,
+} from './select';
 export { Checkbox } from './Checkbox';
-export { Dialog } from './dialog';
-export { Badge } from './badge';
+export type { CheckboxProps } from './Checkbox';
+export {
+  Dialog,
+  DialogPortal,
+  DialogOverlay,
+  DialogTrigger,
+  DialogClose,
+  DialogContent,
+  DialogHeader,
+  DialogFooter,
+  DialogTitle,
+  DialogDescription,
+} from './dialog';
+export { Popover, PopoverTrigger, PopoverAnchor, PopoverContent } from './popover';
+export { Badge, badgeVariants } from './badge';
+export type { BadgeProps } from './badge';
 export { Tabs, TabsList, TabsTrigger, TabsContent } from './tabs';
+export type { TabsVariant, TabsProps, TabsListProps, TabsTriggerProps } from './tabs';
 export { ScrollArea } from './ScrollArea';
 export { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent, TooltipPortal, TooltipArrow } from './tooltip';
 export type { TooltipProps, TooltipProviderProps } from './tooltip';

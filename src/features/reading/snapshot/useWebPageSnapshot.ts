@@ -22,6 +22,17 @@ export const webPageSnapshotQueryKey = (conversationId: string, url: string) =>
 export const webPageSnapshotListQueryKey = (conversationId: string) =>
   ['web-page-snapshots', conversationId] as const;
 
+function mergeSnapshot(
+  current: WebPageSnapshotDto | null | undefined,
+  incoming: WebPageSnapshotDto | null,
+): WebPageSnapshotDto | null {
+  if (current?.status === 'ready') {
+    if (incoming === null) return current;
+    if (current.id === incoming.id && incoming.status === 'pending') return current;
+  }
+  return incoming;
+}
+
 export interface UseWebPageSnapshot {
   snapshot: WebPageSnapshotDto | null;
   /** True until the first answer about this page arrives. */
@@ -41,7 +52,11 @@ export function useWebPageSnapshot(conversationId: string | null, url: string | 
 
   const query = useQuery({
     queryKey,
-    queryFn: () => getWebPageSnapshot(conversationId ?? '', url ?? ''),
+    queryFn: async () => {
+      const snapshot = await getWebPageSnapshot(conversationId ?? '', url ?? '');
+      const current = queryClient.getQueryData<WebPageSnapshotDto | null>(queryKey);
+      return mergeSnapshot(current, snapshot);
+    },
     enabled,
     // A missing command or a failed lookup means "show Reader", not "wait".
     retry: false,
@@ -68,12 +83,20 @@ export function useWebPageSnapshot(conversationId: string | null, url: string | 
               normalizeSnapshotUrl(snapshot.requestedUrl)?.toLowerCase() === target.toLowerCase() ||
               (snapshot.finalUrl !== null &&
                 normalizeSnapshotUrl(snapshot.finalUrl)?.toLowerCase() === target.toLowerCase())));
-        if (conversationMatches && matches) queryClient.setQueryData(queryKey, snapshot);
+        if (conversationMatches && matches) {
+          queryClient.setQueryData<WebPageSnapshotDto | null>(queryKey, (current) =>
+            mergeSnapshot(current, snapshot),
+          );
+        }
       },
-    ).then((stop) => {
-      if (disposed) stop();
-      else unlisten = stop;
-    });
+    )
+      .then((stop) => {
+        if (disposed) stop();
+        else unlisten = stop;
+      })
+      .catch((err: unknown) => {
+        console.error('[useWebPageSnapshot] failed to subscribe to snapshot events:', err);
+      });
     return () => {
       disposed = true;
       unlisten?.();
@@ -84,17 +107,9 @@ export function useWebPageSnapshot(conversationId: string | null, url: string | 
     mutationFn: () => captureWebPageSnapshot(conversationId ?? '', url ?? ''),
     onSuccess: (snapshot) => {
       void queryClient.invalidateQueries({ queryKey: webPageSnapshotListQueryKey(conversationId ?? '') });
-      queryClient.setQueryData<WebPageSnapshotDto | null>(queryKey, (current) => {
-        if (
-          current &&
-          current.id === snapshot.id &&
-          current.status === 'ready' &&
-          snapshot.status === 'pending'
-        ) {
-          return current;
-        }
-        return snapshot;
-      });
+      queryClient.setQueryData<WebPageSnapshotDto | null>(queryKey, (current) =>
+        mergeSnapshot(current, snapshot),
+      );
     },
   });
   const { mutate } = mutation;

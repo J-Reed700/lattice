@@ -198,7 +198,7 @@ fn picture_sources(output: &FindImageOutput) -> Vec<SourceDto> {
             category: "Web image".to_string(),
             file_size_bytes: 0,
             modified_at: modified_at.clone(),
-            // The card's preview: the UI refuses an excerpt over its limit.
+            // Short preview for the citation card alongside the full caption.
             excerpt: Some(build_excerpt(
                 &image.caption,
                 &[],
@@ -311,8 +311,8 @@ pub(super) fn collect_tool_sources(
                     category: "Web Article".to_string(),
                     file_size_bytes: output.word_count as i64,
                     modified_at,
-                    // The card's short preview, not the page: the UI refuses an
-                    // excerpt over 2000 characters.
+                    // Short preview for the citation card; the full page text
+                    // is kept untruncated in `content` above.
                     excerpt: Some(build_excerpt(
                         &output.content,
                         highlight_terms,

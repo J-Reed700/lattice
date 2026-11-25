@@ -22,10 +22,9 @@ use std::sync::{Arc, Mutex};
 
 const CONVERSATION: &str = "tool-loop-conversation";
 
-/// One step of a model's script: a reply, or the provider failing.
+/// One step of a model's script: a reply, a delayed reply, or a refused prompt.
 enum Scripted {
     Reply(CompletionResponse),
-    Fail(String),
     /// A reply that takes this long to write.
     After(Duration, CompletionResponse),
     /// The prompt refused before it was sent: this many tokens, counted
@@ -107,7 +106,6 @@ impl LLMPort for Model {
         let reply = self.script.lock().unwrap().pop_front();
         match reply {
             Some(Scripted::Reply(reply)) => Ok(reply),
-            Some(Scripted::Fail(error)) => Err(AppError::ServiceNotAvailable(error)),
             Some(Scripted::After(wait, reply)) => {
                 tokio::time::sleep(wait).await;
                 Ok(reply)
@@ -1332,7 +1330,152 @@ async fn an_unknown_tool_is_answered_with_the_tools_there_are() {
     assert!(web.log().is_empty(), "nothing ran");
 }
 
+fn numbered_source(label: u32, content: &str) -> SourceDto {
+    SourceDto {
+        page_number: None,
+        from_ocr: false,
+        document_id: format!("d{label}"),
+        chunk_id: format!("c{label}"),
+        content: content.into(),
+        score: 0.9,
+        path: None,
+        position: None,
+        file_name: format!("d{label}.md"),
+        file_path: format!("d{label}.md"),
+        mime_type: "text/markdown".into(),
+        category: "Text".into(),
+        file_size_bytes: 0,
+        modified_at: String::new(),
+        excerpt: None,
+        highlights: None,
+        section: None,
+        chunk_index: None,
+        chunk_excerpts: None,
+        citation_id: Some(label),
+        web_snapshot: None,
+    }
+}
+
+#[tokio::test]
+async fn a_grounded_turn_answers_in_one_pass_without_a_reading_round() {
+    let answer = "The bridge opened on 1932-05-01 [s2].";
+    let model = Model::new([CompletionResponse::from_text(answer)]);
+    let message = "Context:\n[s2] Document: d2.md\nContent: The bridge opened on 1932-05-01 to traffic.\n\nQuestion: When did the bridge open?";
+    let turn = Turn {
+        message,
+        sources: vec![numbered_source(
+            2,
+            "The bridge opened on 1932-05-01 to traffic.",
+        )],
+        time_budget: TURN_TIME,
+        source: None,
+    };
+    let run = run_turn(
+        FakeRuntime::default(),
+        &model,
+        &[tool("search_documents")],
+        ROOMY,
+        5,
+        "grounded-single-pass",
+        turn,
+    )
+    .await;
+
+    assert_eq!(model.requests().len(), 1);
+    assert_eq!(run.outcome.expect("an answer").response, answer);
+    let labels: Vec<&str> = run.steps.iter().map(|step| step.label.as_str()).collect();
+    assert!(labels.contains(&"Thinking"), "{labels:?}");
+    assert!(!labels.contains(&"Reading the passages"), "{labels:?}");
+    assert!(!labels.contains(&"Adding what was left out"), "{labels:?}");
+}
+
+#[tokio::test]
+async fn a_reply_with_nothing_in_it_is_asked_for_again() {
+    let model = Model::new([
+        CompletionResponse::from_text(""),
+        CompletionResponse::from_text("The bridge opened in 1932."),
+    ]);
+    let run = run_on(
+        FakeRuntime::default(),
+        &model,
+        &[tool("search_documents")],
+        ROOMY,
+        5,
+        "retry-empty-reply",
+    )
+    .await;
+
+    assert_eq!(
+        run.outcome.expect("an answer").response,
+        "The bridge opened in 1932."
+    );
+    assert_eq!(model.requests().len(), 2);
+}
+
+#[tokio::test]
+async fn a_second_reply_with_nothing_in_it_ends_the_turn() {
+    let model = Model::new([
+        CompletionResponse::from_text(""),
+        CompletionResponse::from_text(""),
+        CompletionResponse::from_text("Never asked for."),
+    ]);
+    let run = run_on(
+        FakeRuntime::default(),
+        &model,
+        &[tool("search_documents")],
+        ROOMY,
+        5,
+        "second-empty-reply-errors",
+    )
+    .await;
+
+    assert!(run.outcome.is_err());
+    assert_eq!(model.requests().len(), 2);
+}
+
+fn stopped_by_safety_filter(text: &str) -> CompletionResponse {
+    CompletionResponse {
+        finish_reason: "refusal".into(),
+        ..CompletionResponse::from_text(text)
+    }
+}
+
+#[tokio::test]
+async fn an_answer_a_safety_filter_stopped_says_so() {
+    let model = Model::new([stopped_by_safety_filter("The roof was")]);
+    let run = run_on(
+        FakeRuntime::default(),
+        &model,
+        &[tool("search_documents")],
+        ROOMY,
+        5,
+        "safety-filter-partial",
+    )
+    .await;
+
+    let answer = run.outcome.expect("what came before the stop").response;
+    assert!(answer.starts_with("The roof was"), "{answer}");
+    assert!(answer.contains("safety filter"), "{answer}");
+    assert_eq!(model.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn a_safety_filter_that_stops_two_empty_replies_says_so() {
+    let model = Model::new([stopped_by_safety_filter(""), stopped_by_safety_filter("")]);
+    let run = run_on(
+        FakeRuntime::default(),
+        &model,
+        &[tool("search_documents")],
+        ROOMY,
+        5,
+        "safety-filter-twice-empty",
+    )
+    .await;
+
+    let error = run.outcome.expect_err("no answer").to_string();
+    assert!(error.contains("safety filter"), "{error}");
+    assert_eq!(model.requests().len(), 2);
+}
+
 #[path = "limit_loop_tests.rs"]
 mod limit_loop_tests;
-#[path = "reading_loop_tests.rs"]
-mod reading_loop_tests;

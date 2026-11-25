@@ -217,7 +217,8 @@ impl IndexFileUseCase {
             document,
             self.embedding_service.as_ref(),
             &page_ranges,
-        )?;
+        )
+        .await?;
         document.mark_ocr_pages(&ocr_pages);
         let model_identity = self.embedding_service.model_identity();
         let embeddings = super::super::embedding_input::embed_prepared_chunks(

@@ -1,7 +1,7 @@
 import { Check, Lightbulb, MessageCircle } from 'lucide-react';
 
 import { TiptapViewer } from '@/components/TiptapEditor';
-import { CitationCards } from '@/features/learning/practice/PracticeSourceRail';
+import { PracticeCitations, sourceClosedReason } from '@/features/learning/practice/PracticeSourceRail';
 import { PracticeThread, type ThreadMessage } from '@/features/learning/practice/shared/PracticeThread';
 import type { PracticeBusyState } from '@/features/learning/practice/usePracticeSession';
 import { HINTS, type HintRung } from '@/features/learning/practice/workbench/helpModes';
@@ -11,6 +11,7 @@ import { useDraft } from '@/shared/drafts/drafts';
 type TutorTurn = Wire.LearningPracticeSessionDto['tutorTurns'][number];
 
 export interface TutorConversationProps {
+  programId: string;
   sessionId: string;
   turns: TutorTurn[];
   mode: Wire.LearningPracticeMode;
@@ -38,6 +39,7 @@ function closedReason(active: boolean, mode: Wire.LearningPracticeMode): string 
 }
 
 export function TutorConversation({
+  programId,
   sessionId,
   turns,
   mode,
@@ -100,7 +102,12 @@ export function TutorConversation({
                 </p>
                 <TiptapViewer content={turn.response} />
                 {showCitations && turn.citations.length > 0 && (
-                  <CitationCards disabled={!sourceOpeningAllowed || busy} citations={turn.citations} onOpen={onOpenCitation} />
+                  <PracticeCitations
+                    programId={programId}
+                    disabledReason={sourceClosedReason(sourceOpeningAllowed, busy)}
+                    citations={turn.citations}
+                    onOpen={onOpenCitation}
+                  />
                 )}
               </div>
             );

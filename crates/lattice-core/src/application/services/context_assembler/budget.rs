@@ -44,6 +44,9 @@ pub struct ModelCapacity {
     pub context_tokens: usize,
     /// Explicit generation limit, when the caller has one.
     pub configured_output_limit: Option<usize>,
+    /// How many times the output reservation, configured or default, is asked
+    /// for: 1 is the plain reservation, 2 a send that follows a cut-off.
+    pub output_scale: usize,
     pub accounting: TokenAccounting,
 }
 
@@ -53,12 +56,18 @@ impl ModelCapacity {
             model_identity: model_identity.into(),
             context_tokens,
             configured_output_limit: None,
+            output_scale: 1,
             accounting: TokenAccounting::Estimated,
         }
     }
 
     pub fn with_output_limit(mut self, limit: usize) -> Self {
         self.configured_output_limit = Some(limit);
+        self
+    }
+
+    pub fn with_output_scale(mut self, scale: usize) -> Self {
+        self.output_scale = scale;
         self
     }
 
@@ -84,16 +93,11 @@ const RECENT_FRACTION: f64 = 0.35;
 /// optional allocation.
 const MANDATORY_BORROW_FRACTION: f64 = 0.50;
 
-/// Ceiling on the default generation reservation. A reasoning model spends
-/// much of its answer budget thinking before it writes a word, so this is sized
-/// for a long written answer plus its reasoning, not for the answer alone.
-const OUTPUT_RESERVATION_CAP: usize = 32_768;
-
 /// Default generation reservation when the caller configures none. It
-/// becomes the request's `max_tokens`, so a small fixed cap would cut a
-/// reasoning model off mid-answer on a large window.
+/// becomes the request's `max_tokens`, so it scales with the window rather
+/// than capping large windows at a fixed token count.
 fn default_output_reservation(capacity: usize) -> usize {
-    (capacity / 4).min(OUTPUT_RESERVATION_CAP)
+    capacity / 4
 }
 
 /// Safety margin against tokenizer imprecision and provider framing.
@@ -215,6 +219,7 @@ impl BudgetAllocation {
         let output_reserved = capacity
             .configured_output_limit
             .unwrap_or_else(|| default_output_reservation(total))
+            .saturating_mul(capacity.output_scale)
             // A configured limit larger than the window itself would leave no
             // input at all; clamp it rather than underflowing below.
             .min(total / 2);
@@ -501,14 +506,11 @@ mod tests {
 
     #[test]
     fn a_model_matrix_reserves_output_and_margin_before_anything_else() {
-        // 4K, 8K, 32K and 128K: the sizes a local build actually meets.
-        for tokens in [4096, 8192, 32_768, 131_072] {
+        // 4K, 8K, 32K, 128K and 256K: the sizes local and cloud builds meet.
+        for tokens in [4096, 8192, 32_768, 131_072, 262_144] {
             let allocation = BudgetAllocation::plan(&capacity(tokens), &fixed(500)).expect("plan");
             assert_eq!(allocation.capacity, tokens);
-            assert_eq!(
-                allocation.output_reserved,
-                (tokens / 4).min(OUTPUT_RESERVATION_CAP)
-            );
+            assert_eq!(allocation.output_reserved, tokens / 4);
             assert_eq!(
                 allocation.safety_margin,
                 ((tokens as f64 * 0.05).ceil() as usize).max(256)
@@ -541,11 +543,11 @@ mod tests {
             // The memory pools leave a share of the window to evidence.
             assert!(allocation.evidence > 0);
         }
-        // A large window carries a longer summary and more recall, not the
-        // same few thousand tokens a small model gets.
+        // A large window carries a longer summary, more recall, and a
+        // proportional output reservation rather than a fixed token cap.
         assert!(large.summary > 1_536 * 10, "{}", large.summary);
         assert!(large.recall > 2_048 * 10, "{}", large.recall);
-        assert_eq!(large.output_reserved, OUTPUT_RESERVATION_CAP);
+        assert_eq!(large.output_reserved, 1_000_000 / 4);
     }
 
     #[test]
@@ -561,6 +563,38 @@ mod tests {
                 .expect("plan");
         assert_eq!(allocation.output_reserved, 4096);
         assert!(allocation.input_budget < 8192);
+    }
+
+    #[test]
+    fn an_output_scale_multiplies_the_default_reservation() {
+        let plain = BudgetAllocation::plan(&capacity(8192), &fixed(0)).expect("plan");
+        let scaled =
+            BudgetAllocation::plan(&capacity(8192).with_output_scale(2), &fixed(0)).expect("plan");
+        assert_eq!(plain.output_reserved, 2048);
+        assert_eq!(scaled.output_reserved, 4096);
+    }
+
+    #[test]
+    fn an_output_scale_multiplies_a_configured_limit() {
+        let scaled = BudgetAllocation::plan(
+            &capacity(8192).with_output_limit(1024).with_output_scale(2),
+            &fixed(0),
+        )
+        .expect("plan");
+        assert_eq!(scaled.output_reserved, 2048);
+    }
+
+    #[test]
+    fn a_scaled_reservation_is_still_clamped_to_half_the_window() {
+        let default =
+            BudgetAllocation::plan(&capacity(8192).with_output_scale(4), &fixed(0)).expect("plan");
+        let configured = BudgetAllocation::plan(
+            &capacity(8192).with_output_limit(3000).with_output_scale(2),
+            &fixed(0),
+        )
+        .expect("plan");
+        assert_eq!(default.output_reserved, 4096);
+        assert_eq!(configured.output_reserved, 4096);
     }
 
     #[test]

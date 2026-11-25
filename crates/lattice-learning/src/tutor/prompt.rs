@@ -44,16 +44,12 @@ pub(crate) const TUTOR_TEMPLATE: &str =
 /// when the learner turns it on, but the library's tools stay offered, as in
 /// any chat. Every claim is checked, as in a chat, because a tutor cites; what
 /// only runs the session is no claim. A session reads, reviews and saves a few
-/// things per round, so it gets a folder's rounds. It does not read its
-/// passages into notes first: the round after the notes answers in the
-/// passages' words whatever the learner said, which restated a card's answer
-/// and left the card unrated.
+/// things per round, so it gets a folder's rounds.
 pub(crate) const TUTOR_POLICY: TurnSourcePolicy = TurnSourcePolicy {
     routes_to_library: false,
     offers_library_tools: true,
     infers_intent: false,
     verifies_cited_only: false,
-    reads_passages: false,
     drops_session_talk: true,
     tool_rounds: 10,
     evidence_template: Some(TUTOR_TEMPLATE),

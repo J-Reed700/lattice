@@ -1,5 +1,5 @@
-//! A shared index handle that can bind the first downloaded model without restarting.
-//! Once bound, changing vector spaces still requires the normal restart migration.
+//! A shared index handle that binds or hot-rebinds embedding models at
+//! runtime without restarting Lattice.
 use super::IndexPersistence;
 use crate::infrastructure::persistence::repositories::embedding::generation;
 use crate::infrastructure::vector_index::{USearchVectorIndex, VectorIndexCompression};
@@ -12,11 +12,8 @@ use lattice_core::application::ports::{
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::background::BackgroundTasks;
-use std::{
-    collections::HashSet,
-    path::PathBuf,
-    sync::{Arc, OnceLock},
-};
+use parking_lot::RwLock;
+use std::{collections::HashSet, path::PathBuf, sync::Arc};
 
 /// The name every file of one vector space shares: the embedding identity,
 /// plus the compression layout when there is one, because a compression switch
@@ -33,17 +30,22 @@ pub fn generation_name(identity: Option<&str>, compression: &VectorIndexCompress
     }
 }
 
+struct BoundIndex {
+    identity: String,
+    index: Arc<USearchVectorIndex>,
+    persistence: Option<Arc<IndexPersistence>>,
+    persistence_task: Option<tokio::task::JoinHandle<()>>,
+}
+
 pub struct RuntimeVectorIndex {
     initial: Arc<USearchVectorIndex>,
-    bound: OnceLock<(String, Arc<USearchVectorIndex>)>,
+    bound: RwLock<Option<BoundIndex>>,
+    rebind_lock: tokio::sync::Mutex<()>,
     path: PathBuf,
     compression: VectorIndexCompression,
-    /// Writes the bound index and its manifest. Set at startup when a model is
-    /// already active, or by [`Self::bind_first`] for the first one.
-    persistence: OnceLock<Arc<IndexPersistence>>,
-    /// The database the first bind prepares and restores its generation from.
+    /// The database each bind prepares and restores its generation from.
     database: Database,
-    /// Where the persistence worker runs, so shutdown flushes and stops it.
+    /// Where the persistence worker runs, so shutdown and rebind flush and stop it.
     background: Arc<BackgroundTasks>,
 }
 
@@ -57,101 +59,147 @@ impl RuntimeVectorIndex {
         database: Database,
         background: Arc<BackgroundTasks>,
     ) -> Self {
-        let bound = OnceLock::new();
-        if let Some(identity) = identity {
-            let _ = bound.set((identity, initial.clone()));
-        }
-        let persistence_slot = OnceLock::new();
-        if let Some(persistence) = persistence {
-            let _ = persistence_slot.set(persistence);
-        }
+        let bound = identity.map(|identity| BoundIndex {
+            identity,
+            index: Arc::clone(&initial),
+            persistence,
+            persistence_task: None,
+        });
         Self {
             initial,
-            bound,
+            bound: RwLock::new(bound),
+            rebind_lock: tokio::sync::Mutex::new(()),
             path,
             compression,
-            persistence: persistence_slot,
             database,
             background,
         }
     }
 
-    pub fn identity(&self) -> Option<&str> {
-        self.bound.get().map(|(id, _)| id.as_str())
+    pub fn identity(&self) -> Option<String> {
+        self.bound
+            .read()
+            .as_ref()
+            .map(|bound| bound.identity.clone())
     }
 
     /// Writes the index and its manifest. `None` until a model is bound.
     /// Shutdown flushes through it so coalesced saves are not lost.
-    pub fn persistence(&self) -> Option<&Arc<IndexPersistence>> {
-        self.persistence.get()
+    pub fn persistence(&self) -> Option<Arc<IndexPersistence>> {
+        self.bound
+            .read()
+            .as_ref()
+            .and_then(|bound| bound.persistence.clone())
     }
 
-    fn current(&self) -> &USearchVectorIndex {
+    fn current(&self) -> Arc<USearchVectorIndex> {
         self.bound
-            .get()
-            .map(|(_, index)| index.as_ref())
-            .unwrap_or(&self.initial)
+            .read()
+            .as_ref()
+            .map(|bound| Arc::clone(&bound.index))
+            .unwrap_or_else(|| Arc::clone(&self.initial))
     }
 
     /// Called inside the embedding loader's single-flight operation, before it
-    /// publishes a ready model. All search and indexing consumers share this handle.
+    /// publishes a ready model. All search and indexing consumers share this
+    /// handle; switching embedding models at runtime hot-rebinds to the new
+    /// model's generation and flushes/stops the previous persistence worker.
     pub async fn bind_first(&self, model: &dyn EmbeddingPort) -> Result<()> {
-        let pool = &self.database;
+        let _rebind = self.rebind_lock.lock().await;
         let identity = model.model_identity();
-        if let Some(current) = self.identity() {
-            return if current == identity && self.dimension() == model.dimension() {
-                Ok(())
-            } else {
-                Err(AppError::ModelLoadFailed("Embedding model changed. Restart Lattice to open its prepared search generation.".into()))
-            };
+        let dimension = model.dimension();
+        {
+            let guard = self.bound.read();
+            if let Some(current) = guard.as_ref() {
+                if current.identity == identity && current.index.dimension() == dimension {
+                    return Ok(());
+                }
+            }
         }
+
+        let pool = &self.database;
         crate::infrastructure::ml::embedding_generation::prepare(pool, model).await?;
-        let rows = generation::restore(pool, &identity, model.dimension()).await?;
         // Opened exactly as startup opens a bound index — same file name, same
-        // compression, coalesced saves and a manifest writer — so the next
-        // launch finds this index trustworthy instead of rebuilding it.
+        // compression, coalesced saves and streaming page-by-page restore — so
+        // the next launch finds this index trustworthy instead of rebuilding it.
         let generation = generation_name(Some(&identity), &self.compression);
         let path = self
             .path
             .with_file_name(format!("usearch-{generation}.usearch"));
-        let dimension = model.dimension();
         let compression = self.compression.clone();
-        let index_path = path.clone();
+        let open_path = path.clone();
         let index = tokio::task::spawn_blocking(move || {
             let _layout = crate::infrastructure::vector_index::ensure_index_layout_match(
-                &path,
+                &open_path,
                 dimension,
                 &compression,
             )?;
-            let index =
-                USearchVectorIndex::open_or_create_with_compression(dimension, path, compression)?
-                    .with_coalesced_saves();
-            let expected = rows.len();
-            if index.rebuild_from_embeddings(rows)? != expected {
-                return Err(AppError::InvalidState(
-                    "Incomplete vector index rebuild".into(),
-                ));
-            }
+            let index = USearchVectorIndex::open_or_create_with_compression(
+                dimension,
+                open_path,
+                compression,
+            )?
+            .with_coalesced_saves();
             Ok::<_, AppError>(Arc::new(index))
         })
         .await
         .map_err(|e| {
             AppError::InternalError(format!("Vector index initialization failed: {e}"))
         })??;
+
+        let restore = |cursor: String| {
+            let database = pool.clone();
+            let identity = identity.clone();
+            async move { generation::restore_page(&database, &identity, dimension, &cursor, 128).await }
+        };
+        super::persistence::open_or_rebuild_streaming(
+            &index,
+            pool,
+            &path,
+            &identity,
+            &generation,
+            dimension,
+            restore,
+        )
+        .await?;
+
         let persistence = Arc::new(IndexPersistence::new(
             Arc::clone(&index),
             pool.clone(),
             identity.clone(),
             generation,
             dimension,
-            index_path,
+            path,
         ));
-        self.bound.set((identity, index)).map_err(|_| {
-            AppError::InvalidState("Embedding index was already initialized".into())
-        })?;
-        if self.persistence.set(Arc::clone(&persistence)).is_ok() {
-            self.background
-                .spawn(persistence.run(self.background.token()));
+        let persistence_task = self
+            .background
+            .spawn(Arc::clone(&persistence).run(self.background.token()));
+
+        let previous = {
+            let mut guard = self.bound.write();
+            guard.replace(BoundIndex {
+                identity,
+                index,
+                persistence: Some(persistence),
+                persistence_task,
+            })
+        };
+
+        if let Some(previous) = previous {
+            if let Some(old_persistence) = previous.persistence {
+                old_persistence.stop();
+                if let Err(error) = old_persistence.flush_if_dirty().await {
+                    tracing::warn!(
+                        %error,
+                        identity = %previous.identity,
+                        "Failed to flush superseded vector index during hot-rebind"
+                    );
+                }
+                drop(old_persistence);
+            }
+            if let Some(task) = previous.persistence_task {
+                let _ = task.await;
+            }
         }
         Ok(())
     }
@@ -166,7 +214,7 @@ impl EmbeddingIndexBinding for RuntimeVectorIndex {
 
 impl VectorSearchPort for RuntimeVectorIndex {
     fn search(&self, query: &[f32], k: usize, threshold: f32) -> Result<Vec<SearchResultRecord>> {
-        VectorSearchPort::search(self.current(), query, k, threshold)
+        VectorSearchPort::search(self.current().as_ref(), query, k, threshold)
     }
     fn search_scoped(
         &self,
@@ -214,7 +262,7 @@ impl VectorSearchPort for RuntimeVectorIndex {
 #[async_trait::async_trait]
 impl SearchServiceTrait for RuntimeVectorIndex {
     fn search(&self, query: &[f32], k: usize) -> Result<Vec<SearchResult>> {
-        SearchServiceTrait::search(self.current(), query, k)
+        SearchServiceTrait::search(self.current().as_ref(), query, k)
     }
     async fn search_with_metadata(&self, query: &[f32], k: usize) -> Result<Vec<SearchResult>> {
         self.current().search_with_metadata(query, k).await
@@ -236,23 +284,31 @@ impl SearchServiceTrait for RuntimeVectorIndex {
 mod tests {
     use super::*;
 
-    struct Model(&'static str);
+    struct Model(&'static str, usize);
     #[async_trait::async_trait]
     impl EmbeddingPort for Model {
         fn model_identity(&self) -> String {
             self.0.into()
         }
         fn dimension(&self) -> usize {
-            2
+            self.1
         }
         async fn is_ready(&self) -> Result<bool> {
             Ok(true)
         }
         async fn embed_single(&self, _: &str) -> Result<Vec<f32>> {
-            Ok(vec![1., 0.])
+            let mut v = vec![0.0; self.1];
+            if let Some(first) = v.first_mut() {
+                *first = 1.0;
+            }
+            Ok(v)
         }
         async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-            Ok(vec![vec![1., 0.]; texts.len()])
+            let mut v = vec![0.0; self.1];
+            if let Some(first) = v.first_mut() {
+                *first = 1.0;
+            }
+            Ok(vec![v; texts.len()])
         }
     }
 
@@ -286,7 +342,7 @@ mod tests {
         // These handles exist before the user downloads their first model.
         let indexing: Arc<dyn VectorSearchPort> = runtime.clone();
         let searching: Arc<dyn SearchServiceTrait> = runtime.clone();
-        runtime.bind_first(&Model("sha256:first")).await.unwrap();
+        runtime.bind_first(&Model("sha256:first", 2)).await.unwrap();
         assert_eq!(indexing.dimension(), 2);
         indexing
             .add_embedding_with_content(
@@ -299,14 +355,13 @@ mod tests {
             .unwrap();
         assert_eq!(searching.search(&[1., 0.], 1).unwrap().len(), 1);
         assert_eq!(indexing.search(&[1., 0.], 1, 0.).unwrap().len(), 1);
-        runtime.bind_first(&Model("sha256:first")).await.unwrap();
+        runtime.bind_first(&Model("sha256:first", 2)).await.unwrap();
         assert_eq!(
             indexing.count(),
             1,
             "repeated load must not clear the index"
         );
-        assert!(runtime.bind_first(&Model("sha256:other")).await.is_err());
-        assert_eq!(runtime.identity(), Some("sha256:first"));
+        assert_eq!(runtime.identity().as_deref(), Some("sha256:first"));
         // Saves are coalesced, as at startup; the manifest writer persists them.
         assert!(runtime
             .persistence()
@@ -318,6 +373,76 @@ mod tests {
             USearchVectorIndex::open_or_create(2, dir.path().join("usearch-sha256-first.usearch"))
                 .unwrap();
         assert_eq!(reopened.count(), 1);
+    }
+
+    #[tokio::test]
+    async fn switching_models_hot_rebinds_existing_consumers_and_flushes_previous_generation() {
+        use lattice_core::shared::hash::sha256_hex;
+        use lattice_core::shared::persistence::embedding_encoding;
+
+        let pool = database().await;
+        let dir = tempfile::tempdir().unwrap();
+        let runtime = Arc::new(RuntimeVectorIndex::new(
+            Arc::new(USearchVectorIndex::new(384, None).unwrap()),
+            None,
+            dir.path().join("usearch-unconfigured.usearch"),
+            VectorIndexCompression::None,
+            None,
+            Database::new(pool.clone()),
+            Arc::default(),
+        ));
+        let indexing: Arc<dyn VectorSearchPort> = runtime.clone();
+        let searching: Arc<dyn SearchServiceTrait> = runtime.clone();
+
+        runtime.bind_first(&Model("sha256:first", 2)).await.unwrap();
+        let first_persistence = runtime.persistence().unwrap();
+        indexing
+            .add_embedding_with_content(
+                "v1".into(),
+                vec![1., 0.],
+                "Chicago".into(),
+                "c1".into(),
+                "doc1".into(),
+            )
+            .unwrap();
+        assert!(runtime.current().is_dirty());
+
+        // Seed prepared generation vectors for the second model (with a different dimension).
+        sqlx::query(
+            "INSERT INTO text_chunks (id, content, document_id) VALUES ('c2', 'Denver', 'doc2')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO embedding_generation_vectors (model_identity, chunk_id, content_hash, embedding, dimension) VALUES ('sha256:second', 'c2', ?, ?, 4)",
+        )
+        .bind(sha256_hex("Denver"))
+        .bind(embedding_encoding::encode_embedding(&[0., 1., 0., 0.]))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        runtime
+            .bind_first(&Model("sha256:second", 4))
+            .await
+            .unwrap();
+        assert_eq!(runtime.identity().as_deref(), Some("sha256:second"));
+        assert_eq!(indexing.dimension(), 4);
+        assert_eq!(indexing.count(), 1);
+        assert_eq!(searching.search(&[0., 1., 0., 0.], 1).unwrap().len(), 1);
+
+        // Old generation was flushed to disk and its persistence task was stopped on rebind.
+        let reopened_first =
+            USearchVectorIndex::open_or_create(2, dir.path().join("usearch-sha256-first.usearch"))
+                .unwrap();
+        assert_eq!(reopened_first.count(), 1);
+        assert!(!first_persistence.flush_if_dirty().await.unwrap());
+
+        // Switching back reuses the persisted generation for sha256:first.
+        runtime.bind_first(&Model("sha256:first", 2)).await.unwrap();
+        assert_eq!(runtime.identity().as_deref(), Some("sha256:first"));
+        assert_eq!(indexing.dimension(), 2);
     }
 
     #[tokio::test]
@@ -337,12 +462,49 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        assert!(runtime.bind_first(&Model("sha256:first")).await.is_err());
+        assert!(runtime.bind_first(&Model("sha256:first", 2)).await.is_err());
         assert_eq!(runtime.identity(), None);
         assert_eq!(runtime.dimension(), 384);
         sqlx::query("CREATE TABLE text_embeddings (chunk_id TEXT, model_name TEXT, dimension INTEGER, embedding BLOB)").execute(&pool).await.unwrap();
-        runtime.bind_first(&Model("sha256:first")).await.unwrap();
+        runtime.bind_first(&Model("sha256:first", 2)).await.unwrap();
         assert_eq!(runtime.dimension(), 2);
+    }
+
+    #[tokio::test]
+    async fn failed_rebind_preserves_currently_bound_model() {
+        let pool = database().await;
+        let dir = tempfile::tempdir().unwrap();
+        let runtime = RuntimeVectorIndex::new(
+            Arc::new(USearchVectorIndex::new(384, None).unwrap()),
+            None,
+            dir.path().join("usearch-unconfigured.usearch"),
+            VectorIndexCompression::None,
+            None,
+            Database::new(pool.clone()),
+            Arc::default(),
+        );
+        runtime.bind_first(&Model("sha256:first", 2)).await.unwrap();
+        runtime
+            .add_embedding_with_content(
+                "vector".into(),
+                vec![1., 0.],
+                "Chicago".into(),
+                "chunk".into(),
+                "doc".into(),
+            )
+            .unwrap();
+
+        sqlx::query("DROP TABLE text_embeddings")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(runtime
+            .bind_first(&Model("sha256:second", 4))
+            .await
+            .is_err());
+        assert_eq!(runtime.identity().as_deref(), Some("sha256:first"));
+        assert_eq!(runtime.dimension(), 2);
+        assert_eq!(runtime.count(), 1);
     }
 
     #[tokio::test]
@@ -360,7 +522,7 @@ mod tests {
             Database::new(pool.clone()),
             Arc::default(),
         );
-        runtime.bind_first(&Model("sha256:first")).await.unwrap();
+        runtime.bind_first(&Model("sha256:first", 2)).await.unwrap();
         assert_eq!(runtime.current().compression(), &compression);
         runtime
             .add_embedding_with_content(

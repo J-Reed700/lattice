@@ -6,6 +6,7 @@ import { FirstRunGate } from './features/model/components/FirstRun';
 import { useDownloadedModelsListener } from './features/model/hooks/useDownloadedModels';
 import { useDownloadsListener } from './features/model/hooks/useDownloads';
 import { useModelWarmupListener } from './features/model/hooks/useModelWarmupListener';
+import { useVaultConflictListener } from './features/vault/hooks/useVaultConflictListener';
 import { useVaultFocusRescan } from './features/vault/hooks/useVaultFocusRescan';
 import { useVaultImportListener } from './features/vault/hooks/useVaultImportListener';
 import { useVaultWriteErrorListener } from './features/vault/hooks/useVaultWriteErrorListener';
@@ -26,6 +27,7 @@ function App() {
   useModelWarmupListener();
   useVaultWriteErrorListener();
   useVaultImportListener();
+  useVaultConflictListener();
   useVaultFocusRescan();
   useDownloadedModelsListener();
 

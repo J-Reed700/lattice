@@ -10,9 +10,9 @@ vi.mock('@/features/files/hooks/useIndexedFoldersQuery', () => ({ useIndexedFold
 vi.mock('@/features/files/hooks/useCorpusIdentity', () => ({ useCorpusIdentity: () => h.identity }));
 
 const docs = [
-  { id: '1', fileName: 'a.md', filePath: '/notes/a.md', category: 'document' },
-  { id: '2', fileName: 'b.pdf', filePath: '/notes/b.pdf', category: 'document' },
-  { id: '3', fileName: 'Bread', filePath: 'https://example.org/bread', category: 'web article' },
+  { id: '1', fileName: 'a.md', filePath: '/notes/a.md', category: 'document', web: false, typeBucket: 'Markdown' },
+  { id: '2', fileName: 'b.pdf', filePath: '/notes/b.pdf', category: 'document', web: false, typeBucket: 'PDF' },
+  { id: '3', fileName: 'Bread', filePath: 'https://example.org/bread', category: 'web article', web: true, typeBucket: 'Web' },
 ] as DocumentMetadata[];
 
 const collections = [{ id: 'k1', name: 'Fermentation' }] as CustomCollection[];

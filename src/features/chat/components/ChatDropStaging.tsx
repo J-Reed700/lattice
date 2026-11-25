@@ -1,4 +1,4 @@
-import { X } from 'lucide-react';
+import { Paperclip, X } from 'lucide-react';
 import { Link } from 'react-router';
 
 import { IconButton } from '@/components/ui';
@@ -15,10 +15,11 @@ import type { ChatImage } from '@/types/conversation';
  * of the stored file, and say so when the model answering cannot see them.
  */
 export interface ChatDropStagingProps {
-  staged: StagedFile[];
+  staged: readonly StagedFile[];
   isImporting: boolean;
   onRemove: (_path: string) => void;
   onClear: () => void;
+  onCancelImport?: () => void;
   pictures?: readonly ChatImage[];
   isAttachingPictures?: boolean;
   onRemovePicture?: (_id: string) => void;
@@ -33,6 +34,7 @@ export function ChatDropStaging({
   isImporting,
   onRemove,
   onClear,
+  onCancelImport,
   pictures = [],
   isAttachingPictures = false,
   onRemovePicture,
@@ -47,7 +49,7 @@ export function ChatDropStaging({
   ].filter(Boolean).join(' and ');
 
   return (
-    <div className="border-t border-subtle px-6 py-2 text-xs">
+    <div className="border-t border-border-subtle px-6 py-2 text-xs">
       {pictures.length > 0 || isAttachingPictures ? (
         <ul className="mb-2 flex flex-wrap gap-2" aria-label="Pictures for your next message">
           {pictures.map((picture) => {
@@ -89,34 +91,39 @@ export function ChatDropStaging({
       ) : null}
       {queued ? (
         <div className="flex items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-2 text-[hsl(var(--text-secondary))]">
-            <span className="shrink-0">
+          <div className="flex min-w-0 flex-wrap items-center gap-2 text-text-secondary">
+            <span className="shrink-0 text-text-muted">
               {isImporting ? `Adding ${queued}…` : `${queued} — added when you send`}
             </span>
-            <span className="min-w-0 truncate text-[hsl(var(--text-muted))]">
-              {preview.map((file, index) => (
-                <span key={file.path}>
-                  {index > 0 && ' · '}
-                  {file.name}
-                  {!isImporting && (
-                    <IconButton
-                      label={`Remove ${file.name}`}
-                      className="ml-1 h-4 w-4 align-middle [&>svg]:h-3 [&>svg]:w-3"
-                      onClick={() => onRemove(file.path)}
-                    >
-                      <X />
-                    </IconButton>
-                  )}
-                </span>
-              ))}
-            </span>
+            {preview.length > 0 && (
+              <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                {preview.map((file) => (
+                  <span
+                    key={file.path}
+                    className="inline-flex max-w-[200px] items-center gap-1 rounded-full border border-border-subtle bg-surface px-2 py-0.5 text-[11px] text-text-secondary shadow-control"
+                  >
+                    <Paperclip className="h-3 w-3 shrink-0 text-text-muted" strokeWidth={1.75} aria-hidden="true" />
+                    <span className="truncate">{file.name}</span>
+                    {!isImporting && (
+                      <IconButton
+                        label={`Remove ${file.name}`}
+                        className="h-4 w-4 rounded-full [&>svg]:h-2.5 [&>svg]:w-2.5"
+                        onClick={() => onRemove(file.path)}
+                      >
+                        <X />
+                      </IconButton>
+                    )}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
           <div className="flex shrink-0 items-center gap-3">
             <button
               type="button"
-              onClick={onClear}
-              disabled={isImporting}
-              className="text-[hsl(var(--text-muted))] transition-colors duration-fast hover:text-[hsl(var(--text-secondary))] disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={isImporting ? onCancelImport : onClear}
+              disabled={isImporting && !onCancelImport}
+              className="text-text-muted transition-colors duration-fast hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
             >
               Cancel
             </button>

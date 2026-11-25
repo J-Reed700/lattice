@@ -1,5 +1,9 @@
 import { useEffect, useState } from 'react';
 
+import { Loader2, Pencil } from 'lucide-react';
+
+import { Input, Textarea } from '@/components/ui';
+
 type FieldState = 'idle' | 'saving' | 'error';
 
 interface ReferenceAnnotationStripProps {
@@ -14,11 +18,9 @@ interface ReferenceAnnotationStripProps {
 }
 
 /**
- * Quiet inline-edit strip for a reference title + note. Kind-agnostic: it
+ * Editorial inline-edit strip for a reference title + note. Kind-agnostic: it
  * annotates a message bookmark or a saved passage identically. Blur-to-save;
- * Enter commits title, ⌘Enter commits note. No Save button — save state
- * is a single quiet word per row.
- * Spec §5.5.
+ * Enter commits title, ⌘Enter commits note.
  */
 export function ReferenceAnnotationStrip({
   id,
@@ -77,17 +79,17 @@ export function ReferenceAnnotationStrip({
   };
 
   return (
-    <div className="mt-8 border-t border-[hsl(var(--border-subtle))] pt-6">
+    <div className="mt-6 space-y-3 rounded-xl border border-border-subtle bg-surface-sunken/50 p-4">
       {/* Title row */}
       <div className="flex items-start gap-4">
         {/* A span, not a label: the control it would name only exists in edit
             mode, and a label with no control is a lie to a screen reader. */}
-        <span className="mt-1 w-12 shrink-0 text-xs text-[hsl(var(--text-muted))]">
+        <span className="mt-1.5 w-12 shrink-0 text-xs font-medium text-text-muted">
           Title
         </span>
         <div className="min-w-0 flex-1">
           {editingTitle ? (
-            <input
+            <Input
               autoFocus
               aria-label="Reference title"
               value={titleDraft}
@@ -103,7 +105,8 @@ export function ReferenceAnnotationStrip({
                   setEditingTitle(false);
                 }
               }}
-              className="w-full rounded-sm border border-[hsl(var(--border-default))] bg-[hsl(var(--surface))] px-2 py-1 text-base text-[hsl(var(--text-primary))] outline-hidden focus:border-[hsl(var(--accent))]"
+              placeholder="Add a title…"
+              className="text-sm font-medium"
             />
           ) : (
             <button
@@ -112,29 +115,38 @@ export function ReferenceAnnotationStrip({
                 setTitleDraft(title ?? '');
                 setEditingTitle(true);
               }}
-              className="block w-full cursor-text text-left text-base text-[hsl(var(--text-primary))] hover:text-[hsl(var(--text-primary))] transition-colors duration-fast"
+              className="group/field flex w-full cursor-text items-center justify-between gap-2 rounded-lg border border-transparent px-2.5 py-1.5 text-left text-sm font-medium text-text-primary transition-[background-color,border-color] duration-fast hover:border-border-default hover:bg-surface focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
             >
-              {title?.trim() ? (
-                title
-              ) : (
-                <span className="italic text-[hsl(var(--text-muted))]">
-                  Add a title…
-                </span>
-              )}
+              <span className="min-w-0 flex-1 truncate">
+                {title?.trim() ? (
+                  title
+                ) : (
+                  <span className="font-normal italic text-text-muted">
+                    Add a title…
+                  </span>
+                )}
+              </span>
+              <Pencil
+                className="h-3.5 w-3.5 shrink-0 text-text-muted opacity-0 transition-opacity duration-fast group-hover/field:opacity-100 group-focus-visible/field:opacity-100"
+                strokeWidth={1.75}
+                aria-hidden="true"
+              />
             </button>
           )}
         </div>
         <FieldStateLabel state={titleState} onRetry={retryTitle} />
       </div>
 
+      <div className="h-px bg-border-subtle" aria-hidden="true" />
+
       {/* Note row */}
-      <div className="mt-4 flex items-start gap-4">
-        <span className="mt-1 w-12 shrink-0 text-xs text-[hsl(var(--text-muted))]">
+      <div className="flex items-start gap-4">
+        <span className="mt-1.5 w-12 shrink-0 text-xs font-medium text-text-muted">
           Note
         </span>
         <div className="min-w-0 flex-1">
           {editingNote ? (
-            <textarea
+            <Textarea
               autoFocus
               aria-label="Reference note"
               value={noteDraft}
@@ -151,7 +163,8 @@ export function ReferenceAnnotationStrip({
                 }
               }}
               rows={3}
-              className="w-full resize-y rounded-sm border border-[hsl(var(--border-default))] bg-[hsl(var(--surface))] px-2 py-1 text-sm text-[hsl(var(--text-secondary))] outline-hidden focus:border-[hsl(var(--accent))]"
+              placeholder="Add context or a takeaway…"
+              className="min-h-[76px] text-sm text-text-primary"
             />
           ) : (
             <button
@@ -160,15 +173,22 @@ export function ReferenceAnnotationStrip({
                 setNoteDraft(note ?? '');
                 setEditingNote(true);
               }}
-              className="block w-full cursor-text whitespace-pre-wrap text-left text-sm text-[hsl(var(--text-secondary))] hover:text-[hsl(var(--text-secondary))] transition-colors duration-fast"
+              className="group/field flex w-full cursor-text items-start justify-between gap-2 rounded-lg border border-transparent px-2.5 py-1.5 text-left text-sm leading-relaxed text-text-secondary transition-[background-color,border-color] duration-fast hover:border-border-default hover:bg-surface focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
             >
-              {note?.trim() ? (
-                note
-              ) : (
-                <span className="italic text-[hsl(var(--text-muted))]">
-                  Add context or a takeaway…
-                </span>
-              )}
+              <span className="min-w-0 flex-1 whitespace-pre-wrap">
+                {note?.trim() ? (
+                  note
+                ) : (
+                  <span className="italic text-text-muted">
+                    Add context or a takeaway…
+                  </span>
+                )}
+              </span>
+              <Pencil
+                className="mt-0.5 h-3.5 w-3.5 shrink-0 text-text-muted opacity-0 transition-opacity duration-fast group-hover/field:opacity-100 group-focus-visible/field:opacity-100"
+                strokeWidth={1.75}
+                aria-hidden="true"
+              />
             </button>
           )}
         </div>
@@ -187,7 +207,8 @@ function FieldStateLabel({
 }) {
   if (state === 'saving') {
     return (
-      <span className="mt-1 shrink-0 text-xs text-[hsl(var(--text-muted))]">
+      <span className="mt-1.5 inline-flex shrink-0 items-center gap-1.5 text-xs text-text-muted">
+        <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
         Saving…
       </span>
     );
@@ -197,7 +218,7 @@ function FieldStateLabel({
       <button
         type="button"
         onClick={onRetry}
-        className="mt-1 shrink-0 text-xs text-[hsl(var(--danger-fg))] underline-offset-2 hover:underline"
+        className="mt-1.5 shrink-0 text-xs text-danger-fg underline-offset-2 hover:underline"
       >
         Save failed — retry?
       </button>

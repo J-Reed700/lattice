@@ -10,35 +10,16 @@ fn number(handle: &Value) -> usize {
         .unwrap_or(0)
 }
 
-/// The kind a defect has when a test names none.
-const UNTRUE: &str = "untrue";
-
 /// A review of every item of `task`. `tell` gives an item its one defect (none when empty) and the
 /// questions it repeats: `have-N` is the learner's question N and `new-N` the Nth item of the set,
 /// both from zero.
 pub(crate) fn judged(task: &Value, tell: impl Fn(&Value) -> (String, Vec<String>)) -> Value {
-    judged_of_kinds(task, |item| {
-        let (finding, repeats) = tell(item);
-        let defects = if finding.is_empty() {
-            Vec::new()
-        } else {
-            vec![(UNTRUE, finding)]
-        };
-        (defects, repeats)
-    })
-}
-
-/// [`judged`] where `tell` gives an item its defects, each with its kind, as the words the judge writes.
-pub(crate) fn judged_of_kinds(
-    task: &Value,
-    tell: impl Fn(&Value) -> (Vec<(&'static str, String)>, Vec<String>),
-) -> Value {
     let entries: Vec<Value> = task["items"]
         .as_array()
         .into_iter()
         .flatten()
         .map(|item| {
-            let (found, repeats) = tell(item);
+            let (finding, repeats) = tell(item);
             let me = number(&item["id"]).saturating_sub(1);
             let mut held = Vec::new();
             let mut new = Vec::new();
@@ -58,10 +39,11 @@ pub(crate) fn judged_of_kinds(
                     }
                 }
             }
-            let defects: Vec<Value> = found
-                .into_iter()
-                .map(|(kind, defect)| json!({"kind": kind, "defect": defect}))
-                .collect();
+            let defects: Vec<Value> = if finding.is_empty() {
+                Vec::new()
+            } else {
+                vec![json!({"defect": finding})]
+            };
             json!({
                 "of": item["id"],
                 "defects": defects,
@@ -84,7 +66,7 @@ pub(crate) fn judged_static(items: usize, fault: Option<(usize, &str)>) -> Value
         .map(|item| {
             let defects: Vec<Value> = fault
                 .filter(|(at, _)| *at == item)
-                .map(|(_, text)| json!({"kind": UNTRUE, "defect": text}))
+                .map(|(_, text)| json!({"defect": text}))
                 .into_iter()
                 .collect();
             json!({

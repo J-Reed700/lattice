@@ -1,7 +1,7 @@
 //! Scripted teaching reviews for the fixture model: a script written as
 //! `{"issues":[…],"sectionDefects":[…],"openFindings":[…]}` is answered in the
 //! form the request asks for, with the handles the request shows.
-use super::{ANSWER_FORM, CONCERN_FORM};
+use super::{ANSWER_FORM_HEAD, CONCERN_FORM_HEAD};
 use crate::lessons::content_verification::tests::fixture_task;
 use serde_json::{json, Value};
 
@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 /// for, or `None` when the prompt is not a review or the script is already in
 /// the layer's form.
 pub(crate) fn reply(prompt: &str, script: &str) -> Option<String> {
-    if !prompt.contains(ANSWER_FORM) {
+    if !prompt.contains(ANSWER_FORM_HEAD) {
         return None;
     }
     let wanted: Value = serde_json::from_str(script).ok()?;
@@ -20,7 +20,7 @@ pub(crate) fn reply(prompt: &str, script: &str) -> Option<String> {
         return None;
     }
     let task = fixture_task(prompt)?;
-    let lesson = prompt.contains(CONCERN_FORM.trim());
+    let lesson = prompt.contains(CONCERN_FORM_HEAD);
     let open: Vec<Value> = task
         .get("openFindings")
         .and_then(Value::as_array)

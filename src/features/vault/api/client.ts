@@ -1,3 +1,4 @@
+import type { VaultConflictDto } from '@/lib/bindings';
 import { apiCall } from '@/shared/ipc/transport';
 import type { ApiResult } from '@/types';
 
@@ -13,4 +14,12 @@ export const vaultApi = {
   rescanVault: async (): Promise<
     ApiResult<{ scanned: number; imported: number; deleted: number }>
   > => apiCall('rescan_vault'),
+
+  /** Unacknowledged vault conflicts recorded in SQLite. */
+  listVaultConflicts: async (): Promise<ApiResult<VaultConflictDto[]>> =>
+    apiCall('list_vault_conflicts'),
+
+  /** Mark the given vault conflict notices as read/dismissed. */
+  dismissVaultConflicts: async (ids: string[]): Promise<ApiResult<null>> =>
+    apiCall('dismiss_vault_conflicts', { ids }),
 };

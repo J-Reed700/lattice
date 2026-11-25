@@ -27,7 +27,8 @@ pub use generation::{
 pub use llm::{
     CustomToolSettingsDto, LLMPromptSettingsDto, LLMProvider, LLMSettingsDto,
     LLMVerificationSettingsDto, LlamaCppSettingsDto, RouterSettingsDto, ToolOutputSettingsDto,
-    ToolOutputTemplatesDto, VisionDeclarationDto, DEFAULT_LLM_STALL_TIMEOUT_SECONDS,
+    ToolOutputTemplatesDto, VisionDeclarationDto, DEFAULT_HYBRID_RAG_PROMPT_TEMPLATE,
+    DEFAULT_LLM_STALL_TIMEOUT_SECONDS, DEFAULT_NO_CONTEXT_PROMPT_TEMPLATE, DEFAULT_OLLAMA_URL,
     DEFAULT_RAG_PROMPT_TEMPLATE, MIN_LLM_STALL_TIMEOUT_SECONDS,
 };
 pub use model_window::ModelWindowDto;
@@ -41,7 +42,7 @@ pub use retrieval::{
     VectorIndexCompressionModeDto, VectorIndexCompressionSettingsDto, VectorQuantizationDto,
     DEFAULT_VECTOR_COMPRESSION_DIMS,
 };
-pub use sourcing::{FinderSettingDto, SourcingSettingsDto};
+pub use sourcing::{FinderSettingDto, SourcingAddress, SourcingSettingsDto};
 pub use sourcing_status::{
     FinderGateDto, FinderHealthDto, FinderHealthStateDto, FinderNeedDto, FinderStatusDto,
     KeyServiceDto, KeyStatusDto, ReachGroupDto, SourcesStatusDto,

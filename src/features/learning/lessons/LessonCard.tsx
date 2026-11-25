@@ -2,17 +2,19 @@ import { useEffect, useId, useState, type ReactNode } from 'react';
 
 import { ArrowRight, Check, CheckCircle2, ChevronDown, ClipboardCheck, Clock3, Pencil } from 'lucide-react';
 
+import { PlainError } from '@/components/PlainError';
 import { Button } from '@/components/ui/button';
 import { ResizableColumns } from '@/components/ui/ResizableColumns';
 import { useLearningLessonEvidence } from '@/features/learning/api/evidenceQueries';
 import { OutlineCitation } from '@/features/learning/curriculum/OutlineEvidence';
-import { useCancelLearningGenerationJob, useLearningPlan } from '@/features/learning/curriculum/useLearningPlan';
+import { useCancelLearningGenerationJob, useLearningPlan, useRetryLearningGenerationJob } from '@/features/learning/curriculum/useLearningPlan';
 import { LessonCheck } from '@/features/learning/lessons/active/LessonCheck';
 import { LessonFromMemory } from '@/features/learning/lessons/active/LessonFromMemory';
 import { LessonWarmUp } from '@/features/learning/lessons/active/LessonWarmUp';
 import { useLessonDraft } from '@/features/learning/lessons/active/useLessonDraft';
+import { CitedSection } from '@/features/learning/lessons/CitedSection';
 import { LessonSectionEditor } from '@/features/learning/lessons/edit/LessonSectionEditor';
-import { LessonEvidencePanel, LessonSectionEvidence, unverifiedCount } from '@/features/learning/lessons/LessonEvidencePanel';
+import { LessonEvidencePanel, unverifiedCount } from '@/features/learning/lessons/LessonEvidencePanel';
 import { preparingLine } from '@/features/learning/lessons/lessonPreparationActivity';
 import { preparationQueue, queuedLesson, queuedLine } from '@/features/learning/lessons/preparationQueue';
 import { claimsCount, claimsNeedYou, statementsNotVerified, teachingNotesForYou } from '@/features/learning/lessons/review/claimReviewCopy';
@@ -21,6 +23,7 @@ import { AuditLessonNow } from '@/features/learning/lessons/review/LessonAudit';
 import { isTeachingWaiting } from '@/features/learning/lessons/review/TeachingFindings';
 import { useLessonClaimReview } from '@/features/learning/lessons/review/useLessonClaimReview';
 import { UnverifiedStatements, unverifiedStatements } from '@/features/learning/lessons/UnverifiedStatements';
+import { useLessonCitationSources } from '@/features/learning/lessons/useLessonCitationSources';
 import { findOutlineCitation } from '@/features/learning/model/evidencePresentation';
 import { PracticeWorkbenchPanel } from '@/features/learning/practice/PracticeWorkbenchPanel';
 import { SourceLine } from '@/features/learning/sources/SourceLine';
@@ -30,6 +33,7 @@ import { MarkdownViewer } from '@/features/reading/components/viewers/MarkdownVi
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import { ListenButton } from '@/features/speech/components/ListenButton';
 import type { LearningBlockKind, LearningLessonDto, LearningOutlineEvidenceDto, LearningProgramDto } from '@/lib/bindings';
+import { jobErrorToError } from '@/lib/errorHandling';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 const LISTEN_CLASS =
@@ -91,6 +95,7 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
     program.summary.revision,
     lesson.preparation === 'ready',
   );
+  const citationSources = useLessonCitationSources(program.summary.id, evidenceReport.data, showCitations && expanded);
   const objectiveCitation = findOutlineCitation(
     outlineEvidence,
     'lesson_objective',
@@ -123,16 +128,24 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
     audit_stop: 'Waiting for the independent check', audit: 'Waiting for the independent check', resolved: 'Ready to resume',
   };
   const cancel = useCancelLearningGenerationJob();
+  const retryJob = useRetryLearningGenerationJob();
   const place = lesson.preparation === 'outline' ? queuedLesson(preparationQueue(jobs), lesson.id) : null;
   const queuedThis = place?.job.status === 'pending' ? place : null;
   const preparingThis = lesson.preparation === 'outline' && (place ? place.job.status === 'running' : activeJob?.activity?.lessonTitle === lesson.title);
   const preparingJob = place?.job ?? activeJob;
+  const failedThis = lesson.preparation === 'outline' && !place && !holdingJob
+    ? currentPreparationJobs(jobs)
+        .filter((job) => !job.endedByUpdate && job.lessonIds?.includes(lesson.id) && (job.status === 'failed' || job.status === 'cancelled'))
+        .sort((a, b) => b.createdAt - a.createdAt)[0] ?? null
+    : null;
   // The first that applies, as §4.4 orders them.
   const statusLabel = reviewState === 'stopped' ? 'Stopped with a cause to fix'
     : needsReview ? holdLabel[hold]
     : lesson.preparation === 'ready' ? ['Ready', teachingWaiting > 0 ? teachingNotesForYou(teachingWaiting) : null, notVerified > 0 ? statementsNotVerified(notVerified) : null].filter(Boolean).join(' · ')
     : queuedThis ? queuedLine(queuedThis.ahead)
     : preparingThis ? preparingLine(preparingJob?.activity)
+    : failedThis?.status === 'failed' ? 'Preparation failed'
+    : failedThis?.status === 'cancelled' ? 'Preparation paused'
     : 'Outline';
   const reviewable = Boolean(onReview) && (needsReview || teachingWaiting > 0 || notVerified > 0);
   const openReview = () => onReview?.(program.summary.id, lesson.id);
@@ -156,6 +169,7 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
         </button>
         <span className="studio-lesson-status">{needsReview && <ClipboardCheck size={12} aria-hidden="true" className="mr-1 inline" />}{statusLabel}</span>
         {queuedThis && <button type="button" disabled={cancel.isPending} onClick={() => cancel.mutate({ operationId: crypto.randomUUID(), programId: program.summary.id, jobId: queuedThis.job.id, expectedRevision: program.summary.revision })} className="studio-lesson-review disabled:opacity-50">Cancel</button>}
+        {failedThis?.status === 'failed' && <button type="button" disabled={retryJob.isPending || Boolean(waitsForIndex)} onClick={() => retryJob.mutate({ operationId: crypto.randomUUID(), programId: program.summary.id, jobId: failedThis.id, expectedRevision: program.summary.revision })} className="studio-lesson-review disabled:opacity-50">{retryJob.isPending ? 'Retrying…' : 'Retry'}</button>}
         {reviewable && <button type="button" onClick={openReview} className="studio-lesson-review">Review</button>}
       </div>
       {expanded && <ResizableColumns id={bodyId} label="Lesson notes width" storageKey="lattice.studio.lesson-margin-width" className={`studio-lesson-body studio-lesson-layout ${hasMargin ? '' : 'without-margin'}`} sidebar={hasMargin ? (<aside className="studio-lesson-margin" aria-label={`Lesson outline and notes for ${lesson.title}`}><div className="studio-margin-sticky">
@@ -180,12 +194,15 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
               </div>}
             </div>
           ) : (
-            <div className="flex flex-wrap items-center justify-between gap-4 border-t border-border pt-6">
-              <div><h4 className="font-medium text-text-primary">{queuedThis ? 'Waiting its turn' : 'Ready when you are'}</h4><p className="mt-1 text-sm text-text-secondary">{queuedThis ? 'It starts when the lessons ahead of it finish. Cancel it from the lesson list.' : 'This prepares this lesson only. The accepted outline stays in place if preparation fails.'}</p></div>
+            <div className="space-y-3 border-t border-border pt-6">
+              {failedThis?.status === 'failed' && <PlainError error={failedThis.error ? jobErrorToError(failedThis) : new Error('Preparation failed. Your saved checkpoints remain.')} className="text-sm text-rose-700" />}
+              <div className="flex flex-wrap items-center justify-between gap-4">
+              <div><h4 className="font-medium text-text-primary">{queuedThis ? 'Waiting its turn' : failedThis?.status === 'failed' ? 'Preparation stopped' : 'Ready when you are'}</h4><p className="mt-1 text-sm text-text-secondary">{queuedThis ? 'It starts when the lessons ahead of it finish. Cancel it from the lesson list.' : 'This prepares this lesson only. The accepted outline stays in place if preparation fails.'}</p></div>
               {!queuedThis && <div className="flex flex-col items-start gap-1.5 sm:items-end">
-                <Button variant="outline" type="button" disabled={pending || preparingThis || program.summary.status !== 'active' || Boolean(waitsForIndex)} aria-describedby={heldByIndex ? indexWaitId : undefined} onClick={onPrepare} className="studio-button studio-button-primary disabled:opacity-50">{program.summary.status !== 'active' ? 'Accept the course to begin' : pending || preparingThis ? 'Preparing…' : 'Prepare lesson'}</Button>
+                <Button variant="outline" type="button" disabled={pending || preparingThis || program.summary.status !== 'active' || Boolean(waitsForIndex)} aria-describedby={heldByIndex ? indexWaitId : undefined} onClick={onPrepare} className="studio-button studio-button-primary disabled:opacity-50">{program.summary.status !== 'active' ? 'Accept the course to begin' : pending || preparingThis ? 'Preparing…' : failedThis?.status === 'failed' ? 'Retry lesson' : 'Prepare lesson'}</Button>
                 {heldByIndex && <p id={indexWaitId} className="text-xs tabular-nums text-text-secondary">{heldByIndex}</p>}
               </div>}
+              </div>
             </div>
           ) : (
             <>
@@ -197,7 +214,8 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
                 open onClose={() => setEditing(null)} onSaved={() => setEditNote('Section saved.')} />}
               <div className="studio-lesson-sections">
                 {lesson.blocks.map((block, index) => {
-                  const prose = (content: string) => <StudyTangentSelection moduleId={moduleId} lessonId={lesson.id} sectionIndex={index} sectionTitle={block.title}><MarkdownViewer content={content} /></StudyTangentSelection>;
+                  const tangent = (viewer: ReactNode) => <StudyTangentSelection moduleId={moduleId} lessonId={lesson.id} sectionIndex={index} sectionTitle={block.title}>{viewer}</StudyTangentSelection>;
+                  const prose = (content: string) => tangent(<MarkdownViewer content={content} />);
                   const check = block.check ?? null;
                   const heldRecap = block.kind === 'recap' && recallFirst && !compared;
                   return <section id={`lesson-${lesson.id}-section-${index}`} key={`${lesson.id}-${index}`} className="studio-lesson-section">
@@ -209,10 +227,9 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
                   {!heldRecap && <div className="-mx-1.5 mt-1"><ListenButton sourceId={`lesson:${lesson.id}:${index}`} markdown={`# ${block.title}\n\n${check ? check.question : block.body}`} subject={`the section “${block.title}”`} className={LISTEN_CLASS} /></div>}
                   {check ? <LessonCheck programId={program.summary.id} lessonId={lesson.id} lessonTitle={lesson.title} section={index} body={block.body} parts={check} sourceIds={block.sourceIds} active={program.summary.status === 'active'} questionView={prose(check.question)} />
                     : heldRecap ? <p className="mt-3 text-sm leading-6 text-text-secondary">These open once you have explained the lesson from memory above, so you can see what you recalled and what you missed. <button type="button" onClick={compare} className="underline underline-offset-2 hover:text-text-primary">Show them now</button></p>
-                    : <div className="studio-lesson-prose">{prose(block.body)}</div>}
+                    : <div className="studio-lesson-prose"><CitedSection lessonId={lesson.id} sectionIndex={index} body={block.body} report={evidenceReport.data} sources={citationSources} showCitations={showCitations} wrap={tangent} /></div>}
                   {block.kind === 'reflection' && recallFirst && <LessonFromMemory lessonId={lesson.id} compared={compared} onCompare={compare} />}
                   <UnverifiedStatements programId={program.summary.id} lessonId={lesson.id} statements={unverifiedStatements(evidenceReport.data, index)} onReview={onReview} />
-                  {showCitations && <LessonSectionEvidence report={evidenceReport} sectionIndex={index} />}
                   {showCitations && evidenceReport.isSuccess && !evidenceReport.data && <SourceLine ids={block.sourceIds} sources={program.sources} />}
                   {block.kind === 'guided_practice' && selected && program.summary.status === 'active' && <div id={`guided-${lesson.id}`}><PracticeWorkbenchPanel key={lesson.id} program={program} lesson={lesson} taskKind="guided" embedded onContinue={onPractice} /></div>}
                   {block.kind === 'independent_practice' && <Button variant="outline" type="button" onClick={onPractice} className="studio-button studio-button-primary mt-5">Work on this assignment <ArrowRight size={15} /></Button>}

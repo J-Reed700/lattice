@@ -3,12 +3,7 @@
 use std::cell::RefCell;
 use std::sync::Arc;
 use tracing::{subscriber::Interest, Level, Subscriber};
-use tracing_subscriber::{
-    filter::{dynamic_filter_fn, FilterExt},
-    fmt::MakeWriter,
-    registry::LookupSpan,
-    Layer,
-};
+use tracing_subscriber::{filter::dynamic_filter_fn, fmt::MakeWriter, registry::LookupSpan, Layer};
 
 type Lines = Arc<parking_lot::Mutex<Vec<u8>>>;
 
@@ -97,66 +92,6 @@ where
             })
             .with_callsite_filter(|_| Interest::sometimes()),
         )
-}
-
-static PROCESS_LOG: parking_lot::Mutex<Option<std::fs::File>> = parking_lot::Mutex::new(None);
-
-/// Writes this process's log lines, in the app's file-log format and at its
-/// release filter, to `path` until the returned guard drops.
-pub fn write_process_log(path: &std::path::Path) -> std::io::Result<ProcessLogGuard> {
-    super::subscriber::install();
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
-    *PROCESS_LOG.lock() = Some(file);
-    Ok(ProcessLogGuard)
-}
-
-/// Closes the process log when dropped.
-#[must_use = "the process log closes when this guard drops"]
-pub struct ProcessLogGuard;
-
-impl Drop for ProcessLogGuard {
-    fn drop(&mut self) {
-        *PROCESS_LOG.lock() = None;
-    }
-}
-
-struct ProcessLog;
-
-struct ProcessLogWriter;
-
-impl std::io::Write for ProcessLogWriter {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        if let Some(file) = PROCESS_LOG.lock().as_mut() {
-            file.write_all(bytes)?;
-        }
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
-}
-
-impl<'a> MakeWriter<'a> for ProcessLog {
-    type Writer = ProcessLogWriter;
-    fn make_writer(&'a self) -> Self::Writer {
-        ProcessLogWriter
-    }
-}
-
-pub(super) fn process_layer<S>() -> impl Layer<S>
-where
-    S: Subscriber + for<'lookup> LookupSpan<'lookup>,
-{
-    crate::shared::observability::file_log_layer(ProcessLog).with_filter(
-        dynamic_filter_fn(|_, _| PROCESS_LOG.lock().is_some())
-            .with_callsite_filter(|_| Interest::sometimes())
-            .and(crate::shared::observability::env_filter(
-                crate::shared::observability::DEFAULT_FILTER,
-            )),
-    )
 }
 
 #[cfg(test)]

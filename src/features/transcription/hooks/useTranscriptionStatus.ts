@@ -6,7 +6,7 @@ import { describeFailure } from '@/lib/errorHandling';
 export const TRANSCRIPTION_STATUS_QUERY_KEY = ['transcription', 'status'] as const;
 
 /** Whether a Whisper model is downloaded, and which one a voice conversation should get. */
-export function useTranscriptionStatusQuery() {
+export function useTranscriptionStatusQuery(options: { refetchOnMount?: 'always' } = {}) {
   const api = useApi();
   return useQuery({
     queryKey: TRANSCRIPTION_STATUS_QUERY_KEY,
@@ -16,5 +16,6 @@ export function useTranscriptionStatusQuery() {
       return result.data;
     },
     staleTime: 30_000,
+    refetchOnMount: options.refetchOnMount,
   });
 }

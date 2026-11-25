@@ -136,7 +136,11 @@ const marksField = StateField.define<DecorationSet>({
 });
 
 /** Gutter selection: click a number, shift-click to extend, or drag across. */
-function gutterSelection(onSelect: (_range: ExplorerLineRange | null) => void, current: () => ExplorerLineRange | null): Extension {
+function gutterSelection(
+  onSelect: (_range: ExplorerLineRange | null) => void,
+  current: () => ExplorerLineRange | null,
+  signal: AbortSignal,
+): Extension {
   const lineAt = (view: EditorView, clientY: number) =>
     view.state.doc.lineAt(view.lineBlockAtHeight(clientY - view.documentTop).from).number;
 
@@ -144,7 +148,7 @@ function gutterSelection(onSelect: (_range: ExplorerLineRange | null) => void, c
     domEventHandlers: {
       mousedown(view, block, event) {
         const mouse = event as MouseEvent;
-        if (mouse.button !== 0) return false;
+        if (mouse.button !== 0 || signal.aborted) return false;
         mouse.preventDefault();
         const line = view.state.doc.lineAt(block.from).number;
         const existing = current();
@@ -156,13 +160,19 @@ function gutterSelection(onSelect: (_range: ExplorerLineRange | null) => void, c
           return true;
         }
         pick(line);
-        const move = (next: MouseEvent) => pick(lineAt(view, next.clientY));
-        const up = () => {
-          window.removeEventListener('mousemove', move);
-          window.removeEventListener('mouseup', up);
+        const dragController = new AbortController();
+        const onAbort = () => dragController.abort();
+        signal.addEventListener('abort', onAbort, { once: true });
+        const move = (next: MouseEvent) => {
+          if (dragController.signal.aborted) return;
+          pick(lineAt(view, next.clientY));
         };
-        window.addEventListener('mousemove', move);
-        window.addEventListener('mouseup', up);
+        const up = () => {
+          dragController.abort();
+          signal.removeEventListener('abort', onAbort);
+        };
+        window.addEventListener('mousemove', move, { signal: dragController.signal });
+        window.addEventListener('mouseup', up, { signal: dragController.signal });
         return true;
       },
     },
@@ -192,13 +202,14 @@ export function CodeViewer({ path, text, language, selection, highlight, highlig
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
+    const controller = new AbortController();
     const codeLanguage = resolveLanguage(path, language);
     const view = new EditorView({
       parent: host,
       state: EditorState.create({
         doc: text,
         extensions: [
-          gutterSelection((range) => onSelectRef.current(range), () => selectionRef.current),
+          gutterSelection((range) => onSelectRef.current(range), () => selectionRef.current, controller.signal),
           folding,
           languageSlot(codeLanguage),
           codeHighlighting,
@@ -216,6 +227,7 @@ export function CodeViewer({ path, text, language, selection, highlight, highlig
     viewRef.current = view;
     fillLanguageSlot(view, codeLanguage, () => viewRef.current === view);
     return () => {
+      controller.abort();
       view.destroy();
       viewRef.current = null;
     };

@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Message } from '@/features/chat/components/Message';
 import { setFolderThreadHost } from '@/features/chat/model/folderThreadHost';
-import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
+import { useReaderStore } from '@/features/reading/stores/readerStore';
 import { render } from '@/tests/renderWithQueryClient';
 import { reply } from '@/tests/replyFixtures';
 import type { MessageVerificationSummary, SourceWithMetadata } from '@/types/conversation';
@@ -45,6 +45,7 @@ vi.mock('@/features/settings/hooks/useSettingsQuery', () => ({
   useUpdateSettingsMutation: () => ({ mutateAsync: vi.fn() }),
 }));
 vi.mock('@/features/reading/hooks/usePassageReferencesQuery', () => ({ usePassageReferenceIds: () => [] }));
+vi.mock('@/features/model/hooks/useActiveModels', () => ({ useActiveModels: () => ({ activeModels: null }) }));
 vi.mock('@/features/model/hooks/useDownloadedModels', () => ({ useDownloadedModels: () => ({ downloadedModels: [] }) }));
 vi.mock('@/features/model/hooks/useLoadedModels', () => ({ useLoadedModels: () => [], degradedReasonFor: () => null }));
 // The chips the answer body draws are what the reader is opened from, so the
@@ -100,7 +101,7 @@ function renderAnswer(sources?: SourceWithMetadata[]) {
 beforeEach(() => {
   verificationSummary = DEFAULT_SUMMARY;
   explorerRoot = null;
-  useChatReaderStore.setState({ session: null, resolvedLocations: new Map() });
+  useReaderStore.setState({ session: null, resolvedLocations: new Map() });
   useCitationDisplayStore.setState({ visible: true });
 });
 
@@ -237,6 +238,81 @@ describe('message verification disclosure', () => {
     renderAnswer();
     expect(screen.getByRole('button', { name: /Partially verified · 1/ })).toBeInTheDocument();
   });
+
+  it('shows General knowledge badge and tooltip in hybrid mode with no evaluated claims', () => {
+    verificationSummary = {
+      enabled: true,
+      claimsEvaluated: 0,
+      groundingMode: 'hybrid',
+    };
+    renderAnswer();
+
+    const badge = screen.getByRole('button', { name: /General knowledge/ });
+    expect(badge).toHaveAttribute(
+      'title',
+      'Answered from general knowledge without source citations. Turn on Sources only for document-only answers.'
+    );
+    expect(badge).not.toHaveAttribute('aria-expanded');
+    expect(badge.querySelector('svg')).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('shows an interrupted tooltip on Not checked badges', () => {
+    verificationSummary = {
+      enabled: true,
+      interrupted: true,
+    };
+    renderAnswer();
+
+    const badge = screen.getByRole('button', { name: /Not checked/ });
+    expect(badge).toHaveAttribute('title', 'Verification was interrupted before finishing.');
+  });
+
+  it('shows Sources verified badge, tooltip, and hybrid summary line when cited claims pass', () => {
+    verificationSummary = {
+      enabled: true,
+      claimsEvaluated: 2,
+      supportedClaims: 2,
+      supportedClaimNotes: ['Claim one', 'Claim two'],
+      unsupportedClaims: [],
+      contradictedClaims: [],
+      verdictCounts: { supported: 2, contradicted: 0, unsupported: 0, unverified: 0 },
+      groundingMode: 'hybrid',
+      citedOnly: true,
+    };
+    renderAnswer();
+
+    const badge = screen.getByRole('button', { name: /Sources verified/ });
+    expect(badge).toHaveAttribute(
+      'title',
+      'Cited claims verified against your sources; uncited parts may use general knowledge.'
+    );
+
+    fireEvent.click(badge);
+    expect(
+      screen.getByText('All cited claims are grounded in your sources · 2 claims checked · uncited parts may use general knowledge')
+    ).toBeVisible();
+  });
+
+  it('keeps Verified and Nothing to verify when groundingMode is strict or undefined', () => {
+    verificationSummary = {
+      enabled: true,
+      claimsEvaluated: 0,
+      groundingMode: 'strict',
+    };
+    const first = render(<Message message={{ id: 'answer', role: 'assistant', content: 'Answer', createdAt: new Date().toISOString(), conversationId: 'conversation' } as Parameters<typeof Message>[0]['message']} />);
+    expect(screen.getByRole('button', { name: /Nothing to verify/ })).toBeInTheDocument();
+    first.unmount();
+
+    verificationSummary = {
+      enabled: true,
+      claimsEvaluated: 2,
+      supportedClaims: 2,
+      unsupportedClaims: [],
+      verdictCounts: { supported: 2, contradicted: 0, unsupported: 0, unverified: 0 },
+    };
+    renderAnswer();
+    expect(screen.getByRole('button', { name: /^Verified$/ })).toBeInTheDocument();
+  });
 });
 
 describe('a checked sentence of the answer', () => {
@@ -255,7 +331,7 @@ describe('a checked sentence of the answer', () => {
 
     expect(screen.getByRole('dialog', { name: 'Claim actions' })).toHaveTextContent('Canopy cools streets');
     // A sentence is not a citation: the reader stays shut.
-    expect(useChatReaderStore.getState().session).toBeNull();
+    expect(useReaderStore.getState().session).toBeNull();
   });
 
   it('is not drawn when verification was off for the turn', () => {
@@ -272,7 +348,7 @@ describe('opening the source reader from an answer', () => {
 
     fireEvent.click(document.querySelector('[data-cite="2"]')!);
 
-    const session = useChatReaderStore.getState().session;
+    const session = useReaderStore.getState().session;
     expect(session?.ownerKey).toBe('answer');
     expect(session?.index).toBe(1);
     // All of them, so `[` / `]` can travel the whole answer from here.
@@ -284,18 +360,18 @@ describe('opening the source reader from an answer', () => {
     const chip = () => document.querySelector('[data-cite="2"]')!;
 
     act(() => {
-      useChatReaderStore.getState().open('another-answer', [source(2)], 0);
+      useReaderStore.getState().open('another-answer', [source(2)], 0);
     });
     // Same number, different answer: that is a different passage.
     expect(chip().classList.contains('is-lit')).toBe(false);
 
     act(() => {
-      useChatReaderStore.getState().open('answer', [source(1), source(2)], 1);
+      useReaderStore.getState().open('answer', [source(1), source(2)], 1);
     });
     expect(chip().classList.contains('is-lit')).toBe(true);
 
     act(() => {
-      useChatReaderStore.getState().close();
+      useReaderStore.getState().close();
     });
     expect(chip().classList.contains('is-lit')).toBe(false);
   });
@@ -307,12 +383,12 @@ describe('opening the source reader from an answer', () => {
     fireEvent.click(marks()[1]!);
 
     // The same source further down the answer stands for a different sentence.
-    expect(useChatReaderStore.getState().session?.occurrence).toBe(1);
+    expect(useReaderStore.getState().session?.occurrence).toBe(1);
     expect(marks().map((mark) => mark.classList.contains('is-lit'))).toEqual([false, true]);
 
     fireEvent.click(marks()[0]!);
 
-    expect(useChatReaderStore.getState().session?.occurrence).toBe(0);
+    expect(useReaderStore.getState().session?.occurrence).toBe(0);
     expect(marks().map((mark) => mark.classList.contains('is-lit'))).toEqual([true, false]);
   });
 });
@@ -384,6 +460,83 @@ describe('a question that failed to send', () => {
 
     expect(screen.getByText("Message didn't send")).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+  });
+
+  it('shows the specific error message from message.error or metadata.error instead of a generic fallback', () => {
+    render(
+      <Message
+        isLastTurn
+        message={{
+          id: 'q-err-1',
+          role: 'user',
+          content: 'Why?',
+          status: 'failed',
+          error: 'Model quota exceeded',
+          createdAt: new Date().toISOString(),
+          conversationId: 'conversation',
+        } as Parameters<typeof Message>[0]['message']}
+      />
+    );
+    expect(screen.getByText('Model quota exceeded')).toBeInTheDocument();
+    expect(screen.queryByText("Message didn't send")).not.toBeInTheDocument();
+
+    render(
+      <Message
+        isLastTurn={false}
+        message={{
+          id: 'q-err-2',
+          role: 'user',
+          content: 'Why again?',
+          status: 'failed',
+          metadata: JSON.stringify({ error: 'Context window overflow' }),
+          createdAt: new Date().toISOString(),
+          conversationId: 'conversation',
+        } as Parameters<typeof Message>[0]['message']}
+      />
+    );
+    expect(screen.getByText('Context window overflow')).toBeInTheDocument();
+  });
+
+  it('shows Stopped and Try again (without "Message didn\'t send") on a stopped unanswered question', () => {
+    regenerateResponse.mockClear();
+    render(
+      <Message
+        isLastTurn
+        message={{
+          id: 'q-stopped',
+          role: 'user',
+          content: 'Why was I stopped?',
+          status: 'failed',
+          metadata: JSON.stringify({ requestId: 'req-stop', cancelled: true }),
+          createdAt: new Date().toISOString(),
+          conversationId: 'conversation',
+        } as Parameters<typeof Message>[0]['message']}
+      />
+    );
+
+    expect(screen.getByText('Stopped')).toBeInTheDocument();
+    expect(screen.queryByText("Message didn't send")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(regenerateResponse).toHaveBeenCalledWith('conversation');
+  });
+
+  it('shows Stopped on a partial assistant reply saved on Stop', () => {
+    render(
+      <Message
+        isLastTurn
+        message={{
+          id: 'a-stopped',
+          role: 'assistant',
+          content: 'Entropy measures ',
+          status: 'completed',
+          metadata: JSON.stringify({ cancelled: true }),
+          createdAt: new Date().toISOString(),
+          conversationId: 'conversation',
+        } as Parameters<typeof Message>[0]['message']}
+      />
+    );
+
+    expect(screen.getByText('Stopped')).toBeInTheDocument();
   });
 });
 

@@ -46,12 +46,12 @@ export function useVoiceConversation({ conversationId, send, fill, reply: replyT
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const speak = useSpeaker();
-  const cancelGeneration = useConversationsStore((state) => state.cancelGeneration);
-  const replyStreaming = useConversationsStore((state) => replyBeingWritten(state, conversationId));
-  const replying = useConversationsStore((state) =>
-    conversationId !== null && state.inFlightGenerations.has(conversationId));
-
   const [phase, setPhase] = useState<VoicePhase>('off');
+  const cancelGeneration = useConversationsStore((state) => state.cancelGeneration);
+  const replyStreaming = useConversationsStore((state) =>
+    phase === 'off' ? '' : replyBeingWritten(state, conversationId));
+  const replying = useConversationsStore((state) =>
+    phase !== 'off' && conversationId !== null && state.inFlightGenerations.has(conversationId));
   const session = useRef<VoiceSession | null>(null);
   const waitingForChat = useRef<Array<() => void>>([]);
   const latest = useRef({ conversationId, send, fill, speak, replying, replyText });

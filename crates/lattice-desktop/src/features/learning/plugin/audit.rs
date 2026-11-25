@@ -49,7 +49,7 @@ impl VerifierAccess for ContainerVerifier {
         Some(Arc::new(VerifierPages {
             database: self.0.database().clone(),
             program_id: program_id.to_owned(),
-            web: self.0.web(),
+            web: self.0.web_service(),
             snapshots: self.0.reference_snapshots(),
         }))
     }

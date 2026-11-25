@@ -15,6 +15,14 @@ import {
 } from '@/features/explorer/api/queries';
 import { useExplorerStore } from '@/features/explorer/stores/explorerStore';
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
+import { READER_FOCUSED_CHAT_WIDTH, ReaderPane } from '@/features/reading/components/ReaderPane';
+import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
+import {
+  READER_MAX_WIDTH,
+  READER_MIN_CHAT_WIDTH,
+  READER_MIN_WIDTH,
+  useReaderStore,
+} from '@/features/reading/stores/readerStore';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { toast } from '@/stores/toastStore';
 
@@ -217,12 +225,44 @@ export function ExplorerPage() {
     if (typeof picked === 'string') await openRoot(picked);
   };
 
+  const [readerFocused, setReaderFocused] = useState(false);
+  const readerSession = useReaderStore((state) => state.session);
+  const readerWidth = useReaderStore((state) => state.width);
+  const showCitations = useCitationDisplayStore((state) => state.visible);
+  const readerOpen = Boolean(
+    readerSession?.citations[readerSession.index] &&
+      (!readerSession.citing || showCitations)
+  );
+
   // Each column yields before the file view does; the view keeps VIEWER_MIN.
   // A hidden tree takes no room, so the chat can have what it would have had.
   const room = Math.max(0, rowWidth - VIEWER_MIN);
   const treeFloor = treeHidden ? 0 : TREE_MIN;
-  const chat = rowWidth ? Math.min(chatWidth, Math.max(CHAT_MIN, room - treeFloor)) : chatWidth;
-  const tree = treeHidden ? 0 : rowWidth ? Math.min(treeWidth, Math.max(TREE_MIN, room - chat)) : treeWidth;
+  const baseChat = rowWidth ? Math.min(chatWidth, Math.max(CHAT_MIN, room - treeFloor)) : chatWidth;
+  const tree = treeHidden ? 0 : rowWidth ? Math.min(treeWidth, Math.max(TREE_MIN, room - baseChat)) : treeWidth;
+  const readerAvailableWidth = Math.max(0, rowWidth - tree - VIEWER_MIN);
+  const readerCanDock = readerOpen && readerAvailableWidth >= READER_MIN_CHAT_WIDTH + READER_MIN_WIDTH;
+  const dockedReaderWidth = readerCanDock
+    ? Math.min(
+        readerWidth,
+        Math.max(
+          READER_MIN_WIDTH,
+          Math.min(READER_MAX_WIDTH, rowWidth * 0.6, readerAvailableWidth - READER_MIN_CHAT_WIDTH)
+        )
+      )
+    : 0;
+  const activeReaderWidth = readerCanDock && readerFocused
+    ? Math.max(dockedReaderWidth, readerAvailableWidth - READER_FOCUSED_CHAT_WIDTH)
+    : dockedReaderWidth;
+  const dockedChatFloor = readerCanDock && readerFocused
+    ? Math.min(CHAT_MIN, READER_FOCUSED_CHAT_WIDTH)
+    : CHAT_MIN;
+  // When the third-pane reader docks (and especially when expanded/focused),
+  // yield chat width so tree + viewer (>= VIEWER_MIN) + chat + reader never
+  // crush ExplorerFileView.
+  const chat = rowWidth
+    ? Math.min(baseChat, readerCanDock ? Math.max(dockedChatFloor, readerAvailableWidth - activeReaderWidth) : baseChat)
+    : chatWidth;
 
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 bg-bg">
@@ -246,7 +286,7 @@ export function ExplorerPage() {
               {/* Hidden, not unmounted, so the tree keeps its place and a search its results. */}
               <aside
                 aria-label="Folder tree"
-                className={treeHidden ? 'hidden' : 'flex h-full shrink-0 flex-col border-r border-border-subtle bg-surface'}
+                className={treeHidden ? 'hidden' : 'flex h-full shrink-0 flex-col border-r border-border-subtle bg-surface-sunken/70'}
                 style={{ width: tree }}
               >
                 <ExplorerSearch key={root.root} root={root.root} onActiveChange={setSearching} />
@@ -283,6 +323,12 @@ export function ExplorerPage() {
           <section aria-label="Chat about this folder" className="h-full shrink-0 border-l border-border-subtle" style={{ width: chat }}>
             <ExplorerChat threads={threads} />
           </section>
+          <ReaderPane
+            rowWidth={rowWidth}
+            availableWidth={readerAvailableWidth}
+            resetKey={`${root.root}:${threads.activeId ?? ''}`}
+            onFocusChange={setReaderFocused}
+          />
           {settingsFor && (
             <FolderSettingsDialog
               folder={settingsFor}

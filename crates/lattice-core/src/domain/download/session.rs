@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -49,6 +49,93 @@ pub enum DownloadError {
 
     #[error("Insufficient disk space: required {required} bytes, available {available} bytes")]
     InsufficientDiskSpace { required: u64, available: u64 },
+
+    /// A destination holds one file, so a second session for it may not run
+    /// beside a live one. Carries the destination for the logs; the message
+    /// is the one the user sees.
+    #[error("This file is already downloading or waiting in the queue ({0})")]
+    DestinationBusy(String),
+}
+
+impl DownloadError {
+    /// The one plain sentence stored on a failed session and shown in the
+    /// drawer, the settings rows and Activity. The technical detail (hashes,
+    /// byte counts) stays in `Display` and the logs.
+    pub fn user_message(&self) -> String {
+        match self {
+            DownloadError::ChecksumMismatch { .. } => {
+                "The downloaded file didn't match its published checksum, so it was discarded. \
+                 Try again."
+                    .to_string()
+            }
+            DownloadError::InsufficientDiskSpace {
+                required,
+                available,
+            } => format!(
+                "Not enough disk space: {} needed, {} free.",
+                human_bytes(*required),
+                human_bytes(*available)
+            ),
+            DownloadError::ValidationFailed(message) => message.clone(),
+            DownloadError::NetworkError(_) => {
+                "Couldn't reach the download host. Check your connection and try again.".to_string()
+            }
+            DownloadError::HttpError { status, .. } => match status {
+                401 | 403 => format!("The download host refused access (HTTP {status})."),
+                404 | 410 => {
+                    format!("The file is no longer at its download address (HTTP {status}).")
+                }
+                429 => "The download host is limiting requests. Try again in a few minutes."
+                    .to_string(),
+                _ => {
+                    format!("The download host returned an error (HTTP {status}). Try again later.")
+                }
+            },
+            DownloadError::MaxRetriesExceeded => {
+                "The download kept failing, so it stopped. Check your connection and try again."
+                    .to_string()
+            }
+            DownloadError::IoError(_) => {
+                "Couldn't save the download to disk. Check that the drive has space and can be \
+                 written to."
+                    .to_string()
+            }
+            DownloadError::InvalidResponse(_) => {
+                "The download host sent an unexpected response. Try again later.".to_string()
+            }
+            other => other.to_string(),
+        }
+    }
+}
+
+/// Byte count in the decimal units the UI shows ("639 MB").
+pub fn human_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 4] = ["KB", "MB", "GB", "TB"];
+    if bytes < 1000 {
+        return format!("{bytes} B");
+    }
+    let mut value = bytes as f64 / 1000.0;
+    let mut unit = 0;
+    while value >= 1000.0 && unit < UNITS.len() - 1 {
+        value /= 1000.0;
+        unit += 1;
+    }
+    let unit_name = UNITS.get(unit).copied().unwrap_or("TB");
+    if value >= 100.0 {
+        format!("{value:.0} {unit_name}")
+    } else {
+        format!("{value:.1} {unit_name}")
+    }
+}
+
+/// Where a download is written until it has been verified: the destination's
+/// full file name with ".part" appended (`x.gguf` becomes `x.gguf.part`). The
+/// destination itself then exists only once its size and checksum pass, so
+/// anything that reads that path never sees a partial or unverified file.
+pub fn part_path(destination: &Path) -> PathBuf {
+    let mut name = destination.as_os_str().to_os_string();
+    name.push(".part");
+    PathBuf::from(name)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,12 +155,15 @@ impl DownloadState {
         matches!(
             (self, target),
             (Pending, Downloading)
+                | (Pending, Paused)
+                | (Pending, Failed)
                 | (Pending, Cancelled)
                 | (Downloading, Paused)
                 | (Downloading, Completed)
                 | (Downloading, Failed)
                 | (Downloading, Cancelled)
                 | (Paused, Downloading)
+                | (Paused, Pending)
                 | (Paused, Cancelled)
                 | (Failed, Downloading)
                 | (Failed, Pending)
@@ -93,8 +183,9 @@ impl DownloadState {
         matches!(self, DownloadState::Downloading)
     }
 
+    /// A queued (Pending) download can be paused too: it simply leaves the queue.
     pub fn can_pause(&self) -> bool {
-        matches!(self, DownloadState::Downloading)
+        matches!(self, DownloadState::Pending | DownloadState::Downloading)
     }
 
     pub fn can_resume(&self) -> bool {
@@ -346,6 +437,13 @@ impl DownloadSession {
         self
     }
 
+    /// Attach a display name without a model id, for downloads that belong to
+    /// no model record (a vision projector, a reranker).
+    pub fn with_model_name(mut self, model_name: String) -> Self {
+        self.model_name = Some(model_name);
+        self
+    }
+
     pub fn with_model_file_name(mut self, model_file_name: String) -> Self {
         self.model_file_name = Some(model_file_name);
         self
@@ -391,8 +489,19 @@ impl DownloadSession {
         &self.updated_at
     }
 
+    /// Whether this session was left Pending or Downloading by a process that
+    /// has since ended: nothing in memory owns it, because the queue and the
+    /// transfer tasks do not survive a restart.
     pub fn is_stale_at(&self, cutoff: DateTime<Utc>) -> bool {
-        self.state == DownloadState::Downloading && self.updated_at < cutoff
+        matches!(
+            self.state,
+            DownloadState::Pending | DownloadState::Downloading
+        ) && self.updated_at < cutoff
+    }
+
+    /// The `.part` file this session writes until it is verified.
+    pub fn working_path(&self) -> PathBuf {
+        part_path(&self.destination)
     }
 
     pub fn started_at(&self) -> Option<&DateTime<Utc>> {
@@ -433,14 +542,20 @@ impl DownloadSession {
         self.transition_to(DownloadState::Paused)
     }
 
+    /// Bring a Paused or Failed session back to the queue. It becomes Pending,
+    /// not Downloading: it may wait for a free slot, and a row that says
+    /// Downloading with no transfer behind it would be failed as dead by the
+    /// next startup. The manager moves it to Downloading when a slot frees.
     pub fn resume(&mut self) -> Result<(), DownloadError> {
         if !self.state.can_resume() {
             return Err(DownloadError::InvalidStateTransition {
                 from: self.state,
-                to: DownloadState::Downloading,
+                to: DownloadState::Pending,
             });
         }
-        self.transition_to(DownloadState::Downloading)
+        self.transition_to(DownloadState::Pending)?;
+        self.error_message = None;
+        Ok(())
     }
 
     pub fn cancel(&mut self) -> Result<(), DownloadError> {
@@ -460,6 +575,14 @@ impl DownloadSession {
     }
 
     pub fn fail(&mut self, error_message: String) -> Result<(), DownloadError> {
+        // Check first: a rejected transition must not leave a message or a
+        // retry count behind.
+        if !self.state.can_transition_to(&DownloadState::Failed) {
+            return Err(DownloadError::InvalidStateTransition {
+                from: self.state,
+                to: DownloadState::Failed,
+            });
+        }
         self.error_message = Some(error_message);
         self.retry_count += 1;
         self.transition_to(DownloadState::Failed)

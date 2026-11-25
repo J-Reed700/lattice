@@ -16,10 +16,7 @@ use parking_lot::Mutex;
 use serde_json::Value;
 use tokio::sync::watch;
 
-use lattice_core::application::ports::LLMPort;
-
-use super::{BackendCapacity, InferenceScheduler, ScheduledLlm, ServerTokenizer};
-use crate::features::llm::backend::ModelBackend;
+use super::{BackendCapacity, InferenceScheduler};
 
 /// `/props` answers instantly on a healthy server.
 const PROPS_TIMEOUT: Duration = Duration::from_secs(3);
@@ -40,9 +37,6 @@ pub(crate) struct SchedulerRegistry {
     /// Moved by every scheduler this registry made, local ones included,
     /// whenever its queue changes.
     changed: Arc<watch::Sender<u64>>,
-    /// Where a test run records or replays the calls beneath the schedulers.
-    #[cfg(test)]
-    calls: std::sync::OnceLock<Arc<crate::tests::call_log::Calls>>,
 }
 
 impl Default for SchedulerRegistry {
@@ -50,39 +44,11 @@ impl Default for SchedulerRegistry {
         Self {
             shared: Mutex::default(),
             changed: Arc::new(watch::channel(0).0),
-            #[cfg(test)]
-            calls: std::sync::OnceLock::new(),
         }
     }
 }
 
 impl SchedulerRegistry {
-    /// Makes every port this registry fronts from now on record or replay its backend's calls.
-    #[cfg(test)]
-    pub(crate) fn record_calls(&self, calls: Arc<crate::tests::call_log::Calls>) {
-        let _ = self.calls.set(calls);
-    }
-
-    /// The one constructor of a scheduled port: `backend` behind `scheduler`,
-    /// counting exactly with `tokenizer` where there is one.
-    pub(crate) fn front(
-        &self,
-        backend: Arc<dyn ModelBackend>,
-        scheduler: Arc<InferenceScheduler>,
-        tokenizer: Option<ServerTokenizer>,
-    ) -> Arc<dyn LLMPort> {
-        #[cfg(test)]
-        let backend = match self.calls.get() {
-            Some(calls) => calls.model(backend),
-            None => backend,
-        };
-        let scheduled = ScheduledLlm::new(backend, scheduler);
-        Arc::new(match tokenizer {
-            Some(tokenizer) => scheduled.with_tokenizer(tokenizer),
-            None => scheduled,
-        })
-    }
-
     /// Moves whenever a request joins, leaves or is admitted on any backend.
     pub(crate) fn changes(&self) -> watch::Receiver<u64> {
         self.changed.subscribe()

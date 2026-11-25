@@ -142,16 +142,15 @@ impl RecentDocumentsRepositoryPort for RecentDocumentsRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sqlx::sqlite::SqlitePoolOptions;
     use sqlx::SqlitePool;
 
     async fn create_test_pool() -> SqlitePool {
-        SqlitePoolOptions::new().connect(":memory:").await.unwrap()
+        lattice_core::shared::testing::sqlite::migrated_in_memory()
+            .await
+            .unwrap()
     }
 
     async fn setup_schema(pool: &SqlitePool) {
-        // Exercise the same schema as the application, including future migrations.
-        sqlx::migrate!("./migrations").run(pool).await.unwrap();
         sqlx::query(
             r#"
             WITH seed(id, path, name, mime, size) AS (

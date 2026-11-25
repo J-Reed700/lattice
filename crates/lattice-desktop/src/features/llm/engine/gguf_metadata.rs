@@ -38,6 +38,9 @@ pub struct GgufModelInfo {
     /// Whether `tokenizer.chat_template` in the GGUF header declares tool-calling
     /// markers (`tools`, `tool_call`, or `tool_calls`).
     pub chat_template_supports_tools: bool,
+    /// Whether `tokenizer.chat_template` in the GGUF header declares thinking
+    /// markers (`enable_thinking`, `<think>`, or `</think>`).
+    pub chat_template_supports_thinking: bool,
     /// `{architecture}.pooling_type` (llama.cpp's `LLM_KV_POOLING_TYPE`): how
     /// an embedding model pools its token states. 0 none, 1 mean, 2 CLS,
     /// 3 last, 4 rank. Absent in a chat model.
@@ -64,6 +67,60 @@ impl GgufModelInfo {
             Some("qwen2" | "qwen3" | "qwen3moe" | "qwen35" | "qwen35moe" | "gemma4")
         )
     }
+
+    /// Whether the GGUF metadata indicates this model supports native thinking
+    /// (either via its embedded Jinja `tokenizer.chat_template` or a known
+    /// thinking-capable architecture family).
+    pub fn supports_thinking(&self) -> bool {
+        if self.chat_template_supports_thinking {
+            return true;
+        }
+        self.architecture.as_deref().is_some_and(|arch| {
+            let lower = arch.to_ascii_lowercase();
+            // Note: `deepseek2` is shared by non-thinking DeepSeek-V2/V3 chat models,
+            // so DeepSeek-R1 is detected via `chat_template_supports_thinking` (`<think>`).
+            matches!(
+                lower.as_str(),
+                "qwen3" | "qwen3moe" | "qwen35" | "qwen35moe" | "laguna" | "gpt-oss"
+            )
+        })
+    }
+}
+
+/// Whether a model or file name belongs to a known thinking-capable model family.
+/// Used when no local GGUF header is available (e.g. external llama-server endpoints
+/// or an unreadable local GGUF header).
+pub fn model_name_supports_thinking(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    [
+        "qwen3",
+        "laguna",
+        "deepseek-r1",
+        "deepseek_r1",
+        "qwq",
+        "gpt-oss",
+    ]
+    .iter()
+    .any(|family| lower.contains(family))
+}
+
+/// Whether the model file at `path` supports native thinking: its parsed GGUF
+/// `info` says so (via chat template or architecture), or, when the header
+/// could not establish an architecture, its file name matches a known thinking
+/// family.
+pub fn file_supports_thinking(path: &Path, info: Option<&GgufModelInfo>) -> bool {
+    if let Some(info) = info {
+        if info.supports_thinking() {
+            return true;
+        }
+        // Header outranks file name once an architecture was read.
+        if info.architecture.is_some() {
+            return false;
+        }
+    }
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(model_name_supports_thinking)
 }
 
 /// Whether the model file at `path` can call tools: the curated catalog says
@@ -129,6 +186,9 @@ pub fn read_model_info_from<R: Read + Seek>(reader: R, file_len: u64) -> Option<
             info.chat_template_supports_tools = template.contains("tools")
                 || template.contains("tool_call")
                 || template.contains("tool_calls");
+            info.chat_template_supports_thinking = template.contains("enable_thinking")
+                || template.contains("<think>")
+                || template.contains("</think>");
             continue;
         }
 

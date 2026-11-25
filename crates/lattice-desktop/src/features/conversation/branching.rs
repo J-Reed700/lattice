@@ -306,12 +306,18 @@ pub async fn regenerate_response_impl(
     match Box::pin(fut).await {
         Ok(response) => Ok(response),
         Err(error) => {
+            let cancelled =
+                crate::features::conversation::chat::cancellation::is_cancellation(&error);
+            let error_reason = (!cancelled)
+                .then(|| crate::features::conversation::chat::human_readable_error(&error));
+            let restore_metadata =
+                with_outcome_metadata(metadata, cancelled, error_reason.as_deref());
             let restored = restore_lifted_question(
                 branches.as_ref(),
                 &conversation_id,
                 baseline,
                 &content,
-                metadata.as_deref(),
+                restore_metadata.as_deref(),
             )
             .await;
             if let Some(message_id) = restored.filter(|_| !image_ids.is_empty()) {
@@ -412,9 +418,38 @@ fn with_pictures(metadata: Option<String>, pictures: &[ChatImageDto]) -> Option<
     Some(serde_json::Value::Object(map).to_string())
 }
 
-/// Puts a lifted question back on the thread after a failed regenerate, only
-/// when the turn failed before saving it again (the thread no longer than when
-/// it was lifted). Returns the id of the question it put back, if any.
+fn with_outcome_metadata(
+    metadata: Option<String>,
+    cancelled: bool,
+    error_reason: Option<&str>,
+) -> Option<String> {
+    if !cancelled && error_reason.is_none() {
+        return metadata;
+    }
+    let mut map = metadata
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+        .and_then(|value| match value {
+            serde_json::Value::Object(map) => Some(map),
+            _ => None,
+        })
+        .unwrap_or_default();
+    if cancelled {
+        map.remove("error");
+        map.insert("cancelled".to_string(), serde_json::json!(true));
+    } else {
+        map.remove("cancelled");
+        if let Some(reason) = error_reason.map(str::trim).filter(|s| !s.is_empty()) {
+            map.insert("error".to_string(), serde_json::json!(reason));
+        }
+    }
+    Some(serde_json::Value::Object(map).to_string())
+}
+
+/// Puts a lifted question back on the thread after a failed or cancelled
+/// regenerate, only when the turn ended before saving it again (the thread no
+/// longer than when it was lifted). Returns the id of the question it put back,
+/// if any.
 async fn restore_lifted_question(
     branches: &dyn ConversationBranches,
     conversation_id: &str,
@@ -476,11 +511,11 @@ mod tests {
     use super::*;
     use crate::features::conversation::repository::ConversationRepository;
     use lattice_core::shared::persistence::Database;
-    use sqlx::sqlite::SqlitePoolOptions;
 
     async fn thread() -> (ConversationRepository, String) {
-        let pool = SqlitePoolOptions::new().connect(":memory:").await.unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+            .await
+            .unwrap();
         let repo = ConversationRepository::new(Database::new(pool));
         let id = repo.create("Thread", None).await.unwrap().id.to_string();
         (repo, id)
@@ -601,5 +636,36 @@ mod tests {
         assert_eq!(metadata["images"][0]["id"], copy.id.as_str());
         assert_eq!(metadata["images"].as_array().unwrap().len(), 1);
         assert_eq!(with_pictures(Some("{}".into()), &[]), Some("{}".into()));
+    }
+
+    #[tokio::test]
+    async fn restored_question_preserves_failure_reason_or_marks_cancelled_failed() {
+        let (repo, id) = thread().await;
+        let err_meta = with_outcome_metadata(
+            Some(r#"{"requestId":"r-err","cancelled":true}"#.into()),
+            false,
+            Some("Backend timeout"),
+        );
+        restore_lifted_question(&repo, &id, Some(0), "retry me", err_meta.as_deref()).await;
+
+        let cancel_meta =
+            with_outcome_metadata(Some(r#"{"requestId":"r-stop"}"#.into()), true, None);
+        restore_lifted_question(&repo, &id, Some(1), "stopped me", cancel_meta.as_deref()).await;
+
+        let messages = repo.get_messages(&id).await.unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].status, "failed");
+        let meta0: serde_json::Value =
+            serde_json::from_str(messages[0].metadata.as_deref().unwrap()).unwrap();
+        assert_eq!(meta0["requestId"], "r-err");
+        assert_eq!(meta0["error"], "Backend timeout");
+        assert!(meta0.get("cancelled").is_none());
+
+        assert_eq!(messages[1].status, "failed");
+        let meta1: serde_json::Value =
+            serde_json::from_str(messages[1].metadata.as_deref().unwrap()).unwrap();
+        assert_eq!(meta1["requestId"], "r-stop");
+        assert_eq!(meta1["cancelled"], true);
+        assert!(meta1.get("error").is_none());
     }
 }

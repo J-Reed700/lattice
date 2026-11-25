@@ -14,6 +14,7 @@ export const normalizeHexColor = (value: string | null | undefined): string | nu
 /** The tools a space turns on for its new turns, as `toolPreferencesJson` holds them. */
 export interface SpaceToolPreferences {
   knowledgeBase: boolean;
+  strictSources: boolean;
   webSearch: boolean;
   deepResearchMode: boolean;
   enabledTools: string[];
@@ -21,15 +22,18 @@ export interface SpaceToolPreferences {
 
 export const buildSpaceToolPreferencesJson = ({
   knowledgeBase,
+  strictSources = false,
   webSearch,
   deepResearchMode,
 }: {
   knowledgeBase: boolean;
+  strictSources?: boolean;
   webSearch: boolean;
   deepResearchMode: boolean;
 }): string =>
   JSON.stringify({
     knowledgeBase,
+    strictSources,
     webSearch,
     deepResearchMode,
     enabledTools: webSearch ? ['web_search', 'fetch_url_content'] : [],
@@ -37,7 +41,7 @@ export const buildSpaceToolPreferencesJson = ({
 
 export const parseSpaceToolPreferences = (raw: string | null): SpaceToolPreferences => {
   if (!raw) {
-    return { knowledgeBase: false, webSearch: false, deepResearchMode: false, enabledTools: [] };
+    return { knowledgeBase: false, strictSources: false, webSearch: false, deepResearchMode: false, enabledTools: [] };
   }
 
   try {
@@ -46,6 +50,10 @@ export const parseSpaceToolPreferences = (raw: string | null): SpaceToolPreferen
       typeof parsed.knowledgeBase === 'boolean'
         ? parsed.knowledgeBase
         : (typeof parsed.knowledge_base === 'boolean' ? parsed.knowledge_base : false);
+    const strictSources =
+      typeof parsed.strictSources === 'boolean'
+        ? parsed.strictSources
+        : (typeof parsed.strict_sources === 'boolean' ? parsed.strict_sources : false);
     const webSearch =
       typeof parsed.webSearch === 'boolean'
         ? parsed.webSearch
@@ -61,9 +69,9 @@ export const parseSpaceToolPreferences = (raw: string | null): SpaceToolPreferen
       ? [...new Set(enabledToolsRaw.filter((tool): tool is string => typeof tool === 'string').map((tool) => tool.trim()).filter(Boolean))]
       : (webSearch ? ['web_search', 'fetch_url_content'] : []);
 
-    return { knowledgeBase, webSearch, deepResearchMode, enabledTools };
+    return { knowledgeBase, strictSources, webSearch, deepResearchMode, enabledTools };
   } catch {
-    return { knowledgeBase: false, webSearch: false, deepResearchMode: false, enabledTools: [] };
+    return { knowledgeBase: false, strictSources: false, webSearch: false, deepResearchMode: false, enabledTools: [] };
   }
 };
 

@@ -3,7 +3,7 @@
 //! itself nor points at what the learner cannot see.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
-use crate::content_verification::tests::{fixture_completion, fixture_task};
+use crate::content_verification::tests::fixture_completion;
 use crate::lessons::content_verification::Protected;
 use crate::lessons::course_generation_tests::{clean_review, verdict, ScriptedModel};
 use crate::reference_collection::ReferenceCollection;
@@ -1177,8 +1177,8 @@ async fn the_contract_check_describes_learner_actions_in_no_subjects_terms() -> 
     let candidate = lesson(["One.", "Two.", "Three."]);
     run(&model, &candidate, &context(&[], &[]), &[]).await?;
     let drafting = model.drafting();
-    let start = drafting[0].find("Go through the lesson part by part in order.");
-    let end = drafting[0].find("say where the lesson, the earlier lessons");
+    let start = drafting[0].find("Check the lesson part by part in order");
+    let end = drafting[0].find("check whether the lesson, the earlier lessons");
     assert!(start.is_some() && end.is_some(), "{}", drafting[0]);
     let brief = &drafting[0][start.unwrap()..end.unwrap()];
     assert_no_software_words("the brief", brief);
@@ -1540,12 +1540,9 @@ async fn a_planned_item_the_confirming_read_does_not_find_is_a_finding_where_it_
     Ok(())
 }
 
-/// The notes waiting after a lesson with a contrast section is twice repaired
-/// for its missing planned contrast, the prompts of the confirming read, and
-/// the rows of the first repair.
 async fn waiting_after_planned_contrast(
     reply: Value,
-) -> Result<(Vec<(String, Option<String>)>, Vec<String>, Value)> {
+) -> Result<(Vec<(String, Option<String>)>, Vec<String>)> {
     let scripted = scripted(vec![
         reviewed(),
         retitle_at(1),
@@ -1568,19 +1565,12 @@ async fn waiting_after_planned_contrast(
     ],"questions":[]});
     let ctx = context_planning(&[], &[], &[], "A planned confusion");
     let result = run(&model, &candidate, &ctx, &[]).await?;
-    let prompts = scripted.prompts.lock().unwrap();
-    let repair = prompts
-        .iter()
-        .find(|prompt| prompt.contains("issuesToFix"))
-        .unwrap();
-    let issues =
-        crate::lessons::teaching::repair_script::task_of(repair).unwrap()["issuesToFix"].clone();
-    Ok((waiting(&result), model.confirmed(), issues))
+    Ok((waiting(&result), model.confirmed()))
 }
 
 #[tokio::test]
 async fn a_planned_contrast_is_placed_only_in_a_contrast_section() -> Result<()> {
-    let (found, confirmed, _) =
+    let (found, confirmed) =
         waiting_after_planned_contrast(json!({"taught":false,"quote":"","belongs":"section-1"}))
             .await?;
     assert_eq!(found, [("teaching:section-1".to_owned(), None)]);
@@ -1601,23 +1591,12 @@ async fn a_planned_contrast_is_placed_only_in_a_contrast_section() -> Result<()>
 }
 
 #[tokio::test]
-async fn a_planned_contrast_the_confirming_read_puts_in_an_explanation_waits_at_the_lesson(
+async fn a_planned_contrast_the_confirming_read_puts_in_an_explanation_is_not_placed_there(
 ) -> Result<()> {
-    let (found, _, _) =
+    let (found, _) =
         waiting_after_planned_contrast(json!({"taught":false,"quote":"","belongs":"section-0"}))
             .await?;
     assert_eq!(found, [("teaching:lesson".to_owned(), None)]);
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_planned_contrast_the_confirming_read_misplaces_is_sent_with_the_sections_it_belongs_in(
-) -> Result<()> {
-    let (_, _, issues) =
-        waiting_after_planned_contrast(json!({"taught":false,"quote":"","belongs":"section-0"}))
-            .await?;
-    assert_eq!(issues[0]["part"], Value::Null, "{issues}");
-    assert_eq!(issues[0]["within"], json!(["/blocks/1"]), "{issues}");
     Ok(())
 }
 
@@ -1903,113 +1882,277 @@ async fn prompt_snapshot_lesson_contract_check() -> Result<()> {
     Ok(())
 }
 
-fn parcel_lesson() -> Value {
-    json!({"blocks":[
-        block_of("explanation", "Opening", TYPED),
-        block_of("contrast", "Listing", "The list shows names."),
-        block_of("explanation", "Reading", "Read the names.")
-    ],"questions":[]})
-}
-
-fn repair_script() -> Vec<String> {
-    vec![
-        reviewed(),
-        retitle_at(1),
-        reviewed_of(&[]),
-        retitle_again_at(1),
-        reviewed_of(&[]),
-    ]
-}
-
 #[tokio::test]
-async fn a_contrast_cited_only_in_an_explanation_is_not_taught() -> Result<()> {
-    let scripted = scripted(repair_script());
-    let cited = answer(
-        json!([taught("contrast", TYPED)]),
-        json!([]),
-        json!([]),
-        json!([]),
+async fn clean_find_receipt_skips_ask_findings_on_citation_only_edits_and_resumes() -> Result<()> {
+    let scripted = scripted(vec![]);
+    let model = Routed::new(&scripted, vec![scripted::CONTRACT_NOTHING.to_owned()]);
+    let ctx: Value = serde_json::from_str(&context(&[], &[]))?;
+    let candidate = lesson([
+        "A terminal takes typed commands.",
+        "The list shows names.",
+        "Read the names.",
+    ]);
+    let mut receipts = contract::Receipts::default();
+    let first = contract::check(&model, &ctx, &candidate, &[], &mut receipts, &[]).await?;
+    assert!(first.findings.is_empty());
+    assert_eq!(model.asked_of(Ask::Find).len(), 1);
+
+    let mut cited = candidate.clone();
+    cited["blocks"][0]["sourceIndex"] = json!(1);
+    cited["blocks"][0]["quote"] = json!("Different quotation.");
+    cited["blocks"][0]["citations"] = json!([{"sentence": "A terminal takes typed commands.", "sourceIndex": 1, "quote": "Different quotation."}]);
+
+    let second = contract::check(&model, &ctx, &cited, &[], &mut receipts, &[]).await?;
+    assert!(second.findings.is_empty());
+    assert_eq!(
+        model.asked_of(Ask::Find).len(),
+        1,
+        "citation-only edit must skip LessonContractFind"
     );
-    let model = Routed::new(&scripted, vec![cited.clone(), cited.clone(), cited]);
-    let ctx = context_planning(&[], &[], &[], "A planned confusion");
-    let result = run(&model, &parcel_lesson(), &ctx, &[]).await?;
-    assert_eq!(waiting(&result), [("teaching:section-1".to_owned(), None)]);
+
+    let saved = json!({ "receipts": receipts.saved()? }).to_string();
+    let mut resumed = contract::Receipts::default();
+    resumed.resume(&saved);
+    let third = contract::check(&model, &ctx, &cited, &[], &mut resumed, &[]).await?;
+    assert!(third.findings.is_empty());
+    assert_eq!(
+        model.asked_of(Ask::Find).len(),
+        1,
+        "resumed clean find receipt must also skip LessonContractFind"
+    );
     Ok(())
 }
 
 #[tokio::test]
-async fn a_confirming_read_that_cites_a_contrast_only_in_an_explanation_does_not_settle_it(
+async fn pure_deletion_after_clean_find_scopes_to_used_before_taught_and_dangling_unseen(
 ) -> Result<()> {
-    let scripted = scripted(repair_script());
-    let missing = answer(
-        json!([not_taught("contrast")]),
-        json!([]),
-        json!([]),
-        json!([]),
+    let scripted = scripted(vec![]);
+    let model = Routed::new(
+        &scripted,
+        vec![
+            scripted::CONTRACT_NOTHING.to_owned(),
+            scripted::CONTRACT_NOTHING.to_owned(),
+            scripted::CONTRACT_NOTHING.to_owned(),
+        ],
     );
-    let model = Routed::new(&scripted, vec![missing.clone(), missing.clone(), missing]).confirming(
-        "A planned confusion",
-        json!({"taught":true,"quote":TYPED,"belongs":"section-1"}),
+    let ctx: Value = serde_json::from_str(&context(&[], &[]))?;
+    let candidate = lesson([
+        "A terminal takes typed commands.",
+        "The list shows names. Extra sentence to delete.",
+        "Read the names.",
+    ]);
+    let mut receipts = contract::Receipts::default();
+    contract::check(&model, &ctx, &candidate, &[], &mut receipts, &[]).await?;
+    assert_eq!(model.asked_of(Ask::Find).len(), 1);
+
+    // Pure deletion in Section 2: checks usedBeforeTaught from Section 2 onwards + dangling unseen, skipping contradictions.
+    let deleted = lesson([
+        "A terminal takes typed commands.",
+        "The list shows names.",
+        "Read the names.",
+    ]);
+    contract::check(&model, &ctx, &deleted, &[], &mut receipts, &[]).await?;
+    let finds = model.asked_of(Ask::Find);
+    assert_eq!(finds.len(), 2);
+    let delta_task: Value = serde_json::from_str(&finds[1])?;
+    assert_eq!(delta_task["focusParts"], json!(["Section 2", "Section 3"]));
+    assert!(delta_task.get("changedParts").is_none());
+    assert!(delta_task.get("changedSentences").is_none());
+    let focus_sentences = delta_task["focusSentences"].as_array().unwrap();
+    assert!(!focus_sentences.is_empty());
+    assert!(
+        !focus_sentences.iter().any(|id| id == "u1" || id == "u2"),
+        "Section 1 sentences must not be in focusSentences: {delta_task}"
     );
-    let ctx = context_planning(&[], &[], &[], "A planned confusion");
-    let result = run(&model, &parcel_lesson(), &ctx, &[]).await?;
-    assert_eq!(waiting(&result), [("teaching:section-1".to_owned(), None)]);
+    let drafting = model.drafting();
+    assert!(
+        drafting
+            .iter()
+            .any(|said| said.contains(contract::FIND_DELETION_BRIEF)),
+        "{drafting:?}"
+    );
+
+    // Trailing deletion (removing Section 3): runs deletion-scoped check with empty focusParts so dangling "below" unseen references are still caught.
+    let mut trailing_deleted = deleted.clone();
+    trailing_deleted["blocks"].as_array_mut().unwrap().pop();
+    contract::check(&model, &ctx, &trailing_deleted, &[], &mut receipts, &[]).await?;
+    let finds = model.asked_of(Ask::Find);
+    assert_eq!(finds.len(), 3);
+    let trailing_task: Value = serde_json::from_str(&finds[2])?;
+    assert_eq!(trailing_task["focusParts"], json!([]));
+    assert_eq!(trailing_task["focusSentences"], json!([]));
     Ok(())
 }
 
 #[tokio::test]
-async fn a_term_said_only_in_a_contrast_section_is_taught() -> Result<()> {
-    let scripted = scripted(vec![reviewed()]);
-    let cited = answer(
-        json!([taught("term-0", "The list shows names.")]),
-        json!([]),
-        json!([]),
-        json!([]),
+async fn small_edit_after_clean_find_scopes_contradiction_and_unseen_to_delta() -> Result<()> {
+    let scripted = scripted(vec![]);
+    let model = Routed::new(
+        &scripted,
+        vec![
+            scripted::CONTRACT_NOTHING.to_owned(),
+            scripted::CONTRACT_NOTHING.to_owned(),
+        ],
     );
-    let model = Routed::new(&scripted, vec![cited.clone(), cited]);
-    let ctx = context_planning(&[], &["list"], &[], "");
-    let result = run(&model, &parcel_lesson(), &ctx, &[]).await?;
-    assert!(result.set_aside.is_empty(), "{:?}", waiting(&result));
+    let ctx: Value = serde_json::from_str(&context(&[], &[]))?;
+    let candidate = lesson([
+        "A terminal takes typed commands.",
+        "The list shows names. Keep this unchanged sentence.",
+        "Read the names.",
+    ]);
+    let mut receipts = contract::Receipts::default();
+    contract::check(&model, &ctx, &candidate, &[], &mut receipts, &[]).await?;
+
+    let edited = lesson([
+        "A terminal takes typed commands.",
+        "The list shows file sizes. Keep this unchanged sentence.",
+        "Read the names.",
+    ]);
+    contract::check(&model, &ctx, &edited, &[], &mut receipts, &[]).await?;
+    let finds = model.asked_of(Ask::Find);
+    assert_eq!(finds.len(), 2);
+    let delta_task: Value = serde_json::from_str(&finds[1])?;
+    assert_eq!(delta_task["focusParts"], json!(["Section 2", "Section 3"]));
+    assert_eq!(delta_task["changedParts"], json!(["Section 2"]));
+    let changed = delta_task["changedSentences"].as_array().unwrap();
+    assert_eq!(changed.len(), 1, "{delta_task}");
+    // Section 1 has body ("u1") + title ("u2"); Section 2 has 1st body sentence ("u3") + 2nd ("u4") + title ("u5").
+    assert_eq!(changed[0], "u3");
+    let drafting = model.drafting();
+    assert!(
+        drafting
+            .iter()
+            .any(|said| said.contains(contract::FIND_EDITED_BRIEF)),
+        "{drafting:?}"
+    );
     Ok(())
 }
 
 #[tokio::test]
-async fn a_planned_contrast_with_no_section_to_teach_it_is_set_aside_and_never_sent_to_a_repair(
-) -> Result<()> {
-    let inner = scripted(vec![reviewed(); 6]);
-    let missing = answer(
-        json!([not_taught("contrast")]),
-        json!([]),
-        json!([]),
-        json!([]),
+async fn course_context_change_invalidates_clean_find_receipt() -> Result<()> {
+    let scripted = scripted(vec![]);
+    let model = Routed::new(
+        &scripted,
+        vec![
+            scripted::CONTRACT_NOTHING.to_owned(),
+            scripted::CONTRACT_NOTHING.to_owned(),
+        ],
     );
-    let model = Routed::new(&inner, vec![missing.clone(), missing.clone(), missing])
-        .confirming("A planned confusion", json!({"taught":false,"quote":""}));
-    let candidate = json!({"blocks":[
-        block_of("explanation", "Opening", TYPED),
-        block_of("explanation", "Listing", "The list shows names."),
-        block_of("worked_example", "Reading", "Read the names.")
-    ],"questions":[]});
-    let ctx = context_planning(&[], &[], &[], "A planned confusion");
+    let ctx1: Value = serde_json::from_str(&context(&[], &[]))?;
+    let mut ctx2 = ctx1.clone();
+    ctx2["priorKnowledge"] = json!("Different prior knowledge.");
+    let candidate = lesson([
+        "A terminal takes typed commands.",
+        "The list shows names.",
+        "Read the names.",
+    ]);
+    let mut receipts = contract::Receipts::default();
+    contract::check(&model, &ctx1, &candidate, &[], &mut receipts, &[]).await?;
+    contract::check(&model, &ctx2, &candidate, &[], &mut receipts, &[]).await?;
+    let finds = model.asked_of(Ask::Find);
+    assert_eq!(finds.len(), 2);
+    let second_task: Value = serde_json::from_str(&finds[1])?;
+    assert!(second_task.get("focusParts").is_none());
+    assert!(second_task.get("changedParts").is_none());
+    Ok(())
+}
 
-    let result = run(&model, &candidate, &ctx, &[]).await?;
+#[tokio::test]
+async fn local_keeps_read_prompts_runs_contract_asks_sequentially() -> Result<()> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    let lacking: Vec<_> = result
-        .set_aside
-        .iter()
-        .filter(|waiting| waiting.finding.lacks_its_section())
-        .collect();
-    assert_eq!(lacking.len(), 1, "{:?}", waiting(&result));
-    assert_eq!(lacking[0].repairs, 0);
-    assert_eq!(lacking[0].finding.site, Some(FindingSite::Lesson));
-    let repairs = inner
-        .prompts
-        .lock()
-        .unwrap()
-        .iter()
-        .filter_map(|prompt| fixture_task(prompt))
-        .filter(|task| task.get("issuesToFix").is_some())
-        .count();
-    assert_eq!(repairs, 0);
+    struct Probe {
+        keeps_prompts: bool,
+        in_flight: AtomicUsize,
+        max_in_flight: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl LLMPort for Probe {
+        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+            let active = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+            self.max_in_flight.fetch_max(active, Ordering::SeqCst);
+            tokio::task::yield_now().await;
+            self.in_flight.fetch_sub(1, Ordering::SeqCst);
+            if crate::lessons::structured_call::is_draft_request(request) {
+                return Ok(CompletionResponse::from_text(
+                    crate::lessons::structured_call::FIXTURE_DRAFT,
+                ));
+            }
+            let (system, user) = crate::lessons::structured_call::task_messages(request);
+            let reply = match ask_of(system, user) {
+                Some(Ask::Planned) => {
+                    let task = scripted::task_of(user);
+                    let id = task["thisLesson"]["planned"][0]["id"].clone();
+                    let row = scripted::rows(&task)[0].0.clone();
+                    json!({"entries": [{"of": id, "taught": "taught", "units": [row]}]}).to_string()
+                }
+                Some(Ask::Reports) => {
+                    let task = scripted::task_of(user);
+                    let id = task["reported"][0]["id"].clone();
+                    json!({"entries": [{"of": id, "about": "other"}]}).to_string()
+                }
+                _ => json!({"items": []}).to_string(),
+            };
+            Ok(CompletionResponse::from_text(reply.as_str()))
+        }
+        fn model_name(&self) -> &str {
+            "contract-probe"
+        }
+        fn count_tokens(&self, text: &str) -> usize {
+            text.len() / 4
+        }
+        fn max_context_tokens(&self) -> usize {
+            32_768
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+        fn enforces(
+            &self,
+            _schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
+        }
+        fn keeps_read_prompts(&self) -> bool {
+            self.keeps_prompts
+        }
+    }
+
+    let ctx: Value = serde_json::from_str(&context(&["Terminal idea"], &[]))?;
+    let candidate = lesson([
+        "A terminal takes typed commands.",
+        "The list shows names.",
+        "Read the names.",
+    ]);
+    let report = ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "A reported defect.");
+
+    let local = Probe {
+        keeps_prompts: true,
+        in_flight: AtomicUsize::new(0),
+        max_in_flight: AtomicUsize::new(0),
+    };
+    let mut receipts = contract::Receipts::default();
+    let ruled = contract::check(&local, &ctx, &candidate, &[], &mut receipts, &[&report]).await?;
+    assert!(ruled.findings.is_empty());
+    assert_eq!(local.max_in_flight.load(Ordering::SeqCst), 1);
+
+    let cloud = Probe {
+        keeps_prompts: false,
+        in_flight: AtomicUsize::new(0),
+        max_in_flight: AtomicUsize::new(0),
+    };
+    let mut cloud_receipts = contract::Receipts::default();
+    let ruled = contract::check(
+        &cloud,
+        &ctx,
+        &candidate,
+        &[],
+        &mut cloud_receipts,
+        &[&report],
+    )
+    .await?;
+    assert!(ruled.findings.is_empty());
+    assert!(cloud.max_in_flight.load(Ordering::SeqCst) >= 2);
     Ok(())
 }

@@ -43,21 +43,6 @@ impl Container {
         Ok(Box::new(service))
     }
 
-    /// The embedder a passage index builds and searches with: none while no
-    /// embedding model is active, else the shared one, loaded on first use.
-    pub(crate) async fn passage_embedder(&self) -> Option<Arc<dyn EmbeddingPort>> {
-        self.search.embedding_identity()?;
-        self.get_or_load_embedding()
-            .await
-            .map_err(|error| tracing::warn!(%error, "A passage index has no embedder"))
-            .ok()
-    }
-
-    /// The identity the library's index is bound to, read without loading anything.
-    pub(crate) fn passage_embedder_identity(&self) -> Option<String> {
-        self.search.embedding_identity().map(str::to_owned)
-    }
-
     /// The shared embedding runtime and the loader it falls back to, as one
     /// value: what `get_or_load_embedding` uses, for a holder that must not
     /// keep the container itself.
@@ -92,17 +77,20 @@ impl<R: Runtime> AppEmbedders<R> {
 #[async_trait]
 impl<R: Runtime> EmbedderSource for AppEmbedders<R> {
     async fn embedder(&self) -> Option<Arc<dyn EmbeddingPort>> {
-        self.app
-            .try_state::<Container>()?
-            .passage_embedder()
+        let container = self.app.try_state::<Container>()?;
+        // No identity means no active embedding model: nothing to load.
+        container.search.embedding_identity()?;
+        container
+            .get_or_load_embedding()
             .await
+            .map_err(|error| tracing::warn!(%error, "A passage index has no embedder"))
+            .ok()
     }
 
     /// The identity the library's index is bound to, which is the loaded
     /// model's `model_identity`: read without loading anything.
     async fn identity(&self) -> Option<String> {
-        self.app
-            .try_state::<Container>()?
-            .passage_embedder_identity()
+        let container = self.app.try_state::<Container>()?;
+        container.search.embedding_identity()
     }
 }

@@ -120,7 +120,6 @@ regex = { workspace = true }
 lazy-regex = "3"
 rust-stemmers = { workspace = true }
 async-trait = { workspace = true }
-ollama-rs = "0.2"
 tokio-stream = "0.1"
 tokio-util = { workspace = true }
 # fastembed removed: see ORT note above.
@@ -138,7 +137,6 @@ safetensors = "0.4"
 parking_lot = { workspace = true }
 fs4 = "0.8"
 rand = { workspace = true }
-fsrs = "=6.6.2"
 
 # LLM and web ingestion dependencies
 sysinfo = "0.30"
@@ -244,6 +242,6 @@ custom-protocol = ["tauri/custom-protocol"]
 # unavailable.
 learning-labs = ["dep:rquickjs", "lattice-learning/learning-labs"]
 
-test-utils = []   # Testing utilities and mocks
+test-support = []   # Testing utilities and mocks
 desktop-e2e = ["dep:tauri-plugin-wdio-webdriver"] # Explicitly instrumented test bundles only
 bindings-export = [] # Developer-only TypeScript binding generator; never ship it in app bundles

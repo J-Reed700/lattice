@@ -690,12 +690,9 @@ async fn live_corpus_retrieval_and_answer() {
         false,
         crate::features::conversation::chat::SearchFlags {
             force_kb_search: true,
-            force_web_search: false,
-            web_fallback: false,
-            force_wiki_search: false,
-            deep_research_mode: false,
-            force_followup_mode: false,
-            closed_book: false,
+            user_requested_kb: true,
+            strict_sources: true,
+            ..crate::features::conversation::chat::SearchFlags::default()
         },
     )
     .with_kb_context(Some(context))
@@ -1298,4 +1295,34 @@ fn a_correction_shows_the_titles_its_room_holds_and_counts_the_rest() {
         40
     );
     assert!(tight.more_titles_not_shown > 0);
+}
+
+#[test]
+fn unanchored_followup_detection_distinguishes_anaphora_from_standalone_topics() {
+    for followup in [
+        "Is there any way round that?",
+        "Back to the relocation: when does that supplier's master agreement next renew?",
+        "What about contractors?",
+        "Does it cover equipment shipping?",
+        "And how long are records retained?",
+        "Does this agreement allow termination?",
+    ] {
+        assert!(
+            looks_like_unanchored_followup(followup),
+            "expected follow-up: {followup}"
+        );
+    }
+
+    for standalone in [
+        "What is the maximum annual 401(k) employer match?",
+        "Explain the rules that govern contractor expenses in 2024.",
+        "What is our IT disaster recovery SLA?",
+        "Compare the Q3 revenue policy with the Q4 policy.",
+        "What changed in Python 3.12?",
+    ] {
+        assert!(
+            !looks_like_unanchored_followup(standalone),
+            "expected standalone: {standalone}"
+        );
+    }
 }

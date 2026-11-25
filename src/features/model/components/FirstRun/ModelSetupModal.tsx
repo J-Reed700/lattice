@@ -7,7 +7,7 @@
  */
 import { useState } from 'react';
 
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Cpu } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -22,6 +22,7 @@ import {
 import { useApi } from '@/contexts/ApiContext';
 import { ApiKeyForm } from '@/features/model/components/FirstRun/ApiKeyForm';
 import { RecommendationCardBody } from '@/features/model/components/RecommendationCardBody';
+import { DOWNLOADS_QUERY_KEY } from '@/features/model/hooks/useDownloads';
 import { firstRunStatusQueryOptions, useFirstRunDownloads } from '@/features/model/hooks/useFirstRunSetup';
 import { useModelCatalog } from '@/features/model/hooks/useModelCatalog';
 import { useRecommendedChatModels } from '@/features/model/hooks/useRecommendedChatModels';
@@ -58,6 +59,7 @@ export function ModelSetupModal({
   onDismiss,
 }: ModelSetupModalProps) {
   const api = useApi();
+  const queryClient = useQueryClient();
   // Read again on every opening; what was read last stays up meanwhile.
   const statusQuery = useQuery({ ...firstRunStatusQueryOptions(api), enabled: open });
   const status = statusQuery.data ?? null;
@@ -121,6 +123,8 @@ export function ModelSetupModal({
           if (!result.ok) {
             console.error('embedding download failed:', result.error);
             toast.error('Embedding model download failed', { message: result.error });
+          } else {
+            void queryClient.invalidateQueries({ queryKey: DOWNLOADS_QUERY_KEY });
           }
         }),
       );
@@ -132,6 +136,8 @@ export function ModelSetupModal({
           if (!result.ok) {
             console.error('chat download failed:', result.error);
             toast.error('Chat model download failed', { message: result.error });
+          } else {
+            void queryClient.invalidateQueries({ queryKey: DOWNLOADS_QUERY_KEY });
           }
         }),
       );
@@ -160,8 +166,8 @@ export function ModelSetupModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="gap-5 sm:max-w-[520px]">
-        <DialogHeader className="space-y-2">
+      <DialogContent className="flex max-h-[85vh] flex-col gap-5 sm:max-w-[520px]">
+        <DialogHeader className="shrink-0 space-y-2">
           <div className="mb-1 flex h-10 w-10 items-center justify-center rounded-xl bg-accent-muted text-accent">
             <Cpu className="h-5 w-5" strokeWidth={1.6} />
           </div>
@@ -174,7 +180,7 @@ export function ModelSetupModal({
         </DialogHeader>
 
         {useKey ? <ApiKeyForm onBack={() => setUseKey(false)} onDone={handleKeyDone} /> : <>
-        <div className="space-y-3">
+        <div className="-m-1 min-h-0 space-y-3 overflow-y-auto p-1">
           {loading && <p className="text-sm text-text-muted">Checking your hardware…</p>}
 
           {!loading && selected && (
@@ -226,7 +232,7 @@ export function ModelSetupModal({
           )}
         </div>
 
-        <DialogFooter className="flex-col gap-2 sm:flex-row sm:items-center">
+        <DialogFooter className="shrink-0 flex-col gap-2 sm:flex-row sm:items-center">
           {/* Skipping never depends on the status, so a re-read never blocks
               it; only Install waits for the fresh recommendation. */}
           <Button variant="ghost" onClick={handleSkip} className="sm:mr-auto">

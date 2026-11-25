@@ -250,27 +250,33 @@ test("Learning Studio citations trace saved evidence and support clean reading a
   await expect(evidence.getByText(/Saved version/)).toBeVisible();
   // The original page opens in the in-app source reader at the saved passage, not in an external browser.
   await evidence.getByRole("button", { name: "Open original page" }).click();
-  const reader = page.getByRole("dialog", { name: "Public field notes" });
+  const reader = page.getByRole("complementary", { name: "Source reader" });
   await expect(reader.locator("mark.source-reader-passage")).toHaveText(excerptSentinel);
   await page.keyboard.press("Escape");
-  await expect(reader).toHaveCount(0);
+  await expect(reader).toBeHidden();
   await page.screenshot({ path: `e2e-results/learning-reference-mvp-${browserName}.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(evidence.getByText(/14 statements verified against sources/)).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
   const section = page.locator('#lesson-lesson-observation-section-0');
-  await section.locator('summary').filter({ hasText: 'Evidence · 1 checked statement' }).click();
-  await expect(section.getByText('A careful comparison records the chosen measure and observation period.')).toBeVisible();
-  await section.locator('summary').filter({ hasText: 'Public field notes' }).click();
-  await expect(section.getByText(excerptSentinel, { exact: true })).toBeVisible();
-  expect(await section.getByText(excerptSentinel, { exact: true }).evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+  const chip = section.getByRole('button', { name: 'Citation 1', exact: true });
+  await expect(section.getByRole('button', { name: 'Citation 1: Public field notes' })).toBeVisible();
+  await chip.click();
+  const narrowReader = page.getByRole('dialog', { name: 'Public field notes' });
+  await expect(narrowReader.locator('mark.source-reader-passage')).toHaveText(excerptSentinel);
+  await expect(chip).toHaveClass(/is-lit/);
   await page.screenshot({ path: `e2e-results/learning-citations-narrow-${browserName}.png`, fullPage: true });
+  await page.keyboard.press('Escape');
+  await expect(narrowReader).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
   await page.getByRole('button', { name: 'Hide citations', exact: true }).click();
   await expect(page.getByRole('region', { name: 'Lesson evidence' })).toHaveCount(0);
-  await expect(section.locator('summary')).toHaveCount(0);
-  await expect(section.getByText('A comparison begins by naming the measure and the period under observation.')).toBeVisible();
+  await expect(chip).toHaveCount(0);
+  await expect(section.locator('.citation-hidden')).toHaveCount(1);
+  await expect(section.getByText('Sources', { exact: true })).toHaveCount(0);
+  await expect(section).toContainText('A comparison begins by naming the measure and the period under observation.');
   await expect(page.getByText('View citation', { exact: true })).toHaveCount(0);
   await page.screenshot({ path: `e2e-results/learning-clean-reading-narrow-${browserName}.png`, fullPage: true });
 
@@ -1103,7 +1109,9 @@ async function runCanvasJourney(
     ).__LATTICE_LEARNING_STATE__;
     return state.canvasWorkspace.canvases[0];
   });
-  expect(history.revision).toBe(firstCanvas.revision + 3);
+  // One revision for the title/description edit, one for restoring the
+  // checkpoint (reopening no longer triggers a spurious viewport-only save).
+  expect(history.revision).toBe(firstCanvas.revision + 2);
   expect(history.snapshots).toHaveLength(2);
   expect(
     history.snapshots.find(
@@ -1227,8 +1235,9 @@ async function runSourceLibraryJourney(
   await initialMatch.click();
   await expect(
     panel
-      .getByRole("article")
-      .getByText("ACTIVE_SOURCE_SENTINEL", { exact: false }),
+      .getByRole("region", { name: "Saved source" })
+      .getByText("ACTIVE_SOURCE_SENTINEL", { exact: false })
+      .first(),
   ).toBeVisible();
   await search.fill("");
 
@@ -1594,8 +1603,9 @@ async function runSourceLibraryJourney(
   await updatedMatch.click();
   await expect(
     panel
-      .getByRole("article")
-      .getByText("UPDATED_SOURCE_SENTINEL", { exact: false }),
+      .getByRole("region", { name: "Saved source" })
+      .getByText("UPDATED_SOURCE_SENTINEL", { exact: false })
+      .first(),
   ).toBeVisible();
 
   // Pending is durable across a page reload and does not silently replace the
@@ -1637,14 +1647,16 @@ async function runSourceLibraryJourney(
   await reopened.getByRole("button", { name: "Review update" }).click();
   await expect(
     reopened
-      .getByRole("article")
-      .getByText("UPDATED_SOURCE_SENTINEL", { exact: false }),
+      .getByRole("region", { name: "Saved source" })
+      .getByText("UPDATED_SOURCE_SENTINEL", { exact: false })
+      .first(),
   ).toBeVisible();
   await reopened.getByRole("button", { name: "Adopt this version" }).click();
   await expect(
     reopened
-      .getByRole("article")
-      .getByText("UPDATED_SOURCE_SENTINEL", { exact: false }),
+      .getByRole("region", { name: "Saved source" })
+      .getByText("UPDATED_SOURCE_SENTINEL", { exact: false })
+      .first(),
   ).toBeVisible();
   const adoptedState = await page.evaluate((sourceId) => {
     const state = (
@@ -1768,8 +1780,9 @@ async function runSourceLibraryJourney(
     .selectOption(oldVersionId!);
   await expect(
     afterPolicyReload
-      .getByRole("article")
-      .getByText("ADDED_SOURCE_SENTINEL", { exact: false }),
+      .getByRole("region", { name: "Saved source" })
+      .getByText("ADDED_SOURCE_SENTINEL", { exact: false })
+      .first(),
   ).toBeVisible();
 
   const otherProgramSources = await page.evaluate(async () => {
@@ -2043,8 +2056,9 @@ async function runPracticeWorkbenchJourney(
   await sourcesPanel.getByRole("button", { name: "Review update" }).click();
   await expect(
     sourcesPanel
-      .getByRole("article")
-      .getByText("UPDATED_SOURCE_SENTINEL", { exact: false }),
+      .getByRole("region", { name: "Saved source" })
+      .getByText("UPDATED_SOURCE_SENTINEL", { exact: false })
+      .first(),
   ).toBeVisible();
   await sourcesPanel.getByRole("button", { name: "Adopt this version" }).click();
   await expect
@@ -2149,8 +2163,16 @@ async function runPracticeWorkbenchJourney(
   await expect(exploreRadio).toHaveAttribute("aria-pressed", "true");
   const frozenSource = workbench.getByRole("button", { name: /Public field notes.*Version 1/ });
   await frozenSource.click();
-  await expect(workbench.getByText("Immutable source version", { exact: true })).toBeVisible();
-  await expect(workbench.getByRole("region", { name: "Public field notes" }).getByText("ACTIVE_SOURCE_SENTINEL", { exact: false })).toBeVisible();
+  // The reader docks beside the workbench when there is room; in a narrow row it is a dialog.
+  const sourceReader = page
+    .getByRole("complementary", { name: "Source reader" })
+    .or(page.getByRole("dialog", { name: "Public field notes" }));
+  await expect(sourceReader.getByRole("heading", { level: 2, name: "Public field notes" })).toBeVisible();
+  await expect(sourceReader.getByText("ACTIVE_SOURCE_SENTINEL", { exact: false })).toBeVisible();
+  // A saved source reads from its saved text only: there is no live page to switch to.
+  await expect(sourceReader.getByRole("button", { name: "Page", exact: true })).toHaveCount(0);
+  await sourceReader.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(sourceReader).toHaveCount(0);
 
   const hintLevels = [
     ["Orienting question", "orienting_question"],
@@ -2176,15 +2198,19 @@ async function runPracticeWorkbenchJourney(
       )
       .toBe(index + 1);
   }
-  const citationButton = workbench.getByRole("button", {
-    name: /Saved source quote · exact version/,
-  }).first();
-  await expect(citationButton).toBeVisible();
-  await citationButton.click();
-  const sourceReader = workbench.getByRole("region", { name: "Public field notes" });
-  await expect(sourceReader.getByText("Immutable source version", { exact: true })).toBeVisible();
-  await expect(sourceReader.getByText("Version 1 · saved", { exact: false })).toBeVisible();
-  await expect(sourceReader.getByText("Record the same measure across the observation period.", { exact: false })).toBeVisible();
+  const citationChip = workbench
+    .getByRole("list", { name: "Saved sources cited" })
+    .first()
+    .getByRole("button", { name: /^Citation 1: Public field notes/ });
+  await expect(citationChip).toBeVisible();
+  await citationChip.click();
+  await page.getByRole("button", { name: "View source" }).click();
+  await expect(sourceReader.getByRole("heading", { level: 2, name: "Public field notes" })).toBeVisible();
+  await expect(sourceReader.getByText("Record the same measure across the observation period.", { exact: false }).first()).toBeVisible();
+  await expect(sourceReader.locator("mark.source-reader-passage").first()).toContainText("Record the same measure across the observation period.");
+  await expect(sourceReader.getByRole("button", { name: "Page", exact: true })).toHaveCount(0);
+  await sourceReader.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(sourceReader).toHaveCount(0);
 
   const tutorPrompt = workbench.getByRole("region", { name: "Tutor conversation" }).getByRole("textbox");
   await tutorPrompt.fill("How should I state a limit on the sample?");
@@ -2286,9 +2312,20 @@ async function runPracticeWorkbenchJourney(
   await expect(reopenedWorkbench.getByRole("textbox", { name: "Your response" })).toHaveValue(submittedText);
   await expect(reopenedWorkbench.getByRole("region", { name: "Saved versions for this attempt" }).getByText("ACTIVE_SOURCE_SENTINEL", { exact: false })).toBeVisible();
   await expect(reopenedWorkbench.getByText("source-version-field-notes-1", { exact: false })).toHaveCount(0);
-  const savedSourceCitation = reopenedWorkbench.getByRole("button", { name: /Saved source quote · exact version/ }).first();
+  const savedSourceCitation = reopenedWorkbench
+    .getByRole("list", { name: "Saved sources cited" })
+    .first()
+    .getByRole("button", { name: /^Citation 1: Public field notes/ });
   await savedSourceCitation.click();
-  await expect(reopenedWorkbench.getByRole("region", { name: "Public field notes" }).getByText("Immutable source version", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "View source" }).click();
+  const reopenedReader = page
+    .getByRole("complementary", { name: "Source reader" })
+    .or(page.getByRole("dialog", { name: "Public field notes" }));
+  await expect(reopenedReader.getByRole("heading", { level: 2, name: "Public field notes" })).toBeVisible();
+  await expect(reopenedReader.locator("mark.source-reader-passage").first()).toBeVisible();
+  await expect(reopenedReader.getByRole("button", { name: "Page", exact: true })).toHaveCount(0);
+  await reopenedReader.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(reopenedReader).toHaveCount(0);
   const postSubmitCalls = await page.evaluate((sessionId) => {
     const state = (
       window as unknown as {

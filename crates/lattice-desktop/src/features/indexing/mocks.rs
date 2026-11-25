@@ -188,36 +188,6 @@ impl IndexStorageTrait for MockIndexStorage {
         Ok(())
     }
 
-    async fn store_file_metadata_only(
-        &self,
-        path: &Path,
-        file_id: &str,
-        mime_type: &str,
-    ) -> crate::features::indexing::engine::error::Result<String> {
-        let path_str = path.to_string_lossy().to_string();
-
-        let record = crate::features::indexing::engine::storage::DocumentRecord {
-            id: file_id.to_string(),
-            file_path: path_str.clone(),
-            file_name: path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string(),
-            file_type: None,
-            mime_type: mime_type.to_string(),
-            size_bytes: 0,
-            checksum: "mock_checksum".to_string(),
-            status: "pending".to_string(),
-            path: path_str.clone(),
-            indexed_at: chrono::Utc::now().to_rfc3339(),
-        };
-
-        self.documents.write().unwrap().insert(path_str, record);
-
-        Ok(file_id.to_string())
-    }
-
     async fn get_indexed_count(&self) -> crate::features::indexing::engine::error::Result<i64> {
         Ok(*self.indexed_count.read().unwrap())
     }

@@ -11,15 +11,9 @@ const A: &str = "6f1c0d1e-3b5a-4c52-9d0b-0a1b2c3d4e5f";
 const B: &str = "b7e2f4a9-8c61-4d3e-a5f0-9e8d7c6b5a40";
 
 async fn migrated_pool() -> SqlitePool {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .idle_timeout(None)
-        .max_lifetime(None)
-        .connect("sqlite::memory:")
+    lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
-        .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    pool
+        .unwrap()
 }
 
 fn files_in(home: &Path) -> LibraryFiles {
@@ -353,4 +347,54 @@ async fn any_error_means_no_and_leaves_both_sides_as_they_were() {
         "a database without the table"
     );
     assert_eq!(filed(home.path()), None);
+}
+
+#[tokio::test]
+async fn pending_owner_file_recovers_from_crash_between_commit_and_rename() {
+    let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
+    let home = TempDir::new().unwrap();
+    put_file(&home.path().join("files"));
+    record(&pool, A).await;
+    std::fs::write(home.path().join("owner.pending"), format!("{A}\n")).unwrap();
+
+    assert!(
+        may_sweep(&db, &files_in(home.path())).await,
+        "a committed owner row with matching owner.pending completes the rename"
+    );
+    assert_eq!(filed(home.path()).as_deref(), Some(A));
+    assert!(!home.path().join("owner.pending").exists());
+}
+
+#[tokio::test]
+async fn restored_database_adopts_host_owner_when_restore_marker_is_present() {
+    let pool = migrated_pool().await;
+    let db = Database::new(pool.clone());
+    let home = TempDir::new().unwrap();
+    put_file(&home.path().join("files"));
+    std::fs::write(home.path().join("owner"), format!("{A}\n")).unwrap();
+    std::fs::write(home.path().join("owner.restore"), "restored").unwrap();
+
+    assert!(
+        may_sweep(&db, &files_in(home.path())).await,
+        "a restored database with owner.restore adopts the host owner id"
+    );
+    assert_eq!(recorded(&pool).await.as_deref(), Some(A));
+    assert_eq!(filed(home.path()).as_deref(), Some(A));
+    assert!(!home.path().join("owner.restore").exists());
+}
+
+#[tokio::test]
+async fn promote_pending_owner_file_never_overwrites_existing_owner_file() {
+    let home = TempDir::new().unwrap();
+    let owner = home.path().join("owner");
+    let pending = home.path().join("owner.pending");
+    std::fs::write(&owner, format!("{B}\n")).unwrap();
+    std::fs::write(&pending, format!("{A}\n")).unwrap();
+
+    assert!(promote_pending_owner_file(&pending, &owner, A)
+        .await
+        .is_err());
+    assert_eq!(filed(home.path()).as_deref(), Some(B));
+    assert!(!pending.exists());
 }

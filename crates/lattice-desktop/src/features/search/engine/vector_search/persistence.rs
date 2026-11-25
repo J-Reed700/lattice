@@ -267,6 +267,7 @@ pub struct IndexPersistence {
     dimension: usize,
     index_path: PathBuf,
     flush_lock: tokio::sync::Mutex<()>,
+    stop: tokio_util::sync::CancellationToken,
 }
 
 impl IndexPersistence {
@@ -286,7 +287,14 @@ impl IndexPersistence {
             dimension,
             index_path,
             flush_lock: tokio::sync::Mutex::new(()),
+            stop: tokio_util::sync::CancellationToken::new(),
         }
+    }
+
+    /// Signals the background flush loop to stop without waiting for the next
+    /// tick (for example when [`RuntimeVectorIndex`] hot-rebinds to a new model).
+    pub fn stop(&self) {
+        self.stop.cancel();
     }
 
     /// Write the index and the manifest that vouches for it. Does nothing when
@@ -351,6 +359,7 @@ impl IndexPersistence {
             tokio::select! {
                 biased;
                 _ = cancel.cancelled() => break,
+                _ = self.stop.cancelled() => break,
                 _ = tokio::time::sleep(FLUSH_TICK) => {}
             }
             // A scope that is never closed, as in standalone containers, must

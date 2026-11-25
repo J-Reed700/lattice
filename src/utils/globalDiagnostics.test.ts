@@ -2,12 +2,18 @@ import { afterEach, expect, it, vi } from 'vitest';
 
 import { SANITIZED_MESSAGE, SENSITIVE_MESSAGE } from './__tests__/sensitiveMessage';
 import { diagnostics } from './diagnostics';
-import { installGlobalDiagnostics } from './globalDiagnostics';
+import { BOOT_FAILURE_STORAGE_KEY, installGlobalDiagnostics } from './globalDiagnostics';
 import { toast } from '../stores/toastStore';
 
 vi.mock('../stores/toastStore', () => ({ toast: { error: vi.fn() } }));
 let dispose = () => {};
-afterEach(() => { dispose(); diagnostics.clear(); vi.clearAllMocks(); vi.restoreAllMocks(); });
+afterEach(() => {
+  dispose();
+  diagnostics.clear();
+  sessionStorage.clear();
+  vi.clearAllMocks();
+  vi.restoreAllMocks();
+});
 it('captures uncaught exceptions and rejections with accurate messages and throttled notices', () => {
   diagnostics.clear();
   dispose = installGlobalDiagnostics();
@@ -74,4 +80,26 @@ it('treats a thrown error as an error even when its text is the resize-loop noti
   window.dispatchEvent(new ErrorEvent('error', { error: new Error('ResizeObserver loop completed with undelivered notifications.') }));
   expect(toast.error).toHaveBeenCalledTimes(1);
   expect(diagnostics.getSnapshot()[0].level).toBe('error');
+});
+it('consumes and records persisted pre-mount boot recovery telemetry without showing an error toast', () => {
+  diagnostics.clear();
+  sessionStorage.setItem(
+    BOOT_FAILURE_STORAGE_KEY,
+    JSON.stringify({
+      kind: 'resource-error',
+      detail: 'Failed to load application script: http://localhost:5173/src/main.tsx',
+      url: 'http://localhost:5173/',
+      occurredAt: '2026-11-19T08:00:00.000Z',
+    }),
+  );
+  dispose = installGlobalDiagnostics();
+
+  expect(sessionStorage.getItem(BOOT_FAILURE_STORAGE_KEY)).toBeNull();
+  expect(toast.error).not.toHaveBeenCalled();
+  const entries = diagnostics.getSnapshot();
+  expect(entries).toHaveLength(1);
+  expect(entries[0]?.level).toBe('warn');
+  expect(entries[0]?.source).toBe('Boot Supervisor');
+  expect(entries[0]?.message).toContain('/src/main.tsx');
+  expect(entries[0]?.details).toContain('resource-error');
 });

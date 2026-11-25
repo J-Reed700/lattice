@@ -54,14 +54,9 @@ async fn fixture() -> Fixture {
 
 /// The snapshot kind's handler is registered unless the test does it itself.
 async fn fixture_with(register: bool) -> Fixture {
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .idle_timeout(None)
-        .max_lifetime(None)
-        .connect(":memory:")
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     sqlx::query(
         "INSERT INTO conversations (id, title, space_id, created_at, updated_at) \
          VALUES (?, 'Snap', 'space_general', '2026-10-13T00:00:00Z', '2026-10-13T00:00:00Z')",
@@ -740,4 +735,17 @@ async fn find_for_viewer_matches_requested_and_final_url() {
         .unwrap()
         .unwrap();
     assert_eq!(found_by_final.id, ready.id);
+}
+
+#[tokio::test]
+async fn standalone_capture_without_conversation_uses_library_bucket_not_most_recent_chat() {
+    let f = fixture().await;
+
+    let row = f.service.ensure_capture("", URL, false).await.unwrap();
+    assert_eq!(
+        row.conversation_id,
+        repository::LIBRARY_CONVERSATION,
+        "standalone /search or /references captures must never attach to an unrelated chat"
+    );
+    assert_ne!(row.conversation_id, CONVERSATION);
 }

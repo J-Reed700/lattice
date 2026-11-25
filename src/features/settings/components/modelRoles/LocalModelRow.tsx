@@ -31,19 +31,19 @@ import { LocalModelConfigModal } from './LocalModelConfigModal';
 import { LocalVisionControl } from './LocalVisionControl';
 import { useModelRoles } from './ModelRolesContext';
 import { ActiveRoleBadge } from './RoleButton';
-import { canModelFulfillRole, isChatModelSelected, isLearningModel, isUtilityModel, ROLES } from './roleConfig';
+import { canModelFulfillRole, isLearningModel, isUtilityModel, roleDescriptor, ROLES } from './roleConfig';
 
 interface Props {
   model: DownloadedModel;
 }
 
 export function LocalModelRow({ model }: Props) {
-  const { refresh, chatProvider, llmSettings } = useModelRoles();
-  const chatActive = isChatModelSelected(model, chatProvider);
+  const { refresh, llmSettings, activeModels } = useModelRoles();
+  const chatActive = roleDescriptor('chat').isActive(model, llmSettings, activeModels);
   const utilityActive = isUtilityModel(model, llmSettings);
   const learningActive = isLearningModel(model, llmSettings);
   const roles = ROLES.filter((role) => canModelFulfillRole(model, role));
-  const activeRoles = roles.filter((role) => role.isActive(model, llmSettings));
+  const activeRoles = roles.filter((role) => role.isActive(model, llmSettings, activeModels));
   const { deleteDownloadedModel, warmUpActiveChatModel, warmUpActiveUtilityModel, warmUpLearningModel } =
     useDownloadedModels();
   const loadedModels = useLoadedModels();
@@ -55,7 +55,6 @@ export function LocalModelRow({ model }: Props) {
   const chatWarmup = useModelWarmupStore((state) => state.chat);
   const utilityWarmup = useModelWarmupStore((state) => state.utility);
   const learningWarmup = useModelWarmupStore((state) => state.learning);
-  const setRolePhase = useModelWarmupStore((state) => state.setRolePhase);
   const claimRole = useModelWarmupStore((state) => state.claimRole);
 
   // Stamp this model onto the roles it holds, which drops state left by
@@ -108,15 +107,12 @@ export function LocalModelRow({ model }: Props) {
         return;
       }
       for (const target of targets) {
-        setRolePhase(target.role, 'started', null, model.id);
         try {
           await target.call();
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          setRolePhase(target.role, 'failed', message, model.id);
           throw new Error(`${target.role}: ${message}`);
         }
-        setRolePhase(target.role, 'ready', null, model.id);
       }
       const roleSummary = targets.map((t) => t.role).join(' + ');
       toast.success(`${model.model_name} warmed up (${roleSummary})`, {

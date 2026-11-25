@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 
+import { useRestoreLockoutStore } from '@/features/backup/restoreLockoutStore';
 import { usePaletteCommandsStore } from '@/features/palette/stores/paletteCommandsStore';
 import { useToastStore } from '@/stores/toastStore';
 import type {
@@ -17,6 +18,7 @@ import type { IndexingSnapshot } from '@/types/api/indexing';
 
 
 import { BackupSection } from './BackupSection';
+import { chooseRadixOption } from './radixSelectTestUtils';
 
 const {
   mockListBackups,
@@ -218,6 +220,7 @@ async function openWizardToConfirmStep(user: ReturnType<typeof userEvent.setup>)
 describe('BackupSection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useRestoreLockoutStore.getState().resetRestoreLockout();
     mockListBackups.mockResolvedValue({ ok: true, data: [] });
     mockCreateBackup.mockResolvedValue({
       ok: true,
@@ -324,6 +327,30 @@ describe('BackupSection', () => {
       await screen.findByText('Quit Lattice and open it again to use the restored library.'),
     ).toBeInTheDocument();
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('persists the restored lockout across unmount/remount so backup/restore controls remain locked', async () => {
+    const user = userEvent.setup();
+    mockListBackups.mockResolvedValue({ ok: true, data: [backup()] });
+    const first = renderSection();
+
+    await user.click(await screen.findByRole('button', { name: 'Restore…' }));
+    await user.type(screen.getByPlaceholderText('restore'), 'restore');
+    await user.click(screen.getByRole('button', { name: 'Restore' }));
+    expect(
+      await screen.findByText('Quit Lattice and open it again to use the restored library.'),
+    ).toBeInTheDocument();
+
+    first.unmount();
+    renderSection();
+
+    expect(
+      await screen.findByText('Quit Lattice and open it again to use the restored library.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Back up now' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Restore…' })).not.toBeInTheDocument();
+    expect(usePaletteCommandsStore.getState().commands.get('vault.backup')?.enabled).toBe(false);
+    expect(usePaletteCommandsStore.getState().commands.get('vault.archive.restore')?.enabled).toBe(false);
   });
 
   it('disables Restore while a run is indexing', async () => {
@@ -578,7 +605,7 @@ describe('BackupSection', () => {
       renderSection();
       await user.click(await screen.findByRole('button', { name: 'Change' }));
       await waitFor(() => expect(toastTitles()).toContain("Couldn't change the folder"));
-      await user.selectOptions(screen.getByLabelText('Archives to keep'), '10');
+      await chooseRadixOption(screen.getByLabelText('Archives to keep'), '10', user);
       await waitFor(() => expect(mockSetArchiveKeepCount).toHaveBeenCalledWith(10));
       await waitFor(() => expect(toastTitles()).toContain("Couldn't change how many to keep"));
     });

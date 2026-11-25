@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 
@@ -43,7 +44,9 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date(2026, 9, 24, 9, 5));
   client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  mocks.store.activeConversationId = null;
+  conversationUiStore.setState({ activeConversationId: 'chat-main-1' });
+  mocks.store.activeConversationId = 'chat-main-1';
+  mocks.store.deleteConversation.mockResolvedValue(true);
   mocks.api.explorerFoldersList.mockResolvedValue(folders());
   mocks.api.explorerFolderSetLastThread.mockResolvedValue({ ok: true, data: null });
   mocks.api.setConversationExplorerRoot.mockResolvedValue({ ok: true, data: null });
@@ -52,10 +55,11 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe('useExplorerThread', () => {
-  it('starts a dated thread in General for a folder with none, binds it and shows it at once', async () => {
+  it('starts a dated thread in General for a folder with none, binds it and shows it without clobbering /chat', async () => {
     mocks.api.listConversationsExplorer.mockResolvedValueOnce(list(thread('elsewhere', '2026-10-01T00:00:00Z', '/other')));
     mocks.api.listConversationsExplorer.mockResolvedValue(list(thread('fresh', '2026-10-24T09:05:00Z')));
     mocks.store.createConversation.mockImplementation(async (title: string) => {
+      conversationUiStore.setState({ activeConversationId: 'fresh' });
       client.setQueryData(conversationKeys.detail('fresh'), { id: 'fresh', title, updatedAt: '2026-10-24T09:05:00Z', explorerRoot: null });
       return 'fresh';
     });
@@ -70,7 +74,9 @@ describe('useExplorerThread', () => {
     await waitFor(() => expect(result.current.threads.map((t) => t.id)).toEqual(['fresh']));
     expect(client.getQueryData<{ explorerRoot: string }>(conversationKeys.detail('fresh'))?.explorerRoot).toBe(ROOT);
     await waitFor(() => expect(mocks.api.explorerFolderSetLastThread).toHaveBeenCalledWith(ROOT, 'fresh'));
-    await waitFor(() => expect(mocks.store.selectConversation).toHaveBeenCalledWith('fresh'));
+    await waitFor(() => expect(result.current.activeId).toBe('fresh'));
+    expect(mocks.store.selectConversation).not.toHaveBeenCalled();
+    expect(conversationUiStore.getState().activeConversationId).toBe('chat-main-1');
   });
 
   it('reports a thread it could not bind, stops preparing, and retries on request', async () => {
@@ -105,15 +111,18 @@ describe('useExplorerThread', () => {
 
   it('selects a thread and remembers it for the folder', async () => {
     mocks.api.listConversationsExplorer.mockResolvedValue(list(thread('a', '2026-10-01T00:00:00Z'), thread('b', '2026-10-02T00:00:00Z')));
-    mocks.store.activeConversationId = 'b';
     mocks.api.explorerFoldersList.mockResolvedValue(folders('b'));
     const { result } = renderHook(() => useExplorerThread(ROOT, 'herbarium'), { wrapper });
     await waitFor(() => expect(result.current.activeId).toBe('b'));
     expect(result.current.preparing).toBe(false);
     act(() => result.current.select('a'));
-    expect(mocks.store.selectConversation).toHaveBeenCalledWith('a');
+    expect(result.current.activeId).toBe('a');
+    expect(mocks.store.selectConversation).not.toHaveBeenCalled();
     await waitFor(() => expect(mocks.api.explorerFolderSetLastThread).toHaveBeenCalledWith(ROOT, 'a'));
-    expect(result.current.remove).toBe(mocks.store.deleteConversation);
+    await act(async () => {
+      await result.current.remove('a');
+    });
+    expect(mocks.store.deleteConversation).toHaveBeenCalledWith('a');
   });
 
   it('writes the remembered thread again after a failed save', async () => {

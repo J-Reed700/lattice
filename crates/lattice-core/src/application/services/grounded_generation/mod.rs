@@ -10,7 +10,7 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use crate::application::ports::llm_port::{
-    CompletionInput, InferencePriority, SamplingOverride, TEMPLATE_TOKENS_FOR_ANSWER,
+    CompletionInput, InferencePriority, SamplingOverride, ThinkingMode, TEMPLATE_TOKENS_FOR_ANSWER,
     TEMPLATE_TOKENS_PER_MESSAGE,
 };
 use crate::application::ports::LLMPort;
@@ -113,11 +113,16 @@ pub struct CallOptions {
     pub cancel: Option<CancellationToken>,
     pub cache_key: Option<String>,
     pub sampling: Option<SamplingOverride>,
+    /// Fallback sampling applied when the resolved backend runs with thinking
+    /// off (e.g., `ThinkingOverride::Off`, `AlwaysOff`, or a non-reasoning model),
+    /// while leaving thinking models on their own sampling profile.
+    pub non_thinking_sampling: Option<SamplingOverride>,
     pub time_budget: Option<Duration>,
     /// No elapsed-time limit, for cancellable work a slow model must not
     /// fail. Stall detection and retry limits still apply.
     pub no_time_limit: bool,
     pub reasoning_effort: Option<String>,
+    pub thinking: ThinkingMode,
 }
 
 /// Where answer text goes while the model writes it.
@@ -189,6 +194,14 @@ pub fn evidence_room(
     Ok(plan(llm, request)?.budget.total())
 }
 
+/// The output room the planner gives a request, after its cap at half the window.
+pub fn output_room(
+    llm: &dyn LLMPort,
+    request: &GroundedRequest,
+) -> Result<usize, GroundedGenerationError> {
+    Ok(plan(llm, request)?.allocation.output_reserved)
+}
+
 /// Passage tokens the chunker aims for (the embedding input policy's
 /// retrieval target). Used only when the library's passages cannot be
 /// measured, to size how deep a search reads.
@@ -253,7 +266,8 @@ fn plan(llm: &dyn LLMPort, request: &GroundedRequest) -> Result<Planned, Grounde
         .map(|item| message_tokens(llm, &item.role, &item.content))
         .sum();
     let mut capacity = ModelCapacity::new(llm.model_name(), llm.max_context_tokens())
-        .with_accounting(TokenAccounting::Estimated);
+        .with_accounting(TokenAccounting::Estimated)
+        .with_output_scale(request.output_scale());
     if request.output_tokens() > 0 {
         capacity = capacity.with_output_limit(request.output_tokens());
     }
@@ -615,12 +629,15 @@ async fn run(
     let input = assemble(&request, &carried);
 
     // Room the input leaves unused goes to the answer only when asked: the
-    // margin stays reserved either way.
+    // margin stays reserved either way, and any headroom kept for a follow-up
+    // step (such as the structured answer carrying a prose draft) stays free.
     let output_tokens = if request.output_fills_window() {
-        allocation.output_reserved
+        (allocation.output_reserved
             + allocation
                 .input_budget
-                .saturating_sub(accounting.total_input)
+                .saturating_sub(accounting.total_input))
+        .saturating_sub(request.output_headroom())
+        .max(allocation.output_reserved)
     } else {
         allocation.output_reserved
     };

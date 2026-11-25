@@ -168,7 +168,7 @@ impl EmbeddingPort for MockSplittingEmbedder {
         Ok(texts.iter().map(|_| vec![0.1, 0.2, 0.3]).collect())
     }
 
-    fn split_text(
+    async fn split_text(
         &self,
         text: &str,
         _prefix: &str,
@@ -339,13 +339,9 @@ impl lattice_core::application::ports::RepositoryPort<Document> for MockDocument
 }
 
 async fn test_pool() -> SqlitePool {
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
+    lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
-        .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-    pool
+        .unwrap()
 }
 
 async fn count(pool: &SqlitePool, table: &str) -> i64 {
@@ -745,7 +741,7 @@ async fn prepare_for_indexing_preserves_tokenizer_counts_code_flags_and_avoids_f
             Ok(texts.iter().map(|_| vec![0.1, 0.2, 0.3]).collect())
         }
 
-        fn split_text(
+        async fn split_text(
             &self,
             passage: &str,
             _prefix: &str,

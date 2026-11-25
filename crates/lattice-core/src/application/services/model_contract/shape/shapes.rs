@@ -5,7 +5,7 @@
 use serde_json::{json, Map, Value};
 
 use super::super::edit::{Consistent, Content};
-use super::super::shown::{Kind, Picked, Showing};
+use super::super::shown::{Kind, Name, Picked, Showing};
 use super::document::{self, Document};
 use super::fields::trace;
 use super::form::{Among, Field, Form};
@@ -140,6 +140,54 @@ fn handles_schema(prefix: &str, showing: &Showing<'_>, pointers: Held) -> Value 
     array(point_schema(prefix, Among::Shown, &[], showing, pointers))
 }
 
+fn shown_written(prefix: &str, among: Among, showing: &Showing<'_>) -> Vec<String> {
+    match among {
+        Among::Shown => showing.written(prefix),
+        Among::Own => showing.written_under(prefix),
+    }
+}
+
+/// Whether `field` can be satisfied under `showing`: a required pointer with no
+/// `"none"` fallback cannot be satisfied when nothing of its kind is shown.
+fn field_satisfiable(field: &Field, showing: &Showing<'_>) -> bool {
+    match field {
+        Field::Point {
+            prefix,
+            among,
+            none: false,
+        }
+        | Field::Cite {
+            prefix,
+            among,
+            some: true,
+        } => !shown_written(prefix, *among, showing).is_empty(),
+        Field::Word(list) => !list.is_empty(),
+        Field::Group(form) => form_satisfiable(form, showing),
+        Field::List {
+            form,
+            count: Some(count),
+        } => showing
+            .asked(count)
+            .is_none_or(|(least, _)| least == 0 || form_satisfiable(form, showing)),
+        Field::OneOf(forms) => forms
+            .iter()
+            .any(|(_, form)| form_satisfiable(form, showing)),
+        _ => true,
+    }
+}
+
+fn form_satisfiable(form: &Form, showing: &Showing<'_>) -> bool {
+    form.fields
+        .iter()
+        .all(|(_, field)| field_satisfiable(field, showing))
+}
+
+fn branch_object(tag: &str, form: &Form, showing: &Showing<'_>, pointers: Held) -> Value {
+    let mut properties = vec![("kind".to_owned(), words(&[tag]))];
+    properties.extend(form_properties(form, showing, pointers));
+    closed(properties)
+}
+
 /// A pointer: the `enum` of the handles it may hold and the extra words, or a
 /// plain string where nothing is shown to enumerate or the backend takes none.
 fn point_schema(
@@ -149,10 +197,7 @@ fn point_schema(
     showing: &Showing<'_>,
     pointers: Held,
 ) -> Value {
-    let shown = match among {
-        Among::Shown => showing.written(prefix),
-        Among::Own => showing.written_under(prefix),
-    };
+    let shown = shown_written(prefix, among, showing);
     if pointers == Held::Plain {
         let words = extra.join(" or ");
         let description = match (shown.first(), words.is_empty()) {
@@ -173,6 +218,14 @@ fn point_schema(
         return json!({ "type": "string" });
     }
     json!({ "type": "string", "enum": members })
+}
+
+fn array_or_empty(items: Value, allowed: bool, pointers: Held) -> Value {
+    if !allowed && pointers == Held::Counts {
+        json!({ "type": "array", "items": items, "maxItems": 0 })
+    } else {
+        array(items)
+    }
 }
 
 fn field_schema(field: &Field, showing: &Showing<'_>, pointers: Held) -> Value {
@@ -198,7 +251,9 @@ fn field_schema(field: &Field, showing: &Showing<'_>, pointers: Held) -> Value {
                 Among::Own => showing.written_under(prefix),
             };
             let items = point_schema(prefix, *among, &[], showing, pointers);
-            if *some && !shown.is_empty() {
+            if shown.is_empty() && !*some && pointers == Held::Counts {
+                json!({ "type": "array", "items": items, "maxItems": 0 })
+            } else if *some && !shown.is_empty() {
                 json!({ "type": "array", "items": items, "minItems": 1 })
             } else {
                 array(items)
@@ -207,10 +262,10 @@ fn field_schema(field: &Field, showing: &Showing<'_>, pointers: Held) -> Value {
         Field::Order { prefix } => handles_schema(prefix, showing, pointers),
         Field::Group(form) => form_object(form, showing, pointers),
         Field::List { form, count } => {
-            let list = array(form_object(form, showing, pointers));
+            let item_schema = form_object(form, showing, pointers);
             match count {
-                Some(count) => asked_length(list, count, showing, pointers),
-                None => list,
+                Some(count) => asked_length(array(item_schema), count, showing, pointers),
+                None => array_or_empty(item_schema, form_satisfiable(form, showing), pointers),
             }
         }
         Field::EachOwn { prefix, form } => {
@@ -219,13 +274,18 @@ fn field_schema(field: &Field, showing: &Showing<'_>, pointers: Held) -> Value {
                 point_schema(prefix, Among::Own, &[], showing, pointers),
             )];
             properties.extend(form_properties(form, showing, pointers));
-            array(closed(properties))
+            let allowed =
+                !showing.written_under(prefix).is_empty() && form_satisfiable(form, showing);
+            array_or_empty(closed(properties), allowed, pointers)
         }
         Field::Change {
             prefix,
             with,
             start,
         } => {
+            let has_shown = !showing.written(prefix).is_empty();
+            let has_anchor = has_shown || *start;
+            let with_ok = field_satisfiable(with, showing);
             let at = point_schema(prefix, Among::Shown, &[], showing, pointers);
             let begin: &[&str] = if *start { &["start"] } else { &[] };
             let anchor = point_schema(prefix, Among::Shown, begin, showing, pointers);
@@ -233,37 +293,57 @@ fn field_schema(field: &Field, showing: &Showing<'_>, pointers: Held) -> Value {
             closed(vec![
                 (
                     "replace".to_owned(),
-                    array(closed(vec![
-                        ("at".to_owned(), at.clone()),
-                        ("with".to_owned(), with.clone()),
-                    ])),
+                    array_or_empty(
+                        closed(vec![
+                            ("at".to_owned(), at.clone()),
+                            ("with".to_owned(), with.clone()),
+                        ]),
+                        has_shown && with_ok,
+                        pointers,
+                    ),
                 ),
                 (
                     "insert".to_owned(),
-                    array(closed(vec![
-                        ("after".to_owned(), anchor.clone()),
-                        ("with".to_owned(), with),
-                    ])),
+                    array_or_empty(
+                        closed(vec![
+                            ("after".to_owned(), anchor.clone()),
+                            ("with".to_owned(), with),
+                        ]),
+                        has_anchor && with_ok,
+                        pointers,
+                    ),
                 ),
-                ("remove".to_owned(), array(at.clone())),
+                (
+                    "remove".to_owned(),
+                    array_or_empty(at.clone(), has_shown, pointers),
+                ),
                 (
                     "move".to_owned(),
-                    array(closed(vec![
-                        ("at".to_owned(), at),
-                        ("after".to_owned(), anchor),
-                    ])),
+                    array_or_empty(
+                        closed(vec![("at".to_owned(), at), ("after".to_owned(), anchor)]),
+                        has_shown && has_anchor,
+                        pointers,
+                    ),
                 ),
             ])
         }
         Field::OneOf(forms) => {
-            let branches: Vec<Value> = forms
+            let mut branches: Vec<Value> = forms
                 .iter()
-                .map(|(tag, form)| {
-                    let mut properties = vec![("kind".to_owned(), words(&[*tag]))];
-                    properties.extend(form_properties(form, showing, pointers));
-                    closed(properties)
-                })
+                .filter(|(_, form)| form_satisfiable(form, showing))
+                .map(|(tag, form)| branch_object(tag, form, showing, pointers))
                 .collect();
+            if branches.is_empty() {
+                branches = forms
+                    .iter()
+                    .map(|(tag, form)| branch_object(tag, form, showing, pointers))
+                    .collect();
+            }
+            if branches.len() == 1 {
+                if let Some(only) = branches.pop() {
+                    return only;
+                }
+            }
             json!({ "anyOf": branches })
         }
     }
@@ -589,6 +669,290 @@ pub(super) fn read_flagged<K: Kind, V: Authored + PartialEq>(
     })
 }
 
+/// Whether a line is the word for absence, in any case and with whatever
+/// punctuation or markup surrounds it.
+fn says_none(line: &str) -> bool {
+    line.trim_matches(|c: char| !c.is_ascii_alphanumeric())
+        .eq_ignore_ascii_case("none")
+}
+
+const RANGE_SEPARATORS: [&str; 7] = ["-", "--", "–", "—", "..", "...", "…"];
+
+/// The runs of ASCII letters and digits in a line, with where each starts.
+fn tokens_of(line: &str) -> Vec<(usize, &str)> {
+    let mut found = Vec::new();
+    let mut start = None;
+    for (at, c) in line.char_indices() {
+        match (c.is_ascii_alphanumeric(), start) {
+            (true, None) => start = Some(at),
+            (false, Some(from)) => {
+                found.push((from, &line[from..at]));
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(from) = start {
+        found.push((from, &line[from..]));
+    }
+    found
+}
+
+/// Whether what stands between token `at` and the next one is a range sign.
+fn range_follows(line: &str, tokens: &[(usize, &str)], at: usize) -> bool {
+    let (Some(&(start, token)), Some(&(next, _))) = (tokens.get(at), tokens.get(at + 1)) else {
+        return false;
+    };
+    let Some(between) = line.get(start + token.len()..next) else {
+        return false;
+    };
+    let between: String = between.chars().filter(|c| !c.is_whitespace()).collect();
+    RANGE_SEPARATORS.contains(&between.as_str())
+}
+
+fn all_digits(token: &str) -> bool {
+    !token.is_empty() && token.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// An entry being read: the item and what has been said under it so far.
+struct Entry<K: Kind, C: Kind> {
+    item: Picked<K>,
+    kept: Vec<Picked<C>>,
+    unplaced: bool,
+    names_own: bool,
+    says_none: bool,
+    other_words: bool,
+}
+
+impl<K: Kind, C: Kind> Entry<K, C> {
+    fn new(item: Picked<K>) -> Self {
+        Self {
+            item,
+            kept: Vec::new(),
+            unplaced: false,
+            names_own: false,
+            says_none: false,
+            other_words: false,
+        }
+    }
+
+    fn keep(&mut self, showing: &Showing<'_>, first: u32, last: u32) {
+        self.names_own = true;
+        if self.unplaced {
+            return;
+        }
+        if last < first {
+            trace("unplaced-keep", Some("range runs backwards"));
+            self.unplaced = true;
+            return;
+        }
+        for ordinal in first..=last {
+            let written = format!("{}{ordinal}", C::PREFIX);
+            match showing.resolve_under::<C>(self.item.handle.name(), &written) {
+                Some(own) => {
+                    if !self.kept.contains(&own) {
+                        self.kept.push(own);
+                    }
+                }
+                None => {
+                    trace("unplaced-keep", Some(written.as_str()));
+                    self.unplaced = true;
+                    return;
+                }
+            }
+        }
+    }
+
+    fn into_row(mut self) -> (Picked<K>, Settled<Vec<Picked<C>>>) {
+        let settled = self.settled();
+        (self.item, settled)
+    }
+
+    fn settled(&mut self) -> Settled<Vec<Picked<C>>> {
+        if self.unplaced {
+            Settled::Unanswered(Why::Unplaced)
+        } else if self.says_none && self.names_own {
+            Settled::Unanswered(Why::Contradicted(format!(
+                "{} both says none and names what it keeps.",
+                self.item.handle
+            )))
+        } else if !self.names_own && self.other_words {
+            Settled::Unanswered(Why::NotRead)
+        } else {
+            Settled::Answered(std::mem::take(&mut self.kept))
+        }
+    }
+}
+
+/// The lines of an answer read one by one. An item named on a line that holds
+/// none of its own handles stays open: the lines after it that name no item are
+/// its own.
+struct KeepsReader<'a, 'b, K: Kind, C: Kind> {
+    showing: &'a Showing<'b>,
+    entries: Rows<K, Vec<Picked<C>>>,
+    open: Option<Entry<K, C>>,
+    stray: bool,
+}
+
+impl<K: Kind, C: Kind> KeepsReader<'_, '_, K, C> {
+    fn close(&mut self, entry: Option<Entry<K, C>>) {
+        if let Some(entry) = entry {
+            self.entries.push(entry.into_row());
+        }
+    }
+
+    fn unplace_item(&mut self, word: &str) {
+        trace("unplaced-entry", Some(word));
+        self.stray = true;
+        if let Some(item) = self.showing.resolve::<K>(word) {
+            self.entries
+                .push((item, Settled::Unanswered(Why::Unplaced)));
+        }
+    }
+
+    fn line(&mut self, line: &str) {
+        let tokens = tokens_of(line);
+        let words: Vec<String> = tokens
+            .iter()
+            .map(|(_, token)| token.to_ascii_lowercase())
+            .collect();
+        let prefix_of = |word: &str| Name::pointed(word).map(|name| name.prefix);
+        let names_item = words
+            .iter()
+            .any(|word| prefix_of(word).as_deref() == Some(K::PREFIX));
+        let mut current = if names_item {
+            let open = self.open.take();
+            self.close(open);
+            None
+        } else {
+            self.open.take()
+        };
+        let mut at = 0;
+        while let Some(word) = words.get(at).map(String::as_str) {
+            let next = words.get(at + 1).map(String::as_str);
+            let ranged = range_follows(line, &tokens, at);
+            match prefix_of(word) {
+                Some(prefix) if prefix == K::PREFIX => {
+                    self.close(current.take());
+                    let to_item = next.filter(|n| prefix_of(n).as_deref() == Some(K::PREFIX));
+                    if ranged && (to_item.is_some() || next.is_some_and(all_digits)) {
+                        self.unplace_item(word);
+                        if let Some(second) = to_item {
+                            self.unplace_item(second);
+                        }
+                        at += 2;
+                        continue;
+                    }
+                    match self.showing.resolve::<K>(word) {
+                        Some(item) => current = Some(Entry::new(item)),
+                        None => {
+                            trace("unplaced-entry", Some(word));
+                            self.stray = true;
+                        }
+                    }
+                }
+                Some(prefix) if prefix == C::PREFIX => {
+                    let first = Name::pointed(word).map_or(0, |name| name.ordinal);
+                    let to_own = next
+                        .filter(|n| prefix_of(n).as_deref() == Some(C::PREFIX))
+                        .and_then(Name::pointed)
+                        .map(|name| name.ordinal);
+                    let to_number = next
+                        .filter(|n| all_digits(n))
+                        .map(|n| n.parse().unwrap_or(u32::MAX));
+                    let last = if ranged { to_own.or(to_number) } else { None };
+                    match current.as_mut() {
+                        Some(entry) => entry.keep(self.showing, first, last.unwrap_or(first)),
+                        None => {
+                            trace("unplaced-keep", Some(word));
+                            self.stray = true;
+                        }
+                    }
+                    if last.is_some() {
+                        at += 2;
+                        continue;
+                    }
+                }
+                _ => {
+                    if let Some(entry) = current.as_mut() {
+                        if word == "none" {
+                            entry.says_none = true;
+                        } else {
+                            entry.other_words = true;
+                        }
+                    }
+                }
+            }
+            at += 1;
+        }
+        match current {
+            Some(entry) if !names_item || !entry.names_own => self.open = Some(entry),
+            other => self.close(other),
+        }
+    }
+
+    fn finish(&mut self, complete: bool) {
+        let Some(entry) = self.open.take() else {
+            return;
+        };
+        if complete {
+            self.close(Some(entry));
+        } else {
+            self.entries
+                .push((entry.item, Settled::Unanswered(Why::CutOff)));
+        }
+    }
+}
+
+pub(super) fn read_keeps<K: Kind, C: Kind>(
+    written: &Written<'_>,
+    showing: &Showing<'_>,
+) -> Rows<K, Vec<Picked<C>>> {
+    let shown = showing.shown::<K>();
+    if written.ended == Ended::Declined {
+        return all_unanswered(shown, &Why::Declined);
+    }
+    let complete = written.ended == Ended::Complete;
+    let mut lines: Vec<&str> = written
+        .text
+        .split('\n')
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    if !complete {
+        lines.pop();
+    }
+    let mut reader = KeepsReader::<K, C> {
+        showing,
+        entries: Vec::new(),
+        open: None,
+        stray: false,
+    };
+    let mut none_said = false;
+    for line in &lines {
+        none_said |= says_none(line);
+        reader.line(line);
+    }
+    reader.finish(complete);
+    let KeepsReader { entries, stray, .. } = reader;
+    let unnamed = if !complete {
+        Some(Why::CutOff)
+    } else if stray {
+        Some(Why::Unplaced)
+    } else if entries.is_empty() && !none_said {
+        Some(Why::NotRead)
+    } else {
+        None
+    };
+    per_item(shown, entries, |joined| match joined {
+        Some(settled) => settled,
+        None => match &unnamed {
+            Some(why) => Settled::Unanswered(why.clone()),
+            None => Settled::Answered(Vec::new()),
+        },
+    })
+}
+
 pub(super) fn read_change<K: Kind, W: Content>(
     written: &Written<'_>,
     showing: &Showing<'_>,
@@ -638,12 +1002,13 @@ pub(super) fn read_lead<W: Vocabulary, K: Kind>(
     let Some((line_start, line)) = last.filter(|(start, _)| *start >= after_word) else {
         return Settled::Unanswered(Why::Unplaced);
     };
-    let pointer = match line.trim() {
-        "none" => None,
-        handle => match showing.resolve::<K>(handle) {
+    let pointer = if says_none(line) {
+        None
+    } else {
+        match showing.resolve::<K>(line.trim()) {
             Some(picked) => Some(picked),
             None => return Settled::Unanswered(Why::Unplaced),
-        },
+        }
     };
     let between = text
         .get(after_word..line_start)

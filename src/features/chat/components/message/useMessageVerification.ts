@@ -1,8 +1,15 @@
 import { useMemo, useState } from 'react';
 
-import { ShieldAlert, ShieldCheck, ShieldEllipsis, ShieldOff } from 'lucide-react';
+import { ShieldAlert, ShieldCheck, ShieldEllipsis, ShieldOff, Sparkles, type LucideIcon } from 'lucide-react';
 
 import type { MessageVerificationSummary } from '@/types/conversation';
+
+interface VerificationBadge {
+  label: string;
+  icon: LucideIcon;
+  className: string;
+  title?: string;
+}
 
 /**
  * What a message reads off its verification summary: the claims sorted by
@@ -84,14 +91,14 @@ export function useMessageVerification({
     ? ungroundedClaims
     : ungroundedClaims.slice(0, 5);
 
-  const verificationBadge = useMemo(() => {
+  const verificationBadge = useMemo<VerificationBadge | null>(() => {
     if (isUser || !verificationSummary) return null;
     if (!verificationSummary.enabled) {
       return {
         label: 'Verification off',
         icon: ShieldOff,
         className:
-          'border-subtle bg-surface text-[hsl(var(--text-muted))]',
+          'border-border-subtle bg-surface text-[hsl(var(--text-muted))]',
       };
     }
     // The answer is readable while its check runs; say so quietly rather
@@ -101,7 +108,7 @@ export function useMessageVerification({
         label: 'Checking…',
         icon: ShieldEllipsis,
         className:
-          'border-subtle bg-surface text-[hsl(var(--text-muted))]',
+          'border-border-subtle bg-surface text-[hsl(var(--text-muted))]',
       };
     }
     // The check never reported: the app closed under it, or the wait ran
@@ -111,15 +118,25 @@ export function useMessageVerification({
         label: 'Not checked',
         icon: ShieldOff,
         className:
-          'border-subtle bg-surface text-[hsl(var(--text-muted))]',
+          'border-border-subtle bg-surface text-[hsl(var(--text-muted))]',
+        title: 'Verification was interrupted before finishing.',
       };
     }
     if (claimsEvaluated === 0) {
+      if (verificationSummary.groundingMode === 'hybrid') {
+        return {
+          label: 'General knowledge',
+          icon: Sparkles,
+          className:
+            'border-border-subtle bg-surface text-[hsl(var(--text-muted))]',
+          title: 'Answered from general knowledge without source citations. Turn on Sources only for document-only answers.',
+        };
+      }
       return {
         label: 'Nothing to verify',
         icon: ShieldOff,
         className:
-          'border-subtle bg-surface text-[hsl(var(--text-muted))]',
+          'border-border-subtle bg-surface text-[hsl(var(--text-muted))]',
       };
     }
     if (unsupportedCount === 0 && uncheckedCount > 0) {
@@ -127,10 +144,19 @@ export function useMessageVerification({
         label: `Partly checked · ${uncheckedCount} not checked`,
         icon: ShieldCheck,
         className:
-          'border-subtle bg-surface text-[hsl(var(--text-secondary))]',
+          'border-border-subtle bg-surface text-[hsl(var(--text-secondary))]',
       };
     }
     if (unsupportedCount === 0) {
+      if (verificationSummary.groundingMode === 'hybrid') {
+        return {
+          label: 'Sources verified',
+          icon: ShieldCheck,
+          className:
+            'border-[hsl(var(--success-muted))] bg-[hsl(var(--success-muted))] text-[hsl(var(--success-fg))]',
+          title: 'Cited claims verified against your sources; uncited parts may use general knowledge.',
+        };
+      }
       return {
         label: 'Verified',
         icon: ShieldCheck,
@@ -165,6 +191,8 @@ export function useMessageVerification({
     uncheckedCount,
   ]);
 
+  const citedOnly = Boolean(verificationSummary?.citedOnly);
+
   return {
     claimsEvaluated,
     supportedClaims,
@@ -173,6 +201,7 @@ export function useMessageVerification({
     ungroundedClaims,
     uncheckedClaims,
     uncheckedCount,
+    citedOnly,
     verificationPending,
     evidenceByClaim,
     reasonByClaim,

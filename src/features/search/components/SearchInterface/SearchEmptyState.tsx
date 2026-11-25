@@ -39,10 +39,10 @@ export function SearchEmptyState({ hasSearched, query, isSearching, onPickRecent
 
   if (!hasSearched) {
     if (recent.length === 0 || !onPickRecent) return (
-      <div className="mt-8 flex items-start gap-4 rounded-xl border border-border-subtle bg-surface p-6">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent-muted text-accent"><Search className="h-5 w-5" aria-hidden="true" /></span>
+      <div className="mt-8 flex items-start gap-4 rounded-xl border border-border-subtle bg-surface p-6 shadow-sm">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent-muted text-accent ring-1 ring-inset ring-accent/12"><Search className="h-5 w-5" aria-hidden="true" /></span>
         <div>
-          <h2 className="text-sm font-semibold text-text-primary">Search across your sources</h2>
+          <h2 className="font-sans text-sm font-semibold tracking-[-0.015em] text-text-primary">Search across your sources</h2>
           <p className="mt-1.5 max-w-[48ch] text-sm leading-relaxed text-text-secondary">Start with a topic, phrase, or question. Results point you back to the original document.</p>
           <p className="mt-3 text-xs leading-relaxed text-text-muted">Hybrid combines meaning and keywords. Semantic finds related ideas; Keyword matches words.</p>
         </div>
@@ -51,13 +51,13 @@ export function SearchEmptyState({ hasSearched, query, isSearching, onPickRecent
     return (
       <section className="mt-6">
         <SectionHeading>Recent</SectionHeading>
-        <div className="border-t border-border-subtle">
+        <div className="overflow-hidden rounded-xl border border-border-subtle bg-surface shadow-sm">
           {recent.map((item) => (
             <button
               key={item.id}
               type="button"
               onClick={() => onPickRecent(item.label)}
-              className="flex w-full items-center border-b border-border-subtle px-2 py-2.5 text-left text-sm text-text-secondary transition-colors duration-fast hover:bg-surface hover:text-text-primary"
+              className="row-hover flex w-full items-center border-b border-border-subtle px-3.5 py-2.5 text-left text-sm text-text-secondary transition-colors duration-fast last:border-b-0 hover:text-text-primary"
             >
               {item.label}
             </button>
@@ -70,10 +70,10 @@ export function SearchEmptyState({ hasSearched, query, isSearching, onPickRecent
   if (isSearching) return null;
 
   return (
-    <div className="flex items-start gap-3 rounded-lg border border-border-subtle bg-surface p-5">
+    <div className="flex items-start gap-3 rounded-xl border border-border-subtle bg-surface p-5 shadow-sm">
       <SearchX className="mt-0.5 h-5 w-5 shrink-0 text-text-muted" aria-hidden="true" />
       <div className="min-w-0">
-        <p className="wrap-break-word text-sm font-medium text-text-primary">No results for “{query}”.</p>
+        <p className="wrap-break-word font-sans text-sm font-semibold tracking-[-0.01em] text-text-primary">No results for “{query}”.</p>
         <p className="mt-1 text-sm text-text-secondary">Try a broader term or a different search mode.</p>
       </div>
     </div>

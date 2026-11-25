@@ -4,7 +4,10 @@
 
 use crate::features::web::snapshots::{commands as snapshots, WebPageSnapshotDto};
 use crate::{features::web::commands as web_ingest, interfaces::di::Container};
-use lattice_core::application::contracts::settings::{KeyServiceDto, SourcesStatusDto};
+use lattice_core::application::contracts::settings::{
+    KeyServiceDto, SourcesStatusDto, SourcingAddress,
+};
+use lattice_core::application::contracts::web::SavedWebArticleDto;
 use lattice_core::shared::ipc::ApiError;
 use tauri::{
     plugin::{Builder, TauriPlugin},
@@ -144,22 +147,46 @@ pub async fn remove_source_key(
     .map_err(ApiError::from)
 }
 
-/// What the plugin starts: delivering saved snapshot jobs, and the finders
-/// the user configured (keys, SearXNG, contact, switches) in place of the
-/// keyless defaults, before the first search.
-pub(crate) async fn start(container: &Container) {
-    container
-        .jobs()
-        .register_all(vec![container.web_page_snapshots().job_kind()])
-        .await;
-    container.reload_source_finders().await;
+/// The saved web article whose text file is `path`, with its page, title,
+/// address and links, or nothing when `path` is not one.
+#[tauri::command]
+#[specta::specta]
+pub async fn saved_web_article(
+    path: String,
+    container: State<'_, Container>,
+) -> Result<Option<SavedWebArticleDto>, ApiError> {
+    Ok(container
+        .web_archive()
+        .saved_article(std::path::Path::new(&path))
+        .await
+        .map(SavedWebArticleDto::from))
+}
+
+/// Settings → Sources: whether `value` is an address the setting `field`
+/// accepts, by the rule the settings check applies on save.
+#[tauri::command]
+#[specta::specta]
+pub async fn check_sourcing_address(
+    field: SourcingAddress,
+    value: String,
+) -> Result<bool, ApiError> {
+    Ok(field.accepts(&value))
 }
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("web")
         .setup(|app, _api| {
             let container = app.state::<Container>().inner().clone();
-            tauri::async_runtime::block_on(start(&container));
+            // Registration settles snapshot jobs the last process left
+            // running, then starts delivering saved work.
+            tauri::async_runtime::block_on(
+                container
+                    .jobs()
+                    .register_all(vec![container.web_page_snapshots().job_kind()]),
+            );
+            // The finders the user configured (keys, SearXNG, contact,
+            // switches) replace the keyless defaults before the first search.
+            tauri::async_runtime::block_on(container.reload_source_finders());
             // The scheme handler resolves the service from managed state (not the container).
             app.manage(container.web_page_snapshots());
             app.manage(container.chat_images_service());
@@ -176,6 +203,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             get_sources_status,
             save_source_key,
             remove_source_key,
+            saved_web_article,
+            check_sourcing_address,
         ])
         .build()
 }

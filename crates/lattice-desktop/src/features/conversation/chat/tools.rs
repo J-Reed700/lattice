@@ -37,25 +37,34 @@ pub(super) fn build_optional_tool_allowlist(
         })
 }
 
+/// Policy controlling which non-core tools survive grounded context pruning.
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct GroundedToolPolicy {
+    pub(super) can_open_pages: bool,
+    pub(super) allow_web_search: bool,
+    pub(super) allow_wiki_search: bool,
+}
+
 /// Whether a tool stays offered once retrieval has grounded the turn. Initial
 /// retrieval is a candidate set, not proof, so scoped document reads,
 /// attachment listing, searches and (when the turn carries web pages) opening
 /// a page stay for recovery. `find_image` stays because it illustrates rather
-/// than searches; deep research also keeps the searches the turn allows.
+/// than searches; explicitly enabled web/wiki searches and enabled custom
+/// tools stay available as well.
 pub(super) fn kept_with_grounded_context(
     tool_name: &str,
-    can_open_pages: bool,
-    deep_research: bool,
+    policy: GroundedToolPolicy,
+    is_custom_tool: bool,
 ) -> bool {
-    matches!(
-        tool_name,
-        "semantic_search" | "get_document" | "list_attachments" | "find_image" | "read_more"
-    ) || (matches!(tool_name, "fetch_url_content" | "follow_links") && can_open_pages)
-        || (deep_research
-            && matches!(
-                tool_name,
-                "web_search" | "find_sources" | "wiki_search" | "wiki_summary"
-            ))
+    match tool_name {
+        "semantic_search" | "get_document" | "list_attachments" | "find_image" | "read_more" => {
+            true
+        }
+        "fetch_url_content" | "follow_links" => policy.can_open_pages,
+        "web_search" | "find_sources" => policy.allow_web_search,
+        "wiki_search" | "wiki_summary" => policy.allow_wiki_search,
+        _ => is_custom_tool,
+    }
 }
 
 /// Whether a deep-research turn may search the web again after its first

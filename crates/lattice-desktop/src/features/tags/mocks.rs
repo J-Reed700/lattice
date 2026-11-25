@@ -5,14 +5,13 @@
 #[cfg(test)]
 use crate::features::tags::TagRepositoryTrait;
 #[cfg(test)]
-use lattice_core::application::ports::TagServiceTrait;
-#[cfg(test)]
-use lattice_core::shared::error::{AppError, Result};
-// Removed: use lattice_core::shared::traits (god object eliminated - trait now in infrastructure/services/traits/)
-#[cfg(test)]
 use async_trait::async_trait;
 #[cfg(test)]
 use lattice_core::application::ports::DocumentLockGuard;
+#[cfg(test)]
+use lattice_core::application::ports::TagServiceTrait;
+#[cfg(test)]
+use lattice_core::shared::error::{AppError, Result};
 #[cfg(test)]
 use lattice_core::shared::types::TagName;
 #[cfg(test)]

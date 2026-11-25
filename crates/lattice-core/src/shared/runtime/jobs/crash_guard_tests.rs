@@ -12,18 +12,9 @@ const KIND: &str = "test.work";
 const WAIT: Duration = Duration::from_secs(5);
 
 async fn pool() -> sqlx::SqlitePool {
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .idle_timeout(None)
-        .max_lifetime(None)
-        .connect(":memory:")
+    crate::shared::testing::sqlite::migrated_in_memory()
         .await
-        .unwrap();
-    sqlx::migrate!("../lattice-desktop/migrations")
-        .run(&pool)
-        .await
-        .unwrap();
-    pool
+        .unwrap()
 }
 
 async fn database() -> Database {

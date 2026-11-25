@@ -12,6 +12,62 @@ import { useDownloadStore } from '../stores/downloadStore';
 const isActiveState = (state: DownloadState): boolean =>
   state === 'Downloading' || state === 'Pending' || state === 'Paused';
 
+export type ModelDownloadSummary = DownloadStatus & { files?: DownloadStatus[] };
+
+/**
+ * Aggregates all session rows for a model into one catalog-friendly status,
+ * preferring live/failed states over finished ones (`Downloading > Failed > Paused > Pending`)
+ * so multi-file failures and paused transfers are never hidden by sibling files.
+ */
+export function summarizeModelDownloads(downloads: readonly DownloadStatus[]): ModelDownloadSummary | null {
+  if (downloads.length === 0) return null;
+  const nonCancelled = downloads.filter((download) => download.state !== 'Cancelled');
+  if (nonCancelled.length === 0) return null;
+
+  const unfinished = nonCancelled.filter((download) => download.state !== 'Completed');
+  if (unfinished.length === 0) {
+    // A Completed file alongside a Cancelled sibling is an incomplete batch,
+    // never a finished model download.
+    if (downloads.some((download) => download.state === 'Cancelled')) {
+      return null;
+    }
+    return nonCancelled[0];
+  }
+
+  const representative = unfinished[0];
+  if (downloads.length === 1) {
+    return representative;
+  }
+
+  const totalBytes = nonCancelled.reduce((sum, download) => sum + (download.total_bytes ?? 0), 0);
+  const bytesDownloaded = nonCancelled.reduce((sum, download) => sum + download.bytes_downloaded, 0);
+  const percentage = totalBytes > 0 ? (bytesDownloaded / totalBytes) * 100 : null;
+
+  let state: DownloadState = 'Pending';
+  let errorMessage: string | null = null;
+  if (unfinished.some((download) => download.state === 'Downloading')) {
+    state = 'Downloading';
+  } else {
+    const failed = unfinished.find((download) => download.state === 'Failed');
+    if (failed) {
+      state = 'Failed';
+      errorMessage = failed.error_message ?? null;
+    } else if (unfinished.some((download) => download.state === 'Paused')) {
+      state = 'Paused';
+    }
+  }
+
+  return {
+    ...representative,
+    state,
+    bytes_downloaded: bytesDownloaded,
+    total_bytes: totalBytes > 0 ? totalBytes : representative.total_bytes,
+    percentage,
+    error_message: errorMessage,
+    files: [...downloads],
+  };
+}
+
 export const useDownloadState = () => {
   const api = useApi();
   const queryClient = useQueryClient();
@@ -136,6 +192,10 @@ export const useDownloadState = () => {
     (modelId: string) => activeDownloads.find((download) => download.model_id === modelId) ?? null,
     [activeDownloads]
   );
+  const getModelDownloadSummary = useCallback(
+    (modelId: string) => summarizeModelDownloads(getDownloadsByModel(modelId)),
+    [getDownloadsByModel]
+  );
   const getLatestDownloadForModel = useCallback((modelId: string) => {
     const matches = downloads.filter((download) => download.model_id === modelId);
     return matches.reduce<DownloadStatus | null>((latest, current) => {
@@ -157,6 +217,8 @@ export const useDownloadState = () => {
     listenerError,
     setListenerError,
     isLoading: downloadsQuery.isLoading,
+    // The list has answered at least once; a row must not offer a download before.
+    downloadsSettled: !downloadsQuery.isPending,
     error: downloadsQuery.error?.message ?? null,
     setDownload,
     updateDownloadProgress,
@@ -172,6 +234,7 @@ export const useDownloadState = () => {
     getAllDownloads: () => downloads,
     getDownloadsByModel,
     getActiveDownloadForModel,
+    getModelDownloadSummary,
     hasActiveDownloadForModel: (modelId: string) => getActiveDownloadForModel(modelId) !== null,
     getLatestDownloadForModel,
     openDrawer,

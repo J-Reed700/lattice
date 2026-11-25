@@ -2,7 +2,6 @@ import { useMemo } from 'react';
 
 import { EyeOff, Layers, MessageSquare, PanelRight, RefreshCw } from 'lucide-react';
 
-import { isWebDocument } from '@/features/files/model/documentMetadata';
 import { useRegisterPaletteCommands } from '@/features/palette/hooks/useRegisterPaletteCommands';
 import type { PaletteCommand } from '@/features/palette/stores/paletteCommandsStore';
 import { type DocumentMetadata } from '@/types/fileBrowser';
@@ -48,7 +47,7 @@ export function useLibraryPaletteCommands({
         label: 'Reindex this file',
         group: 'Library',
         icon: RefreshCw,
-        enabled: focusedDoc !== null && !isWebDocument(focusedDoc),
+        enabled: focusedDoc !== null && !focusedDoc.web,
         run: () => {
           if (focusedDoc) void reindexDocument(focusedDoc);
         },
@@ -58,7 +57,7 @@ export function useLibraryPaletteCommands({
         label: 'Remove this file from the index',
         group: 'Library',
         icon: EyeOff,
-        enabled: focusedDoc !== null && !isWebDocument(focusedDoc),
+        enabled: focusedDoc !== null && !focusedDoc.web,
         run: () => {
           if (focusedDoc) void removeFromIndex(focusedDoc);
         },

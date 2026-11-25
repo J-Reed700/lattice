@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
-const GITHUB_REPO: &str = "posh-industries/lattice"; // Update with actual repo
+const GITHUB_REPO: &str = "J-Reed700/lattice";
 const GITHUB_API_BASE: &str = "https://api.github.com/repos";
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -37,35 +37,47 @@ struct GitHubRelease {
 
 /// Update checker using GitHub releases API
 pub struct UpdateCheckerAdapter {
+    api_base: String,
     repo: String,
     current_version: String,
+    client: std::result::Result<reqwest::Client, String>,
 }
 
 impl UpdateCheckerAdapter {
     pub fn new() -> Self {
-        Self {
-            repo: GITHUB_REPO.to_string(),
-            current_version: APP_VERSION.to_string(),
-        }
+        Self::with_repo(GITHUB_REPO.to_string())
     }
 
     pub fn with_repo(repo: String) -> Self {
+        Self::build(GITHUB_API_BASE.to_string(), repo)
+    }
+
+    #[cfg(test)]
+    fn with_api_base(api_base: String, repo: String) -> Self {
+        Self::build(api_base, repo)
+    }
+
+    fn build(api_base: String, repo: String) -> Self {
+        let client = reqwest_client_builder()
+            .user_agent("Lattice-Desktop")
+            .build()
+            .map_err(|e| format!("Failed to create HTTP client: {}", WithCauses(&e)));
         Self {
+            api_base,
             repo,
             current_version: APP_VERSION.to_string(),
+            client,
         }
     }
 
     /// Fetch latest release from GitHub API
     async fn fetch_latest_release(&self) -> Result<GitHubRelease> {
-        let url = format!("{}/{}/releases/latest", GITHUB_API_BASE, self.repo);
+        let url = format!("{}/{}/releases/latest", self.api_base, self.repo);
 
-        let client = reqwest_client_builder()
-            .user_agent("Lattice-Desktop")
-            .build()
-            .map_err(|e| {
-                AppError::Network(format!("Failed to create HTTP client: {}", WithCauses(&e)))
-            })?;
+        let client = self
+            .client
+            .as_ref()
+            .map_err(|e| AppError::Network(e.clone()))?;
 
         let response = client.get(&url).send().await.map_err(|e| {
             AppError::Network(format!("Failed to fetch release info: {}", WithCauses(&e)))
@@ -118,50 +130,44 @@ impl UpdateCheckerPort for UpdateCheckerAdapter {
             self.current_version
         );
 
-        match self.fetch_latest_release().await {
-            Ok(release) => {
-                // Skip drafts and prereleases
-                if release.draft || release.prerelease {
-                    return Ok(UpdateInfoData {
-                        available: false,
-                        current_version: self.current_version.clone(),
-                        latest_version: None,
-                        download_url: None,
-                        release_notes: None,
-                    });
-                }
-
-                let latest_version = release.tag_name.clone();
-                let available = self.is_newer_version(&self.current_version, &latest_version);
-
-                if available {
-                    info!(
-                        "Update available: {} -> {}",
-                        self.current_version, latest_version
-                    );
-                } else {
-                    info!("Already on latest version");
-                }
-
-                Ok(UpdateInfoData {
-                    available,
-                    current_version: self.current_version.clone(),
-                    latest_version: Some(latest_version),
-                    download_url: Some(release.html_url),
-                    release_notes: release.body,
-                })
-            }
+        let release = match self.fetch_latest_release().await {
+            Ok(release) => release,
             Err(e) => {
                 error!("Failed to check for updates: {}", e);
-                Ok(UpdateInfoData {
-                    available: false,
-                    current_version: self.current_version.clone(),
-                    latest_version: None,
-                    download_url: None,
-                    release_notes: Some(format!("Failed to check for updates: {}", e)),
-                })
+                return Err(e);
             }
+        };
+
+        // Skip drafts and prereleases
+        if release.draft || release.prerelease {
+            return Ok(UpdateInfoData {
+                available: false,
+                current_version: self.current_version.clone(),
+                latest_version: None,
+                download_url: None,
+                release_notes: None,
+            });
         }
+
+        let latest_version = release.tag_name.clone();
+        let available = self.is_newer_version(&self.current_version, &latest_version);
+
+        if available {
+            info!(
+                "Update available: {} -> {}",
+                self.current_version, latest_version
+            );
+        } else {
+            info!("Already on latest version");
+        }
+
+        Ok(UpdateInfoData {
+            available,
+            current_version: self.current_version.clone(),
+            latest_version: Some(latest_version),
+            download_url: Some(release.html_url),
+            release_notes: release.body,
+        })
     }
 
     fn get_current_version(&self) -> String {
@@ -210,14 +216,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_check_updates_offline() {
-        // This test will fail to connect to GitHub (no network in test env)
-        // It should return current version without erroring
-        let adapter = UpdateCheckerAdapter::with_repo("nonexistent/repo".to_string());
-        let result = adapter.check_for_updates().await.unwrap();
-
-        assert!(!result.available);
-        assert!(!result.current_version.is_empty());
+    async fn test_check_updates_propagates_network_or_not_found_error() {
+        let adapter = UpdateCheckerAdapter::with_api_base(
+            "http://127.0.0.1:9".to_string(),
+            "nonexistent/repo".to_string(),
+        );
+        let Err(err) = adapter.check_for_updates().await else {
+            panic!("failed release lookup must return Err");
+        };
+        assert!(
+            matches!(err, AppError::Network(_)),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

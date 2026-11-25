@@ -108,13 +108,14 @@ export function DatePicker({
           items-center
           justify-between
           w-full
-          px-3
-          py-2
-          text-sm
+          h-8
+          px-2.5
+          text-ui
           bg-[hsl(var(--surface))]
           border
           border-[hsl(var(--border-default))]
-          rounded-md
+          rounded-lg
+          shadow-control
           hover:bg-[hsl(var(--surface-raised))]
           focus:outline-hidden
           focus-visible:ring-2

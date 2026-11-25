@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import {
+  type StagedFile,
+  useStagedFiles,
+  useStagedFilesStore,
+} from '@/features/chat/stores/stagedFilesStore';
+
 /**
  * Handles files dropped onto the chat panel.
  *
@@ -10,25 +16,16 @@ import { useCallback, useEffect, useRef, useState } from 'react';
  * that never fires.
  */
 
-export interface StagedFile {
-  path: string;
-  name: string;
-}
+export type { StagedFile };
 
 export interface ChatFileDropState {
   isDragging: boolean;
-  staged: StagedFile[];
+  staged: readonly StagedFile[];
   /** Stage paths from somewhere other than a drop (a file dialog, say). */
   add: (_paths: string[]) => void;
   clear: () => void;
   remove: (_path: string) => void;
 }
-
-const basename = (path: string): string => {
-  const normalized = path.replace(/\\/g, '/');
-  const name = normalized.slice(normalized.lastIndexOf('/') + 1);
-  return name || path;
-};
 
 /**
  * `onDrop` hears every dropped path; `stageable` says which of them this hook
@@ -37,14 +34,17 @@ const basename = (path: string): string => {
 export function useChatFileDrop(
   panelRef: React.RefObject<HTMLElement | null>,
   onDrop: (_paths: string[]) => void,
-  stageable: (_path: string) => boolean = () => true
+  stageable: (_path: string) => boolean = () => true,
+  conversationId?: string | null
 ): ChatFileDropState {
   const [isDragging, setIsDragging] = useState(false);
-  const [staged, setStaged] = useState<StagedFile[]>([]);
+  const staged = useStagedFiles(conversationId);
   const onDropRef = useRef(onDrop);
   onDropRef.current = onDrop;
   const stageableRef = useRef(stageable);
   stageableRef.current = stageable;
+  const conversationIdRef = useRef(conversationId);
+  conversationIdRef.current = conversationId;
 
   const isInsidePanel = useCallback(
     (position?: { x: number; y: number }) => {
@@ -65,15 +65,9 @@ export function useChatFileDrop(
   );
 
   const add = useCallback((paths: string[]) => {
-    const usable = [...new Set(paths)].filter((path) => Boolean(path) && stageableRef.current(path));
-    if (usable.length === 0) return;
-    setStaged((current) => {
-      const seen = new Set(current.map((file) => file.path));
-      const added = usable
-        .filter((path) => !seen.has(path))
-        .map((path) => ({ path, name: basename(path) }));
-      return added.length > 0 ? [...current, ...added] : current;
-    });
+    useStagedFilesStore
+      .getState()
+      .add(conversationIdRef.current, paths, (path) => stageableRef.current(path));
   }, []);
 
   useEffect(() => {
@@ -116,9 +110,12 @@ export function useChatFileDrop(
     };
   }, [add, isInsidePanel]);
 
-  const clear = useCallback(() => setStaged([]), []);
+  const clear = useCallback(
+    () => useStagedFilesStore.getState().clear(conversationIdRef.current),
+    []
+  );
   const remove = useCallback(
-    (path: string) => setStaged((current) => current.filter((file) => file.path !== path)),
+    (path: string) => useStagedFilesStore.getState().remove(conversationIdRef.current, path),
     []
   );
 

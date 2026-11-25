@@ -24,9 +24,8 @@ export function JournalCapturePreview({ content, onClose, onOpenNote }: JournalC
     setIsSaving(true);
     setError(null);
     try {
-      const result = await captureToJournal(content);
-      if (result.ok) setSaved(result.data);
-      else setError(result.error);
+      const savedNote = await captureToJournal(content);
+      setSaved(savedNote);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Please try again.');
     } finally {

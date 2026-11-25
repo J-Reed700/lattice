@@ -1,24 +1,28 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { PanelRight } from 'lucide-react';
+import { PanelRight, PanelRightClose } from 'lucide-react';
 
 import { TiptapEditor, type SelectionAction } from '@/components/TiptapEditor';
-import { IconButton } from '@/components/ui/IconButton';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui';
 import { EntryActionRail } from '@/features/journal/components/EntryActionRail';
 import { EntryFromConversation } from '@/features/journal/components/EntryFromConversation';
 import { EntryHeader } from '@/features/journal/components/EntryHeader';
 import { EntryHighlightsStrip } from '@/features/journal/components/EntryHighlightsStrip';
 import { JournalContextRail } from '@/features/journal/components/JournalContextRail';
+import { JournalFormattingPill, useDomTiptapEditor } from '@/features/journal/components/JournalFormattingPill';
 import type { SynthesisScope, WeekCandidateCounts } from '@/features/journal/components/SynthesizePopover';
 import type { JournalEntrySummary } from '@/features/journal/hooks/useJournalEntries';
 import type { JournalSourceSummary } from '@/features/journal/hooks/useJournalSources';
 import { journalCitationMap, toJournalCitationSource } from '@/features/journal/model/journalCitationSources';
 import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
 import { SourceCitations } from '@/features/reading/components/SourceCitations';
-import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
+import { useReaderStore } from '@/features/reading/stores/readerStore';
+import { cn } from '@/lib/utils';
 import { locatorFromSource } from '@/shared/sources/passageLocator';
 import type { SnapshotMessage, WorkspaceNote } from '@/types/api/dailyNotes';
 import type { SourceWithMetadata } from '@/types/conversation';
+
+import './journal-editor.css';
 
 interface EntryEditorProps {
   activeNote: WorkspaceNote | null;
@@ -53,19 +57,21 @@ interface EntryEditorProps {
   onSynthesize: (scope: SynthesisScope) => Promise<boolean>;
   weekCandidates?: WeekCandidateCounts;
   onNotify: (tone: 'info' | 'success' | 'error', message: string) => void;
+  /** Monotonic signal incremented on explicit conversation picks to open the Context Inspector. */
+  openContextRequest?: number;
 }
 
 const CONTEXT_RAIL_KEY = 'journal.contextRail.open';
 
 function readRailOpen(): boolean {
-  // At the minimum supported desktop width the journal index and context rail
-  // would otherwise leave almost no room for the page. Start compact windows
-  // with the rail closed; it remains available as an overlay from the header.
+  // Default collapsed so the writing canvas opens with generous editorial
+  // measure; users can toggle the Context Inspector any time via ⌘. or the
+  // top-bar control.
   if (window.matchMedia('(max-width: 1023px)').matches) return false;
   try {
-    return localStorage.getItem(CONTEXT_RAIL_KEY) !== '0';
+    return localStorage.getItem(CONTEXT_RAIL_KEY) === '1';
   } catch {
-    return true;
+    return false;
   }
 }
 
@@ -118,13 +124,33 @@ export function EntryEditor({
   onSynthesize,
   weekCandidates,
   onNotify,
+  openContextRequest = 0,
 }: EntryEditorProps) {
   const editorContainerRef = useRef<HTMLDivElement | null>(null);
+  const [editorContainer, setEditorContainer] = useState<HTMLDivElement | null>(null);
+  const handleEditorContainerRef = useCallback((node: HTMLDivElement | null) => {
+    editorContainerRef.current = node;
+    setEditorContainer(node);
+  }, []);
+  const tiptapEditor = useDomTiptapEditor(editorContainer, activeNote?.id ?? null);
   const [railOpen, setRailOpen] = useState(readRailOpen);
-  const readerSession = useChatReaderStore((state) => state.session);
-  const openReader = useChatReaderStore((state) => state.open);
-  const setReaderIndex = useChatReaderStore((state) => state.setIndex);
-  const closeReader = useChatReaderStore((state) => state.close);
+  const [seenOpenRequest, setSeenOpenRequest] = useState(openContextRequest);
+  if (seenOpenRequest !== openContextRequest) {
+    setSeenOpenRequest(openContextRequest);
+    if (openContextRequest > 0) setRailOpen(true);
+  }
+  useEffect(() => {
+    if (openContextRequest <= 0) return;
+    try {
+      localStorage.setItem(CONTEXT_RAIL_KEY, '1');
+    } catch {
+      // Preference only.
+    }
+  }, [openContextRequest]);
+  const readerSession = useReaderStore((state) => state.session);
+  const openReader = useReaderStore((state) => state.open);
+  const setReaderIndex = useReaderStore((state) => state.setIndex);
+  const closeReader = useReaderStore((state) => state.close);
   const noteSources = useMemo(
     () => (activeNote?.sources ?? []).map(toJournalCitationSource),
     [activeNote?.sources],
@@ -138,7 +164,7 @@ export function EntryEditor({
   }, [activeNote?.id, closeReader, readerSession?.ownerKey]);
 
   useEffect(() => () => {
-    if (useChatReaderStore.getState().session?.ownerKey.startsWith('journal:')) closeReader();
+    if (useReaderStore.getState().session?.ownerKey.startsWith('journal:')) closeReader();
   }, [closeReader]);
 
   const openJournalCitation = useCallback((number: number, occurrence: number | null = null) => {
@@ -193,7 +219,7 @@ export function EntryEditor({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key === '@/features/journal') {
+      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key === '.') {
         event.preventDefault();
         toggleRail();
       }
@@ -226,55 +252,103 @@ export function EntryEditor({
   );
 
   const ready = !loadError && !isLoadingNote && Boolean(activeNote);
+  const contextItemCount = (activeNote?.highlights.length ?? 0) + noteSources.length + (selectedEntry ? 1 : 0);
 
   return (
-    <main className="relative flex min-h-0 min-w-0 flex-1">
-      <div className="journal-desk relative flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto">
-        <div className="journal-paper mx-auto flex w-full max-w-[740px] flex-1 flex-col px-8 pb-16 pt-7 lg:px-14">
-          {loadError ? (
-            <p className="text-sm text-[hsl(var(--danger-fg))]">{loadError}</p>
-          ) : isLoadingNote || !activeNote ? (
-            <p className="text-sm text-[hsl(var(--text-muted))]">Loading journal…</p>
-          ) : (
-            <>
-              <EntryHeader
-                date={date}
-                journalName={journalName}
-                pageId={activeNote.id}
-                pageTitle={isDefaultPage ? null : pageTitle}
-                autoFocusTitle={autoFocusTitle}
-                onRename={onRenamePage}
-                wordCount={wordCount}
-                lastEditedAt={activeNote.updatedAt}
-                hasPendingChanges={hasPendingChanges}
-                isSaving={isSaving}
-                saveError={saveError}
-                onRetrySave={onSaveNow}
-                actions={
-                  railOpen ? null : (
-                    <IconButton label="Show conversation and highlights" shortcut="⌘." onClick={toggleRail}>
-                      <PanelRight />
-                    </IconButton>
-                  )
-                }
-              />
-              <div
-                ref={editorContainerRef}
-                className="journal-writing-surface min-h-[52vh] flex-1 font-serif text-[17px] leading-[1.85] text-[hsl(var(--text-primary))]"
-              >
-                <TiptapEditor
-                  value={activeNote.content ?? ''}
-                  onChange={onUpdateNoteContent}
-                  ariaLabel="Journal entry"
-                  placeholder="A thought, a question, a place to begin…"
-                  selectionActions={selectionActions}
-                  citationNumbers={[...citationMap.keys()]}
-                  onCitationClick={openJournalCitation}
+    <main className="relative flex min-h-0 min-w-0 flex-1 bg-bg">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto [scrollbar-gutter:stable]">
+          <div className="journal-editorial-sheet flex w-full flex-1 flex-col pb-16">
+            {loadError ? (
+              <p className="mx-auto w-full max-w-[740px] px-8 pt-8 text-sm text-danger-fg lg:px-14">{loadError}</p>
+            ) : isLoadingNote || !activeNote ? (
+              <p className="mx-auto w-full max-w-[740px] px-8 pt-8 text-sm text-text-muted lg:px-14">Loading journal…</p>
+            ) : (
+              <>
+                <EntryHeader
+                  date={date}
+                  journalName={journalName}
+                  pageId={activeNote.id}
+                  pageTitle={isDefaultPage ? null : pageTitle}
+                  autoFocusTitle={autoFocusTitle}
+                  onRename={onRenamePage}
+                  wordCount={wordCount}
+                  lastEditedAt={activeNote.updatedAt}
+                  hasPendingChanges={hasPendingChanges}
+                  isSaving={isSaving}
+                  saveError={saveError}
+                  onRetrySave={onSaveNow}
+                  toolbar={<JournalFormattingPill editor={tiptapEditor} />}
+                  actions={
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={toggleRail}
+                          aria-label={railOpen ? 'Hide context inspector' : 'Show conversation and highlights'}
+                          aria-expanded={railOpen}
+                          className={cn(
+                            'pressable inline-flex h-7 items-center gap-1.5 rounded-lg border px-2 text-xs font-medium transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
+                            railOpen
+                              ? 'border-accent/30 bg-accent-muted text-accent shadow-sm'
+                              : 'border-border-subtle bg-surface text-text-secondary shadow-sm hover:border-border-default hover:text-text-primary',
+                          )}
+                        >
+                          {railOpen ? (
+                            <PanelRightClose className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+                          ) : (
+                            <PanelRight className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+                          )}
+                          <span className="hidden sm:inline">Context</span>
+                          {contextItemCount > 0 ? (
+                            <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-[hsl(var(--text-primary)/0.08)] px-1 text-[10px] font-medium tabular-nums text-text-secondary">
+                              {contextItemCount}
+                            </span>
+                          ) : null}
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <span className="inline-flex items-center gap-2">
+                          <span>{railOpen ? 'Hide context inspector' : 'Show conversation and highlights'}</span>
+                          <kbd className="font-mono text-[10px] opacity-70">⌘.</kbd>
+                        </span>
+                      </TooltipContent>
+                    </Tooltip>
+                  }
                 />
-              </div>
-            </>
-          )}
+                <div
+                  ref={handleEditorContainerRef}
+                  className="journal-editorial-prose mx-auto min-h-[52vh] w-full max-w-[740px] flex-1 px-8 font-serif text-[17px] leading-[1.85] text-text-primary lg:px-14"
+                >
+                  <TiptapEditor
+                    value={activeNote.content ?? ''}
+                    onChange={onUpdateNoteContent}
+                    ariaLabel="Journal entry"
+                    placeholder="A thought, a question, a place to begin…"
+                    selectionActions={selectionActions}
+                    citationNumbers={[...citationMap.keys()]}
+                    onCitationClick={openJournalCitation}
+                  />
+                </div>
+              </>
+            )}
+          </div>
         </div>
+
+        {ready && activeNote ? (
+          <div className="shrink-0 border-t border-border-subtle bg-bg/95 backdrop-blur-xs">
+            <div className="w-full px-6 py-2.5 lg:px-8">
+              <EntryActionRail
+                selectedEntryId={selectedEntry?.id ?? null}
+                pinnedCount={pinnedEntryCount}
+                deckCount={deckCount}
+                onSynthesize={onSynthesize}
+                disabled={!activeNote}
+                weekCandidates={weekCandidates}
+              />
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {ready && activeNote && railOpen ? (
@@ -328,16 +402,6 @@ export function EntryEditor({
                 />
               </section>
             )
-          }
-          footer={
-            <EntryActionRail
-              selectedEntryId={selectedEntry?.id ?? null}
-              pinnedCount={pinnedEntryCount}
-              deckCount={deckCount}
-              onSynthesize={onSynthesize}
-              disabled={!activeNote}
-              weekCandidates={weekCandidates}
-            />
           }
         />
       ) : null}

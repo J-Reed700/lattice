@@ -1,23 +1,20 @@
 import { type FC, useState, useEffect } from 'react';
 
-import * as Tabs from '@radix-ui/react-tabs';
 import { Files, History, Link, List, type LucideIcon } from 'lucide-react';
 
-import { PageHeader } from '@/components/ui';
+import { PageHeader, Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui';
 import { useApi } from '@/contexts/ApiContext';
 import { fetchCorpusShape } from '@/features/corpus-shape/hooks/useCorpusShapeQuery';
 import { BatchFileImport } from '@/features/files/components/Ingest/BatchFileImport';
 import { BatchUrlImport } from '@/features/files/components/Ingest/BatchUrlImport';
 import { ImportHistory } from '@/features/files/components/Ingest/ImportHistory';
 import { UrlImport } from '@/features/files/components/Ingest/UrlImport';
-import { useFileBrowserStore } from '@/features/files/stores/fileBrowserStore';
+import { openLibraryRoot } from '@/features/files/hooks/batchUrlImportRunner';
 import { useToast } from '@/hooks/useToast';
 import type { ApiClient } from '@/lib/api';
-import { cn } from '@/lib/utils';
 import type { CorpusShapeDto } from '@/types';
 
 import { composeIngestSummary, type IngestNoun } from './ingestSummary';
-
 
 type TabId = 'single-url' | 'bulk-url' | 'files' | 'history';
 
@@ -50,40 +47,14 @@ const loadCorpusShapeSafe = async (api: ApiClient): Promise<CorpusShapeDto | nul
 };
 
 /**
- * Navigate without a router hook.
- *
- * The hub is rendered bare in its own tests, so it must not require a router
- * context to mount. Pushing the URL and replaying it as a popstate is what the
- * browser does on Back, and the router handles it the same way — no import of
- * the route table, no cycle.
- */
-const openLibrary = (): void => {
-  const library = useFileBrowserStore.getState();
-  library.setScope({ kind: 'all' });
-  library.setSearchQuery('');
-  library.setFilterByType(null);
-  library.setFilterBySource('all');
-  library.clearContentSearch();
-  window.history.pushState({}, '', '/files');
-  window.dispatchEvent(new PopStateEvent('popstate'));
-};
-
-const triggerClass = cn(
-  'inline-flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors duration-fast',
-  'data-[state=active]:bg-surface data-[state=active]:text-accent data-[state=active]:shadow-sm',
-  'data-[state=inactive]:text-text-tertiary hover:text-text-primary',
-  'focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring'
-);
-
-/**
  * IngestHub
  *
- * The onramp. Reading-column anatomy A: one PageHeader, one row of text
- * tabs, then the surface for the chosen source.
+ * Centered Import Hub: PageHeader, unified pill Tabs, and a calm surface card
+ * for each import workflow.
  */
 export const IngestHub: FC<IngestHubProps> = ({
   defaultTab = 'single-url',
-  onImportComplete
+  onImportComplete,
 }) => {
   const api = useApi();
   const { toast } = useToast();
@@ -116,7 +87,7 @@ export const IngestHub: FC<IngestHubProps> = ({
       const summary = composeIngestSummary(noun, count, shape);
       toast.success(summary.title, {
         ...(summary.message ? { message: summary.message } : {}),
-        action: { label: 'Open Library', onClick: openLibrary },
+        action: { label: 'Open Library', onClick: openLibraryRoot },
       });
     })();
   };
@@ -124,62 +95,68 @@ export const IngestHub: FC<IngestHubProps> = ({
   return (
     <main className="h-full overflow-y-auto bg-bg">
       <div className="mx-auto w-full max-w-[760px] px-6 pt-10 pb-16">
-        <PageHeader title="Import" description="Bring articles, documents, and files into your library." />
+        <PageHeader
+          title="Import"
+          description="Bring web articles, PDFs, notes, and local files into your searchable library."
+        />
 
-        <Tabs.Root
+        <Tabs
+          variant="pill"
           value={activeTab}
           onValueChange={(value) => setActiveTab(value as TabId)}
         >
-          <Tabs.List aria-label="Import source" className="flex flex-wrap items-center gap-1 rounded-lg border border-border-subtle bg-surface-sunken p-1">
+          <TabsList aria-label="Import source" className="h-9 p-1">
             {TABS.map(({ icon: Icon, ...tab }) => (
-              <Tabs.Trigger key={tab.id} value={tab.id} className={triggerClass}>
-                <Icon className="h-4 w-4" aria-hidden="true" />
+              <TabsTrigger key={tab.id} value={tab.id} className="gap-1.5 px-3.5">
+                <Icon className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
                 {tab.label}
-              </Tabs.Trigger>
+              </TabsTrigger>
             ))}
-          </Tabs.List>
+          </TabsList>
 
-          <Tabs.Content value="single-url" className="mt-6 outline-hidden">
-            <UrlImport
-              onImport={() => {}}
-              onImportComplete={(success: boolean, url: string) =>
-                handleImportComplete('single-url', success, 1, url)
-              }
-            />
-          </Tabs.Content>
+          <div className="mt-5 rounded-xl border border-border-subtle bg-surface p-6 shadow-sm">
+            <TabsContent value="single-url" className="mt-0 outline-hidden">
+              <UrlImport
+                onImport={() => {}}
+                onImportComplete={(success: boolean, url: string) =>
+                  handleImportComplete('single-url', success, 1, url)
+                }
+              />
+            </TabsContent>
 
-          <Tabs.Content value="bulk-url" className="mt-6 outline-hidden">
-            <BatchUrlImport
-              onImport={() => {}}
-              onImportComplete={(results: { successful: number; failed: number }) =>
-                handleImportComplete(
-                  'bulk-url',
-                  results.failed === 0,
-                  results.successful,
-                  results.failed > 0 ? `${results.failed} URLs` : undefined
-                )
-              }
-            />
-          </Tabs.Content>
+            <TabsContent value="bulk-url" className="mt-0 outline-hidden">
+              <BatchUrlImport
+                onImport={() => {}}
+                onImportComplete={(results: { successful: number; failed: number }) =>
+                  handleImportComplete(
+                    'bulk-url',
+                    results.failed === 0,
+                    results.successful,
+                    results.failed > 0 ? `${results.failed} URLs` : undefined
+                  )
+                }
+              />
+            </TabsContent>
 
-          <Tabs.Content value="files" className="mt-6 outline-hidden">
-            <BatchFileImport
-              onReviewFailures={() => setActiveTab('history')}
-              onImportComplete={(results: { successful: number; failed: number }) =>
-                handleImportComplete(
-                  'files',
-                  results.failed === 0,
-                  results.successful,
-                  results.failed > 0 ? `${results.failed} files` : undefined
-                )
-              }
-            />
-          </Tabs.Content>
+            <TabsContent value="files" className="mt-0 outline-hidden">
+              <BatchFileImport
+                onReviewFailures={() => setActiveTab('history')}
+                onImportComplete={(results: { successful: number; failed: number }) =>
+                  handleImportComplete(
+                    'files',
+                    results.failed === 0,
+                    results.successful,
+                    results.failed > 0 ? `${results.failed} files` : undefined
+                  )
+                }
+              />
+            </TabsContent>
 
-          <Tabs.Content value="history" className="mt-6 outline-hidden">
-            <ImportHistory />
-          </Tabs.Content>
-        </Tabs.Root>
+            <TabsContent value="history" className="mt-0 outline-hidden">
+              <ImportHistory />
+            </TabsContent>
+          </div>
+        </Tabs>
       </div>
     </main>
   );

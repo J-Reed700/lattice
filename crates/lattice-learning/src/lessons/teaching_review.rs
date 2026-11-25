@@ -37,16 +37,45 @@ const REVIEW_ANSWER_TOKENS: usize = 6000;
 /// What the reviewer works through in prose before its findings are written
 /// to the response schema, where each section's verdict would otherwise be
 /// chosen as it is written.
-const REVIEW_DRAFT_BRIEF: &str = "Go through the candidate part by part: for a lesson, every section whose inReview is true and every question; for an outline, every module. Solve each exercise and question yourself and check each worked example against its stated premises and result. For each part say what you checked, what you found and whether it has a material defect.";
+const REVIEW_DRAFT_BRIEF: &str = "Inspect the candidate part by part: for a lesson, every section whose inReview is true and every question; for an outline, every module. Solve each exercise and question yourself and check each worked example against its stated premises and result. Record only actual material defects (with their passage id or part, concern, and why) — skip parts that pass cleanly instead of writing confirmations for them. If no material defects exist, state that clearly.";
 
 /// The sentence the prose step is given when open findings are asked about.
 const OPEN_FINDINGS_BRIEF: &str = " For each entry of openFindings, read the part it names as the candidate now has it, whether or not that part is in review. Find the words of that part that still show the defect, or, for something left out, the words it should follow. When no words of the part show it any more, the finding is resolved. An open finding's id is never used for a different defect: report that as a new issue.";
 
-/// How the entries of an answer are written, in every review.
-const ANSWER_FORM: &str = "Answer with items. Each item holds one entry, and the entry's kind says what it is. An entry of kind issue is a defect of the whole material, as the issues described above: its note says what is wrong, and continues is the id of the open finding it continues, or none. An entry of kind sectionDefect is a defect in a section in review, as the sectionDefects described above: passageId is the passage where it shows, finding says what is wrong, and continues is as for an issue. An entry of kind resolved gives in openFinding the id of an open finding whose defect is no longer in the candidate; an open finding that no entry names stays open.";
+pub(super) const ANSWER_FORM_HEAD: &str =
+    "Answer with items. Each item holds one entry, and the entry's kind says what it is.";
+#[cfg(test)]
+pub(super) const CONCERN_FORM_HEAD: &str = "An issue's concern is the one concern it fails.";
+
+/// How the entries of an answer are written, given whether any passages or open findings are shown.
+fn answer_form(has_passages: bool, has_open: bool) -> String {
+    let mut form = String::from(ANSWER_FORM_HEAD);
+    if has_open {
+        form.push_str(" An entry of kind issue is a defect of the whole material, as the issues described above: its note says what is wrong, and continues is the id of the open finding it continues, or none.");
+    } else {
+        form.push_str(" An entry of kind issue is a defect of the whole material, as the issues described above: its note says what is wrong, and continues is none.");
+    }
+    if has_passages {
+        if has_open {
+            form.push_str(" An entry of kind sectionDefect is a defect in a section in review, as the sectionDefects described above: passageId is the passage where it shows, finding says what is wrong, and continues is as for an issue.");
+        } else {
+            form.push_str(" An entry of kind sectionDefect is a defect in a section in review, as the sectionDefects described above: passageId is the passage where it shows, finding says what is wrong, and continues is none.");
+        }
+    }
+    if has_open {
+        form.push_str(" An entry of kind resolved gives in openFinding the id of an open finding whose defect is no longer in the candidate; an open finding that no entry names stays open.");
+    }
+    form
+}
 
 /// What a lesson's review adds to how its entries are written.
-const CONCERN_FORM: &str = " An issue's concern is the one concern it fails. A sectionDefect's concerns is a list of objects, each with a concern: one for every concern the section fails.";
+fn concern_form(has_passages: bool) -> &'static str {
+    if has_passages {
+        " An issue's concern is the one concern it fails. A sectionDefect's concerns is a list of objects, each with a concern: one for every concern the section fails."
+    } else {
+        " An issue's concern is the one concern it fails."
+    }
+}
 
 /// A part of a section the reviewer may point at: a passage of a section in review.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -268,7 +297,12 @@ impl<L: Lens> Answered for TeachingReview<L> {
         }
         let mut task = input.prompt.0.as_object().cloned().unwrap_or_default();
         task.insert("candidate".into(), candidate);
-        if !input.sources.is_empty() {
+        if L::REMIT == Remit::Lesson {
+            if let Some(Value::Object(context)) = task.get_mut("authoringContext") {
+                context.remove("sources");
+                context.remove("referenceCatalog");
+            }
+        } else if !input.sources.is_empty() {
             if let Some(Value::Object(context)) = task.get_mut("authoringContext") {
                 let sources: Vec<&Value> = input.sources.iter().map(|source| &source.0).collect();
                 context.insert("sources".into(), json!(sources));
@@ -299,9 +333,15 @@ impl<L: Lens> Answered for TeachingReview<L> {
         if !input.reported.0.is_empty() {
             task.insert("alreadyReported".into(), json!(input.reported));
         }
-        let mut instructions = format!("{}\n{ANSWER_FORM}", input.system.0);
+        let has_passages = !input.passages.is_empty();
+        let has_open = !input.open.is_empty();
+        let mut instructions = format!(
+            "{}\n{}",
+            input.system.0,
+            answer_form(has_passages, has_open)
+        );
         if L::REMIT == Remit::Lesson {
-            instructions.push_str(CONCERN_FORM);
+            instructions.push_str(concern_form(has_passages));
         }
         let mut says = Says::new(instructions, Value::Object(task).to_string());
         says.output_tokens = REVIEW_ANSWER_TOKENS;
@@ -668,6 +708,17 @@ async fn ask_entries<L: Lens>(llm: &dyn LLMPort, input: &Input) -> Result<(Vec<E
         |standing: &[Item<L>]| {
             let mut next = input.clone();
             next.reported.0.extend(already_reported(standing));
+            let resolved_ids: std::collections::HashSet<&str> = standing
+                .iter()
+                .filter_map(|item| match &item.0 {
+                    Entry::Resolved(id) => Some(id.reference.as_str()),
+                    _ => None,
+                })
+                .collect();
+            if !resolved_ids.is_empty() {
+                next.open
+                    .retain(|open| !resolved_ids.contains(open.id.as_str()));
+            }
             Some(next)
         },
         &crate::model_call::answer_options(),
@@ -716,18 +767,31 @@ pub async fn review(
         },
     );
     let (reviewed, passages) = review_candidate(candidate, &sections);
-    let excerpts = prompt
-        .get_mut("authoringContext")
-        .and_then(|context| WriterExcerpts::take(llm, context, candidate));
-    let sources = Packed::new(
-        excerpts
-            .map(|excerpts| excerpts.ranked())
-            .unwrap_or_default()
-            .into_iter()
-            .map(Told)
-            .collect(),
-        |source: &Told<Value>| item_tokens(llm, &source.0),
-    );
+    let sources = match remit {
+        Remit::Open => {
+            let excerpts = prompt
+                .get_mut("authoringContext")
+                .and_then(|context| WriterExcerpts::take(llm, context, candidate));
+            Packed::new(
+                excerpts
+                    .map(|excerpts| excerpts.ranked())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(Told)
+                    .collect(),
+                |source: &Told<Value>| item_tokens(llm, &source.0),
+            )
+        }
+        Remit::Lesson => {
+            if let Some(Value::Object(context)) = prompt.get_mut("authoringContext") {
+                context.remove("sources");
+                context.remove("referenceCatalog");
+            }
+            Packed::new(Vec::new(), |source: &Told<Value>| {
+                item_tokens(llm, &source.0)
+            })
+        }
+    };
     let open: Vec<OpenFinding> = scope
         .asked
         .into_iter()

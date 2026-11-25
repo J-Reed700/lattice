@@ -73,7 +73,16 @@ export default defineConfig({
     strictPort: true,
     host: true,
     watch: {
-      ignored: ['**/e2e-results/**', '**/target/**'],
+      ignored: [
+        '**/.claude/**',
+        '**/.worktrees/**',
+        '**/.tmp-pr/**',
+        '**/crates/**',
+        '**/docs/**',
+        '**/evals/**',
+        '**/e2e-results/**',
+        '**/target/**',
+      ],
     },
     hmr: {
       protocol: 'ws',

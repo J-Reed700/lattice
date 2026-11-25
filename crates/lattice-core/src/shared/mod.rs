@@ -14,7 +14,6 @@ pub mod http;
 pub mod ipc;
 pub mod markdown_math;
 pub mod markdown_media;
-pub mod observability;
 pub mod path_safety;
 pub mod persistence;
 pub mod process;

@@ -1,15 +1,7 @@
 use super::*;
 
 fn flags() -> SearchFlags {
-    SearchFlags {
-        force_kb_search: false,
-        force_web_search: false,
-        web_fallback: false,
-        force_wiki_search: false,
-        deep_research_mode: false,
-        force_followup_mode: false,
-        closed_book: false,
-    }
+    SearchFlags::default()
 }
 
 fn prompt(reason: Option<&str>, kb_attempted: bool) -> String {
@@ -93,5 +85,148 @@ fn the_default_template_has_somewhere_to_put_the_reason() {
             .no_context_prompt_template
             .contains("No relevant documents were found"),
         "the default must not assert a search that may not have happened"
+    );
+}
+
+#[test]
+fn hybrid_user_requested_kb_without_hits_still_allows_general_knowledge() {
+    let settings = LLMPromptSettingsDto::default();
+    let flags = SearchFlags {
+        force_kb_search: true,
+        user_requested_kb: true,
+        strict_sources: false,
+        ..SearchFlags::default()
+    };
+    let prompt = PromptMessageBuilder::new(&settings, "What is TCP?", false, flags)
+        .with_kb_attempted(true)
+        .build();
+
+    assert!(
+        prompt.contains("Answer naturally from general knowledge"),
+        "{prompt}"
+    );
+    assert!(
+        !prompt.contains("Do not answer from general knowledge"),
+        "{prompt}"
+    );
+}
+
+#[test]
+fn a_requested_search_that_found_nothing_says_the_answer_is_not_backed_by_their_documents() {
+    let settings = LLMPromptSettingsDto::default();
+    let flags = SearchFlags {
+        force_kb_search: true,
+        user_requested_kb: true,
+        strict_sources: false,
+        ..SearchFlags::default()
+    };
+    let prompt = PromptMessageBuilder::new(&settings, "What is TCP?", false, flags)
+        .with_kb_attempted(true)
+        .build();
+
+    assert!(prompt.contains("not backed by their documents"), "{prompt}");
+}
+
+#[test]
+fn a_requested_search_that_could_not_run_says_why_and_that_the_answer_is_not_backed() {
+    let settings = LLMPromptSettingsDto::default();
+    let flags = SearchFlags {
+        user_requested_kb: true,
+        ..SearchFlags::default()
+    };
+    let prompt = PromptMessageBuilder::new(&settings, "What is TCP?", false, flags)
+        .with_kb_unavailable_reason(Some("the vault is still indexing".to_string()))
+        .build();
+
+    assert!(prompt.contains("the vault is still indexing"), "{prompt}");
+    assert!(prompt.contains("not backed by their documents"), "{prompt}");
+}
+
+#[test]
+fn a_turn_that_did_not_ask_for_its_documents_is_not_told_to_say_so() {
+    let settings = LLMPromptSettingsDto::default();
+    let prompt = PromptMessageBuilder::new(&settings, "What is TCP?", false, flags())
+        .with_kb_attempted(true)
+        .build();
+
+    assert!(
+        !prompt.contains("not backed by their documents"),
+        "{prompt}"
+    );
+}
+
+#[test]
+fn strict_mode_without_hits_refuses_general_knowledge() {
+    let settings = LLMPromptSettingsDto::default();
+    let flags = SearchFlags {
+        strict_sources: true,
+        ..SearchFlags::default()
+    };
+    let prompt = PromptMessageBuilder::new(&settings, "What is TCP?", false, flags)
+        .with_kb_attempted(true)
+        .build();
+
+    assert!(
+        prompt.contains("Do not answer from general knowledge"),
+        "{prompt}"
+    );
+    assert!(prompt.contains("turn off Sources only"), "{prompt}");
+}
+
+#[test]
+fn strict_mode_with_failed_forced_web_refuses_general_knowledge() {
+    let settings = LLMPromptSettingsDto::default();
+    let strict_flags = SearchFlags {
+        strict_sources: true,
+        force_web_search: true,
+        ..SearchFlags::default()
+    };
+    let strict_prompt = PromptMessageBuilder::new(&settings, "Latest news?", false, strict_flags)
+        .with_web_search_error(Some("network offline".to_string()))
+        .build();
+    assert!(strict_prompt.contains("network offline"), "{strict_prompt}");
+    assert!(
+        strict_prompt.contains("Do not answer from general knowledge"),
+        "{strict_prompt}"
+    );
+    assert!(
+        strict_prompt.contains("turn off Sources only"),
+        "{strict_prompt}"
+    );
+
+    let hybrid_flags = SearchFlags {
+        strict_sources: false,
+        force_web_search: true,
+        ..SearchFlags::default()
+    };
+    let hybrid_prompt = PromptMessageBuilder::new(&settings, "Latest news?", false, hybrid_flags)
+        .with_web_search_error(Some("network offline".to_string()))
+        .build();
+    assert!(
+        hybrid_prompt.contains("Give your best-effort answer from your built-in knowledge"),
+        "{hybrid_prompt}"
+    );
+}
+
+#[test]
+fn strict_mode_with_evidence_cut_never_falls_through_to_general_knowledge() {
+    let settings = LLMPromptSettingsDto::default();
+    let strict_flags = SearchFlags {
+        strict_sources: true,
+        ..SearchFlags::default()
+    };
+    let prompt = PromptMessageBuilder::new(&settings, "What is in my notes?", false, strict_flags)
+        .with_evidence_cut(true)
+        .build();
+
+    assert!(prompt.contains("Sources-only mode is on"), "{prompt}");
+    assert!(prompt.contains("context window had no room"), "{prompt}");
+    assert!(
+        prompt.contains("Do not answer from general knowledge"),
+        "{prompt}"
+    );
+    assert!(
+        !prompt.contains("Answer naturally from general knowledge"),
+        "{prompt}"
     );
 }

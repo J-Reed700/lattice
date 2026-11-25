@@ -347,6 +347,24 @@ pub struct Checked {
     pub left: Vec<Left>,
 }
 
+/// What one decision made of its finding.
+#[derive(Clone)]
+enum Ruling {
+    Established(ReviewFinding),
+    Left(Left),
+    Neither,
+}
+
+impl Checked {
+    fn add(&mut self, ruling: Ruling) {
+        match ruling {
+            Ruling::Established(finding) => self.established.push(finding),
+            Ruling::Left(left) => self.left.push(left),
+            Ruling::Neither => {}
+        }
+    }
+}
+
 /// The word the model writes for `basis`.
 fn basis_word(basis: Basis) -> &'static str {
     Basis::WORDS
@@ -388,10 +406,9 @@ fn evidence_ruling(decision: &Decision, established: bool) -> String {
     )
 }
 
-/// Records in `checked` what `decision` makes of `issue`: it with its site
-/// when established, or handed to the check its leftTo names together with
-/// that verdict.
-fn rule(checked: &mut Checked, issue: &ReviewFinding, decision: &Decision, beside: Beside<'_>) {
+/// What `decision` makes of `issue`: it with its site when established, or
+/// handed to the check its leftTo names together with that verdict.
+fn ruling(issue: &ReviewFinding, decision: &Decision, beside: Beside<'_>) -> Ruling {
     let established = established(issue, decision);
     match decision.left_to.as_ref().map(|picked| picked.reference) {
         None => {
@@ -400,7 +417,7 @@ fn rule(checked: &mut Checked, issue: &ReviewFinding, decision: &Decision, besid
                 decision,
                 &evidence_ruling(decision, established.is_some()),
             );
-            checked.established.extend(established);
+            established.map_or(Ruling::Neither, Ruling::Established)
         }
         Some(Ruled::Recorded(at)) => {
             if let Some(known) = beside.recorded.get(at) {
@@ -411,6 +428,7 @@ fn rule(checked: &mut Checked, issue: &ReviewFinding, decision: &Decision, besid
                     &format!("evidence gate: already recorded as {}", known.id().as_str()),
                 );
             }
+            Ruling::Neither
         }
         Some(Ruled::Check(check)) => {
             let decides = beside.decides.get(check).copied().unwrap_or_default();
@@ -427,11 +445,11 @@ fn rule(checked: &mut Checked, issue: &ReviewFinding, decision: &Decision, besid
                     }
                 ),
             );
-            checked.left.push(Left {
+            Ruling::Left(Left {
                 check,
                 finding: issue.clone(),
                 established,
-            });
+            })
         }
     }
 }
@@ -556,8 +574,10 @@ pub async fn check(
         &call,
     )?;
     // Each finding's search gets an equal share of the room the request
-    // leaves for reference passages.
-    let share = room / issues.len().max(1);
+    // leaves for reference passages, capped so large context windows do not
+    // pack hundreds of low-relevance passages for one or two findings.
+    const MAX_REVIEW_EVIDENCE_ISSUE_TOKENS: usize = 6_000;
+    let share = (room / issues.len().max(1)).min(MAX_REVIEW_EVIDENCE_ISSUE_TOKENS);
     let shown_as = |at: usize, passage: &ReferencePassage| {
         let source = references
             .sources
@@ -611,7 +631,7 @@ pub async fn check(
         &Asking {
             progress,
             reasoning: Some(ReasonFirst {
-                kind: CallKind::Classifier,
+                kind: CallKind::Authoring,
                 subject: "the review-finding check",
                 brief: DRAFT_BRIEF,
             }),
@@ -656,7 +676,7 @@ pub async fn check(
     let mut accepted = Checked::default();
     for (issue, settled) in issues.iter().zip(settled) {
         match settled {
-            Settled::Answered(decision) => rule(&mut accepted, issue, &decision, beside),
+            Settled::Answered(decision) => accepted.add(ruling(issue, &decision, beside)),
             Settled::Unanswered(why) => {
                 tracing::warn!(finding = %issue.id().as_str(), ?why, "The review-finding check left a finding undecided; it is not established");
             }

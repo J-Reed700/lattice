@@ -9,9 +9,10 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
-use lattice_core::domain::ports::article_archive::ArticleArchive;
+use lattice_core::domain::ports::article_archive::{ArticleArchive, SavedArticle};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::path_safety::reject_parent_components;
+use lattice_core::shared::fs::confinement::confine_to_root;
+use lattice_core::shared::fs::owned_folder::OwnedFolder;
 
 mod content;
 mod naming;
@@ -46,6 +47,25 @@ pub struct ArticleMetadata {
     /// Outgoing links captured from the article HTML
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub links: Vec<String>,
+}
+
+async fn is_file(path: &Path) -> bool {
+    fs::metadata(path)
+        .await
+        .map(|metadata| metadata.is_file())
+        .unwrap_or(false)
+}
+
+/// What `metadata.json` says about a saved article, read leniently: older
+/// files lack fields `ArticleMetadata` requires.
+#[derive(Debug, Default, Deserialize)]
+struct SavedFacts {
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default)]
+    links: Vec<String>,
 }
 
 /// README content explaining the web archive structure
@@ -153,6 +173,7 @@ https://github.com/RecallGraph/Lattice
 pub struct WebArchiveService {
     /// Base directory for archive (~/.lattice/web-archive)
     base_dir: PathBuf,
+    owned: OwnedFolder,
 }
 
 impl WebArchiveService {
@@ -163,9 +184,7 @@ impl WebArchiveService {
     /// - `AppError::ConfigError` if home directory cannot be determined
     /// - `AppError::Io` if directory creation fails
     pub fn new() -> Result<Self> {
-        Ok(Self {
-            base_dir: Self::default_root()?,
-        })
+        Ok(Self::with_base_dir(Self::default_root()?))
     }
 
     /// `~/.lattice/web-archive`, where saved articles live. Backups pack and
@@ -182,7 +201,8 @@ impl WebArchiveService {
     /// Used by tests and by anything that needs an archive somewhere other
     /// than the user's home directory.
     pub fn with_base_dir(base_dir: PathBuf) -> Self {
-        Self { base_dir }
+        let owned = OwnedFolder::new(&base_dir);
+        Self { base_dir, owned }
     }
 
     /// Root of this archive.
@@ -222,11 +242,35 @@ impl WebArchiveService {
 
         Ok(())
     }
+
+    /// True when `path`, with every link in it followed, is inside the
+    /// archive: a link inside it can lead anywhere.
+    fn reaches_inside(&self, path: &Path) -> bool {
+        confine_to_root(&self.base_dir, path).is_ok()
+    }
+
+    /// Refuses `path` unless, with every link in it followed, it is strictly
+    /// inside the archive: never where a link inside it leads out to, and
+    /// never the archive itself.
+    fn confine_deletion(&self, path: &Path) -> Result<()> {
+        let resolved = confine_to_root(&self.base_dir, path)?;
+        if resolved == confine_to_root(&self.base_dir, &self.base_dir)? {
+            return Err(AppError::Security(format!(
+                "Refusing to delete the whole web archive: {}",
+                path.display()
+            )));
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
 impl ArticleArchive for WebArchiveService {
     async fn delete_article(&self, path: &Path) -> Result<()> {
+        // With no archive folder, no article of it is left to delete.
+        if !self.base_dir.exists() {
+            return Ok(());
+        }
         // Determine what to delete based on path type
         let path_to_delete = if path.is_dir() {
             // Directory path: remove entire directory (legacy)
@@ -238,6 +282,7 @@ impl ArticleArchive for WebArchiveService {
                 .unwrap_or_else(|| path.to_path_buf())
         } else {
             // Single file: remove just the file (legacy)
+            self.confine_deletion(path)?;
             match fs::remove_file(path).await {
                 Ok(()) => return Ok(()),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -250,6 +295,7 @@ impl ArticleArchive for WebArchiveService {
             }
         };
 
+        self.confine_deletion(&path_to_delete)?;
         match fs::remove_dir_all(&path_to_delete).await {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -261,8 +307,36 @@ impl ArticleArchive for WebArchiveService {
     }
 
     fn owns(&self, path: &Path) -> bool {
-        // Component-wise, and never through a `..` that climbs back out.
-        reject_parent_components(path).is_ok() && path.starts_with(&self.base_dir)
+        self.owned.holds(path)
+    }
+
+    fn is_saved_article(&self, path: &Path) -> bool {
+        path.file_name() == Some(std::ffi::OsStr::new("article.md")) && self.owns(path)
+    }
+
+    async fn saved_article(&self, path: &Path) -> Option<SavedArticle> {
+        if !self.is_saved_article(path) || !self.reaches_inside(path) || !is_file(path).await {
+            return None;
+        }
+        let dir = path.parent()?;
+        let page = dir.join("page.html");
+        let page = (self.reaches_inside(&page) && is_file(&page).await).then_some(page);
+        let metadata = dir.join("metadata.json");
+        let content = if self.reaches_inside(&metadata) {
+            fs::read_to_string(&metadata).await.ok()
+        } else {
+            None
+        };
+        let facts = content
+            .and_then(|json| serde_json::from_str::<SavedFacts>(&json).ok())
+            .unwrap_or_default();
+        Some(SavedArticle {
+            text: path.to_path_buf(),
+            page,
+            title: facts.title,
+            url: facts.url,
+            links: facts.links,
+        })
     }
 }
 

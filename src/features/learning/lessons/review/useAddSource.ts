@@ -1,71 +1,46 @@
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
 
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
-import { invalidateLearningSourceDependents } from '@/features/learning/api/learningInvalidation';
-import { learningClaimReviewKey, learningLessonEvidencePrefix } from '@/features/learning/api/learningQueryKeys';
-import { learningSourcesKey } from '@/features/learning/sources/useLearningSources';
-import type { AttachEvidenceDto, AttachScopeDto, ClaimAttachProgressDto, ClaimAttachReportDto } from '@/lib/bindings';
-import { failureToError } from '@/lib/errorHandling';
+import {
+  type AttachSourceVariables,
+  EMPTY_LESSON_ATTACH_RUN,
+  lessonAttachRunKey,
+  useSourceRecheckStore,
+} from '@/features/learning/sources/sourceRecheckStore';
+import type { ClaimAttachReportDto } from '@/lib/bindings';
 
-export type AddSourceVariables = {
-  expectedRevision: number;
-  evidence: AttachEvidenceDto;
-} & (
-  | {
-    /** The claim the attach is recorded on: the first of the scope. */
-    claimId: string;
-    scope: AttachScopeDto;
-  }
-  /** The lesson as a whole, with no claim chosen first. */
-  | { lesson: true }
-);
+export type AddSourceVariables = AttachSourceVariables;
 
 /**
  * "Add a source" over `attach_learning_claim_evidence`, or over
  * `attach_learning_lesson_source` for the whole lesson (§3.6, §5.3): the
- * stage it is at, live, and the report when it ends. No timeout: the fetch's
- * own failure or the checker's error ends it. Cancel stops listening; the
- * server finishes the claim it is on (the ledger is append-only).
+ * stage it is at, live, and the report when it ends. Persists across unmount
+ * so route/tab leaves keep progress and results; explicit Cancel discards it.
  */
-export function useAddSource(programId: string, lessonId: string) {
+export function useAddSource(
+  programId: string,
+  lessonId: string,
+  describeBanner?: (report: ClaimAttachReportDto) => string | null,
+) {
   const api = useApi();
   const client = useQueryClient();
-  const [progress, setProgress] = useState<ClaimAttachProgressDto | null>(null);
-  // Each run gets a token; a cancelled run's late events and result are dropped.
-  const run = useRef(0);
+  const key = lessonAttachRunKey(programId, lessonId);
+  const state = useSourceRecheckStore((store) => store.attachRuns[key] ?? EMPTY_LESSON_ATTACH_RUN);
+  const runLessonAttach = useSourceRecheckStore((store) => store.runLessonAttach);
+  const cancelLessonAttach = useSourceRecheckStore((store) => store.cancelLessonAttach);
+  const describeRef = useRef(describeBanner);
+  describeRef.current = describeBanner;
 
-  const mutation = useMutation<ClaimAttachReportDto | null, Error, AddSourceVariables>({
-    retry: false,
-    mutationFn: async (variables) => {
-      const token = ++run.current;
-      setProgress(null);
-      const { expectedRevision, evidence } = variables;
-      const onProgress = (update: ClaimAttachProgressDto) => { if (run.current === token) setProgress(update); };
-      const result = 'lesson' in variables
-        ? await api.attachLearningLessonSource({ programId, lessonId, expectedRevision, evidence }, onProgress)
-        : await api.attachLearningClaimEvidence({ programId, lessonId, claimId: variables.claimId, expectedRevision, evidence, scope: variables.scope }, onProgress);
-      if (run.current !== token) return null;
-      if (!result.ok) throw failureToError(result);
-      return result.data;
-    },
-    onSettled: async () => {
-      // An attach saves a source: every source-derived view changes with it.
-      await Promise.all([
-        client.invalidateQueries({ queryKey: learningClaimReviewKey(programId, lessonId) }),
-        client.invalidateQueries({ queryKey: learningLessonEvidencePrefix(programId) }),
-        client.invalidateQueries({ queryKey: learningSourcesKey(programId) }),
-        invalidateLearningSourceDependents(client, programId),
-      ]);
-    },
-  });
-
-  const cancel = () => {
-    run.current += 1;
-    setProgress(null);
-    mutation.reset();
+  return {
+    isPending: state.isPending,
+    backendPending: state.backendPending,
+    progress: state.progress,
+    mutateAsync: (variables: AddSourceVariables) =>
+      runLessonAttach(api, client, programId, lessonId, variables, (report) =>
+        describeRef.current ? describeRef.current(report) : null,
+      ),
+    cancel: () => cancelLessonAttach(programId, lessonId),
   };
-
-  return { ...mutation, progress, cancel };
 }

@@ -8,43 +8,106 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-pub const DEFAULT_INTENT_PROMPT_TEMPLATE: &str = "You classify one turn of a conversation with a \
-personal knowledge-base assistant. Decide four things about the user's latest message:
-- needsKnowledgeBase: true only if answering requires searching the user's own documents, notes, or files.
+// What a turn needs, defined once for both prompts that ask for it.
+macro_rules! turn_needs {
+    () => {
+        "- needsKnowledgeBase: true only if answering requires searching or reading the user's own documents, notes, or files.
 - needsWeb: true only if the answer depends on information that cannot be in the user's own files: current events, live data such as prices or weather, or public facts about the outside world that the user did not write about. False for questions about the user's own documents, notes, policies, projects or work, including anything asked about \"our\", \"my\" or \"the company's\" rules, plans or records. When unsure, false.
 - isFollowup: true only if the message just continues the recent conversation and cannot stand alone.
-- standaloneQuestion: the user's latest message as a question that can be understood with no conversation before it, naming in full what it is about.
+- standaloneQuestion: the user's latest message as a question that can be understood with no conversation before it, naming in full what it is about.\n"
+    };
+}
+
+pub const DEFAULT_INTENT_PROMPT_TEMPLATE: &str = concat!(
+    "You classify one turn of a conversation with a \
+personal knowledge-base assistant. Decide four things about the user's latest message:\n",
+    turn_needs!(),
+    "Also give a confidence between 0 and 1.\n\nRecent conversation:\n{context}\n\nUser message: {message}"
+);
+
+pub const DEFAULT_UNIFIED_TRIAGE_PROMPT_TEMPLATE: &str = concat!(
+    "You classify one turn of a conversation \
+with a personal knowledge-base assistant. Decide seven things about the user's latest message:\n",
+    turn_needs!(),
+    "- documentAction: choose \"use_last_document\" when continuing or asking about the recent document, \"new_search\" when asking about other documents or a new topic in the library, \"clarify\" only when genuinely ambiguous whether the user means the recent document or something else, or \"none\" when no document is needed at all.
+- clarifyQuestion: a short question naming the recent document when documentAction is \"clarify\", else empty string.
+- rationale: a short reason for documentAction.
 Also give a confidence between 0 and 1.
 
 Recent conversation:
 {context}
 
-User message: {message}";
+Recent document title: {recent_document_title}
+User message: {message}"
+);
 
 /// The answer's shape, sent as the request's schema rather than spelled out in
 /// the prompt: a format demand in the prompt is what costs a small model its
 /// accuracy, while the grammar holds the shape. No bound here comes near
 /// llama.cpp's grammar repetition limit, past which it would drop the grammar.
 pub(crate) fn intent_schema() -> serde_json::Value {
+    let mut properties = turn_need_properties();
+    // Range left to the clamp in `TurnIntent::settled`: not every provider's
+    // structured output accepts numeric bounds.
+    properties.insert(
+        "confidence".to_string(),
+        serde_json::json!({ "type": "number" }),
+    );
+    object_schema(properties)
+}
+
+pub(crate) fn unified_triage_schema() -> serde_json::Value {
+    let mut properties = turn_need_properties();
+    properties.insert(
+        "documentAction".to_string(),
+        serde_json::json!({
+            "type": "string",
+            "enum": ["none", "use_last_document", "new_search", "clarify"]
+        }),
+    );
+    properties.insert(
+        "clarifyQuestion".to_string(),
+        serde_json::json!({ "type": "string" }),
+    );
+    properties.insert(
+        "rationale".to_string(),
+        serde_json::json!({ "type": "string" }),
+    );
+    properties.insert(
+        "confidence".to_string(),
+        serde_json::json!({ "type": "number" }),
+    );
+    object_schema(properties)
+}
+
+fn turn_need_properties() -> serde_json::Map<String, serde_json::Value> {
+    let mut properties = serde_json::Map::new();
+    properties.insert(
+        "needsKnowledgeBase".to_string(),
+        serde_json::json!({ "type": "boolean" }),
+    );
+    properties.insert(
+        "needsWeb".to_string(),
+        serde_json::json!({ "type": "boolean" }),
+    );
+    properties.insert(
+        "isFollowup".to_string(),
+        serde_json::json!({ "type": "boolean" }),
+    );
+    properties.insert(
+        "standaloneQuestion".to_string(),
+        serde_json::json!({ "type": "string" }),
+    );
+    properties
+}
+
+fn object_schema(properties: serde_json::Map<String, serde_json::Value>) -> serde_json::Value {
+    let required: Vec<String> = properties.keys().cloned().collect();
     serde_json::json!({
         "type": "object",
         "additionalProperties": false,
-        "properties": {
-            "needsKnowledgeBase": { "type": "boolean" },
-            "needsWeb": { "type": "boolean" },
-            "isFollowup": { "type": "boolean" },
-            "standaloneQuestion": { "type": "string" },
-            // Range left to the clamp in `classify`: not every provider's
-            // structured output accepts numeric bounds.
-            "confidence": { "type": "number" }
-        },
-        "required": [
-            "needsKnowledgeBase",
-            "needsWeb",
-            "isFollowup",
-            "standaloneQuestion",
-            "confidence"
-        ]
+        "properties": properties,
+        "required": required
     })
 }
 
@@ -79,6 +142,45 @@ impl TurnIntent {
             confidence: 0.0,
         }
     }
+
+    /// The intent the turn may act on: a guess the model itself does not
+    /// believe must not steer the turn, and a standalone question stands only
+    /// for a believed follow-up. The confidence stays on the record for logging.
+    fn settled(mut self, confidence_threshold: f32) -> Self {
+        self.confidence = self.confidence.clamp(0.0, 1.0);
+        if self.confidence < confidence_threshold {
+            self.needs_knowledge_base = false;
+            self.needs_web = false;
+            self.is_followup = false;
+        }
+        let is_followup = self.is_followup;
+        self.standalone_question = self
+            .standalone_question
+            .map(|question| question.trim().to_string())
+            .filter(|question| is_followup && !question.is_empty());
+        self
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TriageDocumentAction {
+    #[default]
+    None,
+    UseLastDocument,
+    NewSearch,
+    Clarify,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct UnifiedTurnTriage {
+    pub intent: TurnIntent,
+    pub document_action: TriageDocumentAction,
+    pub clarify_question: Option<String>,
+    pub rationale: Option<String>,
+    #[serde(default)]
+    pub used_fallback: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -133,6 +235,34 @@ impl IntentClassifier {
     /// own is not dropped: its start goes in, marked as continuing, since the
     /// turn a follow-up follows is the one thing the classifier must see.
     pub fn input_for(&self, message: &str, context: &[String]) -> IntentInput {
+        let bare = render_intent_prompt(
+            &self.prompt_template,
+            &IntentInput {
+                message: message.to_string(),
+                recent_context: Vec::new(),
+            },
+        );
+        self.input_for_bare(message, context, &bare)
+    }
+
+    pub fn input_for_recent_document(
+        &self,
+        message: &str,
+        context: &[String],
+        recent_document_title: &str,
+    ) -> IntentInput {
+        let bare = render_unified_triage_prompt(
+            DEFAULT_UNIFIED_TRIAGE_PROMPT_TEMPLATE,
+            &IntentInput {
+                message: message.to_string(),
+                recent_context: Vec::new(),
+            },
+            recent_document_title,
+        );
+        self.input_for_bare(message, context, &bare)
+    }
+
+    fn input_for_bare(&self, message: &str, context: &[String], bare: &str) -> IntentInput {
         use lattice_core::application::services::completion_input::is_system_entry;
         use lattice_core::application::services::history_share::{
             auxiliary_history_room, newest_that_fit, omitted_note,
@@ -143,19 +273,12 @@ impl IntentClassifier {
             .cloned()
             .collect();
         let context = turns.as_slice();
-        let bare = render_intent_prompt(
-            &self.prompt_template,
-            &IntentInput {
-                message: message.to_string(),
-                recent_context: Vec::new(),
-            },
-        );
-        let room = auxiliary_history_room(self.llm.as_ref(), &bare);
+        let room = auxiliary_history_room(self.llm.as_ref(), bare);
         let turn_cost = |turn: &String| self.llm.count_tokens(turn).saturating_add(1);
         let (recent, omitted) = newest_that_fit(context, room, turn_cost);
         let (recent, omitted) = match (recent.is_empty(), context.last()) {
             (true, Some(newest)) => match self.start_of(newest, room) {
-                Some(partial) => (vec![partial], omitted - 1),
+                Some(partial) => (vec![partial], omitted.saturating_sub(1)),
                 None => (Vec::new(), omitted),
             },
             _ => (recent.to_vec(), omitted),
@@ -197,27 +320,14 @@ impl IntentClassifier {
     pub async fn classify(&self, input: &IntentInput) -> TurnIntent {
         let prompt = render_intent_prompt(&self.prompt_template, input);
 
-        match self.complete(prompt).await {
+        match self.complete_with_schema(prompt, intent_schema()).await {
             Ok(text) => {
-                let mut intent = parse_turn_intent(&text).unwrap_or_else(|| {
-                    warn!("Intent classifier returned unparsable output, falling back");
-                    TurnIntent::fallback()
-                });
-
-                intent.confidence = intent.confidence.clamp(0.0, 1.0);
-
-                // A guess the model itself does not believe must not steer the
-                // turn; the confidence stays on the record for logging.
-                if intent.confidence < self.confidence_threshold {
-                    intent.needs_knowledge_base = false;
-                    intent.needs_web = false;
-                    intent.is_followup = false;
-                }
-                let is_followup = intent.is_followup;
-                intent.standalone_question = intent
-                    .standalone_question
-                    .map(|question| question.trim().to_string())
-                    .filter(|question| is_followup && !question.is_empty());
+                let intent = parse_turn_intent(&text)
+                    .unwrap_or_else(|| {
+                        warn!("Intent classifier returned unparsable output, falling back");
+                        TurnIntent::fallback()
+                    })
+                    .settled(self.confidence_threshold);
 
                 info!(
                     needs_knowledge_base = intent.needs_knowledge_base,
@@ -235,18 +345,60 @@ impl IntentClassifier {
             }
         }
     }
+
+    pub async fn triage_with_recent_document(
+        &self,
+        input: &IntentInput,
+        recent_document_title: &str,
+    ) -> UnifiedTurnTriage {
+        let prompt = render_unified_triage_prompt(
+            DEFAULT_UNIFIED_TRIAGE_PROMPT_TEMPLATE,
+            input,
+            recent_document_title,
+        );
+        match self
+            .complete_with_schema(prompt, unified_triage_schema())
+            .await
+        {
+            Ok(text) => match parse_unified_triage(&text, self.confidence_threshold) {
+                Some(triage) => {
+                    info!(
+                        needs_knowledge_base = triage.intent.needs_knowledge_base,
+                        needs_web = triage.intent.needs_web,
+                        is_followup = triage.intent.is_followup,
+                        document_action = ?triage.document_action,
+                        confidence = triage.intent.confidence,
+                        "Unified turn triage"
+                    );
+                    triage
+                }
+                None => {
+                    warn!("Unified triage returned unparsable output, falling back");
+                    unified_triage_fallback()
+                }
+            },
+            Err(e) => {
+                warn!(error = %e, "Unified triage LLM failed, falling back");
+                unified_triage_fallback()
+            }
+        }
+    }
 }
 
 impl IntentClassifier {
     /// One schema-constrained request. A provider that cannot hold the answer
     /// to the schema still gets the prompt, and the lenient parser reads what
     /// comes back.
-    async fn complete(&self, prompt: String) -> Result<String> {
+    async fn complete_with_schema(
+        &self,
+        prompt: String,
+        schema: serde_json::Value,
+    ) -> Result<String> {
         let response = self
             .llm
             .complete(&legacy::completion(legacy::Completion {
                 input: from_context("", &[], &prompt),
-                json_schema: Some(intent_schema()),
+                json_schema: Some(schema),
                 sampling: Some(SamplingOverride::deterministic()),
                 // Part of the turn the user is waiting on: Stop cancels it.
                 priority: InferencePriority::Interactive,
@@ -275,6 +427,75 @@ fn render_intent_prompt(template: &str, input: &IntentInput) -> String {
         .replace("{context}", &context)
 }
 
+fn render_unified_triage_prompt(
+    template: &str,
+    input: &IntentInput,
+    recent_document_title: &str,
+) -> String {
+    render_intent_prompt(template, input)
+        .replace("{recent_document_title}", recent_document_title.trim())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawUnifiedTriage {
+    needs_knowledge_base: bool,
+    needs_web: bool,
+    is_followup: bool,
+    #[serde(default)]
+    standalone_question: Option<String>,
+    #[serde(default, alias = "document_action")]
+    document_action: Option<TriageDocumentAction>,
+    #[serde(default, alias = "clarify_question")]
+    clarify_question: Option<String>,
+    #[serde(default)]
+    rationale: Option<String>,
+    confidence: f32,
+}
+
+fn unified_triage_fallback() -> UnifiedTurnTriage {
+    UnifiedTurnTriage {
+        intent: TurnIntent::fallback(),
+        document_action: TriageDocumentAction::NewSearch,
+        clarify_question: None,
+        rationale: Some("fallback".to_string()),
+        used_fallback: true,
+    }
+}
+
+fn parse_unified_triage(text: &str, confidence_threshold: f32) -> Option<UnifiedTurnTriage> {
+    let json = extract_json_object(text)?;
+    let raw: RawUnifiedTriage = serde_json::from_str(&json).ok()?;
+    let intent = TurnIntent {
+        needs_knowledge_base: raw.needs_knowledge_base,
+        needs_web: raw.needs_web,
+        is_followup: raw.is_followup,
+        standalone_question: raw.standalone_question,
+        confidence: raw.confidence,
+    }
+    .settled(confidence_threshold);
+    let document_action =
+        raw.document_action
+            .unwrap_or(if intent.needs_knowledge_base || intent.is_followup {
+                TriageDocumentAction::NewSearch
+            } else {
+                TriageDocumentAction::None
+            });
+    Some(UnifiedTurnTriage {
+        intent,
+        document_action,
+        clarify_question: non_blank(raw.clarify_question),
+        rationale: non_blank(raw.rationale),
+        used_fallback: false,
+    })
+}
+
+fn non_blank(value: Option<String>) -> Option<String> {
+    value
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
 fn parse_turn_intent(text: &str) -> Option<TurnIntent> {
     let json = extract_json_object(text)?;
     serde_json::from_str(&json).ok()
@@ -286,452 +507,9 @@ fn extract_json_object(text: &str) -> Option<String> {
     if end <= start {
         return None;
     }
-    Some(text[start..=end].to_string())
+    text.get(start..=end).map(str::to_string)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use async_trait::async_trait;
-    use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
-
-    struct MockLLM {
-        response: String,
-        window: usize,
-    }
-
-    impl MockLLM {
-        fn new(response: impl Into<String>) -> Arc<Self> {
-            Arc::new(Self {
-                response: response.into(),
-                window: 4096,
-            })
-        }
-
-        /// A 32K window, whose history share holds a long chat whole.
-        fn wide(response: impl Into<String>) -> Arc<Self> {
-            Arc::new(Self {
-                response: response.into(),
-                window: 32_768,
-            })
-        }
-    }
-
-    #[async_trait]
-    impl LLMPort for MockLLM {
-        async fn complete(
-            &self,
-            request: &CompletionRequest,
-        ) -> lattice_core::shared::error::Result<CompletionResponse> {
-            Ok(CompletionResponse::from_text(
-                self.respond(request.user_text()).await?,
-            ))
-        }
-        fn model_name(&self) -> &str {
-            "mock-llm"
-        }
-
-        fn max_context_tokens(&self) -> usize {
-            self.window
-        }
-
-        fn count_tokens(&self, text: &str) -> usize {
-            text.split_whitespace().count()
-        }
-
-        async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
-            Ok(true)
-        }
-        fn enforces(
-            &self,
-            _schema: &lattice_core::application::services::model_contract::shape::Schema,
-        ) -> bool {
-            false
-        }
-    }
-    impl MockLLM {
-        async fn respond(&self, _prompt: &str) -> lattice_core::shared::error::Result<String> {
-            Ok(self.response.clone())
-        }
-    }
-
-    fn input() -> IntentInput {
-        IntentInput {
-            message: "What did my notes say about the launch?".to_string(),
-            recent_context: vec!["User: hello".to_string(), "Assistant: hi".to_string()],
-        }
-    }
-
-    #[test]
-    fn prompt_carries_the_message_and_recent_context() {
-        let prompt = render_intent_prompt(DEFAULT_INTENT_PROMPT_TEMPLATE, &input());
-        assert!(prompt.contains("What did my notes say about the launch?"));
-        assert!(prompt.contains("User: hello"));
-    }
-
-    /// A question the company's own documents answer is not read as a public one.
-    #[test]
-    fn needs_web_is_for_what_the_users_files_cannot_hold() {
-        let prompt = render_intent_prompt(DEFAULT_INTENT_PROMPT_TEMPLATE, &input());
-        let definition = prompt
-            .lines()
-            .find(|line| line.starts_with("- needsWeb:"))
-            .expect("the prompt defines needsWeb");
-
-        for wanted in [
-            "cannot be in the user's own files",
-            "current events",
-            "live data",
-            "public facts about the outside world",
-            "False for questions about the user's own documents, notes, policies, projects",
-            "\"our\", \"my\" or \"the company's\"",
-            "When unsure, false.",
-        ] {
-            assert!(definition.contains(wanted), "needsWeb lost: {wanted}");
-        }
-        assert!(
-            !definition.contains("public information from the web"),
-            "the old definition sent any public-sounding question out"
-        );
-    }
-
-    #[test]
-    fn prompt_without_context_says_so() {
-        let bare = IntentInput {
-            message: "hi".to_string(),
-            recent_context: Vec::new(),
-        };
-        let prompt = render_intent_prompt(DEFAULT_INTENT_PROMPT_TEMPLATE, &bare);
-        assert!(prompt.contains("(no prior turns)"));
-    }
-
-    #[tokio::test]
-    async fn valid_json_parses_into_the_intent() {
-        let classifier = IntentClassifier::new(MockLLM::new(
-            r#"{"needsKnowledgeBase":true,"needsWeb":false,"isFollowup":true,"confidence":0.9}"#,
-        ));
-
-        let intent = classifier.classify(&input()).await;
-
-        assert!(intent.needs_knowledge_base);
-        assert!(!intent.needs_web);
-        assert!(intent.is_followup);
-        assert!((intent.confidence - 0.9).abs() < f32::EPSILON);
-    }
-
-    #[tokio::test]
-    async fn prose_around_the_json_is_ignored() {
-        let classifier = IntentClassifier::new(MockLLM::new(
-            "Sure! {\"needsKnowledgeBase\":false,\"needsWeb\":true,\"isFollowup\":false,\"confidence\":0.8} done",
-        ));
-
-        let intent = classifier.classify(&input()).await;
-
-        assert!(intent.needs_web);
-        assert!(!intent.needs_knowledge_base);
-    }
-
-    #[derive(Default)]
-    struct RecordingLLM {
-        sent: std::sync::Mutex<Vec<CompletionRequest>>,
-    }
-
-    #[async_trait]
-    impl LLMPort for RecordingLLM {
-        async fn complete(
-            &self,
-            request: &CompletionRequest,
-        ) -> lattice_core::shared::error::Result<CompletionResponse> {
-            self.sent.lock().unwrap().push(request.clone());
-            Ok(CompletionResponse::from_text(
-                r#"{"confidence":0.9,"isFollowup":false,"needsKnowledgeBase":true,"needsWeb":false}"#,
-            ))
-        }
-        fn model_name(&self) -> &str {
-            "recording-llm"
-        }
-        fn max_context_tokens(&self) -> usize {
-            4096
-        }
-        fn count_tokens(&self, text: &str) -> usize {
-            text.split_whitespace().count()
-        }
-        async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
-            Ok(true)
-        }
-        fn enforces(
-            &self,
-            _schema: &lattice_core::application::services::model_contract::shape::Schema,
-        ) -> bool {
-            false
-        }
-    }
-
-    #[tokio::test]
-    async fn the_schema_travels_with_the_request_and_the_prompt_demands_no_format() {
-        let llm = Arc::new(RecordingLLM::default());
-        let intent = IntentClassifier::new(llm.clone()).classify(&input()).await;
-
-        assert!(intent.needs_knowledge_base);
-        let sent = llm.sent.lock().unwrap();
-        assert_eq!(sent.len(), 1);
-        let request = sent.first().unwrap();
-        assert_eq!(
-            request.schema().map(|schema| schema.as_json()),
-            Some(&intent_schema())
-        );
-        assert!(request.no_time_limit, "no clock cuts the classifier off");
-        let prompt = request.user_text();
-        for demand in ["JSON", "strict", "Respond with", "no other text", "bool"] {
-            assert!(!prompt.contains(demand), "prompt still asks for: {demand}");
-        }
-        for field in [
-            "needsKnowledgeBase",
-            "needsWeb",
-            "isFollowup",
-            "standaloneQuestion",
-            "confidence",
-        ] {
-            assert!(prompt.contains(field), "prompt no longer explains {field}");
-        }
-        assert_eq!(request.sampling, Some(SamplingOverride::deterministic()));
-    }
-
-    #[test]
-    fn the_schema_requires_every_field_the_parser_reads() {
-        let schema = intent_schema();
-        let required: Vec<&str> = schema["required"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(serde_json::Value::as_str)
-            .collect();
-        let parsed: TurnIntent = serde_json::from_value(serde_json::json!({
-            "needsKnowledgeBase": true, "needsWeb": false, "isFollowup": false, "confidence": 0.5
-        }))
-        .unwrap();
-        assert!(parsed.needs_knowledge_base);
-        assert_eq!(
-            required,
-            [
-                "needsKnowledgeBase",
-                "needsWeb",
-                "isFollowup",
-                "standaloneQuestion",
-                "confidence"
-            ]
-        );
-        assert_eq!(schema["additionalProperties"], false);
-    }
-
-    async fn standalone_question_of(reply: &str) -> Option<String> {
-        IntentClassifier::new(MockLLM::new(reply))
-            .classify(&IntentInput {
-                message: "And on the edge ring?".into(),
-                recent_context: Vec::new(),
-            })
-            .await
-            .standalone_question
-    }
-
-    #[tokio::test]
-    async fn a_followup_keeps_the_question_it_stands_for() {
-        let question = standalone_question_of(
-            r#"{"needsKnowledgeBase":true,"needsWeb":false,"isFollowup":true,"standaloneQuestion":"  What is the hold on the edge ring? ","confidence":0.9}"#,
-        )
-        .await;
-        assert_eq!(
-            question.as_deref(),
-            Some("What is the hold on the edge ring?")
-        );
-    }
-
-    #[tokio::test]
-    async fn only_a_believed_followup_has_a_standalone_question() {
-        for reply in [
-            r#"{"needsKnowledgeBase":true,"needsWeb":false,"isFollowup":false,"standaloneQuestion":"A rewrite","confidence":0.9}"#,
-            r#"{"needsKnowledgeBase":true,"needsWeb":false,"isFollowup":true,"standaloneQuestion":"A rewrite","confidence":0.2}"#,
-            r#"{"needsKnowledgeBase":true,"needsWeb":false,"isFollowup":true,"standaloneQuestion":"  ","confidence":0.9}"#,
-            r#"{"needsKnowledgeBase":true,"needsWeb":false,"isFollowup":true,"confidence":0.9}"#,
-        ] {
-            assert_eq!(standalone_question_of(reply).await, None, "{reply}");
-        }
-    }
-
-    #[tokio::test]
-    async fn garbage_falls_back_to_all_false() {
-        let classifier = IntentClassifier::new(MockLLM::new("I have no idea."));
-
-        assert_eq!(classifier.classify(&input()).await, TurnIntent::fallback());
-    }
-
-    #[tokio::test]
-    async fn missing_fields_fall_back_to_all_false() {
-        let classifier = IntentClassifier::new(MockLLM::new(
-            r#"{"needsKnowledgeBase":true,"confidence":0.9}"#,
-        ));
-
-        assert_eq!(classifier.classify(&input()).await, TurnIntent::fallback());
-    }
-
-    #[tokio::test]
-    async fn low_confidence_clears_the_booleans_but_keeps_the_confidence() {
-        let classifier = IntentClassifier::new(MockLLM::new(
-            r#"{"needsKnowledgeBase":true,"needsWeb":true,"isFollowup":true,"confidence":0.2}"#,
-        ));
-
-        let intent = classifier.classify(&input()).await;
-
-        assert!(!intent.needs_knowledge_base);
-        assert!(!intent.needs_web);
-        assert!(!intent.is_followup);
-        assert!((intent.confidence - 0.2).abs() < f32::EPSILON);
-    }
-
-    #[tokio::test]
-    async fn out_of_range_confidence_is_clamped() {
-        let classifier = IntentClassifier::new(MockLLM::new(
-            r#"{"needsKnowledgeBase":true,"needsWeb":false,"isFollowup":false,"confidence":7}"#,
-        ));
-
-        let intent = classifier.classify(&input()).await;
-
-        assert_eq!(intent.confidence, 1.0);
-        assert!(intent.needs_knowledge_base);
-    }
-
-    /// The history is what the classifier's window gives it: newest turns whole
-    /// and the rest counted.
-    #[test]
-    fn history_is_sized_from_the_classifiers_window() {
-        use lattice_core::application::services::history_share::auxiliary_history_room;
-        let context: Vec<String> = (0..60)
-            .map(|turn| format!("turn {turn} {}", "word ".repeat(20)))
-            .collect();
-
-        let wide = IntentClassifier::new(MockLLM::wide("{}")).input_for("and then?", &context);
-        assert_eq!(wide.recent_context, context, "a 32K window holds it all");
-
-        let narrow = IntentClassifier::new(MockLLM::new("{}"));
-        let input = narrow.input_for("and then?", &context);
-        assert!(input.recent_context.len() > 1 && input.recent_context.len() < context.len());
-        assert!(
-            input.recent_context[0].contains("earlier messages not shown"),
-            "{:?}",
-            input.recent_context
-        );
-        assert!(input.recent_context.last().unwrap().starts_with("turn 59 "));
-        let room = auxiliary_history_room(
-            narrow.llm.as_ref(),
-            &render_intent_prompt(
-                DEFAULT_INTENT_PROMPT_TEMPLATE,
-                &IntentInput {
-                    message: "and then?".into(),
-                    recent_context: Vec::new(),
-                },
-            ),
-        );
-        let carried: usize = input.recent_context[1..]
-            .iter()
-            .map(|turn| narrow.llm.count_tokens(turn) + 1)
-            .sum();
-        assert!(carried <= room, "{carried} of {room}");
-    }
-
-    #[test]
-    fn the_conversations_system_prompt_is_not_shown_as_a_turn() {
-        let context = [
-            "System: You are Lattice, a precise research assistant.".to_string(),
-            "User: When does the agreement renew?".to_string(),
-            "Assistant: On 2025-10-14 [1].".to_string(),
-        ];
-        let input =
-            IntentClassifier::new(MockLLM::wide("{}")).input_for("And the notice?", &context);
-        assert_eq!(input.recent_context, context[1..]);
-        let alone = IntentClassifier::new(MockLLM::wide("{}")).input_for("Hi there", &context[..1]);
-        assert!(
-            alone.recent_context.is_empty(),
-            "{:?}",
-            alone.recent_context
-        );
-    }
-
-    /// Answers after `delay`, as a slow local model does.
-    struct SlowLLM {
-        delay: std::time::Duration,
-    }
-
-    #[async_trait]
-    impl LLMPort for SlowLLM {
-        async fn complete(
-            &self,
-            _request: &CompletionRequest,
-        ) -> lattice_core::shared::error::Result<CompletionResponse> {
-            tokio::time::sleep(self.delay).await;
-            Ok(CompletionResponse::from_text(
-                r#"{"needsKnowledgeBase":true,"needsWeb":false,"isFollowup":true,"confidence":0.9}"#,
-            ))
-        }
-        fn model_name(&self) -> &str {
-            "slow-llm"
-        }
-        fn max_context_tokens(&self) -> usize {
-            4096
-        }
-        fn count_tokens(&self, text: &str) -> usize {
-            text.split_whitespace().count()
-        }
-        async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
-            Ok(true)
-        }
-        fn enforces(
-            &self,
-            _schema: &lattice_core::application::services::model_contract::shape::Schema,
-        ) -> bool {
-            false
-        }
-    }
-
-    /// A model that answers after 20 s is slow, not dead: its answer is used.
-    #[tokio::test(start_paused = true)]
-    async fn a_slow_classifier_is_waited_for() {
-        let classifier = IntentClassifier::new(Arc::new(SlowLLM {
-            delay: std::time::Duration::from_secs(20),
-        }));
-        let started = tokio::time::Instant::now();
-        let intent = classifier.classify(&input()).await;
-        assert!(started.elapsed() >= std::time::Duration::from_secs(20));
-        assert!(intent.needs_knowledge_base);
-        assert!(intent.is_followup);
-        assert!((intent.confidence - 0.9).abs() < f32::EPSILON);
-    }
-
-    /// A newest turn longer than the whole room goes in by its start, marked as
-    /// continuing, and nothing older.
-    #[test]
-    fn a_newest_turn_too_long_for_the_room_goes_in_partially_and_marked() {
-        use lattice_core::application::services::history_share::auxiliary_history_room;
-        let classifier = IntentClassifier::new(MockLLM::new("{}"));
-        let room = auxiliary_history_room(
-            classifier.llm.as_ref(),
-            &render_intent_prompt(
-                DEFAULT_INTENT_PROMPT_TEMPLATE,
-                &IntentInput {
-                    message: "and then?".into(),
-                    recent_context: Vec::new(),
-                },
-            ),
-        );
-        let context = vec![
-            "Assistant: an earlier answer".to_string(),
-            format!("Assistant: {}", "word ".repeat(room * 3)),
-        ];
-        let input = classifier.input_for("and then?", &context);
-        assert_eq!(input.recent_context.len(), 2, "{:?}", input.recent_context);
-        assert!(input.recent_context[0].contains("1 earlier message not shown"));
-        let partial = &input.recent_context[1];
-        assert!(partial.starts_with("Assistant: word word"));
-        assert!(partial.contains("more characters not shown"), "{partial}");
-        assert!(classifier.llm.count_tokens(partial) < room);
-    }
-}
+#[path = "intent_tests.rs"]
+mod tests;

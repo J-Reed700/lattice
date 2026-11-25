@@ -8,6 +8,7 @@ use crate::features::download::download_repository::DownloadRepository;
 use crate::features::download::engine::DownloadEngine;
 use crate::infrastructure::services::file_cleanup::FileCleanupService;
 use lattice_core::application::ports::download_manager::DownloadEvent;
+use lattice_core::application::ports::CredentialsPort;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -37,14 +38,15 @@ pub struct DownloadManagerService {
     pub(super) repository: Arc<dyn DownloadRepository>,
     pub(super) engine: Arc<dyn DownloadEngine>,
     pub(super) active_downloads: Arc<RwLock<HashMap<String, ActiveDownload>>>,
-    pub(super) download_queue: Arc<RwLock<VecDeque<String>>>,
+    pub(in crate::features::download) download_queue: Arc<RwLock<VecDeque<String>>>,
     /// Serializes registration with queue promotion so a batch cannot become
     /// observable until every one of its sessions exists.
     pub(super) queue_gate: Arc<Mutex<()>>,
     pub(super) max_concurrent_downloads: usize,
     pub(super) event_tx: mpsc::Sender<DownloadEvent>,
     pub(super) event_rx: Arc<RwLock<Option<mpsc::Receiver<DownloadEvent>>>>,
-    pub(super) auth_tokens: Arc<RwLock<HashMap<String, String>>>,
+    pub(in crate::features::download) auth_tokens: Arc<RwLock<HashMap<String, String>>>,
+    pub(super) credentials: Option<Arc<dyn CredentialsPort>>,
     pub(super) file_cleanup: Arc<FileCleanupService>,
     pub(super) allowed_root: PathBuf,
     /// Where transfers run, so shutdown joins them.
@@ -71,6 +73,7 @@ impl DownloadManagerService {
             event_tx,
             event_rx: Arc::new(RwLock::new(Some(event_rx))),
             auth_tokens: Arc::new(RwLock::new(HashMap::new())),
+            credentials: None,
             file_cleanup: Arc::new(FileCleanupService::new()),
             allowed_root,
             background,
@@ -79,6 +82,14 @@ impl DownloadManagerService {
 
     pub fn with_max_concurrent(mut self, max: usize) -> Self {
         self.max_concurrent_downloads = max;
+        self
+    }
+
+    /// Attach a credentials store so HuggingFace tokens can be resolved on
+    /// demand for sizing, resume, retry, and post-restart recovery without
+    /// persisting secrets to SQLite.
+    pub fn with_credentials(mut self, credentials: Arc<dyn CredentialsPort>) -> Self {
+        self.credentials = Some(credentials);
         self
     }
 }

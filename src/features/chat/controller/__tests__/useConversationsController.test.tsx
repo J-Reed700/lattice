@@ -12,8 +12,12 @@ import { conversationUiStore } from '@/features/chat/stores/conversationUiStore'
 import { VaultAPI } from '@/lib/api';
 import { conversationKeys } from '@/shared/conversations/conversationKeys';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
+import type { ConversationsState } from '@/shared/conversations/conversationsStore.types';
+import { conversationDraftKey, setDraft, useDraftStore } from '@/shared/drafts/drafts';
 import { stubGlobalChatModelWrites } from '@/tests/fixtures/globalChatModelWrites';
 import { ErrorCode } from '@/types/api/errorCodes';
+
+const selectAll = (state: ConversationsState) => state;
 
 const api = VaultAPI as unknown as Record<string, ReturnType<typeof vi.fn>>;
 
@@ -100,7 +104,7 @@ describe('useConversationsController optimistic cleanup', () => {
         }] }),
       }], total: 1 },
     });
-    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.lastMessageSources.get('saved-answer')?.[0]?.webSnapshot)
       .toEqual(webSnapshot));
     expect(result.current.lastMessageSources.get('saved-answer')?.[0]?.content).toBe('Saved search excerpt');
@@ -110,7 +114,7 @@ describe('useConversationsController optimistic cleanup', () => {
     api.getActiveModels = vi.fn();
     api.getSettings = vi.fn();
     api.createConversation = vi.fn().mockResolvedValue({ ok: true, data: { conversation: { ...conversation, id: 'new-chat' } } });
-    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
     await act(async () => { await result.current.createConversation('New chat'); });
     expect(api.createConversation).toHaveBeenCalledWith('New chat');
     expect(api.getActiveModels).not.toHaveBeenCalled();
@@ -123,7 +127,7 @@ describe('useConversationsController optimistic cleanup', () => {
     api.setConversationModelChoice = vi.fn().mockResolvedValue({ ok: true, data: { ...conversation, modelChoice: choice } });
     api.getConversation = vi.fn().mockResolvedValue({ ok: true, data: { conversation: { ...conversation, modelChoice: choice } } });
     const expectNoGlobalWrite = stubGlobalChatModelWrites(api);
-    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.conversations).toHaveLength(1));
     await act(async () => { await result.current.selectConversation(conversation.id); });
 
@@ -138,7 +142,7 @@ describe('useConversationsController optimistic cleanup', () => {
     api.setConversationModelChoice = vi.fn().mockResolvedValue({
       ok: false, error: 'Ornith-1.5-9B is not downloaded any more. Download it in Settings → Models or pick another model.',
     });
-    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
     await act(async () => {
       await expect(result.current.setConversationModelChoice(conversation.id, { kind: 'default' }))
         .rejects.toThrow('Ornith-1.5-9B is not downloaded any more.');
@@ -147,7 +151,7 @@ describe('useConversationsController optimistic cleanup', () => {
 
   it('marks the user message failed and removes the assistant placeholder on transport errors', async () => {
     api.chatWithConversation = vi.fn().mockRejectedValue(new Error('transport unavailable'));
-    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
 
     await waitFor(() => expect(result.current.conversations).toHaveLength(1));
     await act(async () => result.current.sendMessage('Hello'));
@@ -169,7 +173,7 @@ describe('useConversationsController optimistic cleanup', () => {
     api.createConversation = vi.fn().mockResolvedValue({ ok: true, data: { conversation: created } });
     api.moveConversationToSpace = vi.fn().mockResolvedValue({ ok: true, data: {} });
     api.getConversation = vi.fn().mockResolvedValue({ ok: true, data: { conversation: { ...created, spaceId: selected.id } } });
-    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
     await act(async () => { await result.current.createConversation('Training'); });
     expect(api.moveConversationToSpace).toHaveBeenCalledWith({ conversationId: 'new-chat', spaceId: 'patent' });
     expect(result.current.activeConversationId).toBe('new-chat');
@@ -181,7 +185,7 @@ describe('useConversationsController optimistic cleanup', () => {
     api.listConversationSpaces = vi.fn().mockResolvedValue({ ok: true, data: [{ id: 'patent', name: 'Patent Training' }] });
     api.createConversation = vi.fn().mockResolvedValue({ ok: true, data: { conversation: { ...conversation, id: 'new-chat', spaceId: 'space_general' } } });
     api.moveConversationToSpace = vi.fn().mockResolvedValue({ ok: false, error: 'database unavailable' });
-    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
     await act(async () => {
       await expect(result.current.createConversation('Training')).rejects.toThrow('Could not create the chat in Patent Training');
     });
@@ -195,7 +199,7 @@ describe('useConversationsController optimistic cleanup', () => {
       error: 'Network error',
       details: { code: ErrorCode.NETWORK_ERROR, details: 'llama.cpp request timed out' },
     });
-    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.conversations).toHaveLength(1));
     await act(async () => result.current.sendMessage('Help me learn the MPEP'));
     expect(result.current.error).toBe('llama.cpp request timed out');
@@ -215,7 +219,7 @@ describe('useConversationsController optimistic cleanup', () => {
         metadata: JSON.stringify({ requestId: 'older-request' }),
       }], total: 1 },
     });
-    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
 
     await act(async () => { await result.current.sendMessage('Same question', 'conversation-1'); });
 
@@ -238,7 +242,7 @@ describe('useConversationsController optimistic cleanup', () => {
         metadata: JSON.stringify({ requestId: persistedRequestId }),
       }], total: 1 },
     }));
-    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
 
     await act(async () => { await result.current.sendMessage('Same question', 'conversation-1'); });
 
@@ -254,7 +258,7 @@ describe('useConversationsController optimistic cleanup', () => {
     };
     let resolveChat: ((value: unknown) => void) | undefined;
     api.chatWithConversation = vi.fn().mockImplementation(() => new Promise(resolve => { resolveChat = resolve; }));
-    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
 
     act(() => { void result.current.sendMessage('What is this?', 'conversation-1', undefined, undefined, undefined, [picture]); });
 
@@ -280,7 +284,7 @@ describe('useConversationsController optimistic cleanup', () => {
     });
     let resolveChat: ((value: unknown) => void) | undefined;
     api.chatWithConversation = vi.fn().mockImplementation(() => new Promise(resolve => { resolveChat = resolve; }));
-    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.conversations).toHaveLength(1));
     let sending: Promise<unknown> | undefined;
     act(() => { sending = result.current.sendMessage('Try again'); });
@@ -322,7 +326,7 @@ describe('useConversationsController optimistic cleanup', () => {
     });
     let resolveChat: ((value: unknown) => void) | undefined;
     api.chatWithConversation = vi.fn().mockImplementation(() => new Promise(resolve => { resolveChat = resolve; }));
-    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.conversations).toHaveLength(1));
     let sending: Promise<unknown> | undefined;
     act(() => { sending = result.current.sendMessage('Show me a canopy'); });
@@ -381,7 +385,7 @@ describe('useConversationsController optimistic cleanup', () => {
       ok: true,
       data: { conversationId: 'conversation-1', message: answer.content, messages: [answer], contextUsed: 0, sources: [] },
     });
-    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.conversations).toHaveLength(1));
 
     await act(async () => { await result.current.sendMessage('Where do tomatoes go?'); });
@@ -456,7 +460,7 @@ describe('useConversationsController optimistic cleanup', () => {
       ok: true,
       data: { conversationId: 'conversation-1', message: answer.content, messages: [answer], contextUsed: 0, sources: [source] },
     });
-    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.conversations).toHaveLength(1));
 
     await act(async () => { await result.current.sendMessage('Where do tomatoes go?'); });
@@ -503,7 +507,7 @@ describe('useConversationsController optimistic cleanup', () => {
     });
     let resolveChat: ((value: unknown) => void) | undefined;
     api.chatWithConversation = vi.fn().mockImplementation(() => new Promise(resolve => { resolveChat = resolve; }));
-    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.conversations).toHaveLength(1));
     let sending: Promise<unknown> | undefined;
     act(() => { sending = result.current.sendMessage('Search my notes'); });
@@ -531,7 +535,7 @@ describe('useConversationsController optimistic cleanup', () => {
     api.chatWithConversation = vi.fn().mockImplementation(() => new Promise(resolve => {
       resolveChat = resolve;
     }));
-    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
 
     await waitFor(() => expect(result.current.conversations).toHaveLength(1));
     let sendPromise: Promise<unknown> | undefined;
@@ -561,7 +565,7 @@ describe('useConversationsController optimistic cleanup', () => {
     api.chatWithConversation = vi.fn().mockImplementation(() => new Promise(resolve => {
       resolveChat = resolve;
     }));
-    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.conversations).toHaveLength(1));
     let sendPromise: Promise<unknown> | undefined;
     act(() => { sendPromise = result.current.sendMessage('Where is the draft?'); });
@@ -602,7 +606,7 @@ describe('useConversationsController optimistic cleanup', () => {
 
   it('forwards the attached document ids to the chat call', async () => {
     api.chatWithConversation = vi.fn().mockResolvedValue({ ok: false, error: 'fixture finished' });
-    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.conversations).toHaveLength(1));
     await act(async () => result.current.sendMessage('Read these', 'conversation-1', undefined, ['a.pdf'], ['doc-1']));
     expect(api.chatWithConversation).toHaveBeenCalledWith(
@@ -613,7 +617,7 @@ describe('useConversationsController optimistic cleanup', () => {
   it('retains attachment names, document IDs and tool preferences on a failed-message retry', async () => {
     api.chatWithConversation = vi.fn().mockResolvedValue({ ok: false, error: 'fixture failure' });
     api.getConversationMessages = vi.fn().mockResolvedValue({ ok: true, data: { messages: [], total: 0 } });
-    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
     const preferences = { knowledgeBase: false, webSearch: true, turnMode: 'query' as const, enabledTools: ['web'] };
     await act(async () => {
       await result.current.sendMessage('Use the selected manual', 'conversation-1', preferences, ['Manual.pdf'], ['doc-manual']);
@@ -636,7 +640,7 @@ describe('useConversationsController optimistic cleanup', () => {
 
   it('dismisses only the selected failed user prompt', async () => {
     api.chatWithConversation = vi.fn().mockResolvedValue({ ok: false, error: 'fixture failure' });
-    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
     await act(async () => { await result.current.sendMessage('Keep until dismissed', 'conversation-1'); });
     const failed = [...result.current.optimisticMessages.values()].find(message => message.role === 'user');
     expect(failed).toBeDefined();
@@ -662,7 +666,7 @@ describe('useConversationsController optimistic cleanup', () => {
       deleted = true;
       return { ok: true, data: null };
     });
-    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper(queryClient) });
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper(queryClient) });
     await waitFor(() => expect(result.current.conversations).toHaveLength(1));
     let sending!: Promise<unknown>;
     act(() => { sending = result.current.sendMessage('Must not return after deletion', conversation.id); });
@@ -705,7 +709,7 @@ describe('useConversationsController optimistic cleanup', () => {
       deleted = true;
       return { ok: true, data: null };
     });
-    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper(queryClient) });
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper(queryClient) });
     await waitFor(() => expect(result.current.conversations).toHaveLength(1));
 
     const oldRead = queryClient.refetchQueries({ queryKey: conversationKeys.lists, type: 'active' });
@@ -733,7 +737,7 @@ describe('useConversationsController optimistic cleanup', () => {
       deleted.add(id);
       return Promise.resolve({ ok: true, data: null });
     });
-    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper(queryClient) });
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper(queryClient) });
     await waitFor(() => expect(result.current.conversations).toHaveLength(2));
 
     let deletingFirst!: Promise<unknown>;
@@ -758,7 +762,7 @@ describe('useConversationsController optimistic cleanup', () => {
     let resolveTruncate: ((value: unknown) => void) | undefined;
     api.truncateConversationAfter = vi.fn().mockImplementation(() => new Promise(resolve => { resolveTruncate = resolve; }));
     api.deleteConversation = vi.fn().mockResolvedValue({ ok: true, data: null });
-    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper(queryClient) });
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper(queryClient) });
 
     let truncating!: Promise<boolean>;
     act(() => { truncating = result.current.truncateAfter(conversation.id, original.id); });
@@ -784,7 +788,7 @@ describe('useConversationsController optimistic cleanup', () => {
     let resolveMessageDelete: ((value: unknown) => void) | undefined;
     api.deleteConversationMessage = vi.fn().mockImplementation(() => new Promise(resolve => { resolveMessageDelete = resolve; }));
     api.deleteConversation = vi.fn().mockResolvedValue({ ok: true, data: null });
-    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper(queryClient) });
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper(queryClient) });
 
     let deletingMessage!: Promise<void>;
     act(() => { deletingMessage = result.current.deleteMessage(conversation.id, savedMessage.id); });
@@ -821,7 +825,7 @@ describe('useConversationsController optimistic cleanup', () => {
     queryClient.setQueryData(conversationKeys.messages(conversation.id), [precedingMessage, savedMessage, followingMessage]);
     let resolveMessageDelete: ((value: unknown) => void) | undefined;
     api.deleteConversationMessage = vi.fn().mockImplementation(() => new Promise(resolve => { resolveMessageDelete = resolve; }));
-    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper(queryClient) });
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper(queryClient) });
 
     let deletingMessage!: Promise<void>;
     act(() => { deletingMessage = result.current.deleteMessage(conversation.id, savedMessage.id); });
@@ -846,7 +850,7 @@ describe('useConversationsController optimistic cleanup', () => {
     api.listMessageBookmarks = vi.fn().mockResolvedValue({ ok: true, data: { bookmarks: [] } });
     api.listConversationLinkedDocuments = vi.fn().mockResolvedValue({ ok: true, data: [] });
     api.listConversationWebSources = vi.fn().mockResolvedValue({ ok: true, data: [] });
-    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
 
     let openingOlder!: Promise<void>;
     act(() => { openingOlder = result.current.selectConversation('older-chat'); });
@@ -870,7 +874,7 @@ describe('useConversationsController optimistic cleanup', () => {
     vi.mocked(listen).mockImplementationOnce(async () => unlisten);
     api.chatWithConversation = vi.fn().mockImplementation(() => new Promise(resolve => { resolveChat = resolve; }));
     api.deleteConversation = vi.fn().mockImplementation(() => new Promise(resolve => { resolveDelete = resolve; }));
-    const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper(queryClient) });
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper(queryClient) });
     await waitFor(() => expect(result.current.conversations).toHaveLength(1));
     let sending!: Promise<unknown>;
     act(() => { sending = result.current.sendMessage('Keep this turn', conversation.id); });
@@ -910,7 +914,7 @@ describe('useConversationsController optimistic cleanup', () => {
     const unlisten = vi.fn();
     vi.mocked(listen).mockImplementationOnce(async () => unlisten);
     api.chatWithConversation = vi.fn().mockImplementation(() => new Promise(resolve => { resolveChat = resolve; }));
-    const { result, unmount } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+    const { result, unmount } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.conversations).toHaveLength(1));
     const preferences = { knowledgeBase: false, webSearch: true, turnMode: 'query' as const };
     let sending!: Promise<unknown>;
@@ -947,7 +951,7 @@ describe('useConversationsController optimistic cleanup', () => {
       bookmarks = [{ id: 'bookmark-1', spaceId: 'space_general' }];
       return { ok: true, data: { status: 'success' } };
     });
-    const { result } = renderHook(() => ({ controller: useConversationsStore(), sidebar: useSidebarBookmarksQuery('', null) }), { wrapper: createWrapper() });
+    const { result } = renderHook(() => ({ controller: useConversationsStore(selectAll), sidebar: useSidebarBookmarksQuery('', null) }), { wrapper: createWrapper() });
     await waitFor(() => expect(result.current.sidebar.isSuccess).toBe(true));
     expect(result.current.sidebar.data).toEqual([]);
     await act(async () => { await result.current.controller.bookmarkMessage('conversation-1', 'message-1'); });
@@ -964,7 +968,7 @@ describe('useConversationsController optimistic cleanup', () => {
 
     it('moves the sidebar to the space the conversation lives in', async () => {
       // "All spaces" is selected; the chat opened belongs to Food Research.
-      const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+      const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
       await act(async () => { await result.current.selectConversation('conversation-1'); });
 
       expect(conversationUiStore.getState().selectedSpaceId).toBe('food-research');
@@ -973,7 +977,7 @@ describe('useConversationsController optimistic cleanup', () => {
 
     it('leaves the space alone when the conversation is already in it', async () => {
       conversationUiStore.setState({ selectedSpaceId: 'food-research' });
-      const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+      const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
       await waitFor(() => expect(api.listConversationsExplorer).toHaveBeenCalled());
       const before = api.listConversationsExplorer.mock.calls.length;
       await act(async () => { await result.current.selectConversation('conversation-1'); });
@@ -983,14 +987,14 @@ describe('useConversationsController optimistic cleanup', () => {
     });
 
     it('keeps the chat open when opening it moves the sidebar to its space', async () => {
-      const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+      const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
       await act(async () => { await result.current.selectConversation('conversation-1'); });
 
       expect(conversationUiStore.getState().activeConversationId).toBe('conversation-1');
     });
 
     it('closes the open chat when the reader switches to another space', async () => {
-      const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+      const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
       await act(async () => { await result.current.selectConversation('conversation-1'); });
       await act(async () => { await result.current.loadConversations({ spaceId: 'movies' }); });
 
@@ -998,7 +1002,7 @@ describe('useConversationsController optimistic cleanup', () => {
     });
 
     it('keeps the open chat when the reader switches to All spaces', async () => {
-      const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+      const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
       await act(async () => { await result.current.selectConversation('conversation-1'); });
       await act(async () => { await result.current.loadConversations({ spaceId: null }); });
 
@@ -1010,7 +1014,7 @@ describe('useConversationsController optimistic cleanup', () => {
       const waiting: ((_value: unknown) => void)[] = [];
       const resolveDetail = (value: unknown) => waiting.splice(0).forEach(resolve => resolve(value));
       api.getConversation = vi.fn().mockImplementation(() => new Promise(resolve => { waiting.push(resolve); }));
-      const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+      const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
       let opening!: Promise<void>;
       act(() => { opening = result.current.selectConversation('conversation-1'); });
       await waitFor(() => expect(api.getConversation).toHaveBeenCalled());
@@ -1026,7 +1030,7 @@ describe('useConversationsController optimistic cleanup', () => {
     it('stops observing a deleted conversation and deletes one the list filter hides', async () => {
       const hidden = 'hidden-by-search';
       api.deleteConversation = vi.fn().mockResolvedValue({ ok: true, data: null });
-      const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+      const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
       await act(async () => { await result.current.selectConversation(hidden); });
       expect(conversationUiStore.getState().requestedLinkedConversationIds.has(hidden)).toBe(true);
       const linkedCalls = api.listConversationLinkedDocuments.mock.calls.length;
@@ -1043,7 +1047,7 @@ describe('useConversationsController optimistic cleanup', () => {
     });
 
     it('keeps observers only for the most recent conversations', async () => {
-      const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+      const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
       for (let i = 0; i <= MAX_OBSERVED_CONVERSATIONS; i += 1) {
         await act(async () => { await result.current.selectConversation(`c-${i}`); });
       }
@@ -1060,7 +1064,7 @@ describe('useConversationsController optimistic cleanup', () => {
           Array.from({ length: MAX_OBSERVED_MEMBERSHIPS }, (_, i) => `doc-${i}`)
         ),
       });
-      const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
+      const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
       await act(async () => { await result.current.loadDocumentSpaceMemberships('new-doc'); });
       expect(conversationUiStore.getState().requestedMembershipDocumentIds.size).toBe(MAX_OBSERVED_MEMBERSHIPS);
       expect(result.current.documentSpaceMembershipsByDocumentId.has('doc-0')).toBe(false);
@@ -1069,6 +1073,90 @@ describe('useConversationsController optimistic cleanup', () => {
       expect(result.current.documentSpaceMembershipsByDocumentId.has('doc-1')).toBe(false);
       expect(conversationUiStore.getState().requestedMembershipDocumentIds.size).toBe(MAX_OBSERVED_MEMBERSHIPS);
     });
+  });
+
+  it('restores a stopped scoped prompt to its own draft without overwriting main composerDraft', async () => {
+    conversationUiStore.setState({ activeConversationId: 'other-global-chat', composerDraft: 'Keep my main draft' });
+    setDraft(conversationDraftKey('scoped-tangent-1'), '');
+    let resolveChat: ((value: unknown) => void) | undefined;
+    api.chatWithConversation = vi.fn().mockImplementation(() => new Promise(resolve => { resolveChat = resolve; }));
+    api.getConversationMessages = vi.fn().mockResolvedValue({ ok: true, data: { messages: [] } });
+    api.cancelChatGeneration = vi.fn().mockResolvedValue({ ok: true, data: null });
+
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
+
+    let sending!: Promise<unknown>;
+    act(() => { sending = result.current.sendMessage('Scoped stop question', 'scoped-tangent-1'); });
+    await waitFor(() => expect(api.chatWithConversation).toHaveBeenCalled());
+
+    await act(async () => { await result.current.cancelGeneration('scoped-tangent-1'); });
+    await act(async () => {
+      resolveChat?.({ ok: false, error: 'Cancelled', details: { code: ErrorCode.CANCELLED } });
+      await sending;
+    });
+
+    expect(conversationUiStore.getState().composerDraft).toBe('Keep my main draft');
+    expect(useDraftStore.getState().drafts[conversationDraftKey('scoped-tangent-1')]).toBe('Scoped stop question');
+  });
+
+  it('restores a stopped scoped prompt to its own draft when no main conversation is active', async () => {
+    conversationUiStore.setState({ activeConversationId: null, composerDraft: null });
+    setDraft(conversationDraftKey('scoped-tutor-1'), '');
+    let resolveChat: ((value: unknown) => void) | undefined;
+    api.chatWithConversation = vi.fn().mockImplementation(() => new Promise(resolve => { resolveChat = resolve; }));
+    api.getConversationMessages = vi.fn().mockResolvedValue({ ok: true, data: { messages: [] } });
+    api.cancelChatGeneration = vi.fn().mockResolvedValue({ ok: true, data: null });
+
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
+
+    let sending!: Promise<unknown>;
+    act(() => { sending = result.current.sendMessage('Tutor stop question', 'scoped-tutor-1'); });
+    await waitFor(() => expect(api.chatWithConversation).toHaveBeenCalled());
+
+    await act(async () => { await result.current.cancelGeneration('scoped-tutor-1'); });
+    await act(async () => {
+      resolveChat?.({ ok: false, error: 'Cancelled', details: { code: ErrorCode.CANCELLED } });
+      await sending;
+    });
+
+    expect(conversationUiStore.getState().composerDraft).toBeNull();
+    expect(useDraftStore.getState().drafts[conversationDraftKey('scoped-tutor-1')]).toBe('Tutor stop question');
+  });
+
+  it('does not overwrite a new scoped draft typed while cancellation settles', async () => {
+    conversationUiStore.setState({ activeConversationId: 'other-global-chat', composerDraft: 'Keep my main draft' });
+    setDraft(conversationDraftKey('scoped-tangent-2'), '');
+    let resolveChat: ((value: unknown) => void) | undefined;
+    api.chatWithConversation = vi.fn().mockImplementation(() => new Promise(resolve => { resolveChat = resolve; }));
+    api.getConversationMessages = vi.fn().mockResolvedValue({ ok: true, data: { messages: [] } });
+    api.cancelChatGeneration = vi.fn().mockResolvedValue({ ok: true, data: null });
+
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
+
+    let sending!: Promise<unknown>;
+    act(() => { sending = result.current.sendMessage('Cancelled prompt', 'scoped-tangent-2'); });
+    await waitFor(() => expect(api.chatWithConversation).toHaveBeenCalled());
+
+    await act(async () => { await result.current.cancelGeneration('scoped-tangent-2'); });
+    // User starts typing a new prompt before the cancelled request resolves.
+    act(() => { setDraft(conversationDraftKey('scoped-tangent-2'), 'New replacement question'); });
+    await act(async () => {
+      resolveChat?.({ ok: false, error: 'Cancelled', details: { code: ErrorCode.CANCELLED } });
+      await sending;
+    });
+
+    expect(useDraftStore.getState().drafts[conversationDraftKey('scoped-tangent-2')]).toBe('New replacement question');
+  });
+
+  it('dismisses queryError when clearError is called until a new query error occurs', async () => {
+    api.listConversationsExplorer = vi.fn().mockResolvedValue({ ok: false, error: 'Network down' });
+    api.listConversations = vi.fn().mockResolvedValue({ ok: false, error: 'Network down' });
+
+    const { result } = renderHook(() => useConversationsStore(selectAll), { wrapper: createWrapper() });
+    await waitFor(() => expect(result.current.error).toBe('Network down'));
+
+    act(() => result.current.clearError());
+    expect(result.current.error).toBeNull();
   });
 
 });

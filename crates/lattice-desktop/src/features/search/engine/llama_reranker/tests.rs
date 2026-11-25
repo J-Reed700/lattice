@@ -16,6 +16,9 @@ struct FakeStarter {
     fails: bool,
     dead: usize,
     launches: parking_lot::Mutex<Vec<RerankLaunch>>,
+    /// One token per server, held by the server's liveness check, so a dead
+    /// token means that server was dropped.
+    held: parking_lot::Mutex<Vec<std::sync::Weak<()>>>,
 }
 
 impl FakeStarter {
@@ -25,6 +28,7 @@ impl FakeStarter {
             fails,
             dead,
             launches: parking_lot::Mutex::default(),
+            held: parking_lot::Mutex::default(),
         })
     }
 
@@ -34,6 +38,15 @@ impl FakeStarter {
 
     fn starts(&self) -> usize {
         self.launches.lock().len()
+    }
+
+    /// How many servers it started are still held by someone.
+    fn servers_held(&self) -> usize {
+        self.held
+            .lock()
+            .iter()
+            .filter(|token| token.strong_count() > 0)
+            .count()
     }
 }
 
@@ -54,11 +67,16 @@ impl RerankServerStarter for FakeStarter {
         }
         let alive = started > self.dead;
         let uri = if alive { self.uri.as_str() } else { NOWHERE };
+        let token = Arc::new(());
+        self.held.lock().push(Arc::downgrade(&token));
         Ok(Arc::new(RunningLlamaServer::new(
             uri,
             KEY,
             None,
-            Arc::new(move || alive),
+            Arc::new(move || {
+                let _held = &token;
+                alive
+            }),
         )))
     }
 }
@@ -156,6 +174,27 @@ async fn one_server_answers_every_query_while_it_runs() {
     reranker.rerank("two", documents(), 3).await.unwrap();
 
     assert_eq!(starter.starts(), 1);
+}
+
+#[tokio::test]
+async fn releasing_drops_the_server_and_the_next_query_starts_another() {
+    let server = rerank_server().await;
+    let (_dir, gguf) = gguf();
+    let starter = FakeStarter::at(&server.uri());
+    let reranker = LlamaReranker::new(&gguf, starter.clone()).expect("loopback client");
+
+    reranker.rerank("which", documents(), 3).await.unwrap();
+    assert_eq!((starter.starts(), starter.servers_held()), (1, 1));
+
+    reranker.release().await;
+    assert_eq!(
+        starter.servers_held(),
+        0,
+        "nothing holds the server after release"
+    );
+
+    reranker.rerank("which", documents(), 3).await.unwrap();
+    assert_eq!(starter.starts(), 2);
 }
 
 #[tokio::test]

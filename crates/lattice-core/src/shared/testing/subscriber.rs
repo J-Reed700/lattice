@@ -11,8 +11,7 @@ pub(super) fn install() {
         tracing::subscriber::set_global_default(
             tracing_subscriber::registry()
                 .with(super::query_counts::layer())
-                .with(super::logs::layer())
-                .with(super::logs::process_layer()),
+                .with(super::logs::layer()),
         )
         .expect("the test subscriber is installed once");
     });

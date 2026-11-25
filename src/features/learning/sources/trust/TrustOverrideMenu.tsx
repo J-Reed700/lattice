@@ -26,7 +26,7 @@ import type {
 
 type Scope = 'source' | 'site' | 'site_subject';
 
-const FIELD = 'mt-1 w-full rounded-lg border border-border bg-background px-2.5 py-2 text-xs text-text-primary';
+const FIELD = 'mt-1 w-full rounded-lg border border-border bg-bg px-2.5 py-2 text-xs text-text-primary';
 
 export function scopeOf(entry: LearningTrustOverrideDto): LearningTrustOverrideScopeDto {
   if (entry.scope === 'source') return { scope: 'source', programId: entry.programId, sourceId: entry.sourceId };
@@ -152,7 +152,7 @@ export function TrustOverrideMenu({
         Change trust… <ChevronDown size={13} aria-hidden="true" className={open ? 'rotate-180' : ''} />
       </button>
       {open && (
-        <form id={`${id}-menu`} aria-label={`Trust for ${sourceTitle}`} onSubmit={(event) => void apply(event)} className="mt-2 space-y-3 rounded-xl border border-border bg-background p-3">
+        <form id={`${id}-menu`} aria-label={`Trust for ${sourceTitle}`} onSubmit={(event) => void apply(event)} className="mt-2 space-y-3 rounded-xl border border-border bg-bg p-3">
           {entry.overrides.length > 0 && (
             <section aria-label="Overrides in force">
               <h4 className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">In force</h4>

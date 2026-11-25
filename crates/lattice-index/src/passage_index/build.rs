@@ -77,9 +77,9 @@ pub struct Embedded {
 
 /// The text one passage is embedded as: the owner's text, or its head when
 /// that is longer than the model's window.
-fn embeddable(embedding: &Embedding, passage: &Passage) -> Result<String> {
+async fn embeddable(embedding: &Embedding, passage: &Passage) -> Result<String> {
     let text = (embedding.embed_text)(passage);
-    let parts = embedding.embedder.window_parts(&text)?;
+    let parts = embedding.embedder.window_parts(&text).await?;
     Ok(parts.into_iter().next().map_or(text, |part| part.text))
 }
 
@@ -231,10 +231,10 @@ impl Round<'_> {
             return Ok(0);
         }
         let passages = std::mem::take(&mut self.batch);
-        let texts = passages
-            .iter()
-            .map(|passage| embeddable(self.embedding, passage))
-            .collect::<Result<Vec<_>>>()?;
+        let mut texts = Vec::with_capacity(passages.len());
+        for passage in &passages {
+            texts.push(embeddable(self.embedding, passage).await?);
+        }
         let embeddings = self.embedding.embedder.embed_batch(&texts).await?;
         if embeddings.len() != passages.len() {
             return Err(AppError::EmbeddingFailed {

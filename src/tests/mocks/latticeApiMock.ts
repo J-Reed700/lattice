@@ -148,6 +148,7 @@ export function createVaultAPIMock() {
     downloadModel: vi.fn().mockResolvedValue({ success: true }),
     warmUpActiveChatModel: vi.fn().mockResolvedValue({ ok: true, data: null }),
     warmUpActiveUtilityModel: vi.fn().mockResolvedValue({ ok: true, data: null }),
+    warmupStatus: vi.fn().mockResolvedValue({ ok: true, data: [] }),
     clearActiveChatModel: vi.fn().mockResolvedValue({ ok: true, data: null }),
     clearActiveEmbeddingModel: vi.fn().mockResolvedValue({ ok: true, data: null }),
     checkFirstRunStatus: vi
@@ -173,6 +174,8 @@ export function createVaultAPIMock() {
     getSourcesStatus: vi.fn().mockResolvedValue({ ok: true, data: { finders: [], keys: [] } }),
     saveSourceKey: vi.fn().mockResolvedValue({ ok: true, data: { finders: [], keys: [] } }),
     removeSourceKey: vi.fn().mockResolvedValue({ ok: true, data: { finders: [], keys: [] } }),
+    savedWebArticle: vi.fn().mockResolvedValue({ ok: true, data: null }),
+    checkSourcingAddress: vi.fn().mockResolvedValue({ ok: true, data: true }),
     // Default to the state a fresh install is really in: the reranker model is
     // downloaded on demand and is not there yet.
     getRerankerStatus: vi.fn().mockResolvedValue({
@@ -181,6 +184,7 @@ export function createVaultAPIMock() {
         installed: false,
         modelName: 'Qwen/Qwen3-Reranker-0.6B',
         downloadBytes: 639_153_184,
+        path: '/models/reranker/qwen3-reranker-0.6b.gguf',
       },
     }),
     downloadReranker: vi.fn().mockResolvedValue({
@@ -189,6 +193,16 @@ export function createVaultAPIMock() {
         installed: true,
         modelName: 'Qwen/Qwen3-Reranker-0.6B',
         downloadBytes: 639_153_184,
+        path: '/models/reranker/qwen3-reranker-0.6b.gguf',
+      },
+    }),
+    removeReranker: vi.fn().mockResolvedValue({
+      ok: true,
+      data: {
+        installed: false,
+        modelName: 'Qwen/Qwen3-Reranker-0.6B',
+        downloadBytes: 639_153_184,
+        path: '/models/reranker/qwen3-reranker-0.6b.gguf',
       },
     }),
     getRemoteAuthHeaderStatus: vi.fn().mockResolvedValue({ ok: true, data: { ollama: false, llamaCpp: false } }),
@@ -248,6 +262,8 @@ export function createVaultAPIMock() {
       ok: true,
       data: note,
     })),
+    listVaultConflicts: vi.fn().mockResolvedValue({ ok: true, data: [] }),
+    dismissVaultConflicts: vi.fn().mockResolvedValue({ ok: true, data: null }),
 
     // Branching, starters, and passage references
     listConversationTangents: vi.fn().mockResolvedValue({ ok: true, data: [] }),

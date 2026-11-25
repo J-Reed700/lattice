@@ -98,6 +98,24 @@ describe('useConversationNavigationActions', () => {
       await act(() => actions.loadConversations());
       expect(ui().error).toBe('db locked');
     });
+
+    it('preserves an existing turn error when routine loadConversations succeeds', async () => {
+      conversationUiStore.setState({ error: 'Model context exceeded' });
+      const actions = setup();
+      await act(() => actions.loadConversations());
+      expect(ui().error).toBe('Model context exceeded');
+    });
+
+    it('clears its own prior list-load error once loadConversations succeeds', async () => {
+      h.api.listConversationsExplorer.mockResolvedValueOnce(refused('explorer gone'));
+      h.api.listConversations.mockResolvedValueOnce(refused('temporary lock'));
+      const actions = setup();
+      await act(() => actions.loadConversations());
+      expect(ui().error).toBe('temporary lock');
+
+      await act(() => actions.loadConversations());
+      expect(ui().error).toBeNull();
+    });
   });
 
   describe('loadMessageBookmarks', () => {
@@ -120,6 +138,25 @@ describe('useConversationNavigationActions', () => {
       const actions = setup();
       await act(() => actions.selectConversation('c1'));
       expect(ui()).toMatchObject({ activeConversationId: 'c1', selectedSpaceId: 's-hist' });
+    });
+
+    it('keeps the selected space untouched when opening an Explorer or Course Tutor bound chat', async () => {
+      conversationUiStore.setState({ selectedSpaceId: 's-hist' } as never);
+      const actions = setup();
+
+      h.api.getConversation.mockResolvedValueOnce(ok({
+        conversation: { id: 'exp-1', spaceId: GENERAL_SPACE_ID, explorerRoot: '/workspace/project' },
+      }));
+      await act(() => actions.selectConversation('exp-1'));
+      expect(ui()).toMatchObject({ activeConversationId: 'exp-1', selectedSpaceId: 's-hist' });
+      expect(h.api.listConversations).not.toHaveBeenCalled();
+
+      h.api.getConversation.mockResolvedValueOnce(ok({
+        conversation: { id: 'tutor-1', spaceId: GENERAL_SPACE_ID, programId: 'prog-1' },
+      }));
+      await act(() => actions.selectConversation('tutor-1'));
+      expect(ui()).toMatchObject({ activeConversationId: 'tutor-1', selectedSpaceId: 's-hist' });
+      expect(h.api.listConversations).not.toHaveBeenCalled();
     });
 
     it('opens a tangent beside its parent', async () => {

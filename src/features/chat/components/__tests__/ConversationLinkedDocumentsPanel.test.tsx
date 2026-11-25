@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ConversationLinkedDocumentsPanel } from '@/features/chat/components/ConversationLinkedDocumentsPanel';
-import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
+import { useReaderStore } from '@/features/reading/stores/readerStore';
 
 const storeState = vi.hoisted(() => ({
   current: {} as Record<string, unknown>,
@@ -27,7 +27,8 @@ vi.mock('@/features/files/hooks/useLibraryDocumentActions', () => ({
 }));
 
 vi.mock('@/shared/conversations/conversationsStore', () => ({
-  useConversationsStore: () => storeState.current,
+  useConversationsStore: <T,>(selector?: (_s: Record<string, unknown>) => T) =>
+    (selector ? selector(storeState.current) : storeState.current),
 }));
 
 const emptyStore = () => ({
@@ -148,7 +149,7 @@ describe('ConversationLinkedDocumentsPanel — attachments', () => {
 
 describe('ConversationLinkedDocumentsPanel — opening sources', () => {
   beforeEach(() => {
-    useChatReaderStore.getState().close();
+    useReaderStore.getState().close();
   });
 
   it('opens a linked document in the chat reader pane', async () => {
@@ -179,7 +180,7 @@ describe('ConversationLinkedDocumentsPanel — opening sources', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Open' }));
 
-    const session = useChatReaderStore.getState().session;
+    const session = useReaderStore.getState().session;
     expect(session).not.toBeNull();
     expect(session?.ownerKey).toBe('linked-doc:conv-1');
     expect(session?.citations[0].documentId).toBe('doc-1');
@@ -211,7 +212,7 @@ describe('ConversationLinkedDocumentsPanel — opening sources', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Open URL' }));
 
-    const session = useChatReaderStore.getState().session;
+    const session = useReaderStore.getState().session;
     expect(session).not.toBeNull();
     expect(session?.ownerKey).toBe('web-source:conv-1');
     expect(session?.citations[0].filePath).toBe('https://example.com/guide');

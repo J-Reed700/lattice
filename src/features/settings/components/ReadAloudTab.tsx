@@ -4,23 +4,35 @@
  * feature's store.
  */
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 import { useQueryClient } from '@tanstack/react-query';
-import { Check, Pause, Volume2 } from 'lucide-react';
+import { Pause, Volume2 } from 'lucide-react';
 
-import { PageHeader, SettingsRow, SettingsSection, settingsFieldClass } from '@/components/ui';
+import { Button, PageHeader, SettingsRow, SettingsSection } from '@/components/ui';
 import { useApi } from '@/contexts/ApiContext';
+import { DownloadFailure } from '@/features/model/components/Downloads/DownloadFailure';
+import { InlineDownloadStatus } from '@/features/model/components/Downloads/InlineDownloadStatus';
+import { InstalledDownload } from '@/features/model/components/Downloads/InstalledDownload';
 import { useAggregatedDownloads } from '@/features/model/hooks/useAggregatedDownloads';
+import { useDownloadPhase } from '@/features/model/hooks/useDownloadPhase';
 import { useDownloadState } from '@/features/model/hooks/useDownloadState';
-import { SPEECH_STATUS_QUERY_KEY, stopSpeaking, useSpeaker, useSpeechPlayback, useSpeechStatusQuery } from '@/features/speech/hooks/useSpeech';
+import { useRemoveDownloadedModel } from '@/features/model/hooks/useRemoveDownloadedModel';
+import {
+  SPEECH_STATUS_QUERY_KEY,
+  stopSpeaking,
+  useSpeaker,
+  useSpeechPlayback,
+  useSpeechStatusQuery,
+} from '@/features/speech/hooks/useSpeech';
 import { SPEEDS, useSpeechPrefsStore } from '@/features/speech/stores/speechPrefsStore';
 import type { SpeechAccentDto } from '@/lib/bindings';
+import { cn } from '@/lib/utils';
 import { useToastStore } from '@/stores/toastStore';
 import { formatBytes } from '@/utils/formatters';
 
 import { ListeningModelSection } from './ListeningModelSection';
-import { GHOST_BUTTON_CLASS, PRIMARY_BUTTON_CLASS } from './settingsStyles';
+import { SettingsSelect } from './SettingControls';
 import { startModelDownload } from '../hooks/startModelDownload';
 
 const previewId = (voice: string) => `preview:${voice}`;
@@ -34,27 +46,37 @@ interface DownloadRowProps {
   modelId: string;
   name: string;
   hint: string;
+  /** What removing it frees, in bytes. */
+  bytes: number;
+  /** What stops working once it is removed. */
+  removeConsequence: string;
   ready: boolean;
+  /** The speech status has been re-read since this page opened. */
+  statusFetched: boolean;
+  refreshStatus: () => unknown;
 }
 
 /** One catalog entry: its download, its progress, or that it is here. */
-function DownloadRow({ modelId, name, hint, ready }: DownloadRowProps) {
+function DownloadRow({
+  modelId,
+  name,
+  hint,
+  bytes,
+  removeConsequence,
+  ready,
+  statusFetched,
+  refreshStatus,
+}: DownloadRowProps) {
   const api = useApi();
   const queryClient = useQueryClient();
   const addToast = useToastStore((state) => state.addToast);
-  const { getDownloadsByModel } = useDownloadState();
+  const { getDownloadsByModel, downloadsSettled } = useDownloadState();
+  const removeModel = useRemoveDownloadedModel();
   const [starting, setStarting] = useState(false);
 
   const { aggregated, standalone } = useAggregatedDownloads(getDownloadsByModel(modelId));
   const download = aggregated[0] ?? standalone[0] ?? null;
-  const downloading = download !== null && ['Pending', 'Downloading', 'Paused'].includes(download.state);
-  const percent = Math.round(download?.percentage ?? 0);
-
-  useEffect(() => {
-    if (download?.state === 'Completed' && !ready) {
-      void queryClient.invalidateQueries({ queryKey: SPEECH_STATUS_QUERY_KEY });
-    }
-  }, [download?.state, ready, queryClient]);
+  const phase = useDownloadPhase({ ready, download, poll: refreshStatus });
 
   const startDownload = async () => {
     setStarting(true);
@@ -76,21 +98,34 @@ function DownloadRow({ modelId, name, hint, ready }: DownloadRowProps) {
   return (
     <SettingsRow label={name} hint={hint}>
       {ready ? (
-        <span className="inline-flex items-center gap-1.5 text-sm text-text-secondary">
-          <Check className="h-4 w-4 text-accent" aria-hidden="true" />
-          Downloaded
-        </span>
-      ) : downloading ? (
-        <div className="flex w-full max-w-[240px] flex-col gap-1" role="status" aria-label={`Downloading ${name}`}>
-          <progress className="h-1.5 w-full accent-accent" max={100} value={percent} />
-          <span className="text-xs tabular-nums text-text-muted">
-            {download.state === 'Paused' ? 'Paused' : `Downloading… ${percent}%`}
-          </span>
-        </div>
+        <InstalledDownload
+          name={name}
+          consequence={removeConsequence}
+          size={formatBytes(bytes)}
+          onRemove={async () => {
+            // A preview mid-sentence would fail once its files are gone.
+            stopSpeaking();
+            await removeModel(modelId, SPEECH_STATUS_QUERY_KEY);
+          }}
+        />
+      ) : (phase === 'live' || phase === 'finishing') && download ? (
+        <InlineDownloadStatus
+          download={download}
+          finishing={phase === 'finishing'}
+          label={`Downloading ${name}`}
+        />
       ) : (
-        <button type="button" className={PRIMARY_BUTTON_CLASS} aria-label={`Download ${name}`} disabled={starting} onClick={() => void startDownload()}>
-          {starting ? 'Starting…' : 'Download'}
-        </button>
+        <div className="flex flex-col items-end gap-1">
+          <Button
+            type="button"
+            aria-label={`Download ${name}`}
+            disabled={starting || !statusFetched || !downloadsSettled}
+            onClick={() => void startDownload()}
+          >
+            {starting ? 'Starting…' : 'Download'}
+          </Button>
+          <DownloadFailure download={download} />
+        </div>
       )}
     </SettingsRow>
   );
@@ -100,7 +135,9 @@ export function ReadAloudTab() {
   const { voice, speed, setVoice, setSpeed } = useSpeechPrefsStore();
   const speak = useSpeaker();
   const playback = useSpeechPlayback();
-  const { data: speech, isError, refetch } = useSpeechStatusQuery();
+  const { data: speech, isError, refetch, isFetchedAfterMount } = useSpeechStatusQuery({
+    refetchOnMount: 'always',
+  });
 
   const preview = (id: string, name: string) => {
     if (playback.sourceId === previewId(id)) return;
@@ -109,13 +146,18 @@ export function ReadAloudTab() {
 
   return (
     <>
-      <PageHeader title="Read aloud" description="Listen to chat answers and lessons, spoken on this computer." />
+      <PageHeader
+        title="Read aloud"
+        description="Listen to chat answers and lessons, spoken on this computer."
+      />
 
       <SettingsSection title="Voice model">
         {isError ? (
           <p role="alert" className="py-3 text-sm text-danger-fg">
             Couldn&apos;t check the voice model.{' '}
-            <button type="button" className="underline" onClick={() => void refetch()}>Try again</button>
+            <button type="button" className="underline" onClick={() => void refetch()}>
+              Try again
+            </button>
           </p>
         ) : speech ? (
           <>
@@ -123,76 +165,142 @@ export function ReadAloudTab() {
               modelId={speech.modelId}
               name={speech.modelName}
               ready={speech.modelReady}
+              statusFetched={isFetchedAfterMount}
+              refreshStatus={refetch}
+              bytes={speech.downloadBytes}
+              removeConsequence="Read aloud stops until you download it again. The extra voices need it too."
               hint={`${formatBytes(speech.downloadBytes)} once, then it works offline. ${speech.license} licence.`}
             />
             <DownloadRow
               modelId={speech.voicePack.modelId}
               name={speech.voicePack.modelName}
               ready={speech.voicePack.ready}
+              statusFetched={isFetchedAfterMount}
+              refreshStatus={refetch}
+              bytes={speech.voicePack.downloadBytes}
+              removeConsequence="The American voices and the British men go. The four British women stay."
               hint={`The American voices and the British men. ${formatBytes(speech.voicePack.downloadBytes)} more. ${speech.modelName} is not fetched again.`}
             />
           </>
         ) : (
-          <SettingsRow label="Kokoro">{null}</SettingsRow>
+          <SettingsRow label="Kokoro" hint="Checking on-device speech model availability.">
+            <span className="text-xs text-text-muted">Checking…</span>
+          </SettingsRow>
         )}
       </SettingsSection>
 
-      <SettingsSection title="Voice" description="Grades are hexgrad's estimate of each voice's training data, from A down to F.">
+      <SettingsSection
+        title="Voice"
+        description="Grades are hexgrad's estimate of each voice's training data, from A down to F."
+      >
         <div role="radiogroup" aria-label="Voice">
-          {speech && ACCENTS.map(({ accent, label }) => (
-            <div key={accent} role="group" aria-label={label} className="mb-4">
-              <h4 className="pt-3 text-xs font-medium text-text-secondary">{label}</h4>
-              {speech.voices.filter((option) => option.accent === accent).map((option) => {
-                const previewing = playback.sourceId === previewId(option.id) && playback.status !== 'idle';
-                return (
-                  <div key={option.id} className="flex items-center justify-between gap-4 border-b border-border-subtle py-2.5">
-                    <label className="flex min-w-0 items-center gap-2.5 text-sm text-text-primary">
-                      <input
-                        type="radio"
-                        name="speech-voice"
-                        value={option.id}
-                        checked={voice === option.id}
-                        disabled={!option.downloaded}
-                        onChange={() => setVoice(option.id)}
-                        className="accent-accent"
-                      />
-                      {option.name}{' '}
-                      <span className="text-xs text-text-muted">
-                        {option.gender === 'female' ? 'Female' : 'Male'} · grade {option.grade}
-                        {option.id === speech.defaultVoice ? ' · default' : ''}
-                        {option.downloaded ? '' : ' · not downloaded'}
-                      </span>
-                    </label>
-                    <button
-                      type="button"
-                      className={GHOST_BUTTON_CLASS}
-                      disabled={!option.downloaded}
-                      aria-label={previewing ? `Stop the ${option.name} preview` : `Preview ${option.name}`}
-                      onClick={() => (previewing ? stopSpeaking(previewId(option.id)) : preview(option.id, option.name))}
-                    >
-                      {previewing ? <Pause className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" /> : <Volume2 className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />}
-                      {previewing ? 'Stop' : 'Preview'}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          ))}
+          {speech &&
+            ACCENTS.map(({ accent, label }) => (
+              <div key={accent} role="group" aria-label={label} className="mb-4 last:mb-0">
+                <h4 className="pt-3 pb-1 text-xs font-medium text-text-secondary">{label}</h4>
+                {speech.voices
+                  .filter((option) => option.accent === accent)
+                  .map((option) => {
+                    const previewing =
+                      playback.sourceId === previewId(option.id) && playback.status !== 'idle';
+                    const isSelected = voice === option.id;
+                    return (
+                      <div
+                        key={option.id}
+                        className={cn(
+                          'flex items-center justify-between gap-4 border-b border-border-subtle py-2.5 transition-colors duration-fast',
+                          isSelected && 'bg-[hsl(var(--accent)/0.04)]',
+                        )}
+                      >
+                        <label
+                          className={cn(
+                            'flex min-w-0 flex-1 items-center gap-3 text-sm text-text-primary',
+                            option.downloaded ? 'cursor-pointer' : 'cursor-not-allowed opacity-60',
+                          )}
+                        >
+                          <span className="relative flex h-4 w-4 shrink-0 items-center justify-center">
+                            <input
+                              type="radio"
+                              name="speech-voice"
+                              value={option.id}
+                              checked={isSelected}
+                              disabled={!option.downloaded}
+                              onChange={() => setVoice(option.id)}
+                              className="peer sr-only"
+                            />
+                            <span
+                              aria-hidden="true"
+                              className={cn(
+                                'flex h-4 w-4 items-center justify-center rounded-full border transition-colors duration-fast',
+                                'peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-bg',
+                                isSelected
+                                  ? 'border-accent bg-accent/10'
+                                  : 'border-border-strong bg-surface',
+                              )}
+                            >
+                              {isSelected ? (
+                                <span className="h-2 w-2 rounded-full bg-accent" />
+                              ) : null}
+                            </span>
+                          </span>
+                          <span className="truncate font-medium">
+                            {option.name}{' '}
+                            <span className="font-normal text-xs text-text-muted">
+                              {option.gender === 'female' ? 'Female' : 'Male'} · grade{' '}
+                              {option.grade}
+                              {option.id === speech.defaultVoice ? ' · default' : ''}
+                              {option.downloaded ? '' : ' · not downloaded'}
+                            </span>
+                          </span>
+                        </label>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          disabled={!option.downloaded}
+                          aria-label={
+                            previewing
+                              ? `Stop the ${option.name} preview`
+                              : `Preview ${option.name}`
+                          }
+                          onClick={() =>
+                            previewing
+                              ? stopSpeaking(previewId(option.id))
+                              : preview(option.id, option.name)
+                          }
+                        >
+                          {previewing ? (
+                            <Pause className="h-3.5 w-3.5" aria-hidden="true" />
+                          ) : (
+                            <Volume2 className="h-3.5 w-3.5" aria-hidden="true" />
+                          )}
+                          {previewing ? 'Stop' : 'Preview'}
+                        </Button>
+                      </div>
+                    );
+                  })}
+              </div>
+            ))}
         </div>
       </SettingsSection>
 
       <SettingsSection title="Pace">
-        <SettingsRow label="Speed" hint="How fast the voice reads. 1× is its natural pace." htmlFor="speech-speed">
-          <select
-            id="speech-speed"
-            value={speed}
-            onChange={(event) => setSpeed(Number(event.target.value))}
-            className={`${settingsFieldClass} w-28`}
-          >
-            {SPEEDS.map((option) => (
-              <option key={option} value={option}>{`${option}×`}</option>
-            ))}
-          </select>
+        <SettingsRow
+          label="Speed"
+          hint="How fast the voice reads. 1× is its natural pace."
+          htmlFor="speech-speed"
+        >
+          <div className="w-32">
+            <SettingsSelect
+              id="speech-speed"
+              value={String(speed)}
+              onValueChange={(next) => setSpeed(Number(next))}
+              options={SPEEDS.map((option) => ({
+                value: String(option),
+                label: `${option}×`,
+              }))}
+            />
+          </div>
         </SettingsRow>
       </SettingsSection>
 

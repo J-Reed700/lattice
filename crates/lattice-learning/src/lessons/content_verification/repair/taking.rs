@@ -155,8 +155,13 @@ pub(super) fn section_input(
         .filter(|finding| finding.get("unit").and_then(Value::as_u64) == Some(unit as u64))
         .cloned()
         .collect();
+    let mut requirements = context.get("requirements").cloned().unwrap_or(Value::Null);
+    if let Some(object) = requirements.as_object_mut() {
+        object.remove("sources");
+        object.remove("referenceCatalog");
+    }
     Ok(Input {
-        requirements: Told(context.get("requirements").cloned().unwrap_or(Value::Null)),
+        requirements: Told(requirements),
         sections: Told(sections),
         section: Told(only_section(candidate, part)),
         lesson: Internal::of(candidate.clone()),

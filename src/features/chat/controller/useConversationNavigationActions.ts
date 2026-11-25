@@ -1,9 +1,10 @@
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 
 import { useApi } from '@/contexts/ApiContext';
 import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
 import { spacesQueryOptions } from '@/features/spaces/api/queries';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
+import { isBoundChat } from '@/shared/conversations/boundChats';
 import { conversationKeys, type ConversationListParams } from '@/shared/conversations/conversationKeys';
 import type { ConversationsState, LoadConversationsOverrides, LoadMessageBookmarksOverrides } from '@/shared/conversations/conversationsStore.types';
 import type { Conversation } from '@/types/conversation';
@@ -17,6 +18,7 @@ export function useConversationNavigationActions({
   addRequestedId,
 }: Pick<ConversationActionsDependencies, 'queryClient' | 'addRequestedId'>) {
   const api = useApi();
+  const lastListErrorRef = useRef<string | null>(null);
 
   const invalidateLists = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: conversationKeys.lists });
@@ -60,11 +62,12 @@ export function useConversationNavigationActions({
       filterMode: overrides?.filterMode ?? current.filterMode,
       searchQuery: overrides?.searchQuery ?? current.searchQuery,
     };
+    const shouldClearListError = lastListErrorRef.current !== null && current.error === lastListErrorRef.current;
     conversationUiStore.setState({
       selectedSpaceId: params.spaceId,
       filterMode: params.filterMode,
       searchQuery: params.searchQuery,
-      error: null,
+      ...(shouldClearListError ? { error: null } : {}),
       ...(params.spaceId !== current.selectedSpaceId
         ? { activeConversationId: activeChatAfterSpaceChange(params.spaceId) }
         : {}),
@@ -75,7 +78,9 @@ export function useConversationNavigationActions({
         queryFn: () => fetchConversationList(params, api),
         staleTime: 0,
       });
+      lastListErrorRef.current = null;
     } catch (error) {
+      lastListErrorRef.current = error instanceof Error ? error.message : String(error);
       setUiError(error);
     }
   }, [activeChatAfterSpaceChange, queryClient, api]);
@@ -120,7 +125,12 @@ export function useConversationNavigationActions({
         return;
       }
       const spaceId = detail?.spaceId;
-      if (spaceId && current.activeConversationId === id && current.selectedSpaceId !== spaceId) {
+      if (
+        spaceId &&
+        !isBoundChat(detail) &&
+        current.activeConversationId === id &&
+        current.selectedSpaceId !== spaceId
+      ) {
         await loadConversations({ spaceId });
       }
     } catch (error) {

@@ -36,7 +36,7 @@ pub enum NoteIndexAction {
     Index,
     /// Nothing to retrieve — an empty page is not worth a document row.
     Skip,
-    /// The file is gone; drop it from the index.
+    /// The file is gone (or cleared to whitespace); drop it from the index.
     Remove,
 }
 
@@ -51,7 +51,7 @@ pub enum NoteSyncOutcome<'a> {
 
 pub fn note_index_action(outcome: NoteSyncOutcome<'_>) -> NoteIndexAction {
     match outcome {
-        NoteSyncOutcome::Written { body } if body.trim().is_empty() => NoteIndexAction::Skip,
+        NoteSyncOutcome::Written { body } if body.trim().is_empty() => NoteIndexAction::Remove,
         NoteSyncOutcome::Written { .. } => NoteIndexAction::Index,
         NoteSyncOutcome::Deleted => NoteIndexAction::Remove,
     }
@@ -157,6 +157,9 @@ async fn run_worker(
     cancel: tokio_util::sync::CancellationToken,
 ) {
     let repository = super::repository::workspace_notes(&database);
+    if let Err(error) = super::repository::backfill_missing_text_hashes(&database).await {
+        tracing::warn!(%error, "Vault writer could not backfill missing mirrored text digests");
+    }
     loop {
         // Intents survive process shutdown. Finish the current atomic write;
         // leave the rest in SQLite for startup replay.
@@ -186,7 +189,7 @@ async fn run_worker(
                             // Imported front matter is untrusted: note ids
                             // must never escape the flat notes directory.
                             if !safe_note_id(&write.note_id) {
-                                emit_write_error(
+                                super::events::emit_write_error(
                                     &app_handle,
                                     Some(&write.note_id),
                                     &root,
@@ -202,36 +205,31 @@ async fn run_worker(
                             }
                             let result = match repository.get(&write.note_id).await {
                                 Ok(note) => {
-                                    let mirror_result = if write.mirror_complete {
-                                        Ok(())
+                                    let mirror_outcome = if write.mirror_complete {
+                                        Ok(None)
                                     } else {
-                                        let frontmatter = build_frontmatter(
-                                            &note.id,
-                                            &note.title,
-                                            &note.created_at,
-                                            &note.updated_at,
-                                            &[],
-                                        );
-                                        let document = format!("{frontmatter}\n\n{}", note.content);
-                                        match atomic_write(&target, &document).await {
-                                            Ok(()) => {
-                                                suppression.mark_written(target.clone()).await;
-                                                super::repository::mark_mirrored(&database, &write)
-                                                    .await
-                                                    .map_err(|error| error.to_string())
-                                            }
-                                            Err(error) => Err(error.to_string()),
-                                        }
+                                        mirror_note_to_disk(
+                                            &database,
+                                            &suppression,
+                                            &app_handle,
+                                            &write,
+                                            &note,
+                                            &target,
+                                        )
+                                        .await
                                     };
-                                    match mirror_result {
-                                        Ok(()) => {
+                                    match mirror_outcome {
+                                        Ok(preserved_external_body) => {
                                             // Keep the markdown write durable even if this index
                                             // action fails; retries skip the file rewrite.
+                                            let body_for_index = preserved_external_body
+                                                .as_deref()
+                                                .unwrap_or(&note.content);
                                             apply_note_index_action(
                                                 &note_index_sink,
                                                 &target,
                                                 note_index_action(NoteSyncOutcome::Written {
-                                                    body: &note.content,
+                                                    body: body_for_index,
                                                 }),
                                             )
                                             .await
@@ -249,9 +247,11 @@ async fn run_worker(
                                                         == std::io::ErrorKind::NotFound => {}
                                                 Err(error) => return Err(error.to_string()),
                                             }
-                                            super::repository::mark_mirrored(&database, &write)
-                                                .await
-                                                .map_err(|error| error.to_string())?;
+                                            super::repository::mark_mirrored(
+                                                &database, &write, None,
+                                            )
+                                            .await
+                                            .map_err(|error| error.to_string())?;
                                         }
                                         Ok(())
                                     }
@@ -273,7 +273,7 @@ async fn run_worker(
                             match settle_write(&database, &write, result).await {
                                 Ok(()) => {}
                                 Err(error) => {
-                                    emit_write_error(
+                                    super::events::emit_write_error(
                                         &app_handle,
                                         Some(&write.note_id),
                                         &target,
@@ -316,39 +316,6 @@ async fn settle_write(
             super::repository::defer(database, write).await?;
             Err(lattice_core::shared::error::AppError::InternalError(error))
         }
-    }
-}
-
-/// Emit a `vault:write-error` Tauri event so the frontend can surface
-/// disk-full / permission-denied / vault-deleted-from-under-us cases
-/// as a persistent toast. Without this, the user keeps editing notes
-/// believing the vault is mirroring while every write silently fails.
-///
-/// Best-effort: a missing AppHandle (test fixtures, or a window that
-/// has been destroyed) is logged but never crashes the worker.
-fn emit_write_error(
-    app_handle: &Arc<std::sync::RwLock<Option<tauri::AppHandle>>>,
-    note_id: Option<&str>,
-    target: &Path,
-    error: &str,
-) {
-    use tauri::Emitter;
-    let guard = match app_handle.read() {
-        Ok(g) => g,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-    let Some(handle) = guard.as_ref() else {
-        // No handle yet — boot order or test fixture. Already logged
-        // by the caller via tracing::warn; nothing more to do.
-        return;
-    };
-    let payload = serde_json::json!({
-        "noteId": note_id,
-        "target": target.display().to_string(),
-        "error": error,
-    });
-    if let Err(e) = handle.emit("vault:write-error", payload) {
-        tracing::warn!(error = %e, "failed to emit vault:write-error event");
     }
 }
 
@@ -413,12 +380,24 @@ pub fn resolve_vault_root(configured: &str) -> Option<PathBuf> {
     lattice_core::shared::fs::roots::resolve_vault_root(configured)
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn build_frontmatter(
     id: &str,
     title: &str,
     created_at: &str,
     updated_at: &str,
     tags: &[String],
+) -> String {
+    build_frontmatter_with_extra(id, title, created_at, updated_at, tags, &[])
+}
+
+fn build_frontmatter_with_extra(
+    id: &str,
+    title: &str,
+    created_at: &str,
+    updated_at: &str,
+    tags: &[String],
+    extra_frontmatter: &[String],
 ) -> String {
     let escaped_title = escape_yaml_double_quoted(title);
     let tags_block = if tags.is_empty() {
@@ -430,8 +409,13 @@ fn build_frontmatter(
             .collect();
         format!("tags: [{}]", escaped.join(", "))
     };
+    let extra_block = if extra_frontmatter.is_empty() {
+        String::new()
+    } else {
+        format!("\n{}", extra_frontmatter.join("\n"))
+    };
     format!(
-        "---\nid: {id}\ntitle: \"{escaped_title}\"\ncreated_at: {created_at}\nupdated_at: {updated_at}\n{tags_block}\n---"
+        "---\nid: {id}\ntitle: \"{escaped_title}\"\ncreated_at: {created_at}\nupdated_at: {updated_at}\n{tags_block}{extra_block}\n---"
     )
 }
 
@@ -442,7 +426,222 @@ fn escape_yaml_double_quoted(s: &str) -> String {
         .replace('\r', "")
 }
 
+struct ExistingMarkdown {
+    sha256: String,
+    parsed: Option<super::parse::ParsedNote>,
+}
+
+async fn inspect_existing_markdown(
+    target: &Path,
+) -> std::result::Result<Option<ExistingMarkdown>, String> {
+    let bytes = match tokio::fs::read(target).await {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    let sha256 = lattice_core::shared::hash::sha256_hex(&bytes);
+    let parsed = std::str::from_utf8(&bytes)
+        .ok()
+        .and_then(|text| super::parse::parse_note(text).ok());
+    Ok(Some(ExistingMarkdown { sha256, parsed }))
+}
+
+fn changed_outside_lattice(write: &super::repository::PendingWrite, disk_sha256: &str) -> bool {
+    write
+        .last_mirrored_sha256
+        .as_deref()
+        .is_some_and(|baseline| baseline != disk_sha256)
+        && write.writing_sha256.as_deref() != Some(disk_sha256)
+}
+
+/// Mirror `note` to `target` unless the on-disk file was externally modified
+/// since `write.last_mirrored_sha256`. When an external modification is detected,
+/// SQLite `daily_notes_workspace` is reconciled to match the preserved disk file
+/// so disk and database converge without a split-brain.
+async fn mirror_note_to_disk(
+    database: &Database,
+    suppression: &super::watcher::WriteSuppressionRegistry,
+    app_handle: &Arc<std::sync::RwLock<Option<tauri::AppHandle>>>,
+    write: &super::repository::PendingWrite,
+    note: &lattice_core::application::contracts::notes::WorkspaceNoteRecord,
+    target: &Path,
+) -> std::result::Result<Option<String>, String> {
+    let mut existing = inspect_existing_markdown(target).await?;
+    let mut replaced = false;
+    if let Some(md) = existing
+        .as_ref()
+        .filter(|md| changed_outside_lattice(write, &md.sha256))
+    {
+        match md
+            .parsed
+            .as_ref()
+            .filter(|parsed| parsed.id == write.note_id)
+        {
+            Some(parsed) => {
+                let file_text = super::repository::note_text_sha256(&parsed.title, &parsed.body);
+                if write.mirrored_text_sha256.as_deref() != Some(file_text.as_str()) {
+                    return take_outside_edit(database, app_handle, write, md, parsed, target)
+                        .await;
+                }
+            }
+            None => replaced = true,
+        }
+    }
+    let mut set_aside_conflict: Option<super::events::VaultConflictDto> = None;
+    if replaced {
+        let kept = set_aside(suppression, note, target).await?;
+        set_aside_conflict = Some(super::events::VaultConflictDto::SetAside {
+            id: uuid::Uuid::new_v4().to_string(),
+            note_id: note.id.clone(),
+            note_title: note.title.clone(),
+            set_aside_path: kept.display().to_string(),
+        });
+        existing = None;
+    }
+
+    let (existing_tags, existing_extra) = existing
+        .as_ref()
+        .and_then(|md| md.parsed.as_ref())
+        .map(|parsed| (parsed.tags.as_slice(), parsed.extra_frontmatter.as_slice()))
+        .unwrap_or((&[], &[]));
+    let frontmatter = build_frontmatter_with_extra(
+        &note.id,
+        &note.title,
+        &note.created_at,
+        &note.updated_at,
+        existing_tags,
+        existing_extra,
+    );
+    let document = format!("{frontmatter}\n\n{}", note.content);
+    let new_sha256 = lattice_core::shared::hash::sha256_hex(document.as_bytes());
+    let text_sha256 = super::repository::note_text_sha256(&note.title, &note.content);
+    let synced = super::repository::Synced {
+        file_sha256: &new_sha256,
+        text_sha256: &text_sha256,
+    };
+
+    if existing.as_ref().is_some_and(|md| md.sha256 == new_sha256) {
+        super::repository::mark_mirrored(database, write, Some(synced))
+            .await
+            .map_err(|error| error.to_string())?;
+        return Ok(None);
+    }
+
+    let own_unrecorded = existing
+        .as_ref()
+        .filter(|md| write.writing_sha256.as_deref() == Some(md.sha256.as_str()))
+        .and_then(|md| {
+            md.parsed.as_ref().map(|parsed| {
+                (
+                    md.sha256.as_str(),
+                    super::repository::note_text_sha256(&parsed.title, &parsed.body),
+                )
+            })
+        });
+    super::repository::begin_mirror(
+        database,
+        &note.id,
+        own_unrecorded
+            .as_ref()
+            .map(|(file, text)| super::repository::Synced {
+                file_sha256: file,
+                text_sha256: text,
+            }),
+        &new_sha256,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    atomic_write(target, &document)
+        .await
+        .map_err(|error| error.to_string())?;
+    suppression.mark_written(target.to_path_buf()).await;
+    super::repository::mark_mirrored_with_conflict(
+        database,
+        write,
+        Some(synced),
+        set_aside_conflict.as_ref(),
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    if let Some(conflict) = set_aside_conflict.as_ref() {
+        super::events::emit_note_conflict(app_handle, conflict);
+    }
+    Ok(None)
+}
+
+async fn take_outside_edit(
+    database: &Database,
+    app_handle: &Arc<std::sync::RwLock<Option<tauri::AppHandle>>>,
+    write: &super::repository::PendingWrite,
+    md: &ExistingMarkdown,
+    parsed: &super::parse::ParsedNote,
+    target: &Path,
+) -> std::result::Result<Option<String>, String> {
+    let expected = write.last_mirrored_sha256.as_deref().unwrap_or_default();
+    tracing::warn!(
+        note_id = %write.note_id,
+        target = %target.display(),
+        expected_sha256 = %expected,
+        disk_sha256 = %md.sha256,
+        "vault worker: target modified externally while writeback was queued; preserving external file"
+    );
+    let reconciled = super::repository::reconcile_external_note_and_mark_mirrored(
+        database,
+        write,
+        lattice_core::application::contracts::notes::VaultNoteUpsert {
+            id: &parsed.id,
+            title: &parsed.title,
+            content: &parsed.body,
+            created_at: &parsed.created_at,
+            updated_at: &parsed.updated_at,
+        },
+        &md.sha256,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    if let super::repository::Reconciled::TookFile { conflict } = reconciled {
+        super::events::emit_note_imported(app_handle, &parsed.id);
+        if let Some(conflict) = conflict.as_ref() {
+            super::events::emit_note_conflict(app_handle, conflict);
+        }
+    }
+    Ok(Some(parsed.body.clone()))
+}
+
+async fn set_aside(
+    suppression: &super::watcher::WriteSuppressionRegistry,
+    note: &lattice_core::application::contracts::notes::WorkspaceNoteRecord,
+    target: &Path,
+) -> std::result::Result<PathBuf, String> {
+    let stem = target
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("note");
+    let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+    let mut kept = target.with_file_name(format!("{stem}.replaced-{stamp}.md"));
+    let mut n = 2u32;
+    while tokio::fs::try_exists(&kept)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        kept = target.with_file_name(format!("{stem}.replaced-{stamp}-{n}.md"));
+        n += 1;
+    }
+    tokio::fs::rename(target, &kept)
+        .await
+        .map_err(|error| error.to_string())?;
+    suppression.mark_written(kept.clone()).await;
+    tracing::warn!(
+        note_id = %note.id,
+        target = %target.display(),
+        kept = %kept.display(),
+        "vault worker: the note's file was replaced outside Lattice; kept it beside the note"
+    );
+    Ok(kept)
+}
+
 async fn atomic_write(target: &Path, contents: &str) -> std::io::Result<()> {
+    use tokio::io::AsyncWriteExt;
     if let Some(parent) = target.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
@@ -450,7 +649,13 @@ async fn atomic_write(target: &Path, contents: &str) -> std::io::Result<()> {
         Some(name) => target.with_file_name(format!("{}.{}.tmp", name, uuid::Uuid::new_v4())),
         None => target.with_extension(format!("md.{}.tmp", uuid::Uuid::new_v4())),
     };
-    let write_result = tokio::fs::write(&tmp, contents.as_bytes()).await;
+    let write_result: std::io::Result<()> = async {
+        let mut file = tokio::fs::File::create(&tmp).await?;
+        file.write_all(contents.as_bytes()).await?;
+        file.sync_all().await?;
+        Ok(())
+    }
+    .await;
     if let Err(e) = write_result {
         let _ = tokio::fs::remove_file(&tmp).await;
         return Err(e);
@@ -463,220 +668,5 @@ async fn atomic_write(target: &Path, contents: &str) -> std::io::Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use sqlx::SqlitePool;
-
-    #[cfg(windows)]
-    #[test]
-    fn a_note_id_windows_reads_as_a_parent_or_a_drive_is_not_safe() {
-        for id in ["...", ".. ", "C:x"] {
-            assert!(!safe_note_id(id), "{id:?}");
-        }
-    }
-
-    #[test]
-    fn non_empty_write_is_indexed() {
-        assert_eq!(
-            note_index_action(NoteSyncOutcome::Written {
-                body: "Read three papers on retrieval today."
-            }),
-            NoteIndexAction::Index
-        );
-    }
-
-    #[test]
-    fn empty_write_is_skipped() {
-        assert_eq!(
-            note_index_action(NoteSyncOutcome::Written { body: "" }),
-            NoteIndexAction::Skip
-        );
-    }
-
-    #[test]
-    fn whitespace_only_write_is_skipped() {
-        assert_eq!(
-            note_index_action(NoteSyncOutcome::Written {
-                body: "   \n\t  \r\n "
-            }),
-            NoteIndexAction::Skip
-        );
-    }
-
-    #[test]
-    fn delete_removes_from_the_index() {
-        assert_eq!(
-            note_index_action(NoteSyncOutcome::Deleted),
-            NoteIndexAction::Remove
-        );
-    }
-
-    #[test]
-    fn frontmatter_with_tags_roundtrips() {
-        let fm = build_frontmatter(
-            "abc-123",
-            "Hello world",
-            "2026-05-01T18:00:00Z",
-            "2026-05-01T18:05:00Z",
-            &["foo".to_string(), "bar".to_string()],
-        );
-        assert!(fm.starts_with("---\n"));
-        assert!(fm.contains("id: abc-123"));
-        assert!(fm.contains("title: \"Hello world\""));
-        assert!(fm.contains("tags: [\"foo\", \"bar\"]"));
-        assert!(fm.ends_with("---"));
-    }
-
-    #[test]
-    fn frontmatter_escapes_quotes_in_title() {
-        let fm = build_frontmatter("id1", "She said \"hi\"", "now", "now", &[]);
-        assert!(fm.contains("title: \"She said \\\"hi\\\"\""));
-    }
-
-    #[test]
-    fn frontmatter_escapes_newline_in_title() {
-        let fm = build_frontmatter("id1", "Line one\nLine two", "now", "now", &[]);
-        assert!(fm.contains("title: \"Line one\\nLine two\""));
-        let title_line = fm.lines().find(|l| l.starts_with("title:")).unwrap();
-        assert!(!title_line.contains('\n'));
-    }
-
-    #[test]
-    fn frontmatter_strips_carriage_returns() {
-        let fm = build_frontmatter("id1", "Windows\r\nlineending", "now", "now", &[]);
-        assert!(fm.contains("title: \"Windows\\nlineending\""));
-    }
-
-    #[test]
-    fn empty_tags_render_as_empty_array() {
-        let fm = build_frontmatter("id", "title", "now", "now", &[]);
-        assert!(fm.contains("tags: []"));
-    }
-
-    #[tokio::test]
-    async fn atomic_write_creates_parent_dirs_and_file() {
-        let tmp = tempfile::tempdir().unwrap();
-        let target = tmp.path().join("nested/dir/file.md");
-        atomic_write(&target, "hello").await.unwrap();
-        let read = tokio::fs::read_to_string(&target).await.unwrap();
-        assert_eq!(read, "hello");
-    }
-
-    #[tokio::test]
-    async fn atomic_write_handles_concurrent_writers() {
-        let tmp = tempfile::tempdir().unwrap();
-        let target = tmp.path().join("note.md");
-
-        let target_a = target.clone();
-        let target_b = target.clone();
-        let a = tokio::spawn(async move { atomic_write(&target_a, "version A").await });
-        let b = tokio::spawn(async move { atomic_write(&target_b, "version B").await });
-        a.await.unwrap().unwrap();
-        b.await.unwrap().unwrap();
-
-        let final_contents = tokio::fs::read_to_string(&target).await.unwrap();
-        assert!(
-            final_contents == "version A" || final_contents == "version B",
-            "final file must be one of the inputs verbatim, got: {:?}",
-            final_contents
-        );
-
-        let mut entries = tokio::fs::read_dir(tmp.path()).await.unwrap();
-        let mut count = 0;
-        while let Some(entry) = entries.next_entry().await.unwrap() {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            assert!(
-                !name.contains(".tmp"),
-                "unexpected leftover tmp file: {}",
-                name
-            );
-            count += 1;
-        }
-        assert_eq!(count, 1);
-    }
-
-    #[tokio::test]
-    async fn worker_preserves_submit_order_for_same_id() {
-        let tmp = tempfile::tempdir().unwrap();
-        let vault_root = tmp.path().to_path_buf();
-
-        let (tx, mut rx) = mpsc::unbounded_channel::<(String, String)>();
-        let worker_root = vault_root.clone();
-        let worker = tokio::spawn(async move {
-            while let Some((id, body)) = rx.recv().await {
-                let target = worker_root.join("notes").join(format!("{}.md", id));
-                atomic_write(&target, &body).await.unwrap();
-            }
-        });
-
-        let id = "ordering-test".to_string();
-        for n in 0..50 {
-            tx.send((id.clone(), format!("version-{n}"))).unwrap();
-        }
-        drop(tx);
-        worker.await.unwrap();
-
-        let final_contents =
-            tokio::fs::read_to_string(vault_root.join("notes").join("ordering-test.md"))
-                .await
-                .unwrap();
-        assert_eq!(
-            final_contents, "version-49",
-            "FIFO worker must end at the last submitted version"
-        );
-    }
-
-    #[tokio::test]
-    async fn failed_index_action_keeps_the_durable_write_for_retry() {
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        let db = Database::new(pool.clone());
-        sqlx::query(
-            "CREATE TABLE daily_notes_workspace(id TEXT PRIMARY KEY, title TEXT, content TEXT)",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::raw_sql(include_str!(
-            "../../../migrations/20260927000000_vault_write_outbox.sql"
-        ))
-        .execute(&pool)
-        .await
-        .unwrap();
-        sqlx::query("INSERT INTO daily_notes_workspace VALUES ('note', 'Title', 'body')")
-            .execute(&pool)
-            .await
-            .unwrap();
-        let write = super::super::repository::pending(&db)
-            .await
-            .unwrap()
-            .remove(0);
-
-        super::super::repository::mark_mirrored(&db, &write)
-            .await
-            .unwrap();
-        assert!(
-            settle_write(&db, &write, Err("simulated index failure".into()))
-                .await
-                .is_err()
-        );
-        assert!(!super::super::repository::has_pending(&db, "note")
-            .await
-            .unwrap());
-        assert_eq!(
-            super::super::repository::pending(&db).await.unwrap().len(),
-            0
-        );
-        sqlx::query("UPDATE daily_notes_workspace SET content = 'new edit' WHERE id = 'note'")
-            .execute(&pool)
-            .await
-            .unwrap();
-        assert!(super::super::repository::has_pending(&db, "note")
-            .await
-            .unwrap());
-        assert_eq!(
-            super::super::repository::pending(&db).await.unwrap().len(),
-            1
-        );
-    }
-}
+#[path = "writeback_tests.rs"]
+mod tests;

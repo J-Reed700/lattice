@@ -5,7 +5,7 @@ import { MoreHorizontal, Plus, RefreshCw } from 'lucide-react';
 import { IconButton } from '@/components/ui/IconButton';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useIndexedFoldersQuery } from '@/features/files/hooks/useIndexedFoldersQuery';
-import { pathBasename } from '@/features/files/model/documentMetadata';
+import { formatFolderDisplayName } from '@/features/files/model/documentMetadata';
 import { type ClusterDto, type ClusterProgressPayload } from '@/types';
 import {
   type CustomCollection,
@@ -89,7 +89,7 @@ export function LibraryRail({
   const folders = foldersQuery.data ?? [];
 
   return (
-    <aside className="flex w-[240px] shrink-0 flex-col gap-6 overflow-y-auto border-r border-border-subtle py-4 pr-4">
+    <aside className="flex h-full w-[236px] shrink-0 flex-col gap-6 overflow-y-auto border-r border-border-subtle bg-surface-sunken/70 px-3 py-5">
       <RailSection heading="Folders">
         <RailRow
           label="All documents"
@@ -99,7 +99,8 @@ export function LibraryRail({
         {folders.map((folder) => (
           <RailRow
             key={folder.path}
-            label={pathBasename(folder.path)}
+            label={formatFolderDisplayName(folder.path)}
+            title={folder.path}
             trailing={folder.documentCount.toLocaleString()}
             isActive={scope.kind === 'folder' && scope.path === folder.path}
             onClick={() => onScopeChange({ kind: 'folder', path: folder.path })}
@@ -145,7 +146,7 @@ export function LibraryRail({
           isEmpty={themes.length === 0 && !isFindingThemes}
         >
           {isFindingThemes ? (
-            <p className="px-3 py-1 text-xs tabular-nums text-text-muted">
+            <p className="px-2.5 py-1 text-xs tabular-nums text-text-muted">
               {rebuildLabel(themeProgress)}
             </p>
           ) : (
@@ -193,23 +194,37 @@ function CollectionRow({ collection, count, isActive, onClick, onRename, onDelet
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className={`group relative flex items-center rounded-sm ${isActive ? 'bg-surface-raised' : 'hover:bg-surface'}`}>
-      {isActive ? <span aria-hidden="true" className="absolute inset-y-0 left-0 w-0.5 bg-accent" /> : null}
-      <button type="button" onClick={onClick} aria-current={isActive ? 'page' : undefined} className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left text-sm text-text-secondary hover:text-text-primary">
+    <div
+      className={`group relative flex items-center rounded-lg transition-[background-color,box-shadow] duration-fast ${
+        isActive
+          ? 'bg-surface shadow-sm ring-1 ring-border-subtle'
+          : 'hover:bg-surface/65'
+      }`}
+    >
+      <button
+        type="button"
+        onClick={onClick}
+        aria-current={isActive ? 'page' : undefined}
+        className={`flex min-w-0 flex-1 items-center gap-2 px-2.5 py-1.5 text-left text-ui transition-colors duration-fast ${
+          isActive
+            ? 'font-semibold text-text-primary'
+            : 'text-text-secondary hover:text-text-primary'
+        }`}
+      >
         <span className="min-w-0 flex-1 truncate" title={collection.name}>{collection.name}</span>
-        {collection.kind === 'snapshot' ? <span className="text-xs text-text-muted">snapshot</span> : null}
-        <span className="shrink-0 text-xs tabular-nums text-text-muted">{count.toLocaleString()}</span>
+        {collection.kind === 'snapshot' ? <span className="text-xs font-normal text-text-muted">snapshot</span> : null}
+        <span className="shrink-0 text-xs font-normal tabular-nums text-text-muted">{count.toLocaleString()}</span>
       </button>
       {onRename || onDelete ? (
         <Popover open={open} onOpenChange={setOpen}>
           <PopoverTrigger asChild>
-            <button type="button" aria-label={`Actions for ${collection.name}`} className="mr-1 rounded-sm p-1.5 text-text-muted hover:bg-surface hover:text-text-primary">
+            <button type="button" aria-label={`Actions for ${collection.name}`} className="mr-1 rounded-md p-1.5 text-text-muted hover:bg-surface-sunken hover:text-text-primary">
               <MoreHorizontal className="h-4 w-4" />
             </button>
           </PopoverTrigger>
           <PopoverContent align="start" side="right" className="w-44 p-1">
-            {onRename ? <button type="button" className="w-full rounded-sm px-3 py-2 text-left text-sm hover:bg-surface" onClick={() => { setOpen(false); onRename(); }}>Rename collection</button> : null}
-            {onDelete ? <button type="button" className="w-full rounded-sm px-3 py-2 text-left text-sm text-danger hover:bg-surface" onClick={() => { setOpen(false); onDelete(); }}>Delete collection</button> : null}
+            {onRename ? <button type="button" className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-[hsl(var(--text-primary)/0.06)]" onClick={() => { setOpen(false); onRename(); }}>Rename collection</button> : null}
+            {onDelete ? <button type="button" className="w-full rounded-md px-3 py-2 text-left text-sm text-danger hover:bg-danger-muted" onClick={() => { setOpen(false); onDelete(); }}>Delete collection</button> : null}
           </PopoverContent>
         </Popover>
       ) : null}
@@ -251,8 +266,8 @@ function RailSection({
 
   return (
     <section>
-      <div className="flex h-7 items-center justify-between pl-3">
-        <h3 className="text-xs font-medium text-text-secondary">{heading}</h3>
+      <div className="flex h-7 items-center justify-between pl-2.5">
+        <h3 className="text-xs font-medium text-text-muted">{heading}</h3>
         {action ?? null}
         {!action && onCreate ? (
           <IconButton
@@ -282,13 +297,13 @@ function RailSection({
           }}
           placeholder={placeholder}
           aria-label={createLabel ?? heading}
-          className="mt-1 h-8 w-full rounded-sm border border-border-default bg-bg px-2.5 text-sm text-text-primary outline-hidden transition-colors duration-fast placeholder:text-text-muted focus:border-accent"
+          className="mt-1 h-8 w-full rounded-lg border border-border-default bg-surface px-2.5 text-sm text-text-primary shadow-control outline-hidden transition-colors duration-fast placeholder:text-text-muted focus:border-accent focus-visible:ring-2 focus-visible:ring-ring"
         />
       ) : null}
 
-      <div className="mt-1">
+      <div className="mt-1 space-y-0.5">
         {isEmpty && !children ? null : children}
-        {isEmpty && empty ? <p className="px-3 py-1 text-xs text-text-muted">{empty}</p> : null}
+        {isEmpty && empty ? <p className="px-2.5 py-1 text-xs leading-relaxed text-text-muted">{empty}</p> : null}
       </div>
     </section>
   );
@@ -305,25 +320,24 @@ function ThemeRow({ theme, isActive, onClick }: ThemeRowProps) {
     <button
       type="button"
       onClick={onClick}
-      className={`relative flex w-full flex-col items-start gap-0.5 rounded-sm px-3 py-1.5 text-left transition-colors duration-fast ${
+      className={`relative flex w-full flex-col items-start gap-0.5 rounded-lg px-2.5 py-1.5 text-left transition-[background-color,color,box-shadow] duration-fast ${
         isActive
-          ? 'bg-surface-raised text-text-primary'
-          : 'text-text-secondary hover:bg-surface hover:text-text-primary'
+          ? 'bg-surface font-semibold text-text-primary shadow-sm ring-1 ring-border-subtle'
+          : 'text-text-secondary hover:bg-surface/65 hover:text-text-primary'
       }`}
     >
-      {isActive ? <span aria-hidden="true" className="absolute inset-y-0 left-0 w-0.5 bg-accent" /> : null}
       <span className="flex w-full items-baseline justify-between gap-2">
-        <span className="truncate text-sm">{theme.label}</span>
-        <span className="shrink-0 text-xs tabular-nums text-text-muted">
+        <span className="truncate text-ui">{theme.label}</span>
+        <span className="shrink-0 text-xs font-normal tabular-nums text-text-muted">
           {theme.memberCount.toLocaleString()}
         </span>
       </span>
       {isFallbackLabel(theme) && theme.sampleTitles.length > 0 ? (
-        <span className="w-full truncate text-xs text-text-muted">
+        <span className="w-full truncate text-xs font-normal text-text-muted">
           {theme.sampleTitles.slice(0, 3).join(' · ')}
         </span>
       ) : theme.description ? (
-        <span className="w-full truncate text-xs text-text-muted">{theme.description}</span>
+        <span className="w-full truncate text-xs font-normal text-text-muted">{theme.description}</span>
       ) : null}
     </button>
   );
@@ -331,28 +345,28 @@ function ThemeRow({ theme, isActive, onClick }: ThemeRowProps) {
 
 interface RailRowProps {
   label: string;
+  title?: string;
   trailing?: string;
   isActive?: boolean;
   onClick?: () => void;
   onDoubleClick?: () => void;
 }
 
-function RailRow({ label, trailing, isActive = false, onClick, onDoubleClick }: RailRowProps) {
+function RailRow({ label, title, trailing, isActive = false, onClick, onDoubleClick }: RailRowProps) {
   const content = (
     <>
-      {isActive ? (
-        <span aria-hidden="true" className="absolute inset-y-0 left-0 w-0.5 bg-accent" />
-      ) : null}
-      <span className="min-w-0 flex-1 truncate">{label}</span>
+      <span className="min-w-0 flex-1 truncate" title={title ?? label}>{label}</span>
       {trailing ? (
-        <span className="shrink-0 text-xs tabular-nums text-text-muted">{trailing}</span>
+        <span className="shrink-0 text-xs font-normal tabular-nums text-text-muted">{trailing}</span>
       ) : null}
     </>
   );
 
-  const className = `relative flex h-8 w-full items-center gap-2 rounded-sm px-3 text-left text-sm transition-colors duration-fast ${
-    isActive ? 'bg-surface-raised text-text-primary' : 'text-text-secondary'
-  } ${onClick ? 'hover:bg-surface hover:text-text-primary' : ''}`;
+  const className = `relative flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-left text-ui transition-[background-color,color,box-shadow] duration-fast ${
+    isActive
+      ? 'bg-surface font-semibold text-text-primary shadow-sm ring-1 ring-border-subtle'
+      : 'text-text-secondary'
+  } ${onClick && !isActive ? 'hover:bg-surface/65 hover:text-text-primary' : ''}`;
 
   if (!onClick) {
     return <div className={className}>{content}</div>;

@@ -11,6 +11,7 @@ import type { SpeechStatusDto } from '@/lib/bindings';
 import { createTestApi } from '@/tests/apiClient';
 import type { DownloadStatus } from '@/types/downloads';
 
+import { chooseRadixOption } from './radixSelectTestUtils';
 import { ReadAloudTab } from './ReadAloudTab';
 import { startModelDownload } from '../hooks/startModelDownload';
 
@@ -18,7 +19,7 @@ const h = vi.hoisted(() => ({ downloads: [] as DownloadStatus[] }));
 
 vi.mock('../hooks/startModelDownload', () => ({ startModelDownload: vi.fn(async () => ({ alreadyDownloaded: false })) }));
 vi.mock('@/features/model/hooks/useDownloadState', () => ({
-  useDownloadState: () => ({ getDownloadsByModel: (id: string) => h.downloads.filter((download) => download.model_id === id) }),
+  useDownloadState: () => ({ getDownloadsByModel: (id: string) => h.downloads.filter((download) => download.model_id === id), downloadsSettled: true }),
 }));
 vi.mock('@/features/speech/model/speechPlayer', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/features/speech/model/speechPlayer')>();
@@ -60,6 +61,11 @@ const status = (modelReady: boolean, packReady = false): SpeechStatusDto => {
 function setup(modelReady: boolean, packReady = false) {
   const api = createTestApi({
     getSpeechStatus: vi.fn(async () => ({ ok: true as const, data: status(modelReady, packReady) })),
+    getDownloadedModels: vi.fn(async () => ({
+      ok: true as const,
+      data: [{ id: 'rec-model', model_id: 'kokoro-82m-british' }, { id: 'rec-pack', model_id: 'kokoro-82m-more-voices' }],
+    })) as never,
+    deleteDownloadedModel: vi.fn(async () => ({ ok: true as const, data: undefined })) as never,
     synthesizeSpeech: vi.fn(async () => ({ ok: true as const, data: { sampleRate: 10, pcm: btoa('\0\0'), durationMs: 100 } })),
   });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -86,6 +92,7 @@ describe('ReadAloudTab', () => {
   it('offers the voice model download with its size and licence', async () => {
     const { user } = setup(false);
     const download = await screen.findByRole('button', { name: 'Download Kokoro 82M' });
+    await waitFor(() => expect(download).toBeEnabled());
     expect(screen.getByText('323.14 MB once, then it works offline. Apache-2.0 licence.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Preview Emma' })).toBeDisabled();
 
@@ -108,6 +115,7 @@ describe('ReadAloudTab', () => {
   it('tells an install with the first download what the rest costs, and fetches only that', async () => {
     const { user } = setup(true);
     const download = await screen.findByRole('button', { name: 'Download Kokoro 82M: more voices' });
+    await waitFor(() => expect(download).toBeEnabled());
     expect(screen.getByText('Downloaded')).toBeInTheDocument();
     expect(screen.getByText(/20\.65 MB more\. Kokoro 82M is not fetched again\./)).toBeInTheDocument();
 
@@ -119,6 +127,22 @@ describe('ReadAloudTab', () => {
     );
   });
 
+  it('offers Remove on each installed row', async () => {
+    setup(true, true);
+    expect(await screen.findByRole('button', { name: 'Remove Kokoro 82M' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove Kokoro 82M: more voices' })).toBeInTheDocument();
+  });
+
+  it('removes only the pack’s record when the voice pack is removed', async () => {
+    const { api, user } = setup(true, true);
+    await user.click(await screen.findByRole('button', { name: 'Remove Kokoro 82M: more voices' }));
+    expect(await screen.findByText(/The four British women stay\./)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /^Remove\s*⌘/ }));
+
+    await waitFor(() => expect(api.deleteDownloadedModel).toHaveBeenCalledTimes(1));
+    expect(api.deleteDownloadedModel).toHaveBeenCalledWith('rec-pack', true);
+  });
+
   it('shows the pack’s progress on its own row', async () => {
     h.downloads = [
       { model_id: 'kokoro-82m-more-voices', state: 'Downloading', total_bytes: 300, bytes_downloaded: 100, bytes_per_second: 1 },
@@ -127,6 +151,26 @@ describe('ReadAloudTab', () => {
     setup(true);
     expect(await screen.findByText('Downloading… 25%')).toBeInTheDocument();
     expect(screen.getByText('Downloaded')).toBeInTheDocument();
+  });
+
+  it('says why the last download failed', async () => {
+    h.downloads = [
+      { model_id: 'kokoro-82m-british', state: 'Failed', error_message: 'Disk full.', total_bytes: 100, bytes_downloaded: 10, bytes_per_second: 0 },
+    ] as DownloadStatus[];
+    setup(false);
+    expect(await screen.findByText("Couldn't download: Disk full.")).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Download Kokoro 82M' })).toBeInTheDocument();
+  });
+
+  it('offers Resume and a way into Downloads for a paused model', async () => {
+    h.downloads = [
+      { id: 'dl-1', model_id: 'kokoro-82m-british', state: 'Paused', total_bytes: 100, bytes_downloaded: 20, bytes_per_second: 0, percentage: 20 },
+    ] as DownloadStatus[];
+    setup(false);
+    const region = await screen.findByRole('status', { name: 'Downloading Kokoro 82M' });
+    expect(region).toHaveTextContent('Paused');
+    expect(within(region).getByRole('button', { name: 'Resume' })).toBeInTheDocument();
+    expect(within(region).getByRole('button', { name: 'Show in Downloads' })).toBeInTheDocument();
   });
 
   it('groups the voices by accent, each with its gender and grade', async () => {
@@ -187,7 +231,7 @@ describe('ReadAloudTab', () => {
       ),
     );
 
-    await user.selectOptions(screen.getByLabelText('Speed'), '1.25');
+    await chooseRadixOption(screen.getByLabelText('Speed'), '1.25×', user);
     expect(useSpeechPrefsStore.getState().speed).toBe(1.25);
   });
 });

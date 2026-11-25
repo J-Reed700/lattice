@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { resetBatchFileImportWorkflow } from '@/features/files/hooks/batchFileImportWatcher';
 
 import { BatchFileImport } from './BatchFileImport';
 
@@ -47,6 +48,7 @@ vi.mock('@/lib/api', () => ({
 describe('BatchFileImport', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetBatchFileImportWorkflow();
     mocks.collectionsQuery.data = [];
     mocks.collectionsQuery.error = null;
     mocks.operations.clear();
@@ -154,11 +156,12 @@ describe('BatchFileImport', () => {
     expect(screen.getAllByText('Cancelled')).toHaveLength(1);
   });
 
-  it('restores a finished failed PDF and offers retry after reopening Import', async () => {
+  it('restores a finished failed PDF and offers retry after reopening Import without re-firing completion error toasts', async () => {
     const user = userEvent.setup();
+    const onImportComplete = vi.fn();
     const operation = {
       id: 'failed-job', status: 'error', totalFiles: 2,
-      processedFiles: 2, successfulFiles: 1, failedFiles: 1,
+      processedFiles: 2, successfulFiles: 1, failedFiles: 1, restoredFromHistory: true,
       items: [
         { target: '/Downloads/readable.pdf', status: 'completed' },
         { target: '/Downloads/mpep-2100.pdf', status: 'failed', errorMessage: 'PDF extraction timed out' },
@@ -166,17 +169,19 @@ describe('BatchFileImport', () => {
     };
     mocks.operations.set(operation.id, operation);
     mocks.getOperation.mockReturnValue(operation);
-    render(<TooltipProvider><BatchFileImport /></TooltipProvider>);
+    render(<TooltipProvider><BatchFileImport onImportComplete={onImportComplete} /></TooltipProvider>);
     expect(await screen.findByText('Failed — PDF extraction timed out')).toBeInTheDocument();
     expect(screen.getByText('Imported')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retry or replace failed files' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Import' })).toBeDisabled();
+    expect(onImportComplete).not.toHaveBeenCalled();
     // A later import that cannot start must not overwrite the saved PDF error.
     mocks.selectFiles.mockResolvedValue(['/Downloads/new.pdf']);
     await user.click(screen.getByRole('button', { name: 'choose files' }));
     await user.click(screen.getByRole('button', { name: 'Import 1 file' }));
     expect(await screen.findByText('Failed — Embedding model files are missing. Download the embedding model again.')).toBeVisible();
     expect(screen.getByText('Failed — PDF extraction timed out')).toBeVisible();
+    expect(onImportComplete).not.toHaveBeenCalled();
   });
 
 });

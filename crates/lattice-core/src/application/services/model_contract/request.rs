@@ -38,6 +38,11 @@ pub struct CompletionRequest {
     pub include_reasoning: bool,
     /// Sampling for this request. `None` keeps the provider's configuration.
     pub sampling: Option<SamplingOverride>,
+    /// Fallback sampling applied only when the resolved backend runs with
+    /// thinking off (`Thinking::Off`), letting thinking models keep their own
+    /// profile while non-thinking backends decode deterministically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub non_thinking_sampling: Option<SamplingOverride>,
     /// Whether the model thinks before answering. Off unless the caller asks:
     /// see [`ThinkingMode`] for why tool rounds never think.
     pub thinking: ThinkingMode,
@@ -97,6 +102,7 @@ impl CompletionRequest {
             tool_choice: None,
             include_reasoning: false,
             sampling: None,
+            non_thinking_sampling: None,
             thinking: ThinkingMode::default(),
             max_output_tokens: None,
             stop: Vec::new(),
@@ -173,10 +179,17 @@ pub struct GroundedRequest {
     /// Generation reservation, enforced on the request. Zero takes the
     /// planner's default for the model.
     pub(super) output_tokens: usize,
+    /// How many times the planner's reservation, `output_tokens` or its
+    /// default, this request is given. A larger send raises it.
+    pub(super) output_scale: usize,
     /// The answer may also use the input room the request leaves unused, so a
     /// reasoning model writing long structured output is not cut off by an
     /// estimate. `output_tokens` is then the least it is promised.
     pub(super) output_fills_window: bool,
+    /// Tokens kept free at the top of the window when `output_fills_window` is
+    /// set, so a follow-up step that carries this reply (such as Step 2 after a
+    /// prose draft) still fits beside it.
+    pub(super) output_headroom: usize,
     /// Constrains the answer to this schema.
     pub(super) schema: Option<Schema>,
     pub call: CallOptions,
@@ -195,7 +208,9 @@ impl GroundedRequest {
             closing: String::new(),
             history: Vec::new(),
             output_tokens: 0,
+            output_scale: 1,
             output_fills_window: false,
+            output_headroom: 0,
             schema: None,
             call: CallOptions::default(),
         }
@@ -237,8 +252,16 @@ impl GroundedRequest {
         self.output_tokens
     }
 
+    pub fn output_scale(&self) -> usize {
+        self.output_scale
+    }
+
     pub fn output_fills_window(&self) -> bool {
         self.output_fills_window
+    }
+
+    pub fn output_headroom(&self) -> usize {
+        self.output_headroom
     }
 
     /// The schema the answer is held to.
@@ -260,10 +283,12 @@ impl GroundedRequest {
             cancel: call.cancel,
             cache_key: call.cache_key,
             sampling: call.sampling,
+            non_thinking_sampling: call.non_thinking_sampling,
             time_budget: call.time_budget,
             no_time_limit: call.no_time_limit,
             schema: self.schema.clone(),
             reasoning_effort: call.reasoning_effort,
+            thinking: call.thinking,
             max_output_tokens,
             ..CompletionRequest::empty()
         }

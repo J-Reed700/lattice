@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use lattice_core::domain::download::DownloadError;
 use lattice_core::shared::error::WithCauses;
+use lattice_core::shared::fs::plainly_spelled;
 use lattice_core::shared::http::reqwest_client_builder;
 use reqwest::{header, Client, StatusCode};
 use std::path::{Path, PathBuf};
@@ -16,6 +17,11 @@ mod transfer;
 /// Content-Length below this threshold is likely a redirect/error page
 const MIN_VALID_MODEL_SIZE: u64 = 10 * 1024; // 10 KB
 
+/// Total time allowed for each request that only sizes a file. The transfer
+/// itself has no total timeout so a large file can stream for hours, but a
+/// server that accepts a HEAD and never answers must not hold a start call.
+const SIZE_PROBE_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// HTTP status codes that are typically transient and safe to retry.
 const RETRYABLE_HTTP_STATUSES: [u16; 8] = [408, 409, 425, 429, 500, 502, 503, 504];
 
@@ -28,6 +34,7 @@ fn resolve_redirect_location(request_url: &str, location: &str) -> Result<String
 }
 
 fn is_trusted_model_host(host: &str) -> bool {
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
     host == "huggingface.co"
         || host.ends_with(".huggingface.co")
         || host == "hf.co"
@@ -40,6 +47,9 @@ fn may_forward_authorization(source: &str, target: &str) -> bool {
     };
     if source.origin() == target.origin() {
         return true;
+    }
+    if source.scheme() != "https" || target.scheme() != "https" {
+        return false;
     }
 
     match (source.host_str(), target.host_str()) {
@@ -59,13 +69,22 @@ pub struct DownloadOptions {
     pub resume_from: Option<u64>,
     pub progress_callback: Option<ProgressCallback>,
     pub auth_token: Option<String>,
+    /// The size the session already knows (from the caller or the prepare-time
+    /// HEAD). It wins over the transfer-time HEAD's size, which can be absent:
+    /// without it a complete `.part` would be sent `Range: bytes=<total>-`,
+    /// which the server answers with a 416 that is never retried.
+    pub known_total: Option<u64>,
 }
 
 #[async_trait]
 pub trait DownloadEngine: Send + Sync {
     async fn download(&self, options: DownloadOptions) -> Result<DownloadResult, DownloadError>;
 
-    async fn get_file_size(&self, url: &str) -> Result<(Option<u64>, String), DownloadError>;
+    async fn get_file_size(
+        &self,
+        url: &str,
+        auth_token: Option<&str>,
+    ) -> Result<(Option<u64>, String), DownloadError>;
 
     async fn supports_resume(&self, url: &str) -> Result<bool, DownloadError>;
 }
@@ -122,10 +141,9 @@ impl HttpDownloadEngine {
         // Several mount points can prefix one path (`/` and
         // `/Volumes/External` on macOS). The most specific/longest mount is
         // the volume that actually owns the destination.
-        if let Some(disk) = disks
-            .iter()
-            .filter(|disk| dest_path.starts_with(disk.mount_point()))
-            .max_by_key(|disk| mount_point_specificity(disk.mount_point()))
+        let mount = owning_mount(dest_path, disks.iter().map(|disk| disk.mount_point()));
+        if let Some(disk) =
+            mount.and_then(|mount| disks.iter().find(|disk| disk.mount_point() == mount))
         {
             let available_bytes = disk.available_space();
 
@@ -179,6 +197,15 @@ fn mount_point_specificity(path: &Path) -> usize {
     path.components().count()
 }
 
+/// The most specific mount point that `path` sits under.
+fn owning_mount<'a>(path: &Path, mounts: impl IntoIterator<Item = &'a Path>) -> Option<&'a Path> {
+    let path = plainly_spelled(path.to_path_buf());
+    mounts
+        .into_iter()
+        .filter(|mount| path.starts_with(mount))
+        .max_by_key(|mount| mount_point_specificity(mount))
+}
+
 /// Validates whether a Content-Length value from HEAD response is reliable.
 ///
 /// Returns false if:
@@ -194,7 +221,24 @@ fn is_content_length_valid(content_length: Option<u64>) -> bool {
 #[async_trait]
 impl DownloadEngine for HttpDownloadEngine {
     async fn download(&self, options: DownloadOptions) -> Result<DownloadResult, DownloadError> {
-        let (expected_total_bytes, final_url) = self.get_file_size(&options.url).await?;
+        // Every byte is already on disk: hash it, with no request at all.
+        if let (Some(total), Some(offset)) = (options.known_total, options.resume_from) {
+            if total > 0 && offset == total {
+                return self
+                    .complete_from_local_file(
+                        &options.url,
+                        &options.destination,
+                        total,
+                        options.progress_callback.as_ref(),
+                    )
+                    .await;
+            }
+        }
+
+        let (head_total_bytes, final_url) = self
+            .get_file_size(&options.url, options.auth_token.as_deref())
+            .await?;
+        let expected_total_bytes = options.known_total.or(head_total_bytes);
         let auth_token = options.auth_token.as_ref().filter(|_| {
             let allowed = may_forward_authorization(&options.url, &final_url);
             if !allowed {
@@ -232,62 +276,95 @@ impl DownloadEngine for HttpDownloadEngine {
         .await
     }
 
-    async fn get_file_size(&self, url: &str) -> Result<(Option<u64>, String), DownloadError> {
+    async fn get_file_size(
+        &self,
+        url: &str,
+        auth_token: Option<&str>,
+    ) -> Result<(Option<u64>, String), DownloadError> {
+        const MAX_REDIRECTS: usize = 10;
         debug!(url = %url, "Getting file size via HEAD request");
 
-        let response = reqwest_client_builder()
+        let no_redirect_client = reqwest_client_builder()
             .connect_timeout(Duration::from_secs(30))
-            .redirect(reqwest::redirect::Policy::none()) // Don't follow redirects
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|e| {
                 DownloadError::NetworkError(format!(
                     "Failed to create HTTP client: {}",
                     WithCauses(&e)
                 ))
-            })?
-            .head(url)
-            .send()
-            .await
-            .map_err(|e| {
+            })?;
+
+        // Follow redirects manually so Authorization is preserved across trusted
+        // HuggingFace host hops (e.g. hf.co -> huggingface.co) even when
+        // `x-linked-size` is absent, and stripped on untrusted hosts.
+        let mut current_url = url.to_string();
+        let mut head_response = None;
+        for hop in 0..=MAX_REDIRECTS {
+            let mut request = no_redirect_client
+                .head(&current_url)
+                .timeout(SIZE_PROBE_TIMEOUT);
+            if let Some(token) = auth_token.filter(|_| may_forward_authorization(url, &current_url))
+            {
+                request = request.bearer_auth(token);
+            }
+            let response = request.send().await.map_err(|e| {
                 DownloadError::NetworkError(format!("HEAD request failed: {}", WithCauses(&e)))
             })?;
 
-        let status = response.status();
+            if response.status().is_redirection() {
+                if let Some(size_header) = response.headers().get("x-linked-size") {
+                    if let Ok(size_str) = size_header.to_str() {
+                        if let Ok(size) = size_str.parse::<u64>() {
+                            let final_url =
+                                if let Some(location) = response.headers().get("location") {
+                                    let location = location.to_str().map_err(|error| {
+                                        DownloadError::InvalidResponse(format!(
+                                            "Redirect Location is not valid text: {error}"
+                                        ))
+                                    })?;
+                                    resolve_redirect_location(&current_url, location)?
+                                } else {
+                                    current_url.clone()
+                                };
 
-        if status.is_redirection() {
-            if let Some(size_header) = response.headers().get("x-linked-size") {
-                if let Ok(size_str) = size_header.to_str() {
-                    if let Ok(size) = size_str.parse::<u64>() {
-                        let final_url = if let Some(location) = response.headers().get("location") {
-                            let location = location.to_str().map_err(|error| {
-                                DownloadError::InvalidResponse(format!(
-                                    "Redirect Location is not valid text: {error}"
-                                ))
-                            })?;
-                            resolve_redirect_location(url, location)?
-                        } else {
-                            url.to_string()
-                        };
+                            info!(
+                                url = %url,
+                                final_url = %final_url,
+                                file_size = size,
+                                "Found file size in HuggingFace redirect header (x-linked-size)"
+                            );
 
-                        info!(
-                            url = %url,
-                            final_url = %final_url,
-                            file_size = size,
-                            "Found file size in HuggingFace redirect header (x-linked-size)"
-                        );
-
-                        return Ok((Some(size), final_url));
+                            return Ok((Some(size), final_url));
+                        }
                     }
                 }
+
+                if let Some(location) = response.headers().get("location") {
+                    if hop == MAX_REDIRECTS {
+                        return Err(DownloadError::NetworkError(
+                            "Too many redirects during HEAD probe".to_string(),
+                        ));
+                    }
+                    let location = location.to_str().map_err(|error| {
+                        DownloadError::InvalidResponse(format!(
+                            "Redirect Location is not valid text: {error}"
+                        ))
+                    })?;
+                    current_url = resolve_redirect_location(&current_url, location)?;
+                    continue;
+                }
             }
+
+            head_response = Some(response);
+            break;
         }
 
-        let response = self.client.head(url).send().await.map_err(|e| {
-            DownloadError::NetworkError(format!("HEAD request failed: {}", WithCauses(&e)))
+        let response = head_response.ok_or_else(|| {
+            DownloadError::NetworkError("HEAD request exceeded redirect limit".to_string())
         })?;
-
         let status = response.status();
-        let final_url = response.url().clone();
+        let final_url = current_url;
 
         if !status.is_success() {
             let status_code = status.as_u16();
@@ -330,7 +407,7 @@ impl DownloadEngine for HttpDownloadEngine {
                     .and_then(|s| s.parse::<u64>().ok())
             });
 
-        if final_url.as_str() != url {
+        if final_url != url {
             info!(
                 original_url = %url,
                 final_url = %final_url,
@@ -363,15 +440,21 @@ impl DownloadEngine for HttpDownloadEngine {
 
             debug!(url = %final_url, "Sending GET Range probe to determine file size");
 
-            let range_response = self
-                .client
-                .get(final_url.as_str())
-                .header(header::RANGE, "bytes=0-0")
-                .send()
-                .await
-                .map_err(|e| {
+            let mut range_url = final_url.clone();
+            let mut range_response_opt = None;
+            for hop in 0..=MAX_REDIRECTS {
+                let mut range_request = no_redirect_client
+                    .get(&range_url)
+                    .header(header::RANGE, "bytes=0-0")
+                    .timeout(SIZE_PROBE_TIMEOUT);
+                if let Some(token) =
+                    auth_token.filter(|_| may_forward_authorization(url, &range_url))
+                {
+                    range_request = range_request.bearer_auth(token);
+                }
+                let range_response = range_request.send().await.map_err(|e| {
                     error!(
-                        url = %final_url,
+                        url = %range_url,
                         error = %WithCauses(&e),
                         "Range GET request failed - connection error or timeout"
                     );
@@ -381,8 +464,51 @@ impl DownloadEngine for HttpDownloadEngine {
                     ))
                 })?;
 
+                if range_response.status().is_redirection() {
+                    if let Some(size_header) = range_response.headers().get("x-linked-size") {
+                        if let Ok(size_str) = size_header.to_str() {
+                            if let Ok(size) = size_str.parse::<u64>() {
+                                let resolved = if let Some(location) =
+                                    range_response.headers().get("location")
+                                {
+                                    let location = location.to_str().map_err(|error| {
+                                        DownloadError::InvalidResponse(format!(
+                                            "Redirect Location is not valid text: {error}"
+                                        ))
+                                    })?;
+                                    resolve_redirect_location(&range_url, location)?
+                                } else {
+                                    range_url.clone()
+                                };
+                                return Ok((Some(size), resolved));
+                            }
+                        }
+                    }
+                    if let Some(location) = range_response.headers().get("location") {
+                        if hop == MAX_REDIRECTS {
+                            warn!(url = %final_url, "Range GET exceeded redirect limit");
+                            return Ok((None, final_url));
+                        }
+                        let location = location.to_str().map_err(|error| {
+                            DownloadError::InvalidResponse(format!(
+                                "Redirect Location is not valid text: {error}"
+                            ))
+                        })?;
+                        range_url = resolve_redirect_location(&range_url, location)?;
+                        continue;
+                    }
+                }
+
+                range_response_opt = Some(range_response);
+                break;
+            }
+
+            let Some(range_response) = range_response_opt else {
+                return Ok((None, final_url));
+            };
+
             let range_status = range_response.status();
-            let range_final_url = range_response.url().clone();
+            let range_final_url = range_url;
 
             if !range_status.is_success() && range_status != StatusCode::PARTIAL_CONTENT {
                 warn!(
@@ -390,7 +516,7 @@ impl DownloadEngine for HttpDownloadEngine {
                     status = %range_status,
                     "Range GET request failed, proceeding without file size"
                 );
-                return Ok((None, final_url.to_string()));
+                return Ok((None, final_url));
             }
 
             // Try multiple methods to get file size from Range response
@@ -428,14 +554,14 @@ impl DownloadEngine for HttpDownloadEngine {
                 "Range GET request completed"
             );
 
-            Ok((range_content_length, range_final_url.to_string()))
+            Ok((range_content_length, range_final_url))
         } else {
             info!(
                 url = %final_url,
                 content_length = ?content_length,
                 "Using HEAD Content-Length (valid size)"
             );
-            Ok((content_length, final_url.to_string()))
+            Ok((content_length, final_url))
         }
     }
 
@@ -475,7 +601,7 @@ impl DownloadEngine for HttpDownloadEngine {
     }
 }
 
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(any(test, feature = "test-support"))]
 #[allow(clippy::unwrap_used)] // Test/mock code - unwrap() is acceptable for test infrastructure
 pub mod mock;
 

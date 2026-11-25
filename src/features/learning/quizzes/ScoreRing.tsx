@@ -30,6 +30,6 @@ export function ScoreRing({ score, passMark, tone, label }: { score: number; pas
     {tick !== null && <span className="absolute h-3.5 w-0.5 rounded-full bg-text-primary/70" style={{
       left: centre + Math.cos(tick) * RADIUS - 1, top: centre + Math.sin(tick) * RADIUS - 7, transform: `rotate(${passMark! * 360}deg)`,
     }} />}
-    <span className="absolute font-serif text-[1.9rem] tabular-nums leading-none text-text-primary">{label}</span>
+    <span className="absolute font-sans text-[1.75rem] font-semibold tracking-[-0.025em] tabular-nums leading-none text-text-primary">{label}</span>
   </div>;
 }

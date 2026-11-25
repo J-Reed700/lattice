@@ -152,26 +152,6 @@ pub(super) struct PageLayout {
     pub has_image: bool,
 }
 
-impl PageLayout {
-    pub(super) fn retained_bytes(&self) -> usize {
-        std::mem::size_of::<Self>()
-            + self.fallback_text.as_ref().map_or(0, String::capacity)
-            + self.lines.capacity() * std::mem::size_of::<Line>()
-            + self
-                .lines
-                .iter()
-                .map(|line| {
-                    line.runs.capacity() * std::mem::size_of::<Run>()
-                        + line
-                            .runs
-                            .iter()
-                            .map(|run| run.text.capacity())
-                            .sum::<usize>()
-                })
-                .sum::<usize>()
-    }
-}
-
 /// Read one page's geometry.
 ///
 /// Falls back to lopdf's plain extraction when the operator walk cannot be

@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 # Set up Lattice on a macOS or Linux machine with one command.
 #
-#   ./setup.sh                 from a checkout
-#   curl -fsSL https://raw.githubusercontent.com/J-Reed700/lattice/main/setup.sh | bash
-#                              without one: downloads the source to ~/lattice first
+#   ./setup.sh                 from the repo folder (a clone or an unzipped download)
 #
 # Each step is skipped when what it installs is already there, so running the
 # script again only rebuilds and reinstalls the app.

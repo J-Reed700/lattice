@@ -55,14 +55,14 @@ function ActivityCard({ activity, now, onOpen }: { activity: StudyActivity; now:
       <span className="flex shrink-0 items-center gap-1.5">
         {waiting > 0
           ? <button type="button" onClick={() => onOpen({ ...destination, tab: 'lessons', review: 'claims' })} className="min-h-8 rounded-full bg-accent px-3 text-xs font-semibold text-accent-fg focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">Review</button>
-          : (destination.programId || destination.flashcards) && <button type="button" onClick={() => onOpen(destination)} className="min-h-8 rounded-full border border-border px-3 text-xs font-medium text-text-primary hover:border-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">{failed ? 'Return to task to retry' : pending ? 'Open task' : 'View result'}</button>}
-        {!pending && <button type="button" onClick={() => dismissStudyActivity(activity.id)} className="min-h-8 rounded-full px-3 text-xs text-text-muted hover:bg-background focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">Dismiss</button>}
+          : (destination.programId || destination.flashcards || destination.screen) && <button type="button" onClick={() => onOpen(destination)} className="min-h-8 rounded-full border border-border px-3 text-xs font-medium text-text-primary hover:border-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">{failed ? 'Return to task to retry' : pending ? 'Open task' : 'View result'}</button>}
+        {!pending && <button type="button" onClick={() => dismissStudyActivity(activity.id)} className="min-h-8 rounded-full px-3 text-xs text-text-muted hover:bg-bg focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">Dismiss</button>}
       </span>
     </div>
     {failed && <p role="alert" className="mt-1.5 text-sm leading-6 text-text-secondary">{activity.error}</p>}
     <details key={activity.status} className="mt-1 text-xs text-text-secondary">
       <summary className="cursor-pointer rounded-md py-1 font-medium text-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">Task details</summary>
-      <div className="mt-2 rounded-lg bg-background p-3">
+      <div className="mt-2 rounded-lg bg-bg p-3">
         <p className="leading-5">{pending ? activity.detail : failed ? 'The request did not finish. Its error is shown above.' : 'The app has returned a result. Open the task to review it.'}</p>
         <p className="mt-3 font-medium">What this task involves</p>
         <ul className="mt-2 list-disc space-y-1 pl-4">{activity.involves.map(step => <li key={step}>{step}</li>)}</ul>
@@ -117,7 +117,7 @@ export function StudyActivityPanel({ onOpen }: { onOpen: (destination: StudyDest
           {expanded ? <ChevronUp size={16} aria-hidden="true" /> : <ChevronDown size={16} aria-hidden="true" />}
           <span className="sr-only">{expanded ? 'Collapse activity' : 'Expand activity'}</span>
         </button>
-        {activities.some(item => item.status !== 'pending') && <button type="button" onClick={() => dismissStudyActivity()} aria-label="Clear finished activity" title="Clear finished activity" className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-text-muted hover:bg-background focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"><X size={16} /></button>}
+        {activities.some(item => item.status !== 'pending') && <button type="button" onClick={() => dismissStudyActivity()} aria-label="Clear finished activity" title="Clear finished activity" className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-text-muted hover:bg-bg focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"><X size={16} /></button>}
       </div>
       <div id={panelId} hidden={!expanded}>
         <p className="my-3 text-xs leading-5 text-text-muted">{active.length ? 'Work continues while you browse Study. Collapse this panel to keep reading.' : 'Recent Study requests. Open a result or clear finished activity.'}</p>

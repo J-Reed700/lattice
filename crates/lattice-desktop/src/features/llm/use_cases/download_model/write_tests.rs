@@ -104,12 +104,9 @@ impl CredentialsPort for EmptyKeychain {
 }
 
 async fn use_case() -> (DownloadModelUseCase, SqlitePool) {
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     let db = Database::new(pool.clone());
     let use_case = DownloadModelUseCase::new(
         Arc::new(HardcodedModelCatalog::new()),
@@ -266,4 +263,63 @@ async fn a_multi_file_model_that_cannot_start_is_failed_with_its_files_or_not_at
 
     assert!(result.is_err());
     assert_eq!(model_status(&pool, id).await, "pending");
+}
+
+#[tokio::test]
+async fn huggingface_token_is_loaded_for_hf_urls_even_when_requires_auth_is_false() {
+    use lattice_core::application::services::credentials::{
+        memory::InMemoryCredentials, CredentialKey,
+    };
+
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+        .await
+        .unwrap();
+    let db = Database::new(pool);
+    let credentials = Arc::new(InMemoryCredentials::default());
+    credentials
+        .set_api_key(CredentialKey::HuggingFaceToken.as_str(), "hf_token_123")
+        .await
+        .unwrap();
+
+    let use_case = DownloadModelUseCase::new(
+        Arc::new(HardcodedModelCatalog::new()),
+        Arc::new(DownloadedModelRepository::new(db.clone())),
+        Arc::new(RefusingDownloads),
+        Arc::new(FileSystemAdapter::new()),
+        credentials,
+        Arc::new(TokioChecksumAdapter),
+        Arc::new(TokioFileSystemAdapter),
+        db,
+    );
+
+    let mut meta = curated(vec![]);
+    meta.requires_auth = false;
+    let hf_plan = vec![PlannedFile {
+        filename: "model.gguf".into(),
+        url: "https://huggingface.co/org/gated-repo/resolve/main/model.gguf".into(),
+        size_bytes: 100,
+        expected_size: Some(100),
+        checksum: None,
+    }];
+    assert_eq!(
+        use_case
+            .huggingface_token("hf.test", &meta, &hf_plan)
+            .await
+            .unwrap(),
+        Some("hf_token_123".to_string())
+    );
+
+    // When requires_auth is true and keychain is empty, return InvalidInput.
+    let (empty_use_case, _) = use_case_with_empty_keychain().await;
+    meta.requires_auth = true;
+    assert!(matches!(
+        empty_use_case
+            .huggingface_token("hf.test", &meta, &hf_plan)
+            .await,
+        Err(AppError::InvalidInput(_))
+    ));
+}
+
+async fn use_case_with_empty_keychain() -> (DownloadModelUseCase, SqlitePool) {
+    use_case().await
 }

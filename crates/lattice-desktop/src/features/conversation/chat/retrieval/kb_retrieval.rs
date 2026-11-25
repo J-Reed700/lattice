@@ -28,6 +28,7 @@ pub(super) async fn run_kb_retrieval(
     tuning: &RetrievalTuningSettingsDto,
     // The turn's stop button, which the planner's model calls carry.
     cancel: &tokio_util::sync::CancellationToken,
+    scope_snapshot: Option<&crate::features::conversation::chat::scope::ScopeSnapshot>,
 ) -> super::KbRetrievalOutcome {
     let ChatTurn {
         conv_service,
@@ -42,104 +43,101 @@ pub(super) async fn run_kb_retrieval(
     let kb_start = Instant::now();
     let mut timings = super::RetrievalSubTimingMetrics::default();
 
-    let scope_load_start = Instant::now();
-    let scope = match super::load_space_document_scope(container, conversation_id).await {
-        Some(scope) => scope,
-        None => {
-            timings.kb_scope_load_ms = super::elapsed_ms(scope_load_start);
-            timings.kb_total_ms = super::elapsed_ms(kb_start);
-            warn!(
-                conversation_id = conversation_id,
-                "Unable to resolve hard space scope; failing closed before retrieval"
-            );
-            return super::KbRetrievalOutcome {
-                interpretation: lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
-                    validated_message.to_string(),
-                    QueryType::Question,
-                ),
-                search_response: super::empty_search_response(),
-                sources: Vec::new(),
-                low_confidence: true,
-                kb_unavailable_reason: Some(
-                    "the conversation scope could not be resolved".to_string(),
-                ),
-                timings,
-                searched_documents: 0,
-                scope_is_linked: false,
-                sufficiency: None,
-            };
+    let (scope, scope_load_ms) = if let Some(snapshot) = scope_snapshot.filter(|s| s.resolved) {
+        (snapshot.space.clone(), snapshot.load_ms)
+    } else {
+        let scope_load_start = Instant::now();
+        let mut loaded = super::load_space_document_scope(container, conversation_id).await;
+        if let Some(scope) = loaded.as_mut() {
+            // A chat pinned to particular documents searches those and no others. The
+            // focus was already intersected with this same space scope, so this can
+            // only ever remove ids; when it removes all of them the request named
+            // nothing this chat can reach, and the turn searches nothing rather than
+            // falling back to the whole space.
+            focus.confine(&mut scope.document_ids);
         }
+        (loaded, super::elapsed_ms(scope_load_start))
     };
-    // A chat pinned to particular documents searches those and no others. The
-    // focus was already intersected with this same space scope, so this can
-    // only ever remove ids; when it removes all of them the request named
-    // nothing this chat can reach, and the turn searches nothing rather than
-    // falling back to the whole space.
-    let mut scope = scope;
-    focus.confine(&mut scope.document_ids);
-    timings.kb_scope_load_ms = super::elapsed_ms(scope_load_start);
+    timings.kb_scope_load_ms = scope_load_ms;
+    let Some(scope) = scope else {
+        warn!(
+            conversation_id = conversation_id,
+            "Unable to resolve hard space scope; failing closed before retrieval"
+        );
+        return searched_nothing(
+            validated_message,
+            kb_start,
+            timings,
+            Some("the conversation scope could not be resolved".to_string()),
+            false,
+        );
+    };
     // The exact set the hard filter allows. Reported to the UI verbatim so
     // "Searched N documents" is a fact, not a corpus-sized guess.
     let searched_documents = scope.document_ids.len();
     let scope_is_linked = scope.space_id != super::DEFAULT_SPACE_ID;
 
     if focus.blocks_everything() {
-        timings.kb_total_ms = super::elapsed_ms(kb_start);
         warn!(
             conversation_id = conversation_id,
             space_id = scope.space_id.as_str(),
             "Focus documents are outside this conversation's space; searching nothing"
         );
-        return super::KbRetrievalOutcome {
-            interpretation: lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
-                validated_message.to_string(),
-                QueryType::Question,
-            ),
-            search_response: super::empty_search_response(),
-            sources: Vec::new(),
-            low_confidence: true,
-            kb_unavailable_reason: Some(focus.unavailable_reason().to_string()),
+        return searched_nothing(
+            validated_message,
+            kb_start,
             timings,
-            searched_documents: 0,
+            Some(focus.unavailable_reason().to_string()),
             scope_is_linked,
-            sufficiency: None,
-        };
+        );
     }
 
     if scope.document_ids.is_empty() {
-        timings.kb_total_ms = super::elapsed_ms(kb_start);
         info!(
             conversation_id = conversation_id,
             space_id = scope.space_id.as_str(),
             "Space scope contains no indexed documents; skipping KB retrieval"
         );
-        return super::KbRetrievalOutcome {
-            interpretation: lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
-                validated_message.to_string(),
-                QueryType::Question,
-            ),
-            search_response: super::empty_search_response(),
-            sources: Vec::new(),
-            low_confidence: true,
-            kb_unavailable_reason: Some(if scope.space_id == super::DEFAULT_SPACE_ID {
+        return searched_nothing(
+            validated_message,
+            kb_start,
+            timings,
+            Some(if scope.space_id == super::DEFAULT_SPACE_ID {
                 "the vault has no indexed documents yet".to_string()
             } else {
                 "no indexed documents are assigned to this conversation’s space".to_string()
             }),
-            timings,
-            searched_documents: 0,
-            scope_is_linked: scope.space_id != super::DEFAULT_SPACE_ID,
-            sufficiency: None,
-        };
+            scope_is_linked,
+        );
+    }
+
+    if cancel.is_cancelled() {
+        return searched_nothing(validated_message, kb_start, timings, None, scope_is_linked);
     }
 
     let repository = container.chat_records();
     // How deep to read: as many passages as the evidence budget can carry, at
-    // what a passage of this library actually measures, up to the shortlist.
-    let passage_chars = match repository
-        .retrieval_mean_chunk_chars(&scope.document_ids)
-        .await
-    {
+    // what a passage of this library actually measures.
+    // Overlap cold embedding load with the mean-chunk-chars query so an empty
+    // space or focus-blocked turn never wakes the embedding model.
+    let (embedding_result, passage_chars_result) = tokio::join!(
+        container.get_or_load_embedding(),
+        repository.retrieval_mean_chunk_chars(&scope.document_ids),
+    );
+    let embedding_unavailable_reason = match embedding_result {
+        Ok(_) => None,
+        Err(e) => {
+            tracing::debug!(
+                error = %e,
+                "Embedding model not available for RAG — keyword search only"
+            );
+            Some("the embedding model is not ready".to_string())
+        }
+    };
+    if cancel.is_cancelled() {
+        return searched_nothing(validated_message, kb_start, timings, None, scope_is_linked);
+    }
+    let passage_chars = match passage_chars_result {
         Ok(measured) => measured,
         Err(error) => {
             warn!(%error, "Could not measure passage length; assuming the chunker's target");
@@ -167,7 +165,28 @@ pub(super) async fn run_kb_retrieval(
             let plan = if let Some(plan) =
                 super::corpus_plan::ordered_learning_plan(validated_message, &catalog)
             {
+                timings.kb_planner_skipped = true;
                 plan
+            } else if super::corpus_plan::whole_document_intent(validated_message)
+                || standalone_question.is_some_and(super::corpus_plan::whole_document_intent)
+                || super::corpus_plan::has_section_identifiers(validated_message)
+                || standalone_question.is_some_and(super::corpus_plan::has_section_identifiers)
+            {
+                // Whole-document, collection-structure, and numbered-clause questions cannot be
+                // disambiguated by passage similarity alone, so plan opening documents upfront.
+                planned_or_fallback(
+                    container,
+                    conv_service,
+                    conversation_id,
+                    validated_message,
+                    &catalog,
+                    &scope,
+                    &summaries.summaries,
+                    &mut planner_turn,
+                    &mut timings,
+                    cancel,
+                )
+                .await
             } else if let Some((plan, anchors)) =
                 planner_skip_plan(conv_service, conversation_id, validated_message, &catalog).await
             {
@@ -179,29 +198,42 @@ pub(super) async fn run_kb_retrieval(
                     "retrieval: planner skipped — short message continues the previous turn"
                 );
                 plan
-            } else if let Ok(Some(utility)) = (container.utility_llm_loader())().await {
-                // The planner runs only when a utility model is assigned.
-                planned(
+            } else if needs_prior_turn_planning(
+                conv_service,
+                conversation_id,
+                &search_flags,
+                standalone_question,
+                validated_message,
+            )
+            .await
+            {
+                // Multi-turn follow-ups, returns to earlier turns, and anaphoric
+                // prompts without shared immediate anchors need conversation-history
+                // planning upfront so indirect entity/document references reach Pass 1.
+                planned_or_fallback(
                     container,
                     conv_service,
                     conversation_id,
                     validated_message,
-                    utility.as_ref(),
                     &catalog,
                     &scope,
                     &summaries.summaries,
                     &mut planner_turn,
+                    &mut timings,
                     cancel,
                 )
                 .await
             } else {
-                info!("Utility planner unavailable; using immediate local retrieval plan");
+                // Optimistic Pass 1 on standalone first turns: run local hybrid retrieval with
+                // zero LLM calls, escalating to the utility planner only if sufficiency falls short.
+                timings.kb_planner_skipped = true;
                 super::corpus_plan::fallback_with_catalog(validated_message, &catalog)
             };
             (plan, catalog)
         }
         Err(error) => {
             warn!(%error, "Could not load retrieval catalog; searching request directly");
+            timings.kb_planner_skipped = true;
             (
                 super::corpus_plan::CorpusSearchPlan::fallback(validated_message),
                 Vec::new(),
@@ -255,7 +287,7 @@ pub(super) async fn run_kb_retrieval(
     .await;
     timings.kb_search_plan_ms = super::elapsed_ms(search_start);
     timings.kb_query_execution_ms = timings.kb_search_plan_ms;
-    let (search_response, kb_unavailable_reason) = match response {
+    let (search_response, mut kb_unavailable_reason) = match response {
         Ok(response) => {
             search_step.done(Some(passage_count_line(&response.results)));
             (response, None)
@@ -263,10 +295,7 @@ pub(super) async fn run_kb_retrieval(
         Err(error) => {
             warn!(%error, "Document retrieval failed");
             search_step.failed(Some(error.to_string()));
-            (
-                super::empty_search_response(),
-                Some(unavailable_reason(&error.to_string())),
-            )
+            (super::empty_search_response(), Some(error.to_string()))
         }
     };
     let (mut search_response, mut reranked) = rerank_pass(
@@ -332,6 +361,7 @@ pub(super) async fn run_kb_retrieval(
             repository.as_ref(),
             &catalog,
             &scope,
+            &summaries.summaries,
             &correction,
             candidate_limit,
             &mut planner_turn,
@@ -371,6 +401,7 @@ pub(super) async fn run_kb_retrieval(
                 kb_search_limit,
             );
             timings.kb_corrective_retries = 1;
+            timings.kb_planner_skipped = false;
             info!(
                 conversation_id = conversation_id,
                 first_pass_queries = ?plan.queries,
@@ -412,7 +443,6 @@ pub(super) async fn run_kb_retrieval(
     {
         warn!(%error, "Could not read the hits' section context");
     }
-    search_response.results.truncate(super::MAX_READ_PASSAGES);
     search_response.total = search_response.results.len();
     // RRF scores are ranks, not probabilities. A cosine cutoff must never be
     // applied to them or used to claim the documents are unavailable.
@@ -439,6 +469,11 @@ pub(super) async fn run_kb_retrieval(
             warn!(error = %e, "Failed to persist conversation document references");
         }
         timings.kb_persist_references_ms = super::elapsed_ms(persist_refs_start);
+    }
+    if let Some(reason) = embedding_unavailable_reason {
+        if sources.is_empty() {
+            kb_unavailable_reason.get_or_insert(reason);
+        }
     }
     timings.kb_total_ms = super::elapsed_ms(kb_start);
 
@@ -491,17 +526,6 @@ fn bound_leading_structural(results: &mut Vec<SearchResultDto>, evidence_limit: 
         let unpinned: Vec<_> = results.drain(pinned..leading).collect();
         results.extend(unpinned);
     }
-}
-
-/// The retrieval trace carries at most this many characters of the search
-/// failure; the frontend schema caps `unavailableReason` at the same length.
-const UNAVAILABLE_REASON_MAX_CHARS: usize = 400;
-
-/// Clip a search failure for the retrieval trace. A longer reason would fail
-/// the frontend's trace schema and drop the "search unavailable" notice on
-/// exactly the turn that needs it.
-fn unavailable_reason(error: &str) -> String {
-    lattice_core::shared::text::safe_truncate(error, UNAVAILABLE_REASON_MAX_CHARS)
 }
 
 fn passage_count_line(results: &[SearchResultDto]) -> String {
@@ -615,6 +639,7 @@ async fn corrective_pass(
     repository: &dyn ChatRecords,
     catalog: &[CorpusDocument],
     scope: &super::SpaceDocumentScope,
+    summaries: &std::collections::HashMap<String, String>,
     correction: &super::corpus_plan::CorrectionRequest,
     limit: usize,
     planner_turn: &mut super::corpus_plan::PlannerTurn<'_>,
@@ -633,14 +658,15 @@ async fn corrective_pass(
         Some(planner_turn.history_tokens(utility.as_ref())),
     )
     .await;
-    // The correction's prompt carries no summaries.
+    // The shortlist benefits from summaries when escalating, while the correction prompt itself
+    // carries no summaries.
     super::corpus_plan::shortlist_candidates(
         container.library_search().as_ref(),
         utility.as_ref(),
         validated_message,
         history.as_deref(),
         catalog,
-        &std::collections::HashMap::new(),
+        summaries,
         &scope.document_ids,
         planner_turn,
     )
@@ -680,6 +706,82 @@ async fn corrective_pass(
     }
 }
 
+/// Loads the utility planner when available, falling back to the local catalog
+/// plan when no utility model is configured.
+#[allow(clippy::too_many_arguments)]
+async fn planned_or_fallback(
+    container: &dyn ChatRuntime,
+    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
+    conversation_id: &str,
+    validated_message: &str,
+    catalog: &[CorpusDocument],
+    scope: &super::SpaceDocumentScope,
+    summaries: &std::collections::HashMap<String, String>,
+    planner_turn: &mut super::corpus_plan::PlannerTurn<'_>,
+    timings: &mut super::RetrievalSubTimingMetrics,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> super::corpus_plan::CorpusSearchPlan {
+    if let Ok(Some(utility)) = (container.utility_llm_loader())().await {
+        timings.kb_planner_skipped = false;
+        planned(
+            container,
+            conv_service,
+            conversation_id,
+            validated_message,
+            utility.as_ref(),
+            catalog,
+            scope,
+            summaries,
+            planner_turn,
+            cancel,
+        )
+        .await
+    } else {
+        info!("Utility planner unavailable; using immediate local retrieval plan");
+        timings.kb_planner_skipped = true;
+        super::corpus_plan::fallback_with_catalog(validated_message, catalog)
+    }
+}
+
+/// Whether a non-first turn needs conversation-history planning upfront instead
+/// of optimistic single-turn Pass 1 retrieval. Clearly self-contained new topics
+/// (`!force_followup_mode`, no `standalone_question`, no follow-up/anaphoric cues)
+/// keep the zero-LLM Pass 1 fast path and escalate only if sufficiency fails.
+async fn needs_prior_turn_planning(
+    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
+    conversation_id: &str,
+    search_flags: &super::SearchFlags,
+    standalone_question: Option<&str>,
+    validated_message: &str,
+) -> bool {
+    let may_need_prior_context = search_flags.force_followup_mode
+        || standalone_question.is_some()
+        || super::corpus_plan::looks_like_unanchored_followup(validated_message);
+    if !may_need_prior_context {
+        return false;
+    }
+    has_prior_turn(conv_service, conversation_id).await
+}
+
+/// Whether the conversation already has a completed assistant reply, meaning the
+/// current message has earlier turns available for follow-up resolution.
+async fn has_prior_turn(
+    conv_service: &Arc<dyn crate::features::conversation::ConversationServiceTrait>,
+    conversation_id: &str,
+) -> bool {
+    conv_service
+        .get_conversation(conversation_id)
+        .await
+        .ok()
+        .flatten()
+        .is_some_and(|aggregate| {
+            aggregate.messages().iter().any(|message| {
+                message.role == lattice_core::domain::conversation::MessageRole::Assistant
+                    && message.is_completed()
+            })
+        })
+}
+
 /// The plan a skipped planner would have produced, when the message is short
 /// and still on the previous turn's topic.
 async fn planner_skip_plan(
@@ -695,6 +797,32 @@ async fn planner_skip_plan(
     }
     let anchors = super::load_followup_turn_anchor_terms(conv_service, conversation_id).await;
     super::corpus_plan::followup_plan(validated_message, &anchors, catalog)
+}
+
+/// What a search that read nothing reports: no passages, low confidence, and
+/// the reason to give the user when there is one.
+fn searched_nothing(
+    message: &str,
+    kb_start: Instant,
+    mut timings: super::RetrievalSubTimingMetrics,
+    kb_unavailable_reason: Option<String>,
+    scope_is_linked: bool,
+) -> super::KbRetrievalOutcome {
+    timings.kb_total_ms = super::elapsed_ms(kb_start);
+    super::KbRetrievalOutcome {
+        interpretation: lattice_core::domain::qa::hyde::HyDEInterpretation::raw_only(
+            message.to_string(),
+            QueryType::Question,
+        ),
+        search_response: super::empty_search_response(),
+        sources: Vec::new(),
+        low_confidence: true,
+        kb_unavailable_reason,
+        timings,
+        searched_documents: 0,
+        scope_is_linked,
+        sufficiency: None,
+    }
 }
 
 #[cfg(test)]

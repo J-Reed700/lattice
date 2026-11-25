@@ -109,6 +109,10 @@ pub struct DownloadedVisionDto {
     pub geometry: VisionGeometry,
     /// The projector download's size, in bytes.
     pub projector_bytes: u64,
+    /// Where the projector file lives, as `to_string_lossy()` of the path the
+    /// projector download is started with. It equals that download's
+    /// `destination`, so the UI can find the download in the list.
+    pub projector_path: String,
 }
 
 /// A model loaded right now, for diagnostics.
@@ -184,16 +188,24 @@ impl DownloadedModelResponse {
             header.and_then(|path| facts.inspector.supports_tool_calling(path));
         let config = facts.configs.get(model.model_id());
         let configured_context_length = config.and_then(|config| config.context_length);
-        let vision = header.and_then(chat_model_vision).map(|vision| {
-            // repository-barrier-allow: the projector is a sibling file the model record does not list; its full size is what makes it usable.
-            let on_disk = std::fs::metadata(&vision.projector_path).map_or(0, |file| file.len());
-            DownloadedVisionDto {
-                projector_downloaded: vision.is_complete(on_disk),
-                enabled: config.is_none_or(|config| config.vision != Some(false)),
-                geometry: vision.geometry,
-                projector_bytes: vision.projector.size_bytes,
-            }
-        });
+        // From the model's own loadable path, as the projector download is, so
+        // `projector_path` is byte-identical to that download's destination.
+        let vision = model
+            .loadable_path()
+            .filter(|_| header.is_some())
+            .and_then(chat_model_vision)
+            .map(|vision| {
+                // repository-barrier-allow: the projector is a sibling file the model record does not list; its full size is what makes it usable.
+                let on_disk =
+                    std::fs::metadata(&vision.projector_path).map_or(0, |file| file.len());
+                DownloadedVisionDto {
+                    projector_downloaded: vision.is_complete(on_disk),
+                    enabled: config.is_none_or(|config| config.vision != Some(false)),
+                    geometry: vision.geometry,
+                    projector_bytes: vision.projector.size_bytes,
+                    projector_path: vision.projector_path.to_string_lossy().into_owned(),
+                }
+            });
         Self {
             id: model.id().to_string(),
             model_name: model.model_name().to_string(),

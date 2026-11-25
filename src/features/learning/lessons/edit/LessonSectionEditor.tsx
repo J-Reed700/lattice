@@ -2,6 +2,8 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { useApi } from '@/contexts/ApiContext';
 import { useEditLearningLessonSection } from '@/features/learning/lessons/review/useLessonClaimReview';
 import { MarkdownViewer } from '@/features/reading/components/viewers/MarkdownViewer';
@@ -126,19 +128,15 @@ function EditorBody({ programId, lessonId, sectionIndex, title: titleProp, body:
       <DialogContent ref={contentRef} hideClose aria-describedby={undefined} onOpenAutoFocus={landOnSentence}
         className="max-h-[90vh] max-w-3xl overflow-y-auto rounded-2xl border border-border bg-surface p-5 shadow-sheet">
         <DialogTitle className="font-serif text-xl text-text-primary">Edit section {sectionIndex + 1}</DialogTitle>
+        <Input id={`${ids}-title`} label="Title" value={title} disabled={saving} onChange={(event) => setTitle(event.target.value)} />
         <div>
-          <label htmlFor={`${ids}-title`} className="block text-xs font-medium text-text-secondary">Title</label>
-          <input id={`${ids}-title`} value={title} disabled={saving} onChange={(event) => setTitle(event.target.value)}
-            className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary" />
-        </div>
-        <div>
-          <div className="flex items-center justify-between gap-2">
+          <div className="mb-1.5 flex items-center justify-between gap-2">
             <label htmlFor={`${ids}-text`} className="block text-xs font-medium text-text-secondary">Text</label>
             <Button type="button" size="sm" variant="ghost" onClick={() => setPreview((value) => !value)}>{preview ? 'Back to editing' : 'Preview'}</Button>
           </div>
-          <textarea id={`${ids}-text`} ref={textRef} hidden={preview} value={body} disabled={saving} onChange={(event) => setBody(event.target.value)} rows={6}
-            className="mt-1 block w-full resize-none overflow-hidden rounded-lg border border-border bg-background px-3 py-2 font-mono text-sm leading-6 text-text-primary" />
-          {preview && <div className="studio-lesson-prose mt-1 rounded-lg border border-border bg-background px-3 py-2"><MarkdownViewer content={body} /></div>}
+          <Textarea id={`${ids}-text`} ref={textRef} hidden={preview} value={body} disabled={saving} onChange={(event) => setBody(event.target.value)} rows={6} resize="none"
+            className="overflow-hidden font-mono text-sm leading-6" />
+          {preview && <div className="studio-lesson-prose mt-1 rounded-lg border border-border-subtle bg-bg px-3 py-2"><MarkdownViewer content={body} /></div>}
         </div>
         <p aria-live="polite" className="min-h-5 text-sm leading-6 text-text-secondary">{line}</p>
         {save.error && <p role="alert" className="text-sm text-danger-fg">{save.error.message}</p>}

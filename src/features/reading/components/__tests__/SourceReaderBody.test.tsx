@@ -3,7 +3,9 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 
+import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { SourceReaderBody } from '@/features/reading/components/SourceReaderBody';
+import { captureWebPageSnapshot } from '@/features/reading/snapshot/api';
 import { useWebPageSnapshotStore } from '@/features/reading/snapshot/webPageSnapshotStore';
 import VaultAPI from '@/lib/api';
 import type { SourceWithMetadata } from '@/types/conversation';
@@ -12,13 +14,14 @@ import type { SourceWithMetadata } from '@/types/conversation';
 const mocks = vi.hoisted(() => ({
   resolveSourcePath: vi.fn(),
   readFileContent: vi.fn(),
+  savedWebArticle: vi.fn(),
   getWebPageSnapshot: vi.fn(),
   activeConversationId: null as string | null,
 }));
 
 vi.mock('@/lib/api', () => ({
-  default: { readFileContent: mocks.readFileContent },
-  VaultAPI: { readFileContent: mocks.readFileContent },
+  default: { readFileContent: mocks.readFileContent, savedWebArticle: mocks.savedWebArticle },
+  VaultAPI: { readFileContent: mocks.readFileContent, savedWebArticle: mocks.savedWebArticle },
 }));
 vi.mock('@/features/reading/hooks/sourceFileActions', () => ({
   resolveSourcePath: mocks.resolveSourcePath,
@@ -42,7 +45,11 @@ vi.mock('@/features/reading', () => ({
   SelectionToolbar: () => null,
   useTextSelection: () => null,
 }));
-vi.mock('@/features/reading/components/viewers/HTMLViewer', () => ({ HTMLViewer: () => null }));
+vi.mock('@/features/reading/components/viewers/HTMLViewer', () => ({
+  HTMLViewer: ({ article, htmlPath }: { article?: { pagePath: string | null }; htmlPath?: string }) => (
+    <div data-testid="html-viewer" data-page={article?.pagePath ?? htmlPath ?? ''} />
+  ),
+}));
 vi.mock('@/features/reading/components/viewers/DocxViewer', () => ({
   DocxViewer: ({ filePath, title }: { filePath: string; title?: string }) => (
     <div data-testid="docx-viewer" data-path={filePath}>{title}</div>
@@ -114,6 +121,7 @@ beforeEach(() => {
     data: documentId.startsWith('223e') ? '/vault/current/second.txt' : '/vault/current/notes.txt',
   }));
   mocks.readFileContent.mockResolvedValue({ ok: true, data: 'Full file at its current path' });
+  mocks.savedWebArticle.mockResolvedValue({ ok: true, data: null });
 });
 
 describe('SourceReaderBody local citations', () => {
@@ -225,6 +233,33 @@ describe('SourceReaderBody course passages', () => {
     expect(mocks.resolveSourcePath).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: 'Open file' })).toBeNull();
     expect(screen.queryByText(/Show in|Reveal in/)).toBeNull();
+  });
+
+  it('reads a saved web version as an article with no Page view and no live capture', async () => {
+    mocks.activeConversationId = 'conv-1';
+    renderBody(source({
+      documentId: 'course:version-1',
+      filePath: '',
+      fileName: 'Saved story',
+      mimeType: 'text/html',
+      category: 'web',
+      content: '',
+      webSnapshot: {
+        url: 'https://example.com/story',
+        title: 'Saved story',
+        text: 'The page as it was saved.',
+        fetchedAt: null,
+        truncated: false,
+      },
+    }));
+
+    const article = await screen.findByTestId('web-article');
+    expect(article.getAttribute('data-text')).toBe('The page as it was saved.');
+    expect(screen.queryByRole('tablist')).toBeNull();
+    expect(screen.queryByRole('tab', { name: 'Page' })).toBeNull();
+    expect(screen.queryByTestId('page-view')).toBeNull();
+    expect(mocks.getWebPageSnapshot).not.toHaveBeenCalled();
+    expect(captureWebPageSnapshot).not.toHaveBeenCalled();
   });
 });
 
@@ -340,5 +375,155 @@ describe('SourceReaderBody Reader | Page toggle', () => {
 
     const article = await screen.findByTestId('web-article');
     expect(article.getAttribute('data-text')).toBe('Full immutable captured text from web source repository');
+  });
+});
+
+describe('SourceReaderBody saved web articles', () => {
+  const savedArticle = (folder: string) => ({
+    textPath: `${folder}article.md`,
+    pagePath: `${folder}page.html`,
+    title: 'A saved piece',
+    url: 'https://example.com/a',
+    links: [],
+  });
+  const articleSource = (filePath: string) =>
+    source({
+      documentId: undefined,
+      fileName: 'article.md',
+      filePath,
+      mimeType: 'text/markdown',
+      category: 'local file',
+    });
+
+  it('shows the saved page of an article at a Windows path, as the archive says', async () => {
+    const folder = 'C:\\Users\\me\\.lattice\\web-archive\\example.com\\a-1\\';
+    mocks.savedWebArticle.mockResolvedValue({ ok: true, data: savedArticle(folder) });
+    renderBody(articleSource(`${folder}article.md`));
+
+    const viewer = await screen.findByTestId('html-viewer');
+    expect(viewer.getAttribute('data-page')).toBe(`${folder}page.html`);
+    expect(mocks.savedWebArticle).toHaveBeenCalledWith(`${folder}article.md`);
+    expect(mocks.readFileContent).not.toHaveBeenCalled();
+  });
+
+  it('shows the saved page of an article in a custom data folder', async () => {
+    const folder = '/data/lattice/web-archive/x/';
+    mocks.savedWebArticle.mockResolvedValue({ ok: true, data: savedArticle(folder) });
+    renderBody(articleSource(`${folder}article.md`));
+
+    const viewer = await screen.findByTestId('html-viewer');
+    expect(viewer.getAttribute('data-page')).toBe(`${folder}page.html`);
+    expect(mocks.readFileContent).not.toHaveBeenCalled();
+  });
+
+  it('reads a file the archive does not claim as plain markdown, whatever its path says', async () => {
+    mocks.savedWebArticle.mockResolvedValue({ ok: true, data: null });
+    const path = '/Users/me/.lattice/web-archive/id/article.md';
+    renderBody(articleSource(path));
+
+    expect(await screen.findByText('Full file at its current path')).toBeTruthy();
+    expect(mocks.readFileContent).toHaveBeenCalledWith(path);
+    expect(screen.queryByTestId('html-viewer')).toBeNull();
+  });
+
+  it('reads nothing while the archive has not answered, and shows the loading state', async () => {
+    mocks.savedWebArticle.mockReturnValue(new Promise(() => undefined));
+    const { container } = renderBody(articleSource('/data/notes/article.md'));
+
+    await waitFor(() => expect(mocks.savedWebArticle).toHaveBeenCalledWith('/data/notes/article.md'));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mocks.readFileContent).not.toHaveBeenCalled();
+    expect(container.querySelector('.animate-spin')).not.toBeNull();
+    expect(screen.queryByTestId('html-viewer')).toBeNull();
+  });
+
+  it("asks the archive about the document's current path when the cited path is stale", async () => {
+    const folder = '/vault/current/web-archive/example.com/a-1/';
+    mocks.resolveSourcePath.mockResolvedValue({ ok: true, data: `${folder}article.md` });
+    mocks.savedWebArticle.mockImplementation(async (path: string) => ({
+      ok: true,
+      data: path === `${folder}article.md` ? savedArticle(folder) : null,
+    }));
+    renderBody(
+      source({
+        fileName: 'article.md',
+        filePath: '/old/home/web-archive/example.com/a-1/article.md',
+        mimeType: 'text/markdown',
+        category: 'local file',
+      }),
+    );
+
+    const viewer = await screen.findByTestId('html-viewer');
+    expect(viewer.getAttribute('data-page')).toBe(`${folder}page.html`);
+    expect(mocks.savedWebArticle).toHaveBeenCalledWith(`${folder}article.md`);
+    expect(mocks.savedWebArticle).not.toHaveBeenCalledWith(
+      '/old/home/web-archive/example.com/a-1/article.md',
+    );
+  });
+
+  it('ignores stale activeConversationId when standalone dialog views open a web source without explicit conversationId', async () => {
+    mocks.activeConversationId = 'stale-chat-1';
+    mocks.getWebPageSnapshot.mockResolvedValue({ ok: true, data: null });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Dialog open onOpenChange={() => undefined}>
+          <DialogContent>
+            <SourceReaderBody
+              presentation="dialog"
+              source={source({
+                documentId: 'web:https://example.com/standalone',
+                filePath: 'https://example.com/standalone',
+                fileName: 'Standalone page',
+                mimeType: 'text/html',
+                category: 'Web Page',
+                content: 'Snippet',
+              })}
+              initialLocator={{ text: 'Snippet' }}
+              onClose={vi.fn()}
+            />
+          </DialogContent>
+        </Dialog>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() =>
+      expect(mocks.getWebPageSnapshot).toHaveBeenCalledWith('', 'https://example.com/standalone'),
+    );
+  });
+
+  it('uses explicit conversationId on source or prop even when activeConversationId differs (e.g. tangents)', async () => {
+    mocks.activeConversationId = 'main-chat-1';
+    mocks.getWebPageSnapshot.mockResolvedValue({ ok: true, data: null });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Dialog open onOpenChange={() => undefined}>
+          <DialogContent>
+            <SourceReaderBody
+              presentation="docked"
+              conversationId="tangent-9"
+              source={source({
+                documentId: 'web:https://example.com/tangent-page',
+                conversationId: 'tangent-9',
+                filePath: 'https://example.com/tangent-page',
+                fileName: 'Tangent page',
+                mimeType: 'text/html',
+                category: 'Web Page',
+                content: 'Snippet',
+              })}
+              initialLocator={{ text: 'Snippet' }}
+              onClose={vi.fn()}
+            />
+          </DialogContent>
+        </Dialog>
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() =>
+      expect(mocks.getWebPageSnapshot).toHaveBeenCalledWith('tangent-9', 'https://example.com/tangent-page'),
+    );
   });
 });

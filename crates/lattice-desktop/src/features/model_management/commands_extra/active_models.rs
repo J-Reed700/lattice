@@ -67,6 +67,8 @@ pub async fn clear_active_embedding_model_impl(container: &Container) -> Result<
     match use_case.execute().await {
         Ok(()) => {
             info!("Active embedding model cleared");
+            container.invalidate_embedding_cache();
+            info!("Embedding cache invalidated - deactivated embedding model evicted");
             Ok(())
         }
         Err(e) => {

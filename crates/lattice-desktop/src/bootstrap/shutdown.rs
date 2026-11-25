@@ -7,6 +7,8 @@ use tokio_util::sync::CancellationToken;
 // Extended timeouts to handle SQLite busy conditions
 const DB_CLOSE_TIMEOUT: Duration = Duration::from_secs(10);
 const TOTAL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(15);
+const TASKS_WAIT_TIMEOUT: Duration = Duration::from_secs(4);
+const INDEX_CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
 /// How long running jobs get to stop, leaving the rest of the total for
 /// suspending them, flushing the index and closing the database.
 const JOBS_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -57,9 +59,18 @@ pub fn graceful_shutdown(app_handle: &tauri::AppHandle) {
             if let Some(tasks) = app_handle
                 .try_state::<std::sync::Arc<lattice_core::shared::runtime::background::BackgroundTasks>>()
             {
-                // Critical writes finish or remain durably queued. The outer
-                // process deadline handles a stuck worker without closing its DB.
-                tasks.wait().await;
+                // Critical writes finish or remain durably queued. Bounded so a
+                // stuck worker cannot exhaust TOTAL_SHUTDOWN_TIMEOUT before jobs,
+                // indexes, and the database close cleanly.
+                if tokio::time::timeout(TASKS_WAIT_TIMEOUT, tasks.wait())
+                    .await
+                    .is_err()
+                {
+                    tracing::warn!(
+                        timeout_secs = TASKS_WAIT_TIMEOUT.as_secs(),
+                        "Background tasks did not finish in time"
+                    );
+                }
             }
             if let Some(container) = app_handle.try_state::<Container>() {
                 // Running jobs reach their cancellation points and are saved as
@@ -104,6 +115,29 @@ pub fn graceful_shutdown(app_handle: &tauri::AppHandle) {
                         Err(error) => {
                             tracing::warn!(%error, "Could not flush the vector index; it will be rebuilt on next launch")
                         }
+                    }
+                }
+
+                if let Some(folder_index) = container.folder_index() {
+                    if tokio::time::timeout(INDEX_CLOSE_TIMEOUT, folder_index.shutdown())
+                        .await
+                        .is_err()
+                    {
+                        tracing::warn!(
+                            timeout_secs = INDEX_CLOSE_TIMEOUT.as_secs(),
+                            "Folder index shutdown timed out"
+                        );
+                    }
+                }
+                if let Some(course_indexes) = container.course_indexes() {
+                    if tokio::time::timeout(INDEX_CLOSE_TIMEOUT, course_indexes.close_all())
+                        .await
+                        .is_err()
+                    {
+                        tracing::warn!(
+                            timeout_secs = INDEX_CLOSE_TIMEOUT.as_secs(),
+                            "Course index shutdown timed out"
+                        );
                     }
                 }
 

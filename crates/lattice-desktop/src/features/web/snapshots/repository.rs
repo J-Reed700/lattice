@@ -287,15 +287,6 @@ impl SnapshotRepository {
             return Ok(cid);
         }
 
-        if let Some(cid) = sqlx::query_scalar::<_, String>(
-            "SELECT id FROM conversations ORDER BY updated_at DESC LIMIT 1",
-        )
-        .fetch_optional(&mut *tx)
-        .await?
-        {
-            return Ok(cid);
-        }
-
         tx.commit().await?;
         self.library_conversation().await
     }

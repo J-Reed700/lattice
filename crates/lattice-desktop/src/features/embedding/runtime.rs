@@ -249,7 +249,7 @@ mod tests {
             .await
             .unwrap();
 
-        let error = port.split_text("text", "").unwrap_err();
+        let error = port.split_text("text", "").await.unwrap_err();
 
         assert!(matches!(&error, AppError::ModelLoadFailed(m) if m == "weights are corrupt"));
     }

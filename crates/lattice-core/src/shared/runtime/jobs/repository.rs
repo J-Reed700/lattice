@@ -78,6 +78,7 @@ fn parse(row: &SqliteRow) -> Result<JobRecord> {
         finished_at: row.get("finished_at"),
         heartbeat_at: row.get("heartbeat_at"),
         rank: row.get("rank"),
+        revision: row.get("revision"),
     })
 }
 
@@ -212,7 +213,7 @@ impl JobStore {
     /// exited between those steps.
     pub async fn due(&self, kind: &str) -> Result<Vec<JobRecord>> {
         let mut read = self.db.begin_read().await?;
-        let rows = sqlx::query("SELECT * FROM jobs WHERE kind=? AND status='pending' AND (retry_not_before IS NULL OR retry_not_before<=?) ORDER BY created_at,rowid")
+        let rows = sqlx::query("SELECT * FROM jobs WHERE kind=? AND status='pending' AND (retry_not_before IS NULL OR retry_not_before<=?) ORDER BY coalesce(rank,9223372036854775807),created_at,rowid")
             .bind(kind)
             .bind(now())
             .fetch_all(&mut *read)
@@ -284,6 +285,20 @@ impl JobStore {
             .await?;
         record_event(tx, &id, JobStatus::Pending, &job.message, stamp).await?;
         Ok(Admitted { id, created: true })
+    }
+
+    /// Updates a job's queue rank inside the caller's transaction.
+    pub async fn set_rank_in(tx: &mut WriteTx, id: &str, rank: i64) -> Result<()> {
+        let updated = sqlx::query("UPDATE jobs SET rank=? WHERE id=?")
+            .bind(rank)
+            .bind(id)
+            .execute(&mut **tx)
+            .await?
+            .rows_affected();
+        if updated != 1 {
+            return Err(not_found());
+        }
+        Ok(())
     }
 
     pub async fn cancel(&self, id: &str) -> Result<()> {
@@ -459,19 +474,30 @@ impl JobStore {
         activity: Option<&serde_json::Value>,
     ) -> Result<bool> {
         let mut tx = self.db.begin_write().await?;
-        let job = Self::find_in(&mut tx, id).await?.ok_or_else(not_found)?;
-        if job.status != JobStatus::Running {
+        let row = sqlx::query(
+            "SELECT status,progress_current,progress_total,progress_message FROM jobs WHERE id=?",
+        )
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(not_found)?;
+        let status = JobStatus::parse(row.get::<String, _>("status").as_str())
+            .ok_or_else(|| AppError::Database("Invalid job status".into()))?;
+        let progress_current = count(&row, "progress_current");
+        let progress_total = count(&row, "progress_total");
+        let progress_message: String = row.get("progress_message");
+        if status != JobStatus::Running {
             tx.commit().await?;
             return Ok(false);
         }
-        if activity.is_some() && current < job.progress_current {
+        if activity.is_some() && current < progress_current {
             // A heartbeat can wait for the write lock while the worker records
             // a later step. Discard that older snapshot without stopping the
             // worker or moving its durable progress backwards.
             tx.commit().await?;
             return Ok(true);
         }
-        if current < job.progress_current || current > job.progress_total {
+        if current < progress_current || current > progress_total {
             return Err(AppError::InvalidInput(
                 "Job progress must advance monotonically within its bound.".into(),
             ));
@@ -486,7 +512,7 @@ impl JobStore {
             .bind(id)
             .execute(&mut *tx)
             .await?;
-        if current != job.progress_current || message != job.progress_message {
+        if current != progress_current || message != progress_message {
             record_event(&mut tx, id, JobStatus::Running, message, stamp).await?;
         }
         tx.commit().await?;

@@ -17,7 +17,10 @@ const h = vi.hoisted(() => ({
   toast: { info: vi.fn(() => 'toast-1'), success: vi.fn(), error: vi.fn(), dismiss: vi.fn() },
 }));
 
-vi.mock('@/shared/conversations/conversationsStore', () => ({ useConversationsStore: () => h.store }));
+vi.mock('@/shared/conversations/conversationsStore', () => ({
+  useConversationsStore: <T,>(selector?: (_s: Record<string, unknown>) => T) =>
+    (selector ? selector(h.store) : h.store),
+}));
 vi.mock('@/features/journal/synthesis/runSynthesis', () => ({ runSynthesis: h.runSynthesis }));
 vi.mock('@/features/journal/synthesis/synthesisPanel', () => ({ useActiveSynthesis: () => h.activeSynthesis }));
 vi.mock('@/features/palette/hooks/useRegisterPaletteCommands', () => ({

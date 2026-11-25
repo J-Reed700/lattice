@@ -1080,3 +1080,46 @@ fn a_scope_that_only_distant_documents_satisfy_is_still_reached() {
     assert_eq!(hits.len(), 1, "widening must still reach a distant scope");
     assert_eq!(hits[0].doc_id, doc);
 }
+
+#[test]
+fn chunks_for_one_document_share_interned_document_id_arc_across_insert_and_reload() {
+    let dir = tempfile::tempdir().unwrap();
+    let index_path = dir.path().join("interned.usearch");
+    let index = USearchVectorIndex::new(4, Some(index_path.clone())).unwrap();
+    index
+        .add_embedding_with_content(
+            "emb_1".into(),
+            vec![1.0, 0.0, 0.0, 0.0],
+            "first".into(),
+            "c1".into(),
+            "doc-shared".into(),
+        )
+        .unwrap();
+    index
+        .add_embedding_with_content(
+            "emb_2".into(),
+            vec![0.0, 1.0, 0.0, 0.0],
+            "second".into(),
+            "c2".into(),
+            "doc-shared".into(),
+        )
+        .unwrap();
+
+    {
+        let state = index.state.read();
+        let (key_arc, _) = state.document_to_keys.get_key_value("doc-shared").unwrap();
+        let m1 = state.metadata.get("emb_1").unwrap();
+        let m2 = state.metadata.get("emb_2").unwrap();
+        assert!(Arc::ptr_eq(key_arc, &m1.document_id));
+        assert!(Arc::ptr_eq(key_arc, &m2.document_id));
+    }
+    drop(index);
+
+    let reloaded = USearchVectorIndex::open_or_create(4, index_path).unwrap();
+    let state = reloaded.state.read();
+    let (key_arc, _) = state.document_to_keys.get_key_value("doc-shared").unwrap();
+    let m1 = state.metadata.get("emb_1").unwrap();
+    let m2 = state.metadata.get("emb_2").unwrap();
+    assert!(Arc::ptr_eq(key_arc, &m1.document_id));
+    assert!(Arc::ptr_eq(key_arc, &m2.document_id));
+}

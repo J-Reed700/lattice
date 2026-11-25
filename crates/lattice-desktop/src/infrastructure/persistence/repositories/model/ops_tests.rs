@@ -6,16 +6,9 @@ use lattice_core::domain::entities::model_file::ModelFile;
 use lattice_core::domain::value_objects::model_status::{FileStatus, ModelStatus};
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::persistence::Database;
-use sqlx::sqlite::SqlitePoolOptions;
 
 async fn connection() -> Database {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect(":memory:")
-        .await
-        .expect("in-memory pool");
-    sqlx::migrate!("./migrations")
-        .run(&pool)
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
         .expect("migrations");
     let mut conn = pool.acquire().await.expect("connection");

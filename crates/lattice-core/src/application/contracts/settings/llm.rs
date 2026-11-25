@@ -510,7 +510,7 @@ impl Default for RouterSettingsDto {
         Self {
             enabled: false,
             model: "qwen3.5-4b-q4_k_m".to_string(),
-            timeout_ms: 350,
+            timeout_ms: 3000,
             max_tokens: 120,
             temperature: 0.1,
             ambiguity_threshold: 0.62,
@@ -527,6 +527,9 @@ pub const MIN_LLM_STALL_TIMEOUT_SECONDS: u32 = 1;
 /// Long enough to cover prompt ingestion on a local model, short enough that a
 /// dead backend surfaces while the user is still looking at the answer.
 pub const DEFAULT_LLM_STALL_TIMEOUT_SECONDS: u32 = 30;
+
+/// The address Settings suggests for Ollama before the user saves one.
+pub const DEFAULT_OLLAMA_URL: &str = "http://localhost:11434";
 
 impl Default for LLMSettingsDto {
     fn default() -> Self {
@@ -548,7 +551,7 @@ impl Default for LLMSettingsDto {
             vision_declarations: BTreeMap::new(),
             model_windows: BTreeMap::new(),
             speculative_decoding: SpeculativeDecodingDto::Off,
-            ollama_url: "http://localhost:11434".to_string(),
+            ollama_url: DEFAULT_OLLAMA_URL.to_string(),
             ollama_configured: false,
             ollama_utility_model: String::new(),
             ollama_auth_header_name: String::new(),
@@ -569,18 +572,27 @@ impl Default for LLMSettingsDto {
     }
 }
 
-/// The answer template a turn with passages renders in, unless the user set
-/// their own: search before concluding evidence is missing, then say it was
-/// not found in what was searched.
-pub const DEFAULT_RAG_PROMPT_TEMPLATE: &str = "Answer the user's question using only the provided context. Cite every factual statement supported by the context using bracketed labels like [s1], [s2], [s3]. If the excerpts are insufficient, use available document search/read tools before concluding that evidence is missing. If still unsupported, say it was not found in the excerpts searched and do not guess or claim the entire collection lacks it. Do not cite unrelated context. Do not cite a source that does not support the associated statement. If you need to call get_document, name the document by its bracketed name in the context. For long documents, read on with read_more and the name each result gives.\n\nContext:\n{context}\n\nQuestion: {question}\n\nAnswer:";
+/// The strict answer template a turn with passages renders in when `strict_sources`
+/// is on (or unless the user set a custom template): search before concluding
+/// evidence is missing, then say it was not found in what was searched.
+pub const DEFAULT_RAG_PROMPT_TEMPLATE: &str = "Context:\n{context}\n\nAnswer the user's question directly using only the provided context. Read every supplied passage from the relevant document thoroughly so no matching fact, date, figure, measurement, commitment, follow-up entry, exception, or condition is left out, and keep dates, figures, and names as given. Cite every factual statement supported by the context using bracketed labels like [s1], [s2], [s3], citing each passage in the chain when combining facts across passages; do not cite unrelated context or a source that does not support the statement. Give ONLY the facts that belong to the specific item, document, threshold, or current version asked about — strictly omit any sentence, parenthetical, or aside mentioning dates, figures, or milestones of other items that share a name, other documents, other thresholds, or superseded versions. When the supplied excerpts already answer the question, do not call tools. If the excerpts leave any part of the question unanswered — including when excerpts from a matching document omit the section or detail asked about — do not answer yet: call get_document (passing only the bracketed source label, such as [s1], never a filename), read_more (passing the bracketed continuation handle), or semantic_search first. If the specific fact asked for is still not supported after searching, state plainly that it is not available in the excerpts searched — never extrapolate from another contract, site, or routine inspection, and do not guess or claim the entire collection lacks it. Once you have stated the supported facts, stop immediately without adding a closing note about whether other mentions appear. Start straight with the answer without describing source labels, and write in the language of the question, translating any passage in another.\n\nQuestion: {question}\n\nAnswer only the latest question above directly (never repeat an earlier turn's answer), or call a document tool first if a needed section or detail is missing from the excerpts.";
+
+/// The default hybrid answer template: ground claims in the user's documents
+/// first with citations, and allow clearly uncited general knowledge when the
+/// passages do not cover a general or conceptual question (while still
+/// abstaining on private facts specific to the user's own files).
+pub const DEFAULT_HYBRID_RAG_PROMPT_TEMPLATE: &str = "Context:\n{context}\n\nAnswer the user's question directly using the provided context first, citing every factual statement supported by a passage using bracketed labels like [s1], [s2], [s3] and citing each passage in the chain when combining facts across passages. Read every supplied passage from the relevant document thoroughly so no matching fact, date, figure, measurement, commitment, follow-up entry, exception, or condition is left out, and keep dates, figures, and names as given. Give ONLY the facts that belong to the specific item, document, threshold, or current version asked about — strictly omit any sentence, parenthetical, or aside mentioning dates, figures, or milestones of other items that share a name, other documents, other thresholds, or superseded versions. When the supplied excerpts already answer the question, do not call tools. If the excerpts are incomplete for a question about the user's documents — including when excerpts from a matching document omit the section or detail asked about — do not answer yet: call get_document (passing only the bracketed source label, such as [s1], never a filename), read_more (passing the bracketed continuation handle), or semantic_search first. When the passages do not cover a general, conceptual, or public-knowledge question (or only cover part of it), answer naturally from general knowledge without adding citations to uncited claims. Never fabricate citations, never present general knowledge as coming from their documents, and never guess private facts about the user's own files, notes, policies, or projects that are not in the passages (if a private fact is unsupported after searching, state plainly that it is not available in the excerpts searched). Do not cite unrelated context or a source that does not support the statement, and once you have stated the supported facts, stop immediately without adding a closing note about whether other mentions appear. Start straight with the answer without describing source labels, and write in the language of the question, translating any passage in another.\n\nQuestion: {question}\n\nAnswer only the latest question above directly (never repeat an earlier turn's answer), or call a document tool first if a needed section or detail is missing from the excerpts.";
+
+/// The default prompt when no passages were retrieved in hybrid mode.
+pub const DEFAULT_NO_CONTEXT_PROMPT_TEMPLATE: &str = "The user asked: \"{question}\"\n\n{context}\n\nAnswer naturally from general knowledge for general, conceptual, or public-knowledge questions. Only abstain if the question specifically asks for private facts from the user's own documents, notes, or records. Do not claim this answer came from their documents or add fake citations.";
 
 impl Default for LLMPromptSettingsDto {
     fn default() -> Self {
         Self {
             system_prompt: "You are Lattice, a precise research assistant. Use the user's documents when available. Cite sources using bracketed labels like [s1], [s2], [s3]. Never fabricate document IDs.".to_string(),
             greeting_prompt_template: default_greeting_prompt_template(),
-            rag_prompt_template: DEFAULT_RAG_PROMPT_TEMPLATE.to_string(),
-            no_context_prompt_template: "The user asked: \"{question}\"\n\n{context}\n\nAnswer from general knowledge where you can, and say plainly that this answer is not backed by their own documents. If they want sourced evidence, offer a web search or adding documents to their lattice.".to_string(),
+            rag_prompt_template: DEFAULT_HYBRID_RAG_PROMPT_TEMPLATE.to_string(),
+            no_context_prompt_template: DEFAULT_NO_CONTEXT_PROMPT_TEMPLATE.to_string(),
         }
     }
 }

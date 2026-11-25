@@ -220,7 +220,7 @@ impl ObservedModel {
                     CloudProvider::Anthropic => "anthropic",
                     CloudProvider::Google => "google",
                 };
-                let keyring = crate::features::credentials::adapter::CredentialsAdapter::new(
+                let keyring = crate::features::credentials::adapter::CredentialsAdapter::os_keyring(
                     std::path::PathBuf::new(),
                 );
                 let key =

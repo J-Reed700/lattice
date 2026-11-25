@@ -102,6 +102,8 @@ export const parseVerification = (raw: unknown): MessageVerificationSummary | nu
     verdictCounts: value.verdictCounts ?? value.verdict_counts,
     claimVerdicts: value.claimVerdicts ?? value.claim_verdicts,
     judgeUsed: value.judgeUsed ?? value.judge_used,
+    groundingMode: value.groundingMode ?? value.grounding_mode,
+    citedOnly: value.citedOnly ?? value.cited_only,
   });
   return parsed.success ? parsed.data : null;
 };

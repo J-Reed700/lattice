@@ -164,7 +164,7 @@ fn quoted_wording_without_a_citation_is_a_finding_at_its_section() {
     assert_eq!(findings[0].kind, FindingKind::Quotation);
     assert!(findings[0].note.contains("without citing it"));
     assert!(findings[0].note.contains(TIMEOUT));
-    assert!(findings[0].note.contains("citations of /blocks/0"));
+    assert!(findings[0].note.contains("supplied excerpt"));
 
     cited(
         &mut candidate,
@@ -656,7 +656,7 @@ fn a_sentence_naming_a_source_by_number_is_a_finding_with_its_whole_sentence() {
         format!("This sentence names a source by its number, which learners never see: \u{201c}{sentence}\u{201d}")
     );
     assert_eq!(findings[0].sentence.as_deref(), Some(sentence));
-    assert!(findings[0].note.contains("citations list"));
+    assert!(findings[0].note.contains("supplied excerpt"));
 }
 
 #[test]

@@ -14,8 +14,8 @@ use super::images::{self, FIND_IMAGE};
 use super::research_notes::Labels;
 use super::tool_sources::{render_with_citations, result_sources};
 use super::{
-    chars_in_flight, elapsed_ms, emit_cancelled_stream, scoped_document_tools,
-    tool_result_allowance, RequestedCall, ToolLoopTimingMetrics, ToolOutputSettingsDto,
+    chars_in_flight, elapsed_ms, scoped_document_tools, tool_result_allowance, RequestedCall,
+    ToolLoopTimingMetrics, ToolOutputSettingsDto,
 };
 use crate::features::conversation::chat::cancellation::cancelled_error;
 use crate::features::conversation::chat::dto::SourceDto;
@@ -322,7 +322,6 @@ impl<'a> ToolCalls<'a> {
         let mut reserved = 0;
         for (index, call) in calls.iter().enumerate().take(batch.end).skip(batch.start) {
             if self.scope.cancel.is_cancelled() {
-                emit_cancelled_stream(self.scope.sink, self.scope.conv_id, self.scope.request_id);
                 return Err(cancelled_error());
             }
             let plan = self.prepare_call(call, input, reserved, calls.len() - index, timings);
@@ -620,7 +619,6 @@ impl<'a> ToolCalls<'a> {
             Some(ToolRun::Finished(result)) => result,
             Some(ToolRun::Cancelled) => {
                 pending.step.failed(Some("Stopped".into()));
-                emit_cancelled_stream(self.scope.sink, self.scope.conv_id, self.scope.request_id);
                 return Err(cancelled_error());
             }
             Some(ToolRun::TimedOut) | None => {

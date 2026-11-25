@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { motion, useReducedMotion } from 'framer-motion';
+import { AlertCircle, X } from 'lucide-react';
 
 import { ChatEmptyStateIngestDelta } from '@/features/chat/components/ChatEmptyStateIngestDelta';
 import { chatPaletteCommands } from '@/features/chat/components/chatPaletteCommands';
@@ -23,6 +24,7 @@ import { useChatSwitchActions } from '@/features/chat/hooks/useChatSwitchActions
 import { useComposer } from '@/features/chat/hooks/useComposer';
 import { useThreadMessages } from '@/features/chat/hooks/useThreadMessages';
 import { useThreadScroll } from '@/features/chat/hooks/useThreadScroll';
+import { useActiveModels } from '@/features/model/hooks/useActiveModels';
 import { useCloudModelCatalogs } from '@/features/model/hooks/useCloudModels';
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import { degradedReasonFor, useLoadedModels } from '@/features/model/hooks/useLoadedModels';
@@ -34,7 +36,9 @@ import { useOpenSpaces } from '@/features/spaces/components/SpacePickerPopover';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
 import type { ChatModelChoice } from '@/lib/bindings';
 import { useConversationsStore, useThreadStartsAfter } from '@/shared/conversations/conversationsStore';
+import type { ConversationsState } from '@/shared/conversations/conversationsStore.types';
 import { toast } from '@/stores/toastStore';
+import type { OptimisticMessage } from '@/types/conversation';
 import {
   buildChatModelOptions,
   isUnavailableChatModel,
@@ -58,34 +62,79 @@ export interface ChatPanelProps {
   embedded?: boolean;
   /** Focus the composer when the chat opens. */
   autoFocus?: boolean;
+  /** Render the store error banner inside this panel (e.g. when the sidebar is collapsed or absent). */
+  showErrorBanner?: boolean;
 }
 
 const DEFAULT_CHOICE: ChatModelChoice = { kind: 'default' };
 const NO_COMMANDS: PaletteCommand[] = [];
+const EMPTY_OPTIMISTIC: readonly OptimisticMessage[] = [];
 
-export function ChatPanel({ composerNotice, composerChips, starters, startersNote, embedded = false, autoFocus = false }: ChatPanelProps = {}) {
+export function ChatPanel({
+  composerNotice,
+  composerChips,
+  starters,
+  startersNote,
+  embedded = false,
+  autoFocus = false,
+  showErrorBanner,
+}: ChatPanelProps = {}) {
   const { downloadedModels } = useDownloadedModels();
+  const { activeModels } = useActiveModels();
   const { catalogs } = useCloudModelCatalogs();
   const loadedModels = useLoadedModels();
   const activeConversationId = useConversationsStore((state) => state.activeConversationId);
   const conversations = useConversationsStore((state) => state.conversations);
   const spaces = useConversationsStore((state) => state.spaces);
   const selectedSpaceId = useConversationsStore((state) => state.selectedSpaceId);
-  const inFlightGenerations = useConversationsStore((state) => state.inFlightGenerations);
-  const optimisticMessages = useConversationsStore((state) => state.optimisticMessages);
-  const liveModel = useConversationsStore((state) => state.liveModel);
+  const isSending = useConversationsStore((state) =>
+    Boolean(state.activeConversationId && state.inFlightGenerations.has(state.activeConversationId)),
+  );
+  const scopedOptimisticRef = useRef<readonly OptimisticMessage[]>(EMPTY_OPTIMISTIC);
+  const selectScopedOptimistic = useCallback(
+    (state: ConversationsState): readonly OptimisticMessage[] => {
+      const targetId = state.activeConversationId;
+      const prev = scopedOptimisticRef.current;
+      if (!targetId || !state.optimisticMessages) {
+        if (prev.length === 0) return prev;
+        scopedOptimisticRef.current = EMPTY_OPTIMISTIC;
+        return EMPTY_OPTIMISTIC;
+      }
+      const next: OptimisticMessage[] = [];
+      for (const message of state.optimisticMessages.values()) {
+        if (message.conversationId === targetId || message.conversationId === 'temp') {
+          next.push(message);
+        }
+      }
+      if (next.length === 0) {
+        if (prev.length === 0) return prev;
+        scopedOptimisticRef.current = EMPTY_OPTIMISTIC;
+        return EMPTY_OPTIMISTIC;
+      }
+      if (next.length === prev.length && next.every((item, index) => item === prev[index])) {
+        return prev;
+      }
+      scopedOptimisticRef.current = next;
+      return next;
+    },
+    [],
+  );
+  const optimisticMessages = useConversationsStore(selectScopedOptimistic);
+  const pinnedModel = useConversationsStore((state) =>
+    state.activeConversationId && state.inFlightGenerations.has(state.activeConversationId)
+      ? state.liveModel?.get(state.activeConversationId)
+      : undefined,
+  );
   const messageRetrieval = useConversationsStore((state) => state.messageRetrieval);
   const cancelGeneration = useConversationsStore((state) => state.cancelGeneration);
+  const error = useConversationsStore((state) => state.error);
+  const clearError = useConversationsStore((state) => state.clearError);
   const createConversation = useConversationsStore((state) => state.createConversation);
   const regenerateResponse = useConversationsStore((state) => state.regenerateResponse);
   const forkConversation = useConversationsStore((state) => state.forkConversation);
   const selectConversation = useConversationsStore((state) => state.selectConversation);
   const settings = useSettingsQuery().data;
   const threadStartsAfter = useThreadStartsAfter();
-
-  const isSending = activeConversationId
-    ? inFlightGenerations.has(activeConversationId)
-    : false;
 
   const [isCreatingConversation, setIsCreatingConversation] = useState(false);
   // The memory reader is an overlay off the palette, like the source reader:
@@ -157,22 +206,21 @@ export function ChatPanel({ composerNotice, composerChips, starters, startersNot
   const modelChoice = activeConversation?.modelChoice ?? DEFAULT_CHOICE;
   const onDefaultModel = modelChoice.kind === 'default';
   const effectiveModel = useMemo(
-    () => resolveEffectiveChatOption(modelChoice, llmSettings, downloadedModels, catalogs),
-    [modelChoice, llmSettings, downloadedModels, catalogs]
+    () => resolveEffectiveChatOption(modelChoice, llmSettings, downloadedModels, catalogs, activeModels),
+    [modelChoice, llmSettings, downloadedModels, catalogs, activeModels]
   );
   const defaultModelOption = useMemo(
-    () => resolveDefaultChatOption(llmSettings, downloadedModels, catalogs),
-    [llmSettings, downloadedModels, catalogs]
+    () => resolveDefaultChatOption(llmSettings, downloadedModels, catalogs, activeModels),
+    [llmSettings, downloadedModels, catalogs, activeModels]
   );
   const chatModelOptions = useMemo(
-    () => buildChatModelOptions(llmSettings, downloadedModels, catalogs),
-    [llmSettings, downloadedModels, catalogs]
+    () => buildChatModelOptions(llmSettings, downloadedModels, catalogs, activeModels),
+    [llmSettings, downloadedModels, catalogs, activeModels]
   );
   const effectiveRef = effectiveModel && !isUnavailableChatModel(effectiveModel) ? effectiveModel.ref : null;
   // While a turn runs, the model it is pinned to says whether it fell back to
   // the CPU; otherwise the loaded models do. A choice changed mid-turn is not
   // the pinned model, so only a match counts.
-  const pinnedModel = activeConversationId && isSending ? liveModel.get(activeConversationId) : undefined;
   const degradedReason = pinnedModel && sameModelRef(pinnedModel.model, effectiveRef)
     ? pinnedModel.degraded ?? null
     : degradedReasonFor(effectiveRef, loadedModels);
@@ -291,12 +339,37 @@ export function ChatPanel({ composerNotice, composerChips, starters, startersNot
   );
   useRegisterPaletteCommands(embedded ? NO_COMMANDS : paletteCommands);
 
+  const shouldShowErrorBanner = (showErrorBanner ?? !embedded) && Boolean(error);
+  const errorBanner = shouldShowErrorBanner && error ? (
+    <div
+      role="alert"
+      className="mx-6 mt-3 flex shrink-0 items-center justify-between gap-3 rounded-sm border border-[hsl(var(--danger-muted))] bg-[hsl(var(--danger-muted))] px-3 py-2"
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        <AlertCircle className="h-4 w-4 shrink-0 text-[hsl(var(--danger-fg))]" />
+        <p className="text-xs text-[hsl(var(--danger-fg))] break-words">{error}</p>
+      </div>
+      <button
+        type="button"
+        onClick={() => clearError?.()}
+        className="shrink-0 text-[hsl(var(--danger-fg))] opacity-70 transition-opacity hover:opacity-100"
+        aria-label="Dismiss error"
+        title="Dismiss"
+      >
+        <X className="h-3 w-3" />
+      </button>
+    </div>
+  ) : null;
+
   if (!activeConversationId) {
     return (
-      <NoConversationOpen
-        isCreatingConversation={isCreatingConversation}
-        onCreate={handleCreateEmptyStateConversation}
-      />
+      <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-bg">
+        {errorBanner}
+        <NoConversationOpen
+          isCreatingConversation={isCreatingConversation}
+          onCreate={handleCreateEmptyStateConversation}
+        />
+      </div>
     );
   }
 
@@ -319,6 +392,7 @@ export function ChatPanel({ composerNotice, composerChips, starters, startersNot
           <UtilityModelNotice />
         </>
       )}
+      {errorBanner}
       <ConversationMemoryPanel
         conversationId={activeConversationId}
         isOpen={isMemoryOpen}

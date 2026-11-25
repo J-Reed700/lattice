@@ -53,9 +53,54 @@ fn validate_safe_filename(filename: &str) -> Result<()> {
     })
 }
 
+pub(crate) async fn remove_db_wal_sidecars(db_path: &Path) -> std::io::Result<()> {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    for suffix in ["-wal", "-shm"] {
+        let mut raw = db_path.as_os_str().to_os_string();
+        raw.push(suffix);
+        let sidecar = PathBuf::from(raw);
+        let mut delay = std::time::Duration::from_millis(20);
+        loop {
+            match tokio::fs::remove_file(&sidecar).await {
+                Ok(()) => break,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+                Err(error)
+                    if cfg!(windows)
+                        && matches!(error.raw_os_error(), Some(32 | 33))
+                        && tokio::time::Instant::now() < deadline =>
+                {
+                    tokio::time::sleep_until((tokio::time::Instant::now() + delay).min(deadline))
+                        .await;
+                    delay = (delay * 2).min(std::time::Duration::from_millis(250));
+                }
+                Err(error) => {
+                    error!(
+                        path = %sidecar.display(),
+                        %error,
+                        "failed to remove stale database sidecar"
+                    );
+                    return Err(error);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Put the pre-restore safety copy back as the live database. Returns what to
 /// tell the user when that fails, including the path to inspect for recovery.
 pub(crate) async fn roll_back_database(safety: &Path, db_path: &Path) -> Option<String> {
+    if let Err(e) = remove_db_wal_sidecars(db_path).await {
+        error!(
+            safety_copy = %safety.display(),
+            error = %e,
+            "Could not clear stale database journal files during rollback"
+        );
+        return Some(format!(
+            " Could not clear stale database journal files ({e}). Check the safety copy at {} before retrying.",
+            safety.display()
+        ));
+    }
     // repository-barrier-allow: rolling back the live database file.
     match tokio::fs::rename(safety, db_path).await {
         Ok(()) => {
@@ -401,8 +446,12 @@ impl BackupPort for BackupAdapter {
         };
         match copied {
             Ok(()) => {
+                let swapped = match remove_db_wal_sidecars(&self.db_path).await {
+                    Ok(()) => tokio::fs::rename(&temp_path, &self.db_path).await,
+                    Err(e) => Err(e),
+                };
                 // Atomic rename
-                match tokio::fs::rename(&temp_path, &self.db_path).await {
+                match swapped {
                     Ok(_) => {
                         info!("Database restored successfully");
                         info!("Old database backed up to: {}", current_backup.display());

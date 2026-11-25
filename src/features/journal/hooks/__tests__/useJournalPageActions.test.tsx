@@ -1,13 +1,10 @@
-import { confirm } from '@tauri-apps/plugin-dialog';
 import { act, renderHook } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { NEW_ITEM_EVENT } from '@/shared/newItemEvent';
 import type { WorkspaceNote } from '@/types/api/dailyNotes';
 
 import { useJournalPageActions } from '../useJournalPageActions';
-
-vi.mock('@tauri-apps/plugin-dialog', () => ({ confirm: vi.fn() }));
 
 const page = (id: string, title: string) => ({ id, title } as WorkspaceNote);
 
@@ -21,8 +18,6 @@ function setup(overrides: Partial<Parameters<typeof useJournalPageActions>[0]> =
   const view = renderHook((props: typeof options) => useJournalPageActions(props), { initialProps: options });
   return { ...options, ...view };
 }
-
-beforeEach(() => vi.mocked(confirm).mockReset());
 
 describe('useJournalPageActions', () => {
   it('names the legacy first page as untitled and keeps other titles', () => {
@@ -64,16 +59,23 @@ describe('useJournalPageActions', () => {
 
   it('deletes a page only after confirmation, and reports the outcome', async () => {
     const s = setup();
-    vi.mocked(confirm).mockResolvedValueOnce(false);
-    await act(() => s.result.current.handleDeletePage(page('p1', 'Journal · Garden')));
-    expect(confirm).toHaveBeenCalledWith('The page and its highlights are deleted. This cannot be undone.', { title: 'Delete "Untitled page"?', kind: 'warning' });
+    act(() => s.result.current.handleDeletePage(page('p1', 'Journal · Garden')));
+    expect(s.result.current.pagePendingDelete?.id).toBe('p1');
     expect(s.deletePage).not.toHaveBeenCalled();
 
-    vi.mocked(confirm).mockResolvedValue(true);
-    await act(() => s.result.current.handleDeletePage(page('p2', 'Seed order')));
+    act(() => s.result.current.cancelDeletePage());
+    expect(s.result.current.pagePendingDelete).toBeNull();
+    expect(s.deletePage).not.toHaveBeenCalled();
+
+    act(() => s.result.current.handleDeletePage(page('p2', 'Seed order')));
+    await act(() => s.result.current.confirmDeletePage());
+    expect(s.deletePage).toHaveBeenCalledWith('p2');
     expect(s.notify).toHaveBeenCalledWith('success', 'Deleted "Seed order".');
+    expect(s.result.current.pagePendingDelete).toBeNull();
+
     vi.mocked(s.deletePage).mockResolvedValueOnce(false);
-    await act(() => s.result.current.handleDeletePage(page('p2', 'Seed order')));
+    act(() => s.result.current.handleDeletePage(page('p2', 'Seed order')));
+    await act(() => s.result.current.confirmDeletePage());
     expect(s.notify).toHaveBeenCalledWith('error', 'Could not delete that page.');
   });
 
@@ -98,5 +100,14 @@ describe('useJournalPageActions', () => {
   it('ignores ?new=1 without a journal', () => {
     const s = setup({ searchParams: new URLSearchParams('new=1'), requestedJournalSpaceId: null });
     expect(s.setSearchParams).not.toHaveBeenCalled();
+  });
+
+  it('ignores NEW_ITEM_EVENT and handleNewPage when no journal space is active', async () => {
+    const s = setup({ journalSpace: null, requestedJournalSpaceId: null });
+    await act(async () => {
+      window.dispatchEvent(new Event(NEW_ITEM_EVENT));
+      await s.result.current.handleNewPage();
+    });
+    expect(s.createPage).not.toHaveBeenCalled();
   });
 });

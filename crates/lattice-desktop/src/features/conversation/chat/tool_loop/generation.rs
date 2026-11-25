@@ -110,12 +110,28 @@ pub(super) async fn generate<'r>(
                 None => completion.await,
             }
         };
-        tokio::select! {
+        let outcome = tokio::select! {
             biased;
-            _ = cancel.cancelled() => return Err(cancelled_error()),
+            _ = cancel.cancelled() => Err(cancelled_error()),
             result = bounded => result,
+        };
+        match outcome {
+            Ok(response) => response,
+            Err(error) => {
+                if crate::features::conversation::chat::cancellation::is_cancellation(&error) {
+                    let (held, _) = filter
+                        .lock()
+                        .map(|mut filter| filter.finish())
+                        .unwrap_or_default();
+                    if !held.is_empty() {
+                        let _ = emitter.content(&held);
+                    }
+                    let _ = emitter.flush();
+                }
+                return Err(error);
+            }
         }
-    }?;
+    };
     let (held, call) = filter
         .lock()
         .map(|mut filter| filter.finish())
@@ -169,10 +185,9 @@ pub(super) fn thinking_label(iteration: usize) -> &'static str {
     }
 }
 
-/// Live reasoning is a progress surface, not an unbounded transcript. Batch
-/// token-sized deltas before emitting a replacement step so React does not
-/// rerender once per token, then let the completed provider value replace this
-/// capture before the step is persisted.
+/// Batch token-sized reasoning deltas before emitting a replacement step so
+/// React does not rerender once per token, then let the completed provider
+/// value replace this capture before the step is persisted.
 struct ReasoningProgress {
     text: String,
     chars: usize,
@@ -181,7 +196,6 @@ struct ReasoningProgress {
 }
 
 impl ReasoningProgress {
-    const MAX_CHARS: usize = 24_000;
     const MIN_EMIT_CHARS: usize = 160;
     const MAX_EMIT_DELAY: Duration = Duration::from_millis(120);
 
@@ -195,11 +209,9 @@ impl ReasoningProgress {
     }
 
     fn push(&mut self, delta: &str) -> Option<String> {
-        let remaining = Self::MAX_CHARS.saturating_sub(self.chars);
-        if remaining > 0 {
-            let kept = lattice_core::shared::text::safe_truncate(delta, remaining);
-            self.chars = self.chars.saturating_add(kept.chars().count());
-            self.text.push_str(&kept);
+        if !delta.is_empty() {
+            self.chars = self.chars.saturating_add(delta.chars().count());
+            self.text.push_str(delta);
         }
         let should_emit = self.last_sent_chars == 0
             || self.chars.saturating_sub(self.last_sent_chars) >= Self::MIN_EMIT_CHARS

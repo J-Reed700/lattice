@@ -1481,6 +1481,7 @@ fn server_config(prefill_guard: bool) -> ServerConfig {
         context_window: settings.context_window as usize,
         stall_timeout: Duration::from_secs(30),
         supports_tools: true,
+        supports_thinking: false,
         model_thinking: ThinkingPolicy::PerRequest,
         prefill_guard,
         vision: None,
@@ -1955,4 +1956,458 @@ async fn an_answer_larger_than_the_room_left_is_cut_to_fit_not_refused() {
         .unwrap();
     let body: Value = serde_json::from_slice(&sent.body).unwrap();
     assert_eq!(body["max_tokens"], json!(1_072));
+}
+
+#[test]
+fn unmatched_think_close_drops_trailing_duplicate_without_touching_explicit_think_blocks() {
+    let mut decoder = streaming::Decoder::for_completion();
+    let mut streamed = String::new();
+    for frame in [
+        json!({"choices":[{"delta":{"content":"The stopcock is under the sink [s1].\n"}}]}),
+        json!({"choices":[{"delta":{"content":"</th"}}]}),
+        json!({"choices":[{"delta":{"content":"ink>"}}]}),
+        json!({"choices":[{"delta":{"content":"\n\nThe stopcock is under the sink [s1]."}}]}),
+        json!({"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":20}}),
+    ] {
+        for piece in decoder
+            .push(format!("data: {frame}\n\n").as_bytes())
+            .unwrap()
+        {
+            streamed.push_str(&piece);
+        }
+    }
+    for piece in decoder.push(b"data: [DONE]\n\n").unwrap() {
+        streamed.push_str(&piece);
+    }
+    assert!(!streamed.contains("</think>"), "{streamed}");
+    assert_eq!(streamed, "The stopcock is under the sink [s1].\n");
+    let response = decoder.into_response().unwrap();
+    assert_eq!(response.text, "The stopcock is under the sink [s1].");
+    assert_eq!(
+        assistant(&response)["content"],
+        json!("The stopcock is under the sink [s1].")
+    );
+
+    let non_stream = parse_completion(json!({
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": "The stopcock is under the sink [s1].\n</think>\n\nThe stopcock is under the sink [s1]."
+            },
+            "finish_reason": "stop"
+        }]
+    }))
+    .unwrap();
+    assert_eq!(non_stream.text, "The stopcock is under the sink [s1].");
+    assert_eq!(
+        assistant(&non_stream)["content"],
+        json!("The stopcock is under the sink [s1].")
+    );
+
+    let leading = parse_completion(json!({
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": "</think>\n\nClean answer [s2]."
+            },
+            "finish_reason": "stop"
+        }]
+    }))
+    .unwrap();
+    assert_eq!(leading.text, "Clean answer [s2].");
+
+    let explicit = parse_completion(json!({
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": "<think>\ninternal reasoning\n</think>\n\nPublic answer."
+            },
+            "finish_reason": "stop"
+        }]
+    }))
+    .unwrap();
+    assert_eq!(
+        explicit.text,
+        "<think>\ninternal reasoning\n</think>\n\nPublic answer."
+    );
+
+    let mut angle_decoder = streaming::Decoder::for_completion();
+    let mut angle_streamed = String::new();
+    for ch in "2 < 3 and <code>x <".bytes() {
+        let piece_str = std::str::from_utf8(std::slice::from_ref(&ch)).unwrap();
+        let ev = json!({"choices":[{"delta":{"content":piece_str}}]});
+        for piece in angle_decoder
+            .push(format!("data: {ev}\n\n").as_bytes())
+            .unwrap()
+        {
+            angle_streamed.push_str(&piece);
+        }
+    }
+    let fin = json!({"choices":[{"delta":{},"finish_reason":"stop"}]});
+    for piece in angle_decoder
+        .push(format!("data: {fin}\n\ndata: [DONE]\n\n").as_bytes())
+        .unwrap()
+    {
+        angle_streamed.push_str(&piece);
+    }
+    assert_eq!(angle_streamed, "2 < 3 and <code>x <");
+    assert_eq!(
+        angle_decoder.into_response().unwrap().text,
+        "2 < 3 and <code>x <"
+    );
+}
+
+fn decode_stream_chunks(chunks: &[&str], finish_reason: &str) -> (String, String) {
+    let mut decoder = streaming::Decoder::for_completion();
+    let mut streamed = String::new();
+    for chunk in chunks {
+        let ev = json!({"choices":[{"delta":{"content":chunk}}]});
+        for piece in decoder.push(format!("data: {ev}\n\n").as_bytes()).unwrap() {
+            streamed.push_str(&piece);
+        }
+    }
+    let fin = json!({"choices":[{"delta":{},"finish_reason":finish_reason}]});
+    for piece in decoder
+        .push(format!("data: {fin}\n\ndata: [DONE]\n\n").as_bytes())
+        .unwrap()
+    {
+        streamed.push_str(&piece);
+    }
+    let final_text = decoder.into_response().unwrap().text;
+    (streamed, final_text)
+}
+
+fn parse_non_stream_text(content: &str) -> String {
+    parse_completion(json!({
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": content
+            },
+            "finish_reason": "stop"
+        }]
+    }))
+    .unwrap()
+    .text
+}
+
+#[test]
+fn unmatched_think_close_preserves_prose_code_and_json_mentions() {
+    let cases = [
+        (
+            "prose",
+            vec![
+                "The model emits ",
+                "</th",
+                "ink>",
+                " to finish hidden reasoning.",
+            ],
+        ),
+        (
+            "markdown_fence",
+            vec!["```xml\n", "</think>", "\n```\nUse that closing tag."],
+        ),
+        (
+            "memory_json",
+            vec![
+                "{\"memories\":[{\"text\":\"Discussed ",
+                "</think>",
+                " tag handling\"}]}",
+            ],
+        ),
+        (
+            "trailing_inline",
+            vec!["The closing marker is ", "</think>"],
+        ),
+    ];
+
+    for (label, chunks) in cases {
+        let full = chunks.concat();
+        let (streamed, stream_text) = decode_stream_chunks(&chunks, "stop");
+        assert_eq!(streamed, full, "{label}: streamed");
+        assert_eq!(stream_text, full, "{label}: stream response");
+        assert_eq!(parse_non_stream_text(&full), full, "{label}: non-stream");
+    }
+}
+
+#[test]
+fn unmatched_think_close_preserves_leaked_reasoning_followed_by_real_answer() {
+    let leaked_chunks = [
+        "Let me check section 4 carefully.\n",
+        "</th",
+        "ink>\n",
+        "The stopcock is under the sink [s1].",
+    ];
+    let full = leaked_chunks.concat();
+    let (streamed, stream_text) = decode_stream_chunks(&leaked_chunks, "stop");
+    assert_eq!(streamed, full);
+    assert_eq!(stream_text, full);
+    assert_eq!(parse_non_stream_text(&full), full);
+
+    let overlapping_chunks = [
+        "First check the manual\n",
+        "</think>\n",
+        "First check the manual carefully, then turn clockwise [s1].",
+    ];
+    let overlapping_full = overlapping_chunks.concat();
+    let (streamed_overlap, overlap_text) = decode_stream_chunks(&overlapping_chunks, "stop");
+    assert_eq!(streamed_overlap, overlapping_full);
+    assert_eq!(overlap_text, overlapping_full);
+    assert_eq!(parse_non_stream_text(&overlapping_full), overlapping_full);
+}
+
+#[test]
+fn unmatched_think_close_handles_mid_content_think_blocks_and_confirmed_replays() {
+    let mid_chunks = [
+        "Intro line.\n",
+        "<thi",
+        "nk>\nscratchpad\n",
+        "</th",
+        "ink>\nFinal answer.",
+    ];
+    let mid_full = mid_chunks.concat();
+    let (streamed_mid, mid_text) = decode_stream_chunks(&mid_chunks, "stop");
+    assert_eq!(streamed_mid, mid_full);
+    assert_eq!(mid_text, mid_full);
+    assert_eq!(parse_non_stream_text(&mid_full), mid_full);
+
+    let leading_chunks = [
+        "</th",
+        "ink>\n",
+        "<think>\nreasoning\n</think>\n\nPublic answer.",
+    ];
+    let (streamed_leading, leading_text) = decode_stream_chunks(&leading_chunks, "stop");
+    assert_eq!(
+        streamed_leading,
+        "<think>\nreasoning\n</think>\n\nPublic answer."
+    );
+    assert_eq!(
+        leading_text,
+        "<think>\nreasoning\n</think>\n\nPublic answer."
+    );
+    assert_eq!(
+        parse_non_stream_text(&leading_chunks.concat()),
+        "<think>\nreasoning\n</think>\n\nPublic answer."
+    );
+
+    let think_then_replay = [
+        "<think>\nreasoning\n</think>\n",
+        "The answer [s1].\n",
+        "</think>\n\nThe answer [s1].",
+    ];
+    let (streamed_tr, tr_text) = decode_stream_chunks(&think_then_replay, "stop");
+    assert_eq!(
+        streamed_tr,
+        "<think>\nreasoning\n</think>\nThe answer [s1].\n"
+    );
+    assert_eq!(tr_text, "<think>\nreasoning\n</think>\nThe answer [s1].");
+    assert_eq!(
+        parse_non_stream_text(&think_then_replay.concat()),
+        "<think>\nreasoning\n</think>\nThe answer [s1]."
+    );
+
+    let prose_then_replay = [
+        "Explain </think> safely.\n",
+        "</think>\n\nExplain </think> safely.",
+    ];
+    let (streamed_pr, pr_text) = decode_stream_chunks(&prose_then_replay, "stop");
+    assert_eq!(streamed_pr, "Explain </think> safely.\n");
+    assert_eq!(pr_text, "Explain </think> safely.");
+    assert_eq!(
+        parse_non_stream_text(&prose_then_replay.concat()),
+        "Explain </think> safely."
+    );
+
+    let truncated_replay = [
+        "The stopcock is under the sink [s1]. Turn clockwise to shut off.\n",
+        "</think>\n\nThe stopcock is under the sink",
+    ];
+    let (streamed_len, len_text) = decode_stream_chunks(&truncated_replay, "length");
+    assert_eq!(
+        streamed_len,
+        "The stopcock is under the sink [s1]. Turn clockwise to shut off.\n"
+    );
+    assert_eq!(
+        len_text,
+        "The stopcock is under the sink [s1]. Turn clockwise to shut off."
+    );
+    assert_eq!(
+        parse_non_stream_text(&truncated_replay.concat()),
+        "The stopcock is under the sink [s1]. Turn clockwise to shut off."
+    );
+}
+
+#[test]
+fn tool_calls_past_128_and_high_tool_indices_are_preserved() {
+    let count = 135usize;
+    let raw_calls: Vec<Value> = (0..count)
+        .map(|index| {
+            json!({
+                "id": format!("call_{index}"),
+                "type": "function",
+                "function": {"name": "lookup", "arguments": format!("{{\"i\":{index}}}")}
+            })
+        })
+        .collect();
+    let parsed = parse_completion(json!({
+        "choices": [{
+            "message": {"role": "assistant", "content": "", "tool_calls": raw_calls},
+            "finish_reason": "tool_calls"
+        }]
+    }))
+    .unwrap();
+    assert_eq!(parsed.tool_calls.len(), count);
+
+    let mut decoder = streaming::Decoder::for_completion();
+    let event = json!({
+        "choices": [{
+            "delta": {
+                "tool_calls": [{
+                    "index": 200,
+                    "id": "call_200",
+                    "type": "function",
+                    "function": {"name": "lookup", "arguments": "{\"i\":200}"}
+                }]
+            },
+            "finish_reason": "tool_calls"
+        }]
+    });
+    decoder
+        .push(format!("data: {event}\n\ndata: [DONE]\n\n").as_bytes())
+        .unwrap();
+    let streamed = decoder.into_response().unwrap();
+    assert_eq!(streamed.tool_calls.len(), 1);
+    assert!(matches!(
+        &streamed.tool_calls[0],
+        CompletionInput::ToolCall { id, name, arguments }
+            if id == "call_200" && name == "lookup" && *arguments == json!({"i": 200})
+    ));
+}
+
+#[test]
+fn long_unique_stream_does_not_trigger_repetition_detector() {
+    let mut decoder = streaming::Decoder::for_completion();
+    for i in 0..120 {
+        let sentence = format!(
+            "Section {i} explains clinical observation #{i} with distinct terminology code C{:04} and measurement {}. ",
+            i * 37,
+            i * 13 + 7
+        );
+        let event = json!({"choices":[{"delta":{"content":sentence},"finish_reason":null}]});
+        decoder
+            .push(format!("data: {event}\n\n").as_bytes())
+            .unwrap();
+    }
+    decoder
+        .push(
+            b"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+        )
+        .unwrap();
+    assert!(!decoder.repetition_loop());
+    assert!(decoder.into_response().unwrap().text.len() > 10_000);
+}
+
+#[test]
+fn structured_json_reusing_shared_source_quotes_does_not_trigger_repetition_detector() {
+    let shared_quote = "The US Core Implementation Guide is based on FHIR Version R4 and defines the minimum set of constraints on the FHIR resources to create the US Core Profiles and RESTful interactions.";
+    let mut decoder = streaming::Decoder::for_completion();
+    decoder
+        .push(b"data: {\"choices\":[{\"delta\":{\"content\":\"{\\\"answers\\\":[\"},\"finish_reason\":null}]}\n\n")
+        .unwrap();
+    for i in 1..=20 {
+        let comma = if i > 1 { "," } else { "" };
+        let entry = format!(
+            "{comma}{{\"finding\":\"f{i}\",\"part\":\"/blocks/{}\",\"sentence\":\"Distinct lesson statement #{i} covering interoperability contract clause {}\",\"sourceIndex\":0,\"quote\":\"{shared_quote}\"}}",
+            i % 10,
+            i * 17
+        );
+        let event = json!({"choices":[{"delta":{"content":entry},"finish_reason":null}]});
+        decoder
+            .push(format!("data: {event}\n\n").as_bytes())
+            .unwrap();
+    }
+    decoder
+        .push(
+            b"data: {\"choices\":[{\"delta\":{\"content\":\"]}\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+        )
+        .unwrap();
+    assert!(!decoder.repetition_loop());
+    let response = decoder.into_response().unwrap();
+    assert!(response.text.contains("\"finding\":\"f20\""));
+}
+
+#[test]
+fn perturbed_repetition_loop_is_caught_by_shingle_detector() {
+    let mut decoder = streaming::Decoder::for_completion();
+    let mut tripped = false;
+    for i in 0..200 {
+        let sentence = format!(
+            "Wait, let me check section 8 and verify whether the patient identifier constraint requires a system and value pair variant_{i} before deciding if this contradicts section 1. "
+        );
+        let event = json!({"choices":[{"delta":{"content":sentence},"finish_reason":null}]});
+        if decoder
+            .push(format!("data: {event}\n\n").as_bytes())
+            .is_err()
+        {
+            tripped = true;
+            break;
+        }
+    }
+    assert!(tripped);
+    assert!(decoder.repetition_loop());
+}
+
+#[tokio::test]
+async fn repetition_loop_in_stream_aborts_and_retries_with_loop_breaking_dry() {
+    let repeated = "Wait, let me check Sentence 8 again. Reason: The inventory statement omits the explicit qualifier 'not just at design time'. ".repeat(60);
+    let server = sequence_server(vec![
+        ResponseTemplate::new(200)
+            .set_body_string(stream_reply(json!({"content": repeated}), "stop")),
+        ResponseTemplate::new(200)
+            .set_body_string(stream_reply(json!({"content": "{\"ok\":true}"}), "stop")),
+    ])
+    .await;
+    let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
+    let request = legacy::completion(legacy::Completion {
+        input: vec![CompletionInput::Message {
+            role: "user".into(),
+            content: "Check coverage".into(),
+        }],
+        ..Default::default()
+    });
+    let response = client.complete(&request).await.unwrap();
+    assert_eq!(response.text, "{\"ok\":true}");
+
+    let received = server.received_requests().await.unwrap();
+    assert_eq!(received.len(), 2);
+    let first: Value = serde_json::from_slice(&received[0].body).unwrap();
+    let second: Value = serde_json::from_slice(&received[1].body).unwrap();
+    assert!(first.get("dry_multiplier").is_none());
+    assert_eq!(second["repeat_last_n"], json!(512));
+    assert_eq!(second["frequency_penalty"], json!(0.15));
+    assert_eq!(second["dry_multiplier"], json!(0.6));
+    assert_eq!(second["dry_allowed_length"], json!(10));
+    assert_eq!(second["dry_penalty_last_n"], json!(2048));
+}
+
+#[test]
+fn pure_whitespace_runaway_triggers_repetition_detector_while_normal_indentation_does_not() {
+    let normal_json = format!(
+        "{{\"items\":[\n{}\n]}}",
+        (0..60)
+            .map(|i| format!(
+                "    {{\"id\": \"item-{i}\", \"text\": \"Distinct sentence #{i} explaining workflow step {}.\"}}",
+                i * 19 + 3
+            ))
+            .collect::<Vec<_>>()
+            .join(",\n")
+    );
+    assert!(!streaming::has_repetition_loop(&normal_json));
+
+    let runaway = format!(
+        "{}{}",
+        "Distinct preamble text explaining FHIR Patient identity. ".repeat(60),
+        " \n\t ".repeat(600)
+    );
+    assert!(streaming::has_repetition_loop(&runaway));
 }

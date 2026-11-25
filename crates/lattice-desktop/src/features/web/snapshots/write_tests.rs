@@ -8,14 +8,15 @@ use std::time::Duration;
 #[tokio::test]
 async fn the_library_conversation_follows_a_space_replaced_meanwhile() {
     let directory = tempfile::tempdir().unwrap();
-    let pool = SqlitePoolOptions::new()
-        .max_connections(5)
-        .connect_with(crate::tests::sqlite::file_options(
-            directory.path().join("snapshots.db"),
-        ))
+    let path = directory.path().join("snapshots.db");
+    lattice_core::shared::testing::sqlite::write_migrated(&path)
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect_with(lattice_core::shared::testing::sqlite::file_options(&path))
+        .await
+        .unwrap();
     let db = Database::new(pool.clone());
     sqlx::query("INSERT INTO conversation_spaces (id, name) VALUES ('space_other', 'Other')")
         .execute(&pool)

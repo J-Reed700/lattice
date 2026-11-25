@@ -9,10 +9,11 @@ import { useApi } from '@/contexts/ApiContext';
 import { ChatPanel } from '@/features/chat/components/ChatPanel';
 import { ConversationSidebar } from '@/features/chat/components/ConversationSidebar';
 import { ConversationSpotlight } from '@/features/chat/components/ConversationSpotlight';
-import { ChatReaderPane } from '@/features/chat/components/reader/ChatReaderPane';
 import { fetchDocumentFileName, useLinkDocumentToSpaceMutation } from '@/features/chat/hooks/useDocumentLinkRequest';
 import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
+import { ReaderPane } from '@/features/reading/components/ReaderPane';
+import { useReaderRoom } from '@/features/reading/hooks/useReaderRoom';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
 import { useStopSpeechOnChange } from '@/features/speech/hooks/useSpeech';
 import { isBoundChat } from '@/shared/conversations/boundChats';
@@ -45,16 +46,17 @@ function writeSidebarCollapsed(value: boolean): void {
 export function ChatView() {
   const api = useApi();
   const queryClient = useQueryClient();
-  const {
-    loadConversations,
-    loadSpaces,
-    selectConversation,
-    createConversation,
-    activeConversationId,
-    conversations,
-    setComposerDraft,
-    loadConversationLinkedDocuments,
-  } = useConversationsStore();
+  const loadConversations = useConversationsStore((state) => state.loadConversations);
+  const loadSpaces = useConversationsStore((state) => state.loadSpaces);
+  const setSelectedSpace = useConversationsStore((state) => state.setSelectedSpace);
+  const selectConversation = useConversationsStore((state) => state.selectConversation);
+  const createConversation = useConversationsStore((state) => state.createConversation);
+  const activeConversationId = useConversationsStore((state) => state.activeConversationId);
+  const conversations = useConversationsStore((state) => state.conversations);
+  const setComposerDraft = useConversationsStore((state) => state.setComposerDraft);
+  const loadConversationLinkedDocuments = useConversationsStore(
+    (state) => state.loadConversationLinkedDocuments,
+  );
   useStopSpeechOnChange(activeConversationId);
   const { fetchDownloadedModels } = useDownloadedModels();
   const { mutateAsync: linkDocumentToSpace } = useLinkDocumentToSpaceMutation();
@@ -66,13 +68,14 @@ export function ChatView() {
   const creatingRef = useRef(false);
   const rowRef = useRef<HTMLDivElement>(null);
   /**
-   * How much room the chat and the docked reader have between them.
-   *
-   * Measured from the row rather than the window because that is what the two
-   * of them actually share: collapsing the sidebar hands the reader 200-odd
-   * pixels the viewport knows nothing about.
+   * How much room the chat and the docked reader have between them: the row
+   * minus the conversation sidebar, which is its first child.
    */
-  const [row, setRow] = useState({ width: 0, available: 0 });
+  const row = useReaderRoom(
+    rowRef,
+    (element) => element.firstElementChild?.getBoundingClientRect().width ?? 0,
+    [sidebarCollapsed],
+  );
   /** A `?documentId=` request waiting for the conversation it belongs to. */
   const [pendingDocumentLink, setPendingDocumentLink] = useState<{
     documentId: string;
@@ -104,30 +107,6 @@ export function ChatView() {
     else conversationUiStore.setState({ activeConversationId: null });
   }, [activeIsBound, conversations, selectConversation]);
 
-  useEffect(() => {
-    const element = rowRef.current;
-    if (!element || typeof ResizeObserver === 'undefined') return;
-
-    const measure = () => {
-      const width = element.clientWidth;
-      // The sidebar is the first child; the rest is the chat plus the reader.
-      const sidebar = element.firstElementChild?.getBoundingClientRect().width ?? 0;
-      const available = Math.max(0, width - sidebar);
-      setRow((current) =>
-        current.width === width && current.available === available
-          ? current
-          : { width, available }
-      );
-    };
-
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    // Collapsing the sidebar does not resize the row, so the effect re-runs on
-    // it and measures again.
-    measure();
-    return () => observer.disconnect();
-  }, [sidebarCollapsed]);
-
   const handleNewConversation = useCallback(async () => {
     if (creatingRef.current) return;
     creatingRef.current = true;
@@ -148,6 +127,17 @@ export function ChatView() {
     window.addEventListener(NEW_ITEM_EVENT, onNew);
     return () => window.removeEventListener(NEW_ITEM_EVENT, onNew);
   }, [handleNewConversation]);
+
+  useEffect(() => {
+    const requestedSpaceId = searchParams.get('spaceId');
+    if (!requestedSpaceId) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('spaceId');
+    setSearchParams(next, { replace: true });
+    const targetSpaceId = requestedSpaceId === 'all' ? null : requestedSpaceId;
+    setSelectedSpace(targetSpaceId);
+    void loadConversations({ spaceId: targetSpaceId });
+  }, [loadConversations, searchParams, setSearchParams, setSelectedSpace]);
 
   useEffect(() => {
     if (searchParams.get('new') !== '1') return;
@@ -312,7 +302,7 @@ export function ChatView() {
   return (
     <div ref={rowRef} className="flex h-full min-h-0 w-full min-w-0 overflow-hidden">
       {sidebarCollapsed ? (
-        <aside className="flex h-full w-12 shrink-0 flex-col items-center gap-1 border-r border-border-subtle bg-surface py-2">
+        <aside className="flex h-full w-12 shrink-0 flex-col items-center gap-1 border-r border-border-subtle bg-surface-sunken/70 py-2">
           <IconButton label="Show sidebar" shortcut="⌘\" tooltipSide="right" onClick={() => setSidebarCollapsed(false)}>
             <PanelLeft />
           </IconButton>
@@ -323,8 +313,8 @@ export function ChatView() {
       ) : (
         <ConversationSidebar onCollapse={() => setSidebarCollapsed(true)} />
       )}
-      <ChatPanel />
-      <ChatReaderPane rowWidth={row.width} availableWidth={row.available} />
+      <ChatPanel showErrorBanner={sidebarCollapsed} />
+      <ReaderPane rowWidth={row.width} availableWidth={row.available} resetKey={activeConversationId} />
       <ConversationSpotlight isOpen={isSpotlightOpen} onClose={() => setIsSpotlightOpen(false)} />
     </div>
   );

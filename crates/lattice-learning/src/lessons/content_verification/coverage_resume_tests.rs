@@ -7,7 +7,6 @@ struct DisconnectDuringFidelity {
     job: String,
     /// Where the job saves the lesson's fidelity findings.
     fidelity: String,
-    mapping_calls: AtomicUsize,
     fidelity_calls: AtomicUsize,
 }
 
@@ -41,9 +40,6 @@ impl LLMPort for DisconnectDuringFidelity {
 }
 impl DisconnectDuringFidelity {
     async fn respond(&self, prompt: &str) -> Result<String> {
-        if prompt.starts_with("Audit claim coverage independently.") {
-            self.mapping_calls.fetch_add(1, Ordering::Relaxed);
-        }
         if prompt.starts_with("Audit inventory fidelity.")
             && self.fidelity_calls.fetch_add(1, Ordering::Relaxed) == 1
         {
@@ -71,7 +67,7 @@ impl DisconnectDuringFidelity {
 }
 
 #[tokio::test]
-async fn interrupted_coverage_reuses_mapping_and_each_completed_passage() -> Result<()> {
+async fn interrupted_coverage_reuses_each_completed_passage() -> Result<()> {
     let pool = crate::tests::pool().await?;
     let db = Database::new(pool.clone());
     let (repo, job, lesson) = batch_scheduler_tests::setup(&db).await?;
@@ -79,8 +75,7 @@ async fn interrupted_coverage_reuses_mapping_and_each_completed_passage() -> Res
         inner: Model::new(),
         jobs: JobStore::new(db.clone()),
         job: job.clone(),
-        fidelity: format!("{lesson}/coverage-fidelity-v2:"),
-        mapping_calls: AtomicUsize::new(0),
+        fidelity: format!("{lesson}/coverage-fidelity-v3:"),
         fidelity_calls: AtomicUsize::new(0),
     };
     let mut content = vec![
@@ -93,7 +88,7 @@ async fn interrupted_coverage_reuses_mapping_and_each_completed_passage() -> Res
                 index,
                 claims: vec![Claim {
                     quote: GOOD.into(),
-                    statement: GOOD.into(),
+                    statement: FIXED.into(),
                 }],
                 non_factual_reason: String::new(),
             })
@@ -103,7 +98,6 @@ async fn interrupted_coverage_reuses_mapping_and_each_completed_passage() -> Res
         assert!(coverage::audit(&model, &content, &inventory, None)
             .await
             .is_err());
-        assert_eq!(model.mapping_calls.load(Ordering::Relaxed), 2);
         assert_eq!(model.fidelity_calls.load(Ordering::Relaxed), 2);
         Ok(())
     })
@@ -112,13 +106,11 @@ async fn interrupted_coverage_reuses_mapping_and_each_completed_passage() -> Res
     crate::lesson_drafts::run(&db, &repo, &job, &lesson, async {
         let audited = coverage::audit(&model, &content, &inventory, None).await?;
         assert!(audited.units.iter().all(|unit| unit.complete));
-        assert_eq!(model.mapping_calls.load(Ordering::Relaxed), 2);
         assert_eq!(model.fidelity_calls.load(Ordering::Relaxed), 3);
         coverage::audit(&model, &content, &inventory, None).await?;
         assert_eq!(model.fidelity_calls.load(Ordering::Relaxed), 3);
         content[1]["body"] = json!(format!("{GOOD} Follow these practice instructions."));
         coverage::audit(&model, &content, &inventory, None).await?;
-        assert_eq!(model.mapping_calls.load(Ordering::Relaxed), 3);
         assert_eq!(model.fidelity_calls.load(Ordering::Relaxed), 4);
         Ok(())
     })

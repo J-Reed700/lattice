@@ -1,18 +1,25 @@
-//! What the evals do to the container `headless::open` builds: the embedding
-//! model activated the way Settings activates it on a llama-server this
-//! process starts, and the corpus imported through the import use case.
+//! A desktop app with no window: the composition root the desktop builds, a
+//! fresh data directory, the embedding model activated the way Settings
+//! activates it on a llama-server this process starts, and the corpus imported
+//! through the import use case.
 
 use crate::Res;
 use lattice::features::indexing::dto::{ChunkingStrategyDto, IndexFileRequestDto};
 use lattice::features::model_management::commands_extra::{
     set_active_embedding_model_impl, set_active_utility_model_impl,
 };
+use lattice::features::settings::repository::SettingsRepository;
+use lattice::infrastructure::setup::database::setup_database;
+use lattice::interfaces::di::modules::standalone::StandaloneServers;
 use lattice::Container;
+use lattice_core::application::contracts::settings::SettingsDto;
+use lattice_core::application::ports::SettingsRepositoryPort;
 use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Instant;
 
 #[derive(Deserialize)]
@@ -27,6 +34,38 @@ pub struct CorpusDocument {
 #[derive(Deserialize)]
 struct Corpus {
     documents: Vec<CorpusDocument>,
+}
+
+/// Writes the settings file, then builds the container on a new database,
+/// in the order the desktop's startup does. With no app to start sidecars,
+/// the container serves embeddings, and the reranker in `reranker_gguf` when
+/// there is one, from llama-servers it spawns itself.
+pub async fn open(
+    data_dir: &Path,
+    settings: &SettingsDto,
+    reranker_gguf: Option<&Path>,
+) -> Res<Container> {
+    SettingsRepository::new(data_dir.to_path_buf())
+        .await?
+        .save_all(settings)
+        .await?;
+    let connection = setup_database(data_dir.join("lattice.db")).await?;
+    let container = Container::new(
+        connection.database().clone(),
+        None,
+        &settings.llm.ollama_url,
+        &settings.llm.model,
+        data_dir.to_path_buf(),
+        Arc::default(),
+    )
+    .await?;
+    let servers = Arc::new(StandaloneServers::from_env());
+    let container = container.with_embedding_starter(servers.clone());
+    let container = match reranker_gguf {
+        Some(gguf) => container.with_reranker(gguf, servers).await,
+        None => container,
+    };
+    Ok(container)
 }
 
 /// Registers the embedding GGUF as a downloaded model and activates it

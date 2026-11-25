@@ -1,25 +1,25 @@
 import { useState } from 'react';
 
-import { PageHeader, SettingsRow, SettingsSection, settingsFieldClass, Switch } from '@/components/ui';
+import { Button, PageHeader, SettingsRow, SettingsSection, Switch } from '@/components/ui';
 import { toast } from '@/stores/toastStore';
 import type { SearchSettings as ApiSearchSettings } from '@/types/api/settings';
 
-import { describeReranker, formatDownloadSize } from './rerankerStatus';
+import { RerankerRow } from './RerankerRow';
 import { RetrievalTuningSection } from './RetrievalTuningSection';
 import {
   clamp,
   COMPRESSION_MODES,
   QUANTIZATIONS,
-  toFinite,
   type CompressionMode,
   type Quantization,
   type VectorCompression,
 } from './searchSettingsOptions';
-import { NUMBER_FIELD_CLASS, SWITCH_CLASS } from './settingsStyles';
 import {
-  useDownloadRerankerMutation,
-  useRerankerStatusQuery,
-} from '../hooks/useRerankerQuery';
+  RangeStepperControl,
+  SettingsNumberField,
+  SettingsSelect,
+} from './SettingControls';
+import { SWITCH_CLASS } from './settingsStyles';
 import { useSettingsQuery, useUpdateSettingsMutation } from '../hooks/useSettingsQuery';
 
 export { describeReranker, formatDownloadSize } from './rerankerStatus';
@@ -27,8 +27,6 @@ export { describeReranker, formatDownloadSize } from './rerankerStatus';
 export function SearchTab() {
   const { data: settings, isPending, refetch } = useSettingsQuery();
   const { mutate: updateSettings } = useUpdateSettingsMutation();
-  const { data: rerankerStatus } = useRerankerStatusQuery();
-  const downloadReranker = useDownloadRerankerMutation();
   const [showAdvancedTuning, setShowAdvancedTuning] = useState(false);
   // A half-typed number is UI state, so each field may hold a draft while it
   // has focus. Everything else reads the query — the repository is the source
@@ -64,7 +62,7 @@ export function SearchTab() {
         // Drop the draft either way: on success the query already holds the
         // saved value, on failure the field must snap back to what is stored.
         onSettled: () => clearDrafts(draftKeys),
-      }
+      },
     );
   };
 
@@ -73,7 +71,10 @@ export function SearchTab() {
   if (isPending) {
     return (
       <>
-        <PageHeader title="Search" description="Shape how Lattice finds and ranks information in your library." />
+        <PageHeader
+          title="Search"
+          description="Shape how Lattice finds and ranks information in your library."
+        />
         <p className="text-sm text-text-muted">Loading…</p>
       </>
     );
@@ -82,16 +83,15 @@ export function SearchTab() {
   if (!searchSettings) {
     return (
       <>
-        <PageHeader title="Search" description="Shape how Lattice finds and ranks information in your library." />
-        <div className="flex items-center gap-2">
+        <PageHeader
+          title="Search"
+          description="Shape how Lattice finds and ranks information in your library."
+        />
+        <div className="flex items-center gap-3">
           <p className="text-sm text-text-muted">Couldn&apos;t read search settings.</p>
-          <button
-            type="button"
-            onClick={() => void refetch()}
-            className="text-sm text-text-secondary transition-colors duration-fast hover:text-text-primary"
-          >
+          <Button type="button" variant="outline" size="sm" onClick={() => void refetch()}>
             Retry
-          </button>
+          </Button>
         </div>
       </>
     );
@@ -101,42 +101,29 @@ export function SearchTab() {
   const compressionDims = fieldValue('vectorCompressionDims', compression.dims);
   const saveCompression = (
     updates: Partial<VectorCompression>,
-    draftKeys: string[] = []
+    draftKeys: string[] = [],
   ) =>
     saveSearchUpdates(
       { vectorIndexCompression: { ...compression, ...updates } },
-      draftKeys
+      draftKeys,
     );
 
   const maxResults = fieldValue('maxResults', searchSettings.maxResults);
   const similarityThreshold = fieldValue(
     'similarityThreshold',
-    searchSettings.similarityThreshold
+    searchSettings.similarityThreshold,
   );
   const hybridSearchAlpha = fieldValue('hybridSearchAlpha', searchSettings.hybridSearchAlpha);
 
   return (
     <>
-      <PageHeader title="Search" description="Shape how Lattice finds and ranks information in your library." />
+      <PageHeader
+        title="Search"
+        description="Shape how Lattice finds and ranks information in your library."
+      />
 
       <SettingsSection title="Retrieval">
-        <SettingsRow
-          label="Reranker"
-          hint={describeReranker(rerankerStatus, downloadReranker.error)}
-        >
-          {rerankerStatus && !rerankerStatus.installed ? (
-            <button
-              type="button"
-              onClick={() => downloadReranker.mutate()}
-              disabled={downloadReranker.isPending}
-              className="h-8 shrink-0 rounded-sm border border-border-default px-2.5 text-sm text-text-primary transition-colors duration-fast hover:border-accent disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {downloadReranker.isPending
-                ? 'Downloading…'
-                : `Download (${formatDownloadSize(rerankerStatus.downloadBytes)})`}
-            </button>
-          ) : null}
-        </SettingsRow>
+        <RerankerRow />
 
         <SettingsRow
           label="Read web pages"
@@ -179,64 +166,51 @@ export function SearchTab() {
           hint="Truncation needs a model trained for it (Qwen3 Embedding); it is ignored for models that are not"
           htmlFor="search-vector-compression-mode"
         >
-          <select
+          <SettingsSelect
             id="search-vector-compression-mode"
             value={compression.mode}
-            onChange={(event) =>
-              saveCompression({ mode: event.target.value as CompressionMode })
-            }
-            className={settingsFieldClass}
-          >
-            {COMPRESSION_MODES.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+            onValueChange={(next) => saveCompression({ mode: next as CompressionMode })}
+            options={COMPRESSION_MODES.map((option) => ({
+              value: option.value,
+              label: option.label,
+            }))}
+          />
         </SettingsRow>
 
         {compression.mode === 'truncated' && (
           <>
             <SettingsRow label="Stored dimensions" htmlFor="search-vector-compression-dims">
-              <input
+              <SettingsNumberField
                 id="search-vector-compression-dims"
-                type="number"
                 min={1}
                 step={1}
+                integer
                 value={compressionDims}
-                onChange={(event) =>
-                  setDraft(
-                    'vectorCompressionDims',
-                    toFinite(event.target.value, compressionDims)
-                  )
-                }
-                onBlur={() =>
+                onDraftChange={(next) => setDraft('vectorCompressionDims', next)}
+                onCommit={(next) =>
                   saveCompression(
-                    {
-                      dims: Math.max(1, Math.round(compressionDims)),
-                    },
-                    ['vectorCompressionDims']
+                    { dims: Math.max(1, Math.round(next)) },
+                    ['vectorCompressionDims'],
                   )
                 }
-                className={NUMBER_FIELD_CLASS}
               />
             </SettingsRow>
 
-            <SettingsRow label="Stored precision" htmlFor="search-vector-compression-quantization">
-              <select
+            <SettingsRow
+              label="Stored precision"
+              htmlFor="search-vector-compression-quantization"
+            >
+              <SettingsSelect
                 id="search-vector-compression-quantization"
                 value={compression.quantization}
-                onChange={(event) =>
-                  saveCompression({ quantization: event.target.value as Quantization })
+                onValueChange={(next) =>
+                  saveCompression({ quantization: next as Quantization })
                 }
-                className={settingsFieldClass}
-              >
-                {QUANTIZATIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
+                options={QUANTIZATIONS.map((option) => ({
+                  value: option.value,
+                  label: option.label,
+                }))}
+              />
             </SettingsRow>
           </>
         )}
@@ -255,39 +229,34 @@ export function SearchTab() {
         </SettingsRow>
 
         <SettingsRow label="Maximum results" htmlFor="search-max-results">
-          <input
+          <SettingsNumberField
             id="search-max-results"
-            type="number"
             min={1}
             step={1}
+            integer
             value={maxResults}
-            onChange={(event) => setDraft('maxResults', toFinite(event.target.value, maxResults))}
-            onBlur={() =>
-              saveSearchUpdates({ maxResults: Math.max(1, Math.round(maxResults)) }, [
-                'maxResults',
-              ])
+            onDraftChange={(next) => setDraft('maxResults', next)}
+            onCommit={(next) =>
+              saveSearchUpdates({ maxResults: Math.max(1, Math.round(next)) }, ['maxResults'])
             }
-            className={NUMBER_FIELD_CLASS}
           />
         </SettingsRow>
 
         <SettingsRow label="Similarity threshold" htmlFor="search-similarity">
-          <input
+          <RangeStepperControl
             id="search-similarity"
-            type="number"
+            label="Similarity threshold"
             min={0}
             max={1}
             step={0.01}
             value={similarityThreshold}
-            onChange={(event) =>
-              setDraft('similarityThreshold', toFinite(event.target.value, similarityThreshold))
+            onDraftChange={(next) => setDraft('similarityThreshold', next)}
+            onCommit={(next) =>
+              saveSearchUpdates(
+                { similarityThreshold: clamp(next, 0, 1) },
+                ['similarityThreshold'],
+              )
             }
-            onBlur={() =>
-              saveSearchUpdates({ similarityThreshold: clamp(similarityThreshold, 0, 1) }, [
-                'similarityThreshold',
-              ])
-            }
-            className={NUMBER_FIELD_CLASS}
           />
         </SettingsRow>
 
@@ -296,22 +265,22 @@ export function SearchTab() {
           hint="0 is keyword only, 1 is vector only"
           htmlFor="search-hybrid-alpha"
         >
-          <input
+          <RangeStepperControl
             id="search-hybrid-alpha"
-            type="number"
+            label="Hybrid alpha"
             min={0}
             max={1}
             step={0.01}
+            minLabel="Keyword"
+            maxLabel="Vector"
             value={hybridSearchAlpha}
-            onChange={(event) =>
-              setDraft('hybridSearchAlpha', toFinite(event.target.value, hybridSearchAlpha))
+            onDraftChange={(next) => setDraft('hybridSearchAlpha', next)}
+            onCommit={(next) =>
+              saveSearchUpdates(
+                { hybridSearchAlpha: clamp(next, 0, 1) },
+                ['hybridSearchAlpha'],
+              )
             }
-            onBlur={() =>
-              saveSearchUpdates({ hybridSearchAlpha: clamp(hybridSearchAlpha, 0, 1) }, [
-                'hybridSearchAlpha',
-              ])
-            }
-            className={NUMBER_FIELD_CLASS}
           />
         </SettingsRow>
       </SettingsSection>

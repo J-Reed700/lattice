@@ -12,6 +12,7 @@ import { deferred } from '@/tests/deferred';
 const api = vi.hoisted(() => ({
   startBatchFileImport: vi.fn(),
   getBatchJobStatus: vi.fn(),
+  cancelBatchJob: vi.fn().mockResolvedValue({ ok: true, data: 0 }),
   setDocumentsSpaceMembership: vi.fn(),
   attachMessageImages: vi.fn(),
   releaseMessageImages: vi.fn(),

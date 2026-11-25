@@ -52,7 +52,7 @@ function AcceptSourceBody({ programId, support, sharing, onClose, onTrusted }: P
         ))}
       </fieldset>
       <label htmlFor={`${id}-note`} className="mt-4 block text-xs font-medium text-text-secondary">Note (optional)</label>
-      <textarea id={`${id}-note`} value={note} onChange={(event) => setNote(event.target.value)} rows={2} className="mt-1 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" />
+      <textarea id={`${id}-note`} value={note} onChange={(event) => setNote(event.target.value)} rows={2} className="mt-1 w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm" />
       {set.error && <p role="alert" className="mt-2 text-xs text-danger-fg">{set.error.message}</p>}
       <div className="mt-5 flex justify-end gap-2">
         <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>

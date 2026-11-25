@@ -44,13 +44,13 @@ fn embed_windows_manifest() {
     );
 }
 
-/// Reserve the main thread's stack in the app and `export_bindings`; the test
-/// harnesses run their tests on spawned threads.
+/// Reserve the main thread's stack in the app, `export_bindings` and the
+/// examples; the test harnesses run their tests on spawned threads.
 fn reserve_main_thread_stack() {
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
-    for arg in main_thread_stack::link_args(&target_os, &target_env) {
-        println!("cargo::rustc-link-arg-bins={arg}");
+    for line in main_thread_stack::directives(&target_os, &target_env) {
+        println!("{line}");
     }
 }
 
@@ -110,6 +110,7 @@ fn main() {
                     "warm_up_active_utility_model",
                     "warm_up_learning_model",
                     "list_loaded_models",
+                    "warmup_status",
                     "last_learning_window_shortfall",
                     "get_active_chat_model",
                     "get_active_embedding_model",
@@ -143,6 +144,7 @@ fn main() {
                     "batch_search",
                     "reranker_status",
                     "download_reranker",
+                    "remove_reranker",
                 ]),
             )
             .plugin(
@@ -368,6 +370,8 @@ fn main() {
                     "get_sources_status",
                     "save_source_key",
                     "remove_source_key",
+                    "saved_web_article",
+                    "check_sourcing_address",
                 ]),
             )
             .plugin(
@@ -509,6 +513,8 @@ fn main() {
                     "start_learning_generation_job",
                     "cancel_learning_generation_job",
                     "retry_learning_generation_job",
+                    "prioritize_learning_generation_job",
+                    "reset_learning_lesson_preparation",
                     "get_learning_generation_job",
                     "list_learning_programs",
                     "get_learning_program",
@@ -521,9 +527,11 @@ fn main() {
                     "generate_learning_program",
                     "cancel_learning_outline",
                     "repair_learning_outline",
+                    "list_learning_outline_runs",
                     "accept_learning_program",
                     "prepare_learning_lesson",
                     "prepare_learning_module",
+                    "prepare_learning_lessons",
                     "get_learning_course_plan",
                     "plan_learning_course",
                     "edit_learning_course_plan_entry",
@@ -646,6 +654,7 @@ fn main() {
                     "get_learning_practice_profile",
                     "save_learning_practice_profile",
                     "start_practice_build",
+                    "cancel_practice_build",
                     "start_practice_session",
                     "get_practice_session",
                     "move_practice_stage",
@@ -673,7 +682,11 @@ fn main() {
             )
             .plugin(
                 "vault",
-                tauri_build::InlinedPlugin::new().commands(&["rescan_vault"]),
+                tauri_build::InlinedPlugin::new().commands(&[
+                    "rescan_vault",
+                    "list_vault_conflicts",
+                    "dismiss_vault_conflicts",
+                ]),
             )
             .plugin(
                 "transcription",

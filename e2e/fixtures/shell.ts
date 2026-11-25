@@ -1,5 +1,6 @@
 import { expect, test as base, type Page } from '@playwright/test';
 import { makeAppSettings } from '../../src/tests/fixtures/appSettings';
+import { mockActiveModels } from './activeModels';
 import { installTauriMock, serveCommands, type MockArgs } from './tauri';
 
 /** One fixed instant, so relative dates in fixtures read the same on every run. */
@@ -26,6 +27,7 @@ export async function installShell(page: Page): Promise<ShellBackend> {
   // Renderer checks must not wait for external font servers when DNS is offline.
   await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ contentType: 'text/css', body: '' }));
   const mock = await installTauriMock(page);
+  await mockActiveModels(page);
   const settings = makeAppSettings();
   const served = await serveCommands(page, () => ({
     get_settings: () => settings,
@@ -46,6 +48,8 @@ export async function installShell(page: Page): Promise<ShellBackend> {
     get_index_progress: () => ({ is_indexing: false, current_file: null, files_processed: 0, total_files: 0, percent_complete: 0, failed: 0, status: 'idle', paused: false, failures: [] }),
     detect_system_capabilities: () => ({ total_ram_gb: 16, cpu_cores: 8, cpu_architecture: 'e2e', gpu_type: 'none', gpu_acceleration: 'none', vram_gb: null, available_disk_gb: 100 }),
     list_downloaded_models: () => [],
+    // The window reads each model role's warm-up when it opens; none has begun.
+    warmup_status: () => [],
     list_journal_syntheses: () => [],
     list_conversation_spaces: () => [{ id: 'space_general', name: 'General', isArchived: false }],
     // The sidebar's recent conversations; chat fixtures replace these.

@@ -27,7 +27,7 @@ const space = (overrides: Partial<ConversationSpaceDto>): ConversationSpaceDto =
 
 const botany = space({
   id: 'botany', name: 'Botany', description: 'Plants', icon: '🌿', accentColor: '#3A7', spacePrompt: 'Cite field guides.',
-  toolPreferencesJson: JSON.stringify({ knowledge_base: true, web_search: true, deep_research_mode: false }),
+  toolPreferencesJson: JSON.stringify({ knowledge_base: true, strict_sources: true, web_search: true, deep_research_mode: false }),
 });
 const general = space({ id: GENERAL_SPACE_ID, name: 'General' });
 
@@ -59,13 +59,13 @@ describe('useSpaceEditor', () => {
     const { result } = setup('botany');
     expect(result.current).toMatchObject({
       spaceNameDraft: 'Botany', spaceDescriptionDraft: 'Plants', spaceIconDraft: '🌿', spaceAccentDraft: '#3A7',
-      spacePromptDraft: 'Cite field guides.', spaceKbDefault: true, spaceWebDefault: true, spaceDeepResearchDefault: false,
+      spacePromptDraft: 'Cite field guides.', spaceKbDefault: true, spaceStrictSourcesDefault: true, spaceWebDefault: true, spaceDeepResearchDefault: false,
     });
   });
 
   it('starts empty with no space selected, and does nothing on save or archive', async () => {
     const { result } = setup(null);
-    expect(result.current).toMatchObject({ spaceNameDraft: '', spaceIconDraft: '', spaceKbDefault: false, spaceWebDefault: false });
+    expect(result.current).toMatchObject({ spaceNameDraft: '', spaceIconDraft: '', spaceKbDefault: false, spaceStrictSourcesDefault: false, spaceWebDefault: false });
     await act(() => result.current.saveSpaceEnvironment());
     await act(() => result.current.setSelectedSpaceArchived(true));
     expect(api.updateConversationSpace).not.toHaveBeenCalled();
@@ -74,7 +74,7 @@ describe('useSpaceEditor', () => {
 
   it('treats a space with no saved tool preferences as all off', () => {
     const { result } = setup('plain', [space({ id: 'plain', name: 'Plain' })]);
-    expect(result.current).toMatchObject({ spaceNameDraft: 'Plain', spaceDescriptionDraft: '', spaceKbDefault: false, spaceDeepResearchDefault: false });
+    expect(result.current).toMatchObject({ spaceNameDraft: 'Plain', spaceDescriptionDraft: '', spaceKbDefault: false, spaceStrictSourcesDefault: false, spaceDeepResearchDefault: false });
   });
 
   it('creates a uniquely named space, selects it and opens its editor', async () => {
@@ -84,7 +84,7 @@ describe('useSpaceEditor', () => {
     expect(created).toBe(true);
     expect(api.createConversationSpace).toHaveBeenCalledWith({
       name: 'botany 2', description: null, icon: null, accentColor: null, spacePrompt: null,
-      toolPreferencesJson: JSON.stringify({ knowledgeBase: false, webSearch: false, deepResearchMode: false, enabledTools: [] }),
+      toolPreferencesJson: JSON.stringify({ knowledgeBase: false, strictSources: false, webSearch: false, deepResearchMode: false, enabledTools: [] }),
     });
     expect(store.setSelectedSpace).toHaveBeenCalledWith('new-space');
     expect(store.loadConversations).toHaveBeenCalledWith({ spaceId: 'new-space' });
@@ -112,12 +112,13 @@ describe('useSpaceEditor', () => {
       result.current.setSpaceAccentDraft('not-a-colour');
       result.current.setSpacePromptDraft('  Prefer herbarium records.  ');
       result.current.setSpaceKbDefault(false);
+      result.current.setSpaceStrictSourcesDefault(false);
       result.current.setSpaceWebDefault(false);
     });
     await act(() => result.current.saveSpaceEnvironment());
     expect(api.updateConversationSpace).toHaveBeenCalledWith({
       spaceId: 'botany', name: 'Botany', description: null, icon: '🌵', accentColor: null, spacePrompt: 'Prefer herbarium records.',
-      toolPreferencesJson: JSON.stringify({ knowledgeBase: false, webSearch: false, deepResearchMode: false, enabledTools: [] }),
+      toolPreferencesJson: JSON.stringify({ knowledgeBase: false, strictSources: false, webSearch: false, deepResearchMode: false, enabledTools: [] }),
       isArchived: null, sortOrder: null,
     });
   });
@@ -134,7 +135,7 @@ describe('useSpaceEditor', () => {
     await act(() => result.current.saveSpaceEnvironment());
     expect(api.updateConversationSpace).toHaveBeenCalledWith(expect.objectContaining({
       name: 'Plant science', description: 'Leaves and roots', icon: null, spacePrompt: null, accentColor: '#abc',
-      toolPreferencesJson: JSON.stringify({ knowledgeBase: true, webSearch: true, deepResearchMode: false, enabledTools: ['web_search', 'fetch_url_content'] }),
+      toolPreferencesJson: JSON.stringify({ knowledgeBase: true, strictSources: true, webSearch: true, deepResearchMode: false, enabledTools: ['web_search', 'fetch_url_content'] }),
     }));
   });
 

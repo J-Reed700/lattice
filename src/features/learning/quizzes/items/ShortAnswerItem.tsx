@@ -14,7 +14,7 @@ export function ShortAnswerEditor({ item, draft, disabled, promptId, onChange }:
     <label htmlFor={inputId} className="text-xs font-semibold text-text-secondary">Your answer</label>
     <input id={inputId} type="text" inputMode={item.answerHint?.numeric && !item.answerHint.unitHint ? 'decimal' : undefined} autoComplete="off" spellCheck value={draft.textResponse} disabled={disabled}
       aria-describedby={`${promptId} ${inputId}-hint`} onChange={(event) => onChange({ textResponse: event.target.value })}
-      className="mt-1.5 min-h-11 w-full rounded-xl border border-border bg-background px-4 text-base text-text-primary outline-hidden transition focus:border-accent focus:ring-2 focus:ring-accent/30 disabled:opacity-60" />
+      className="mt-1.5 min-h-11 w-full rounded-xl border border-border bg-bg px-4 text-base text-text-primary outline-hidden transition focus:border-accent focus:ring-2 focus:ring-accent/30 disabled:opacity-60" />
     <p id={`${inputId}-hint`} className="mt-2 text-xs leading-5 text-text-muted">{answerHintWords(item.answerHint)}</p>
   </div>;
 }

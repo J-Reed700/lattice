@@ -77,11 +77,11 @@ All live tests are `#[ignore]` lib tests in `crates/lattice-desktop/src/features
 ### What a live run touches
 
 - **Database:** a new SQLite file in the run's artifact directory, created with `create_new` and migrated from `migrations/`. The test refuses to run if the file exists. It never opens the user's library.
-- **Model:** the Learning model the app's own container selects from a copy of the app's settings file (`LATTICE_COURSE_SETTINGS`), with the key read from the keyring entry the installed app uses. Every call goes through a call log.
-- **Web:** real searches and page fetches through the container's web service, through the same call log.
+- **Model:** the llama.cpp server configured in the settings file named by `LATTICE_LLAMACPP_SETTINGS` (its `settings.llm` block). On Josh's machine this is his real remote Qwen3.8-27B llama-server with a 131k window. If `llamaCpp.authHeaderName` names a header, the value comes from `LATTICE_LLAMACPP_AUTH_HEADER_VALUE`, and a run without it stops. It is single-slot: while a run is going, the app's own chat queues behind it, and a run takes the server for hours.
+- **Web:** real searches (DuckDuckGo) and real page fetches through `WebService`, with its cache in `<run>/web/`.
 - **Disk:** every model call is recorded (`call-N.json`), so a run directory can reach hundreds of files.
 - **Window:** a lesson needs about 20k tokens of window to be written. The 9B at a saved context of 8,704 tokens could not write lessons (2026-10-16), so a settings file or recipe for a lesson run needs a larger window; the scored eval's 9B recipe serves and configures 32,768 (§7).
-- **Outages:** the container's own model wrapper waits out reloads, and the job runtime defers transient errors and redelivers.
+- **Outages:** the test wraps the model in the app's `PatientModel`, so the outline waits while the server reloads instead of failing on the first 503 (accept1 failed that way after 81 seconds, before the wrapper was added). The lesson job inside the test runs through the job runtime, which defers transient errors and redelivers.
 
 Run one live course at a time, and only one local llama-server at a time.
 
@@ -102,25 +102,23 @@ Name the binary `<label>-<short sha>`, as in `artifacts/course-e2e-2026-10-14/bi
 
 ### The course end-to-end test
 
-`course_e2e::live_topic_courses_pass_review_and_prepare_their_first_modules`. One process, one container and one database: every course of the run starts at once, as a learner starting each, so the web pacer, source breakers and cloud scheduler see one app's request rate.
+`course_e2e::live_topic_course_passes_review_and_prepares_its_first_lesson`.
 
 | Variable | Meaning |
 |---|---|
-| `LATTICE_COURSE_SETTINGS` | A directory holding a copy of the app's `settings.json`. Vault must be off |
-| `LATTICE_LEARNING_PYTHON` | The Python bundle (`crates/lattice-desktop/resources/learning-python`); it must verify |
-| `LATTICE_COURSE_REQUESTS` | A directory; every `*.json` in it is one `GenerateLearningProgramRequestDto`, its course name the file stem, in file-name order. Each must be topic-only (`documentIds` and `sourceUrls` empty) |
-| `LATTICE_COURSE_ARTIFACTS` | A new directory for this run; each course gets `<artifacts>/<course name>/` |
-| `LATTICE_COURSE_MANUAL_REPAIRS` | Repair presses allowed per course after generation. Default 0, which proves generation alone yields an acceptable outline |
-| `LATTICE_COURSE_RETRY_FAILED` | Set to 1 with `LATTICE_COURSE_CONTINUE`: press "Retry lesson preparation" once on each lesson whose preparation failed, before waiting. Default 0 |
-| `LATTICE_COURSE_COMMIT` | The commit under test, recorded in `run.json` |
-| `LATTICE_COURSE_REPLAY_FROM` | An earlier run's artifacts directory; its `calls/` answers this run's model and web calls (strict with `LATTICE_COURSE_REPLAY_STRICT`). Unset records into `calls/` |
+| `LATTICE_LLAMACPP_SETTINGS` | Settings JSON; the test reads `settings.llm`. The app's file is `$HOME/Library/Application Support/tech.lattice.app/settings.json` |
+| `LATTICE_COURSE_REQUEST` | A `GenerateLearningProgramRequestDto` JSON. Must be topic-only (`documentIds` and `sourceUrls` empty) |
+| `LATTICE_COURSE_ARTIFACTS` | A new directory for this run |
+| `LATTICE_COURSE_MANUAL_REPAIRS` | Repair presses allowed after generation. Default 0, which proves generation alone yields an acceptable outline |
 
 What it does and asserts:
 
-1. Once: builds the container with `interfaces::di::headless::open`, starts the web plugin (`web::plugin::start`), and registers every job kind the app registers (`learning::plugin::job_kinds`).
-2. Per course, side by side (`join_all`): the bodies of the app's commands: `generate_outline`, then `plan_course` as the UI does after every outline operation; Repair (`repair_outline`, then `plan_course`) up to `LATTICE_COURSE_MANUAL_REPAIRS` times while the outline has not passed; a review that never passes is that course's error; `accept_program` (asserts `Active`); `prepare_module` for the whole of module 1. A course's error is recorded and does not stop the others.
-3. Once: waits until every job of every registered kind has ended, or until a file named `stop` appears in the artifacts directory (the run then suspends unfinished jobs, writes what exists and fails; `LATTICE_COURSE_CONTINUE=1` resumes them).
-4. Writes, per course in `<artifacts>/<course name>/`: `module.json`, `outline-*.json`, `lessons.json` (each lesson's end state and job), `course-summary.json` (with its error, if any); in `<artifacts>`: `jobs.json`, `run.json` (per course: name, program id, module id, review status, manual repairs, error) and `app.log` (the app's file-log format, readable by `scripts/lesson_trace.py`). Only then fails, naming the courses, if the run was stopped at request or any course has an error or did not prepare its module.
+1. Runs `service::generate_with_references_and_progress` with the real model and web, exactly as the app does.
+2. Presses Repair (`outline_draft::repair_saved`) up to `LATTICE_COURSE_MANUAL_REPAIRS` times while the outline has not passed.
+3. Asserts the outline review status is `Passed`.
+4. Accepts the course (`service::accept`) and asserts it is `Active`.
+5. Starts a lesson-preparation job for the first lesson of module 1 and runs it through the native job runtime with the production worker (`small::run_and_confirm`). Transient failures stay queued and are redelivered.
+6. Asserts the job completed and, through a new database connection, that the lesson is `Ready` with blocks and questions.
 
 Artifacts in the run directory:
 
@@ -137,15 +135,7 @@ Artifacts in the run directory:
 
 The log prints `LIVE COURSE generated: ...` after generation, `Live call N completed: <in> input / <out> output tokens, <finish reason>` per call, and `LIVE COURSE CONFIRMED: ...` on success.
 
-### Running the one-process run: `scripts/live-course-runs.sh`
-
-```bash
-scripts/live-course-runs.sh <binary> <label> <requests-dir> [artifacts-root]
-```
-
-One process, artifacts in `<artifacts-root>/<label>` (refused if it exists), log beside it as `<label>.log`. `LATTICE_COURSE_REPLAY_FROM_ROOT` and `LATTICE_COURSE_REPLAY_FROM_LABEL` (default `<label>`) replay `<root>/<label>/calls` (refused if it has none). It runs until its jobs end; creating `<artifacts-root>/<label>/stop` ends it in order. It prints the exit code, each course's lesson end states and the call counts at the end.
-
-### Older launcher: `scripts/live-course-e2e.sh` (superseded; it runs the single-request test, which no longer exists)
+### Running it: `scripts/live-course-e2e.sh`
 
 ```bash
 scripts/live-course-e2e.sh <binary> <label> <requests-dir> [artifacts-root]

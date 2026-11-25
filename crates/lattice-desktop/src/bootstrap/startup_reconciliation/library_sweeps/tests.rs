@@ -11,7 +11,6 @@ use std::time::Instant;
 use async_trait::async_trait;
 use reqwest::header::HeaderMap;
 use sha2::{Digest, Sha256};
-use sqlx::sqlite::SqlitePoolOptions;
 use tempfile::TempDir;
 
 use super::super::reconcile_orphaned_files;
@@ -55,14 +54,9 @@ impl ImageNetwork for NoNetwork {
 }
 
 async fn migrated_database() -> Database {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .idle_timeout(None)
-        .max_lifetime(None)
-        .connect("sqlite::memory:")
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     Database::new(pool)
 }
 

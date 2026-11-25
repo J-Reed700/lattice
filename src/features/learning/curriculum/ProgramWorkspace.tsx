@@ -1,7 +1,7 @@
-import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, ArrowRight, Layers3, PanelRightClose, PanelRightOpen } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ChevronDown, PanelRightClose, PanelRightOpen, SlidersHorizontal } from 'lucide-react';
 
 import { PlainError } from '@/components/PlainError';
 import { Button } from '@/components/ui/button';
@@ -22,14 +22,17 @@ import { StartingPointPanel } from '@/features/learning/curriculum/StartingPoint
 import { useLearningPlan } from '@/features/learning/curriculum/useLearningPlan';
 import { StudyHabitsBar, type FrameworkAction } from '@/features/learning/habits';
 import { LessonCard } from '@/features/learning/lessons/LessonCard';
+import { LessonPreparationControlCenter } from '@/features/learning/lessons/LessonPreparationControlCenter';
 import { LessonPreparationLine } from '@/features/learning/lessons/LessonPreparationLine';
 import { LessonPreparationStatus } from '@/features/learning/lessons/LessonPreparationProgress';
+import { buildPreparationControlModel } from '@/features/learning/lessons/preparationControlModel';
 import { coursePreparation, coursePreparationLine, paceLine, preparationPaceMinutes, preparationQueue, queuedLesson, unqueuedLessons } from '@/features/learning/lessons/preparationQueue';
 import { currentPreparationJobs, heldLessonIds } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { NotebookPanel, RecallPanel } from '@/features/learning/memory/MemoryPanels';
 import { useLearningMemory, useSaveLearningCardDraft } from '@/features/learning/memory/useLearningMemory';
 import { findOutlineCitation } from '@/features/learning/model/evidencePresentation';
 import { PortabilityPanel } from '@/features/learning/portability/PortabilityPanel';
+import { usePortabilityRunStore } from '@/features/learning/portability/portabilityRunStore';
 import { PracticeArea } from '@/features/learning/practice/home/PracticeArea';
 import { usePracticeView } from '@/features/learning/practice/home/usePracticeView';
 import { LessonQuizCallout } from '@/features/learning/quizzes/LessonQuizCallout';
@@ -49,7 +52,7 @@ import { useRepairLearningOutline } from '@/features/learning/workspace/useLearn
 import { CitationVisibilityToggle } from '@/features/reading/components/CitationVisibilityToggle';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import { useEffectiveTheme } from '@/hooks/useApplyTheme';
-import type { LearningLessonDto, LearningModuleDto, LearningProgramDto } from '@/lib/bindings';
+import type { LearningGenerationJob, LearningLessonDto, LearningModuleDto, LearningProgramDto } from '@/lib/bindings';
 import { flushPendingSaves } from '@/lib/pendingSaves';
 import type { StudyDestination, StudyTab } from '@/lib/studyActivity';
 
@@ -59,7 +62,7 @@ const LazyCanvasPanel = lazy(() => import('@/features/learning/canvas/CanvasPane
 type Tab = StudyTab;
 type NotebookDraft = { title: string; content: string };
 
-export function ProgramWorkspace({ program, destination, outlineGeneration, initialTangentId, onBack, onOpenProgram, onAccept, acceptPending, acceptError, onPrepare, onPrepareModule, onLessonOpened, preparePending, prepareError, onComplete, completePending, completeError, onReview }: {
+export function ProgramWorkspace({ program, destination, outlineGeneration, initialTangentId, onBack, onOpenProgram, onAccept, acceptPending, acceptError, onPrepare, onPrepareModule, onLessonOpened, preparePending, prepareError, onComplete, completePending, completeError, onReview, onReaderContextChange }: {
   destination?: StudyDestination;
   outlineGeneration?: OutlineOperation;
   initialTangentId?: string | null;
@@ -73,16 +76,27 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   onComplete: (lesson: LearningLessonDto) => void; completePending: boolean; completeError?: Error;
   /** Opens a lesson's claim review screen (UI design §2.3). */
   onReview?: (programId: string, lessonId: string, claimId?: string) => void;
+  /** Reports active tab / Tutor chat changes so ReaderPane can reset on switch. */
+  onReaderContextChange?: (context: string) => void;
 }) {
   const [moduleId, setModuleId] = useState(() => program.modules.find((m) => m.lessons.some((l) => l.id === program.summary.currentLessonId))?.id ?? program.modules[0]?.id ?? '');
   const [lessonId, setLessonId] = useState(program.summary.currentLessonId ?? program.modules[0]?.lessons[0]?.id ?? '');
   const [tab, setTab] = useState<Tab>('lessons');
+  const [tutorChatId, setTutorChatId] = useState<string | null>(null);
+  useEffect(() => {
+    onReaderContextChange?.(`${tab}:${tab === 'tutor' ? (tutorChatId ?? '') : ''}`);
+  }, [onReaderContextChange, tab, tutorChatId]);
   const [preparationExpanded, setPreparationExpanded] = useState(false);
+  const [controlCenterOpen, setControlCenterOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [goalOpen, setGoalOpen] = useState(false);
+  const [moduleDetailsOpen, setModuleDetailsOpen] = useState(false);
   const [reviewingTopics, setReviewingTopics] = useState(false);
   const [contextVisible, setContextVisible] = useState(true);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
+  const goalDetailsRef = useRef<HTMLDetailsElement>(null);
+  const moduleDetailsRef = useRef<HTMLDetailsElement>(null);
   const [canvasOpened, setCanvasOpened] = useState(false);
   const practiceView = usePracticeView({ kind: 'home' });
   // The quiz open in the Quizzes tab (runner or result), and a module test row to bring into view.
@@ -90,7 +104,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   const [quizModuleFocus, setQuizModuleFocus] = useState<string | null>(null);
   const [recallView, setRecallView] = useState<'lesson' | 'evolution' | 'brain-dump'>('lesson');
   const saveRecallDraft = useSaveLearningCardDraft();
-  const handleImported = (importedProgramId: string) => {
+  const handleImported = useCallback((importedProgramId: string) => {
     // A copy or another course: land on it, which resumes at its current lesson.
     if (importedProgramId !== program.summary.id) { onOpenProgram(importedProgramId); return; }
     // Import flushes pending saves first. Retained workbenches must now discard
@@ -100,7 +114,19 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
     setCanvasOpened(false);
     setQuizFormId(null);
     setNotebookDrafts({});
-  };
+  }, [onOpenProgram, practiceView, program.summary.id]);
+  const importSeq = usePortabilityRunStore((state) => state.importFlow.importSeq);
+  const lastImported = usePortabilityRunStore((state) => state.importFlow.lastImported);
+  const handledImportSeqRef = useRef(importSeq);
+  useEffect(() => {
+    if (importSeq <= handledImportSeqRef.current || !lastImported) return;
+    handledImportSeqRef.current = importSeq;
+    // If ImportCourseFlow was mounted inside PortabilityPanel, its own callback handles
+    // navigation; when unmounted (user switched tabs or left /studio), handle it here.
+    if (usePortabilityRunStore.getState().importFlow.mountedCount === 0) {
+      handleImported(lastImported.programId);
+    }
+  }, [handleImported, importSeq, lastImported]);
   const openedDestination = useRef<StudyDestination | undefined>(undefined);
   useEffect(() => {
     if (!destination?.tab || openedDestination.current === destination) return;
@@ -139,11 +165,43 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
     showCitations && program.sources.length > 0,
   );
   const visibleOutlineEvidence = showCitations && !outlineEvidence.isError ? outlineEvidence.data : null;
+  const allLessons = program.modules.flatMap((m) => m.lessons.map((lesson) => ({ module: m, lesson })));
+  const readyLessonIds = new Set(
+    allLessons
+      .filter(({ lesson }) => lesson.preparation === 'ready' || lesson.completed)
+      .map(({ lesson }) => lesson.id),
+  );
   const preparationPlan = useLearningPlan(activeProgram ? program.summary.id : '', preparePending);
-  const preparationJobs = preparationPlan.data?.jobs?.filter((job) => job.kind === 'lesson_preparation' && !job.endedByUpdate).sort((a, b) => b.createdAt - a.createdAt) ?? [];
+  const preparationJobs = currentPreparationJobs(preparationPlan.data?.jobs ?? []).filter((job) => !job.endedByUpdate).sort((a, b) => b.createdAt - a.createdAt);
   const queue = preparationQueue(preparationPlan.data?.jobs ?? []);
-  const preparationJob = queue.find((job) => job.status === 'running') ?? queue[0] ?? preparationJobs[0];
+  const queuedLessonIds = new Set(queue.flatMap((job) => job.lessonIds ?? []));
+  const isFailedJobResolvedOrSuperseded = (job: LearningGenerationJob) => {
+    const ids = job.lessonIds ?? [];
+    if (ids.length === 0) return false;
+    return ids.every(
+      (id) =>
+        readyLessonIds.has(id)
+        || queuedLessonIds.has(id)
+        || preparationJobs.some(
+          (other) =>
+            other.id !== job.id
+            && (other.createdAt > job.createdAt
+              || (other.createdAt === job.createdAt && (other.status === 'completed' || other.status === 'pending' || other.status === 'running')))
+            && (other.lessonIds?.includes(id) || heldLessonIds(other).includes(id)),
+        ),
+    );
+  };
+  const visiblePreparationJobs = preparationJobs.filter(
+    (job) => !(job.status === 'failed' && isFailedJobResolvedOrSuperseded(job)),
+  );
+  const preparationJob = queue.find((job) => job.status === 'running') ?? queue[0] ?? visiblePreparationJobs[0];
   const queuedMore = queue.filter((job) => job.id !== preparationJob?.id).length;
+  const failedPreparationJobs = visiblePreparationJobs.filter(
+    (job) =>
+      job.status === 'failed'
+      && job.id !== preparationJob?.id
+      && !job.lessonIds?.every((id) => queuedLessonIds.has(id)),
+  );
   // A course step that would prepare a lesson only opens it while the course's references index.
   // While the workspace is open, the course's index embeds first.
   useCourseIndexOpen(program.summary.id);
@@ -152,8 +210,12 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   const theme = useEffectiveTheme();
   const currentModule = program.modules.find((m) => m.id === moduleId) ?? program.modules[0];
   const planJobs = preparationPlan.data?.jobs ?? [];
+  const preparationAttentionCount = useMemo(() => {
+    if (!activeProgram) return 0;
+    const { counts } = buildPreparationControlModel(program, preparationPlan.data?.jobs ?? []);
+    return counts.active + counts.paused + counts.failed + counts.needs_review;
+  }, [activeProgram, program, preparationPlan.data?.jobs]);
   const unqueuedInModule = unqueuedLessons(currentModule?.lessons ?? [], planJobs);
-  const allLessons = program.modules.flatMap((m) => m.lessons.map((lesson) => ({ module: m, lesson })));
   const courseLine = coursePreparationLine(coursePreparation(allLessons.map(({ lesson }) => lesson), planJobs));
   const paceMinutes = preparationPaceMinutes(planJobs);
   const currentLesson = lessonId ? (currentModule?.lessons.find((l) => l.id === lessonId) ?? currentModule?.lessons[0]) : undefined;
@@ -230,6 +292,23 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
     return () => document.removeEventListener('keydown', closeOnEscape);
   }, [moreOpen]);
 
+  useEffect(() => {
+    if (!goalOpen && !moduleDetailsOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (moduleDetailsOpen) {
+        setModuleDetailsOpen(false);
+        moduleDetailsRef.current?.querySelector('summary')?.focus();
+      }
+      if (goalOpen) {
+        setGoalOpen(false);
+        goalDetailsRef.current?.querySelector('summary')?.focus();
+      }
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    return () => document.removeEventListener('keydown', closeOnEscape);
+  }, [goalOpen, moduleDetailsOpen]);
+
   const goToStep = (step: CourseStep) => {
     void afterNotebookSave(() => {
       const target = allLessons.find(({ lesson }) => lesson.id === step.lessonId);
@@ -305,72 +384,281 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
       }}
     >
       <div className="studio-workspace pb-12">
-        <div className="studio-course-toolbar">
-          <Button variant="ghost" type="button" disabled={savingBeforeMove} onClick={() => void afterNotebookSave(onBack)} className="studio-course-back disabled:opacity-50"><ArrowLeft size={15} /> {savingBeforeMove ? 'Saving your work…' : 'All programs'}</Button>
-          <div className="studio-course-tools"><CitationVisibilityToggle /><ProgramTangentsTrigger />{activeProgram && <CourseSyllabus compact program={program} moduleId={moduleId} evidence={visibleOutlineEvidence} onSelect={openLesson} onSelectModule={openModule} />}
-            <Button variant="ghost" type="button" aria-pressed={contextVisible} disabled={savingBeforeMove} onClick={() => void afterNotebookSave(() => setContextVisible((visible) => !visible))} className="studio-context-toggle disabled:opacity-50" title={contextVisible ? 'Hide lesson outline and notes' : 'Show lesson outline and notes'}>{contextVisible ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}<span>Outline & notes</span></Button>
-          </div>
-        </div>
-        {showCitations && <OutlineEvidenceStatus report={outlineEvidence} />}
-        <header className="studio-course-header">
-          <div className="studio-course-header-main">
-            <div className="studio-course-title-group">
-              <div className="studio-eyebrow"><Layers3 size={13} /> {program.summary.status === 'draft' ? 'Draft outline' : 'Active program'}</div>
-              {program.summary.status === 'draft' ? <><h1 className="sr-only">{title || 'Untitled program'}</h1><label className="sr-only" htmlFor="program-title">Program title</label><input id="program-title" aria-label="Program title" value={title} onChange={(e) => setTitle(e.target.value)} className="studio-course-title-input" /></> : <h1>{program.summary.title}</h1>}
-              {showGoal && <details className="studio-course-goal"><summary>Goal</summary><p className="mt-2 whitespace-pre-line">{goal}</p></details>}
+        <div className="studio-ws-header">
+          {/* Row 1 (~44px): Back link, crisp sans course title, inline progress pill, primary CTA & compact utilities */}
+          <header className="studio-header-row-1">
+            <div className="studio-header-identity">
+              <button
+                type="button"
+                disabled={savingBeforeMove}
+                onClick={() => void afterNotebookSave(onBack)}
+                className="studio-course-back disabled:opacity-50"
+              >
+                <ArrowLeft size={14} aria-hidden="true" />
+                <span>{savingBeforeMove ? 'Saving your work…' : 'All programs'}</span>
+              </button>
+              <span aria-hidden="true" className="h-4 w-px shrink-0 bg-border-subtle" />
+              {program.summary.status === 'draft' ? (
+                <>
+                  <span className="shrink-0 rounded-md bg-accent-muted px-2 py-0.5 text-[11px] font-semibold text-accent">Draft outline</span>
+                  <h1 className="sr-only">{title || 'Untitled program'}</h1>
+                  <label className="sr-only" htmlFor="program-title">Program title</label>
+                  <input id="program-title" aria-label="Program title" value={title} onChange={(e) => setTitle(e.target.value)} className="studio-course-title-input" />
+                </>
+              ) : (
+                <h1 className="studio-course-title font-sans font-semibold tracking-[-0.025em]" title={program.summary.title}>{program.summary.title}</h1>
+              )}
+              {showGoal && (
+                <details
+                  ref={goalDetailsRef}
+                  open={goalOpen}
+                  onToggle={(event) => setGoalOpen(event.currentTarget.open)}
+                  className="studio-course-goal"
+                >
+                  <summary>Goal</summary>
+                  <div className="studio-course-goal-card">
+                    <p className="whitespace-pre-line">{goal}</p>
+                  </div>
+                </details>
+              )}
+              <div className="studio-progress-pill" aria-label="Course progress">
+                <span>Lessons complete</span>
+                <strong>{completedCount}<span className="font-normal text-text-muted">/{allLessons.length}</span></strong>
+                <span className="studio-progress-pill-bar" aria-hidden="true">
+                  <span style={{ width: `${allLessons.length ? (completedCount / allLessons.length) * 100 : 0}%` }} />
+                </span>
+                {quizzes.data && quizzes.data.quizzesTotal > 0 && (
+                  <>
+                    <span aria-hidden="true" className="text-border-strong">·</span>
+                    <span>Quizzes passed</span>
+                    <strong>{quizzes.data.quizzesPassed}<span className="font-normal text-text-muted">/{quizzes.data.quizzesTotal}</span></strong>
+                  </>
+                )}
+              </div>
+              {topicsPlanned && (
+                <Button type="button" variant="outline" size="sm" disabled={savingBeforeMove} onClick={() => void afterNotebookSave(() => setReviewingTopics(true))} className="h-7 px-2 text-xs">
+                  Review topics
+                </Button>
+              )}
             </div>
-            <div className="studio-course-progress">
-              <div className="studio-course-progress-row"><span>Lessons complete</span><strong>{completedCount} <span className="font-normal text-text-muted">/ {allLessons.length}</span></strong></div>
-              <div className="studio-progress-track" aria-hidden="true"><span style={{ width: `${allLessons.length ? completedCount / allLessons.length * 100 : 0}%` }} /></div>
-              {topicsPlanned && <Button type="button" variant="outline" size="sm" disabled={savingBeforeMove} onClick={() => void afterNotebookSave(() => setReviewingTopics(true))} className="mt-2">Review topics</Button>}
-              {quizzes.data && quizzes.data.quizzesTotal > 0 && <div className="studio-course-progress-row mt-2"><span>Quizzes passed</span><strong>{quizzes.data.quizzesPassed} <span className="font-normal text-text-muted">/ {quizzes.data.quizzesTotal}</span></strong></div>}
-            </div>
-          </div>
-          {activeProgram && courseLine && <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-text-secondary">
-            <span>{courseLine}</span>
-            {paceMinutes != null && <span>{paceLine(paceMinutes)}</span>}
-          </div>}
-          {program.summary.status === 'draft' && <div className="studio-course-draft-actions"><p>{outlineBlocked ? 'Resolve the outline findings before starting this course.' : 'Starting prepares module 1 now, and each next module while you study.'}</p><div className="flex items-center gap-3">{acceptError && <span role="alert" className="max-w-xs text-sm text-danger-fg">{acceptError}</span>}<Button variant="outline" type="button" disabled={acceptPending || outlineBlocked || !title.trim()} onClick={() => onAccept(title.trim())} className="studio-button studio-button-primary disabled:opacity-50">{acceptPending ? 'Starting…' : 'Start this course'}</Button></div></div>}
-        </header>
-    <OutlineReviewPanel program={program} generation={outlineGeneration} repair={repair} />
 
-    {!program.sources.length && <p className="mt-3 text-xs leading-5 text-text-muted">Topic-based course · AI-authored from general knowledge. Add references in Sources to ground future lessons.</p>}
-    {!activeProgram && <CoursePlanStatus programId={program.summary.id} className="mt-3" />}
-    {!activeProgram && <CourseSyllabus program={program} moduleId={moduleId} evidence={visibleOutlineEvidence} onSelect={openLesson} onSelectModule={openModule} renderTopics={(id) => <LessonTopics entry={topicsOf(id)} />} />}
-    {activeProgram && <StudyHabitsBar className="studio-habits" onSelectFramework={handleSelectFramework} />}
-    <div className="grid min-w-0 grid-cols-1 gap-2">
-      <CourseNavigator modules={program.modules} moduleId={currentModule?.id ?? ''} lessonId={currentLesson?.id ?? ''} disabled={savingBeforeMove} onModuleChange={openModule} onLessonChange={(id) => void afterNotebookSave(() => setLessonId(id))}>
-        {activeProgram ? <CourseCoach program={program} dueCount={memoryQuery.data?.dueCount ?? 0} disabled={savingBeforeMove || preparePending} onStep={goToStep} /> : resume && <Button type="button" aria-label={`Continue lesson: ${resume.lesson.title}`} title={resume.lesson.title} disabled={savingBeforeMove} onClick={() => void afterNotebookSave(() => { setModuleId(resume.module.id); setLessonId(resume.lesson.id); setTab('lessons'); })} className="studio-button studio-button-primary">Continue lesson <ArrowRight size={15} /></Button>}
-      </CourseNavigator>
-      <main className="min-w-0"><section id="workspace-panel" tabIndex={-1} aria-label="Program workspace content" className="studio-workspace-panel">
-        <div className="studio-module-header">
-          <div className="min-w-0 flex-1">
-            <h2 className="truncate">{currentModule?.title}</h2>
-            <p className="line-clamp-1">{currentModule?.summary}</p>
-            {showCitations && currentModule && <OutlineCitation citation={findOutlineCitation(visibleOutlineEvidence, 'module_summary', currentModule.id, currentModule.summary)} evidence={visibleOutlineEvidence} />}
-          </div>
-          {activeProgram && onPrepareModule && currentModule && unqueuedInModule.length > 0 && <Button type="button" variant="outline" disabled={preparePending || Boolean(waitsForIndex)} onClick={() => onPrepareModule(currentModule)} className="studio-button shrink-0 disabled:opacity-50">Prepare all lessons</Button>}
-          <details className="group relative shrink-0 text-sm">
-            <summary className="min-h-10 cursor-pointer list-none rounded-full border border-border px-3 py-2 text-text-secondary hover:border-accent/40 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent">Module details <span className="text-accent">⌄</span></summary>
-            <div className="absolute right-0 z-20 mt-2 w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-border bg-surface p-4 shadow-xl">
-              <h3 className="font-medium text-text-primary">Outcomes</h3>
-              <ul className="mt-2 space-y-3 text-sm leading-5 text-text-secondary">{currentModule?.outcomes.map((outcome, index) => <li key={outcome}><div className="flex gap-2"><span aria-hidden="true">•</span><span>{outcome}</span></div>{showCitations && <OutlineCitation citation={findOutlineCitation(visibleOutlineEvidence, 'outcome', currentModule.id, outcome, index)} evidence={visibleOutlineEvidence} className="ml-4" />}</li>)}</ul>
+            <div className="studio-header-actions">
+              {activeProgram ? (
+                <CourseCoach program={program} dueCount={memoryQuery.data?.dueCount ?? 0} disabled={savingBeforeMove || preparePending} onStep={goToStep} />
+              ) : resume ? (
+                <Button
+                  type="button"
+                  size="default"
+                  aria-label={`Continue lesson: ${resume.lesson.title}`}
+                  title={resume.lesson.title}
+                  disabled={savingBeforeMove}
+                  onClick={() => void afterNotebookSave(() => { setModuleId(resume.module.id); setLessonId(resume.lesson.id); setTab('lessons'); })}
+                >
+                  Continue lesson <ArrowRight size={14} />
+                </Button>
+              ) : null}
             </div>
-          </details>
+          </header>
+
+          {showCitations && <OutlineEvidenceStatus report={outlineEvidence} />}
+          {activeProgram && courseLine && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border-subtle py-1.5 text-xs text-text-secondary">
+              <span>{courseLine}</span>
+              {paceMinutes != null && <span className="text-text-tertiary">{paceLine(paceMinutes)}</span>}
+            </div>
+          )}
+          {program.summary.status === 'draft' && (
+            <div className="studio-course-draft-actions">
+              <p>{outlineBlocked ? 'Resolve the outline findings before starting this course.' : 'Starting prepares module 1 now, and each next module while you study.'}</p>
+              <div className="flex items-center gap-3">
+                {acceptError && <span role="alert" className="max-w-xs text-xs text-danger-fg">{acceptError}</span>}
+                <Button type="button" disabled={acceptPending || outlineBlocked || !title.trim()} onClick={() => onAccept(title.trim())}>
+                  {acceptPending ? 'Starting…' : 'Start this course'}
+                </Button>
+              </div>
+            </div>
+          )}
+          <OutlineReviewPanel program={program} generation={outlineGeneration} repair={repair} />
+          {!activeProgram && <CoursePlanStatus programId={program.summary.id} className="mt-2" />}
+          {!activeProgram && <CourseSyllabus program={program} moduleId={moduleId} evidence={visibleOutlineEvidence} onSelect={openLesson} onSelectModule={openModule} renderTopics={(id) => <LessonTopics entry={topicsOf(id)} />} />}
+
+          {/* Row 2 (~40px): Clean underline tabs dock + course utilities & More menu */}
+          <nav aria-label="Module workspace" className="studio-workspace-tabs">
+            <NavigationTabs
+              label="Program workspace"
+              value={practiceTab ? 'workbench' : tab}
+              disabled={savingBeforeMove}
+              options={primary
+                .filter((item) => activeProgram || item.id === 'lessons' || item.id === 'sources')
+                .map((item) => ({
+                  ...item,
+                  badge: item.id === 'recall' && memoryQuery.data?.dueCount ? memoryQuery.data.dueCount : undefined,
+                }))}
+              onValueChange={selectTab}
+              onReselect={(id) => { if (id === 'workbench') practiceView.openHome(); }}
+              idPrefix="workspace-tab"
+              panelId="workspace-panel"
+              actions={
+                <div className="ml-auto flex items-center gap-1 py-1">
+                  {activeProgram && <CourseSyllabus compact program={program} moduleId={moduleId} evidence={visibleOutlineEvidence} onSelect={openLesson} onSelectModule={openModule} />}
+                  <ProgramTangentsTrigger />
+                  {activeProgram && <StudyHabitsBar compact onSelectFramework={handleSelectFramework} />}
+                  <span aria-hidden="true" className="mx-0.5 h-4 w-px bg-border-subtle" />
+                  <div className="relative">
+                    <button
+                      ref={moreButtonRef}
+                      type="button"
+                      aria-haspopup="menu"
+                      aria-expanded={moreOpen}
+                      aria-current={['plan', 'canvas', 'portability'].includes(tab) ? 'page' : undefined}
+                      aria-controls="workspace-more-menu"
+                      onClick={() => setMoreOpen((value) => !value)}
+                      className={`inline-flex h-8 items-center gap-1 rounded-lg px-2.5 text-xs font-medium transition-colors focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring ${
+                        ['plan', 'canvas', 'portability'].includes(tab)
+                          ? 'bg-accent-muted text-accent'
+                          : 'text-text-secondary hover:bg-surface-raised hover:text-text-primary'
+                      }`}
+                    >
+                      More <ChevronDown size={13} aria-hidden="true" className={`transition-transform ${moreOpen ? 'rotate-180' : ''}`} />
+                    </button>
+                    {moreOpen && (
+                      <div
+                        id="workspace-more-menu"
+                        ref={moreMenuRef}
+                        role="menu"
+                        aria-label="More workspace tools"
+                        onKeyDown={(event) => {
+                          if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+                          event.preventDefault();
+                          const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'));
+                          const index = items.indexOf(document.activeElement as HTMLButtonElement);
+                          const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length;
+                          items[next]?.focus();
+                        }}
+                        className="surface-pop absolute right-0 top-full z-30 mt-1 w-48 rounded-xl bg-surface-overlay p-1 shadow-lg"
+                      >
+                        {(activeProgram
+                          ? [{ id: 'plan' as const, label: 'Plan' }, { id: 'canvas' as const, label: 'Canvas' }, { id: 'portability' as const, label: 'Import & export' }]
+                          : [{ id: 'portability' as const, label: 'Import & export' }]
+                        ).map((item) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            role="menuitem"
+                            aria-current={tab === item.id ? 'page' : undefined}
+                            onClick={() => selectMoreTab(item.id)}
+                            className={`flex h-8 w-full items-center rounded-lg px-2.5 text-left text-ui transition-colors focus-visible:bg-surface-raised focus-visible:outline-hidden ${
+                              tab === item.id
+                                ? 'bg-accent-muted font-medium text-accent'
+                                : 'text-text-primary hover:bg-surface-raised'
+                            }`}
+                          >
+                            {item.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              }
+            />
+          </nav>
+
+          {/* Slim inline context strip (~36px): Module heading, Module/Lesson pickers & reading tools */}
+          <div className="studio-context-strip">
+            <div className="studio-context-strip-left">
+              <h2 className="studio-module-title-inline" title={currentModule?.summary ? `${currentModule.title} — ${currentModule.summary}` : currentModule?.title}>
+                {currentModule?.title}
+              </h2>
+              <CourseNavigator
+                modules={program.modules}
+                moduleId={currentModule?.id ?? ''}
+                lessonId={currentLesson?.id ?? ''}
+                disabled={savingBeforeMove}
+                onModuleChange={openModule}
+                onLessonChange={(id) => void afterNotebookSave(() => setLessonId(id))}
+              />
+            </div>
+            <div className="studio-context-strip-right">
+              {activeProgram && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setControlCenterOpen(true)}
+                  className="gap-1.5"
+                >
+                  <SlidersHorizontal size={13} aria-hidden="true" />
+                  <span>Preparation</span>
+                  {preparationAttentionCount > 0 && (
+                    <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-accent-muted px-1 text-[10px] font-semibold tabular-nums text-accent">
+                      {preparationAttentionCount}
+                    </span>
+                  )}
+                </Button>
+              )}
+              {activeProgram && onPrepareModule && currentModule && unqueuedInModule.length > 0 && (
+                <Button type="button" variant="outline" size="sm" disabled={preparePending || Boolean(waitsForIndex)} onClick={() => onPrepareModule(currentModule)}>
+                  Prepare all lessons
+                </Button>
+              )}
+              <details
+                ref={moduleDetailsRef}
+                open={moduleDetailsOpen}
+                onToggle={(event) => setModuleDetailsOpen(event.currentTarget.open)}
+                className="group relative shrink-0 text-xs"
+              >
+                <summary className="inline-flex h-7 cursor-pointer list-none items-center gap-1 rounded-md border border-border-subtle bg-surface px-2.5 font-medium text-text-secondary transition-colors hover:border-border-default hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring">
+                  Module details <ChevronDown size={12} aria-hidden="true" className="text-text-muted transition group-open:rotate-180" />
+                </summary>
+                <div className="surface-pop absolute right-0 z-20 mt-1.5 w-[min(24rem,calc(100vw-2rem))] rounded-xl bg-surface-overlay p-4 shadow-lg">
+                  {currentModule?.summary && <p className="mb-2 text-xs leading-5 text-text-secondary">{currentModule.summary}</p>}
+                  {showCitations && currentModule && (
+                    <OutlineCitation citation={findOutlineCitation(visibleOutlineEvidence, 'module_summary', currentModule.id, currentModule.summary)} evidence={visibleOutlineEvidence} className="mb-3" />
+                  )}
+                  <h3 className="text-xs font-semibold text-text-primary">Outcomes</h3>
+                  <ul className="mt-2 space-y-2.5 text-xs leading-5 text-text-secondary">
+                    {currentModule?.outcomes.map((outcome, index) => (
+                      <li key={outcome}>
+                        <div className="flex gap-2"><span aria-hidden="true">•</span><span>{outcome}</span></div>
+                        {showCitations && <OutlineCitation citation={findOutlineCitation(visibleOutlineEvidence, 'outcome', currentModule.id, outcome, index)} evidence={visibleOutlineEvidence} className="ml-4" />}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </details>
+              <CitationVisibilityToggle />
+              <Button
+                variant="ghost"
+                size="sm"
+                type="button"
+                aria-pressed={contextVisible}
+                disabled={savingBeforeMove}
+                onClick={() => void afterNotebookSave(() => setContextVisible((visible) => !visible))}
+                className="studio-context-toggle disabled:opacity-50"
+                title={contextVisible ? 'Hide lesson outline and notes' : 'Show lesson outline and notes'}
+              >
+                {contextVisible ? <PanelRightClose size={14} /> : <PanelRightOpen size={14} />}
+                <span className="hidden sm:inline">Outline & notes</span>
+              </Button>
+            </div>
+          </div>
         </div>
-        <nav aria-label="Module workspace" className="studio-workspace-tabs"><NavigationTabs label="Program workspace" value={practiceTab ? 'workbench' : tab} disabled={savingBeforeMove} options={primary.filter((item) => activeProgram || item.id === 'lessons' || item.id === 'sources').map((item) => ({ ...item, badge: item.id === 'recall' && memoryQuery.data?.dueCount ? memoryQuery.data.dueCount : undefined }))} onValueChange={selectTab} onReselect={(id) => { if (id === 'workbench') practiceView.openHome(); }} idPrefix="workspace-tab" panelId="workspace-panel" actions={<div className="relative ml-auto"><button ref={moreButtonRef} type="button" aria-haspopup="menu" aria-expanded={moreOpen} aria-current={['plan', 'canvas', 'portability'].includes(tab) ? 'page' : undefined} aria-controls="workspace-more-menu" onClick={() => setMoreOpen((value) => !value)} className="min-h-11 rounded-lg px-3 text-sm font-medium text-text-secondary hover:bg-background focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent">More <span aria-hidden="true">⌄</span></button>{moreOpen && <div id="workspace-more-menu" ref={moreMenuRef} role="menu" aria-label="More workspace tools" onKeyDown={(event) => { if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return; event.preventDefault(); const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')); const index = items.indexOf(document.activeElement as HTMLButtonElement); const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length; items[next]?.focus(); }} className="absolute right-0 top-full z-30 mt-1 w-52 rounded-xl border border-border bg-surface p-1.5 shadow-xl">{(activeProgram ? [{ id: 'plan' as const, label: 'Plan' }, { id: 'canvas' as const, label: 'Canvas' }, { id: 'portability' as const, label: 'Import & export' }] : [{ id: 'portability' as const, label: 'Import & export' }]).map((item) => <button key={item.id} type="button" role="menuitem" aria-current={tab === item.id ? 'page' : undefined} onClick={() => selectMoreTab(item.id)} className="flex min-h-11 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary hover:bg-background focus-visible:bg-background focus-visible:outline-hidden">{item.label}</button>)}</div>}</div>} /></nav>
+
+        <div className="grid min-w-0 grid-cols-1 gap-2">
+      <main className="min-w-0"><section id="workspace-panel" tabIndex={-1} aria-label="Program workspace content" className="studio-workspace-panel">
 
         {activeProgram && tab === 'starting_point' && <div className="mt-4"><StartingPointPanel programId={program.summary.id} onStudy={(lessonId) => goToStep({ kind: 'lesson', title: '', reason: '', lessonId })} onChallenge={(lessonId) => goToStep({ kind: 'assessment', title: '', reason: '', lessonId })} /></div>}
         <CourseIndexNotice programId={program.summary.id} />
         {/* The full panel belongs to Lessons; elsewhere one line keeps the tab's own content in view. */}
         {activeProgram && (tab === 'lessons'
-          ? <LessonPreparationStatus job={preparationJob} queuedMore={queuedMore} pending={preparePending} programId={program.summary.id} revision={program.summary.revision} error={prepareError?.message} expanded={preparationExpanded} onExpandedChange={setPreparationExpanded} lessonTitles={lessonTitles} onReview={openReview} />
-          : <LessonPreparationLine job={preparationJob} queuedMore={queuedMore} pending={preparePending} programId={program.summary.id} error={prepareError?.message} onView={() => selectTab('lessons')} />)}
+          ? <LessonPreparationStatus job={preparationJob} queuedMore={queuedMore} failedJobs={failedPreparationJobs} pending={preparePending} programId={program.summary.id} revision={program.summary.revision} error={prepareError?.message} expanded={preparationExpanded} onExpandedChange={setPreparationExpanded} lessonTitles={lessonTitles} onReview={openReview} onManageQueue={() => setControlCenterOpen(true)} />
+          : <LessonPreparationLine job={preparationJob} queuedMore={queuedMore} failedCount={failedPreparationJobs.length} pending={preparePending} programId={program.summary.id} error={prepareError?.message} onView={() => selectTab('lessons')} onManageQueue={() => setControlCenterOpen(true)} />)}
         {activeProgram && preparationPlan.isError && preparePending && <p role="alert" className="my-3 text-sm text-danger-fg">Progress could not be loaded. <button type="button" className="underline" onClick={() => void preparationPlan.refetch()}>Retry progress</button></p>}
         {tab === 'lessons' && <div className="studio-lessons">{activeProgram && hasUnpreparedLessons && <CoursePlanStatus programId={program.summary.id} />}{!currentModule?.lessons.length ? <p className="rounded-lg bg-surface p-6 text-sm text-text-muted">This module has no lessons in its outline.</p> : currentModule.lessons.map((lesson, index) => <LessonCard key={lesson.id} lesson={lesson} number={`${program.modules.indexOf(currentModule) + 1}.${index + 1}`} moduleId={currentModule.id} outlineEvidence={visibleOutlineEvidence} program={program} selected={lesson.id === lessonId} isCurrent={lesson.id === program.summary.currentLessonId || (lesson.id === resume?.lesson.id && !program.summary.currentLessonId)} pending={completePending || (lesson.preparation === 'outline' && preparePending)} onPrepare={() => onPrepare(lesson)} onComplete={() => onComplete(lesson)} onSelect={() => afterNotebookSave(() => setLessonId(lesson.id))} onPractice={() => void afterNotebookSave(() => { setLessonId(lesson.id); setTab('workbench'); practiceView.openHome(); })} onReview={openReview} contextVisible={contextVisible} onSources={() => selectTab('sources')} topics={activeProgram ? <LessonTopics entry={topicsOf(lesson.id)} /> : undefined}
           notebook={activeProgram && lesson.id === lessonId ? <NotebookPanel compact enabled program={program} lessonId={lesson.id} memory={memoryQuery.data} memoryLoading={memoryQuery.isLoading} memoryError={memoryQuery.error?.message} onRetryMemory={() => void memoryQuery.refetch()} drafts={notebookDrafts} setDraft={(key, draft) => setNotebookDrafts((current) => ({ ...current, [key]: draft }))} onOpenNotebook={() => selectTab('notebook')} /> : undefined}
           quizCallout={activeProgram && lesson.preparation === 'ready' ? <LessonQuizCallout program={program} lesson={lesson} onOpenForm={openQuiz} onViewResult={openQuiz} /> : null} />)}</div>}
-        {activeProgram && tab === 'lessons' && <nav aria-label="Module milestones" className="studio-milestones flex flex-wrap items-center gap-1 text-sm"><span className="px-3 text-text-secondary"><span className="mr-1.5 text-xs font-semibold tabular-nums text-accent">01</span>Learn · {currentModule?.lessons.filter((item) => item.completed).length ?? 0} of {currentModule?.lessons.length ?? 0} complete</span><button type="button" onClick={() => selectTab('workbench')} className="min-h-10 rounded-full px-3 text-left text-text-secondary hover:bg-background hover:text-text-primary disabled:opacity-50"><span className="mr-1.5 text-xs font-semibold tabular-nums text-accent">02</span>Apply →</button>{currentModule && <ModuleTestCallout program={program} module={currentModule} onOpenForm={openQuiz} onShowTest={() => showModuleTest(currentModule.id)} />}<button type="button" disabled={!currentModule?.lessons.some((item) => item.preparation === 'ready')} onClick={() => void afterNotebookSave(() => {
+        {activeProgram && tab === 'lessons' && <nav aria-label="Module milestones" className="studio-milestones flex flex-wrap items-center gap-1 text-sm"><span className="px-3 text-text-secondary"><span className="mr-1.5 text-xs font-semibold tabular-nums text-accent">01</span>Learn · {currentModule?.lessons.filter((item) => item.completed).length ?? 0} of {currentModule?.lessons.length ?? 0} complete</span><button type="button" onClick={() => selectTab('workbench')} className="min-h-10 rounded-full px-3 text-left text-text-secondary hover:bg-bg hover:text-text-primary disabled:opacity-50"><span className="mr-1.5 text-xs font-semibold tabular-nums text-accent">02</span>Apply →</button>{currentModule && <ModuleTestCallout program={program} module={currentModule} onOpenForm={openQuiz} onShowTest={() => showModuleTest(currentModule.id)} />}<button type="button" disabled={!currentModule?.lessons.some((item) => item.preparation === 'ready')} onClick={() => void afterNotebookSave(() => {
           if (!currentModule) return;
           const anchor = [...currentModule.lessons].reverse().find((item) => item.preparation === 'ready');
           if (!anchor) return;
@@ -379,7 +667,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
           const scope = finalModule ? program.modules : [currentModule];
           practiceView.openActivity(null, { id: crypto.randomUUID(), kind: 'code_lab', brief: `Create a ${finalModule ? 'final capstone integrating the complete course' : 'module project'} for ${program.summary.goal}. Project progression: ${scope.map((item) => item.project ? `${item.project.title}: ${item.project.brief} Deliverables: ${item.project.deliverables.join('; ')}. Success criteria: ${item.project.successCriteria.join('; ')}` : item.summary).join(' | ')}. Each milestone must extend the same project artifact and include a revision after feedback. Outcomes: ${scope.flatMap((item) => item.outcomes).join('; ')}. Require a concrete artifact, milestones, constraints, an explicit grading rubric, and a reflection on tradeoffs. Build on these lessons: ${scope.flatMap((item) => item.lessons.map((lesson) => lesson.title)).join('; ')}.` });
           activateTab('workbench');
-        })} title="A project brief shaped by these outcomes, with deliverables and a rubric." className="min-h-10 rounded-full px-3 text-left text-text-secondary hover:bg-background hover:text-text-primary disabled:opacity-50"><span className="mr-1.5 text-xs font-semibold tabular-nums text-accent">04</span>{currentModule?.id === program.modules.at(-1)?.id ? 'Build your capstone →' : 'Build a module project →'}</button></nav>}
+        })} title="A project brief shaped by these outcomes, with deliverables and a rubric." className="min-h-10 rounded-full px-3 text-left text-text-secondary hover:bg-bg hover:text-text-primary disabled:opacity-50"><span className="mr-1.5 text-xs font-semibold tabular-nums text-accent">04</span>{currentModule?.id === program.modules.at(-1)?.id ? 'Build your capstone →' : 'Build a module project →'}</button></nav>}
         {activeProgram && tab === 'plan' && <div className="mt-5"><PlanPanel programId={program.summary.id} onStartingPoint={() => selectTab('starting_point')} /></div>}
         {tab === 'portability' && <div className="mt-5"><PortabilityPanel programId={program.summary.id} onImported={handleImported} /></div>}
         {activeProgram && (practiceTab || practiceView.visited.size > 0) && (
@@ -390,13 +678,13 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
         {activeProgram && tab === 'quizzes' && <div className="mt-4" role="tabpanel" aria-labelledby="workspace-tab-quizzes"><QuizzesOverview program={program} formId={quizFormId} onFormIdChange={setQuizFormId} focusModuleId={quizModuleFocus}
           onOpenLesson={(lessonId) => { const target = allLessons.find(({ lesson }) => lesson.id === lessonId); if (target) void afterNotebookSave(() => { setModuleId(target.module.id); setLessonId(lessonId); activateTab('lessons'); }); }}
           completionFor={(lessonId) => { const target = allLessons.find(({ lesson }) => lesson.id === lessonId)?.lesson; return target ? { completed: target.completed, pending: completePending, onComplete: () => onComplete(target) } : undefined; }} /></div>}
-        {tab === 'sources' && <div className="mt-5">{program.summary.status === 'active' ? <><SourcesPanel programId={program.summary.id} onOpenReview={openHeldReview} /><SourceMaintenancePanel programId={program.summary.id} /></> : <div className="rounded-xl border border-dashed border-border bg-background p-6"><h3 className="font-serif text-xl text-text-primary">Accept this outline to open its source library</h3><p className="mt-2 max-w-2xl text-sm leading-6 text-text-secondary">The outline’s original material is shown in each citation. After acceptance, you can add program-scoped snapshots, read saved versions, search their text, and review changes here.</p></div>}</div>}
-        {activeProgram && tab === 'tutor' && <TutorPanel program={program} lesson={currentLesson} onCourseChanged={clearNotebookDrafts} />}
+        {tab === 'sources' && <div className="mt-5">{program.summary.status === 'active' ? <><SourcesPanel programId={program.summary.id} onOpenReview={openHeldReview} /><SourceMaintenancePanel programId={program.summary.id} /></> : <div className="rounded-xl border border-dashed border-border bg-bg p-6"><h3 className="font-serif text-xl text-text-primary">Accept this outline to open its source library</h3><p className="mt-2 max-w-2xl text-sm leading-6 text-text-secondary">The outline’s original material is shown in each citation. After acceptance, you can add program-scoped snapshots, read saved versions, search their text, and review changes here.</p></div>}</div>}
+        {activeProgram && tab === 'tutor' && <TutorPanel program={program} lesson={currentLesson} onCourseChanged={clearNotebookDrafts} onActiveChatChange={setTutorChatId} />}
         {activeProgram && tab === 'notebook' && <div className="mt-5"><NotebookPanel enabled program={program} lessonId={currentLesson?.id} memory={memoryQuery.data} memoryLoading={memoryQuery.isLoading} memoryError={memoryQuery.error?.message} onRetryMemory={() => void memoryQuery.refetch()} drafts={notebookDrafts} setDraft={(key, draft) => setNotebookDrafts((current) => ({ ...current, [key]: draft }))} /></div>}
         {activeProgram && canvasOpened && tab === 'canvas' && <div className="mt-5"><Suspense fallback={<div role="status" className="rounded-xl border border-border bg-surface p-8 text-sm text-text-muted">Opening Canvas…</div>}><LazyCanvasPanel programId={program.summary.id} lessonId={currentLesson?.id} lessonTitle={currentLesson?.title ?? 'Learning canvas'} theme={theme} enabled lesson={currentLesson} /></Suspense></div>}
         {activeProgram && tab === 'recall' && (
           <div className="mt-5 space-y-4">
-            <div role="group" aria-label="Recall view" className="flex flex-wrap gap-1 rounded-lg border border-border bg-background p-1 text-xs">
+            <div role="group" aria-label="Recall view" className="flex flex-wrap gap-1 rounded-lg border border-border bg-bg p-1 text-xs">
               <button
                 type="button"
                 aria-pressed={recallView === 'lesson'}
@@ -444,9 +732,9 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
               <ActiveRecallBrainDump
                 program={program}
                 lesson={currentLesson}
-                onDraftMissedConcept={(question, answer) => {
-                  if (!currentLesson?.id) return;
-                  saveRecallDraft.mutate({
+                onDraftMissedConcept={async (question, answer) => {
+                  if (!currentLesson?.id) throw new Error('Select a lesson before turning a concept into a recall card.');
+                  await saveRecallDraft.mutateAsync({
                     draftId: null,
                     programId: program.summary.id,
                     lessonId: currentLesson.id,
@@ -467,11 +755,24 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
         {(prepareError || completeError) && tab === 'lessons' && <PlainError error={prepareError ?? completeError} />}
       </section></main>
 
-      <details className="studio-course-provenance border border-border px-4"><summary className="min-h-11 cursor-pointer py-3 text-sm font-semibold text-text-secondary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent">Progress, source materials & authorship</summary><div className="grid gap-3 pb-4 md:grid-cols-2 xl:grid-cols-3"><section className="rounded-xl border border-border bg-background p-4"><div className="text-sm font-medium text-text-muted">Outcome evidence</div><h3 className="mt-1 font-serif text-lg text-text-primary">Where you are</h3><p className="mt-1 text-sm leading-5 text-text-muted">Different signals answer different questions.</p><div className="mt-3 space-y-3">{[{ label: 'Encountered', value: `${readyCount} of ${allLessons.length}`, detail: 'Lessons prepared' }, { label: 'Checked', value: quizzes.data ? `${quizzes.data.quizzesPassed} of ${quizzes.data.quizzesTotal}` : '—', detail: 'Lesson quizzes passed' }, { label: 'Demonstrated', value: quizzes.data ? `${testsPassed} of ${quizzes.data.modules.length}` : '—', detail: 'Module tests passed' }, { label: 'Due for recheck', value: !activeProgram ? 'After acceptance' : memoryQuery.isError ? 'Unavailable' : memoryQuery.data ? `${memoryQuery.data.dueCount} due` : 'Loading', detail: !activeProgram ? 'Review scheduling starts with accepted work' : memoryQuery.isError ? 'Could not load the review schedule' : 'FSRS 6 review schedule' }].map((row) => <div key={row.label} className="border-t border-border pt-2 first:border-0 first:pt-0"><div className="flex items-baseline justify-between gap-2"><span className="text-sm font-medium text-text-secondary">{row.label}</span><span className="text-sm font-semibold tabular-nums text-text-primary">{row.value}</span></div><div className="mt-0.5 text-sm text-text-muted">{row.detail}</div></div>)}</div><p className="mt-3 rounded-lg bg-surface px-3 py-2 text-sm leading-5 text-text-secondary">A quiz result is evidence from one attempt; it does not establish mastery or job readiness.</p></section>
-      <section className="rounded-xl border border-border bg-background p-4"><h3 className="text-sm font-medium text-text-primary">Source materials</h3><p className="mt-1 text-sm leading-5 text-text-secondary">{program.sources.length ? `${program.sources.length} original ${program.sources.length === 1 ? 'source snapshot' : 'source snapshots'} grounding this program.` : 'No source snapshots are attached.'}</p>{program.summary.status === 'active' && <button type="button" disabled={savingBeforeMove} onClick={() => selectTab('sources')} className="mt-3 inline-flex min-h-11 items-center text-sm font-semibold text-accent hover:underline disabled:opacity-50">Open source library <ArrowRight size={15} className="ml-1" /></button>}{program.sources.length > 0 && <details className="mt-3"><summary className="min-h-11 cursor-pointer py-2 text-sm text-text-muted">Original outline excerpts</summary><SourceLine ids={program.sources.map((item) => item.id)} sources={program.sources} /></details>}</section>
-      <section className="rounded-xl border border-border bg-background p-4"><h3 className="text-sm font-medium text-text-primary">Course authorship</h3><p className="mt-2 text-sm leading-5 text-text-secondary">Generated with {program.modelName || 'the selected model'}{program.sources.length ? ' using your chosen sources' : ' from general knowledge'}. The outline is saved before review. Corrections are rechecked and unresolved findings remain available for repair. Lesson material receives its own review and source checks. Lesson answer keys are model-authored and shown after submission.</p></section></div></details>
+      <details className="studio-course-provenance border border-border px-4"><summary className="min-h-11 cursor-pointer py-3 text-sm font-semibold text-text-secondary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent">Progress, source materials & authorship</summary><div className="grid gap-3 pb-4 md:grid-cols-2 xl:grid-cols-3"><section className="rounded-xl border border-border bg-bg p-4"><div className="text-sm font-medium text-text-muted">Outcome evidence</div><h3 className="mt-1 font-serif text-lg text-text-primary">Where you are</h3><p className="mt-1 text-sm leading-5 text-text-muted">Different signals answer different questions.</p><div className="mt-3 space-y-3">{[{ label: 'Encountered', value: `${readyCount} of ${allLessons.length}`, detail: 'Lessons prepared' }, { label: 'Checked', value: quizzes.data ? `${quizzes.data.quizzesPassed} of ${quizzes.data.quizzesTotal}` : '—', detail: 'Lesson quizzes passed' }, { label: 'Demonstrated', value: quizzes.data ? `${testsPassed} of ${quizzes.data.modules.length}` : '—', detail: 'Module tests passed' }, { label: 'Due for recheck', value: !activeProgram ? 'After acceptance' : memoryQuery.isError ? 'Unavailable' : memoryQuery.data ? `${memoryQuery.data.dueCount} due` : 'Loading', detail: !activeProgram ? 'Review scheduling starts with accepted work' : memoryQuery.isError ? 'Could not load the review schedule' : 'FSRS 6 review schedule' }].map((row) => <div key={row.label} className="border-t border-border pt-2 first:border-0 first:pt-0"><div className="flex items-baseline justify-between gap-2"><span className="text-sm font-medium text-text-secondary">{row.label}</span><span className="text-sm font-semibold tabular-nums text-text-primary">{row.value}</span></div><div className="mt-0.5 text-sm text-text-muted">{row.detail}</div></div>)}</div><p className="mt-3 rounded-lg bg-surface px-3 py-2 text-sm leading-5 text-text-secondary">A quiz result is evidence from one attempt; it does not establish mastery or job readiness.</p></section>
+      <section className="rounded-xl border border-border bg-bg p-4"><h3 className="text-sm font-medium text-text-primary">Source materials</h3><p className="mt-1 text-sm leading-5 text-text-secondary">{program.sources.length ? `${program.sources.length} original ${program.sources.length === 1 ? 'source snapshot' : 'source snapshots'} grounding this program.` : 'No source snapshots are attached.'}</p>{program.summary.status === 'active' && <button type="button" disabled={savingBeforeMove} onClick={() => selectTab('sources')} className="mt-3 inline-flex min-h-11 items-center text-sm font-semibold text-accent hover:underline disabled:opacity-50">Open source library <ArrowRight size={15} className="ml-1" /></button>}{program.sources.length > 0 && <details className="mt-3"><summary className="min-h-11 cursor-pointer py-2 text-sm text-text-muted">Original outline excerpts</summary><SourceLine ids={program.sources.map((item) => item.id)} sources={program.sources} /></details>}</section>
+      <section className="rounded-xl border border-border-subtle bg-bg p-4"><h3 className="text-sm font-medium text-text-primary">Course authorship</h3><p className="mt-2 text-sm leading-5 text-text-secondary">Generated with {program.modelName || 'the selected model'}{program.sources.length ? ' using your chosen sources' : ' from general knowledge'}. {!program.sources.length ? 'Topic-based course — add references in Sources to ground future lessons. ' : ''}The outline is saved before review. Corrections are rechecked and unresolved findings remain available for repair. Lesson material receives its own review and source checks. Lesson answer keys are model-authored and shown after submission.</p></section></div></details>
     </div>
   </div>
+  {activeProgram && (
+    <LessonPreparationControlCenter
+      open={controlCenterOpen}
+      onOpenChange={setControlCenterOpen}
+      program={program}
+      planJobs={planJobs}
+      programRevision={Math.max(program.summary.revision, preparationPlan.data?.programRevision ?? program.summary.revision)}
+      waitsForIndex={waitsForIndex}
+      paceMinutes={paceMinutes}
+      onOpenLesson={openLesson}
+      onReview={openReview}
+    />
+  )}
   </ProgramTangents>
   );
 }

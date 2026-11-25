@@ -19,7 +19,8 @@ import { toast } from '@/stores/toastStore';
  */
 export function useNewSpaceForm(editor: ReturnType<typeof useSpaceEditor>) {
   const navigate = useAppNavigate();
-  const { setSelectedSpace, loadConversations } = useConversationsStore();
+  const setSelectedSpace = useConversationsStore((state) => state.setSelectedSpace);
+  const loadConversations = useConversationsStore((state) => state.loadConversations);
   const { journals } = useJournalsQuery();
   const createJournal = useCreateJournalMutation();
   const [isCreateSpaceOpen, setIsCreateSpaceOpen] = useState(false);

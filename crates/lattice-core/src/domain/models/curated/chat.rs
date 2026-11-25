@@ -95,9 +95,9 @@ pub struct ChatModelVision {
 
 impl ChatModelVision {
     /// Whether a projector file of `on_disk_bytes` is the whole download. The
-    /// download manager writes into the destination as bytes arrive and
-    /// deletes a file whose digest does not match, so a file of the pinned
-    /// size is a finished, verified one and anything shorter is in progress.
+    /// download manager writes a `.part` file and renames it onto the
+    /// destination only once its size and digest check out, so a file of the
+    /// pinned size is a finished, verified one.
     pub fn is_complete(&self, on_disk_bytes: u64) -> bool {
         on_disk_bytes == self.projector.size_bytes
     }
@@ -144,25 +144,6 @@ pub fn curated_chat_model_for_file(repo: &str, file: &str) -> Option<ModelMetada
         .iter()
         .find(|model| model.repo.eq_ignore_ascii_case(repo) && model.file == file)
         .map(CuratedChatModel::metadata)
-}
-
-/// Catalog chat entries a catalog search for `query` should show.
-///
-/// Every whitespace-separated term has to appear in the entry's name,
-/// repository or id. An empty query, and the broad `gguf` query the catalog
-/// overview runs, match every entry.
-pub fn curated_chat_models_matching(query: &str) -> Vec<ModelMetadata> {
-    let query = query.trim().to_lowercase();
-    let terms: Vec<&str> = query.split_whitespace().collect();
-    let browse_all = terms.is_empty() || terms == ["gguf"];
-    CURATED_CHAT_MODELS
-        .iter()
-        .filter(|model| {
-            let haystack = format!("{} {} {}", model.name, model.repo, model.id).to_lowercase();
-            browse_all || terms.iter().all(|term| haystack.contains(term))
-        })
-        .map(CuratedChatModel::metadata)
-        .collect()
 }
 
 /// One chat model the catalog vouches for: a single GGUF file, pinned by the

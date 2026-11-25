@@ -20,23 +20,29 @@ use super::plan::PlannedFile;
 use super::{DownloadBatchItem, DownloadModelUseCase, DownloadRequest};
 
 impl DownloadModelUseCase {
-    async fn huggingface_token(
+    pub(super) async fn huggingface_token(
         &self,
         model_id: &str,
         meta: &ModelMetadata,
+        plan: &[PlannedFile],
     ) -> Result<Option<String>, AppError> {
-        if !meta.requires_auth {
+        let targets_huggingface = plan.iter().any(|file| {
+            lattice_core::application::ports::download_manager::is_huggingface_url(&file.url)
+        });
+        if !meta.requires_auth && !targets_huggingface {
             return Ok(None);
         }
         match self.credentials.get_api_key(CredentialKey::HuggingFaceToken.as_str()).await {
-            Ok(Some(token)) => {
-                info!(model_id = %model_id, "Model requires authentication, using HuggingFace token");
+            Ok(Some(token)) if !token.trim().is_empty() => {
+                info!(model_id = %model_id, "Using HuggingFace token for model download");
                 Ok(Some(token))
             }
-            Ok(None) => Err(AppError::InvalidInput(format!(
+            Ok(_) if !meta.requires_auth => Ok(None),
+            Ok(_) => Err(AppError::InvalidInput(format!(
                 "Model '{}' requires HuggingFace authentication. Please set your HuggingFace token in Settings → HuggingFace.",
                 meta.name
             ))),
+            Err(_) if !meta.requires_auth => Ok(None),
             Err(e) => {
                 warn!(error = ?e, model_id = %model_id, "Failed to retrieve HuggingFace token from secure storage");
                 Err(AppError::Other(format!(
@@ -63,7 +69,7 @@ impl DownloadModelUseCase {
             "Starting model download"
         );
 
-        let auth_token = self.huggingface_token(model_id, meta).await?;
+        let auth_token = self.huggingface_token(model_id, meta, plan).await?;
 
         // A GGUF extension says nothing about whether the bundled engine knows
         // its architecture, so read the header before persisting or fetching.
@@ -137,6 +143,7 @@ impl DownloadModelUseCase {
                     model_name: Some(meta.name.clone()),
                     model_id: Some(model_id.to_string()),
                     model_file_name: Some(file.filename.clone()),
+                    expected_bytes: None,
                 }],
             });
         }
@@ -153,6 +160,7 @@ impl DownloadModelUseCase {
         {
             Ok(ids) => ids,
             Err(error) => {
+                warn!(model_id = %model_id, %error, "Model download could not be prepared");
                 let failed_files: Vec<(&str, Option<i64>)> = plan
                     .iter()
                     .map(|file| (file.filename.as_str(), None))
@@ -160,7 +168,7 @@ impl DownloadModelUseCase {
                 self.record_failed(model_id, &failed_files).await?;
                 return Err(AppError::Network(format!(
                     "Failed to prepare model download: {}",
-                    error
+                    error.user_message()
                 )));
             }
         };
@@ -172,8 +180,16 @@ impl DownloadModelUseCase {
         );
 
         // Prefer the sizes the download manager measured over catalog estimates.
-        let mut detected_total_size_bytes = 0u64;
+        // Items sharing a destination, or already live from an earlier call,
+        // come back as the same id: count each session once.
+        let mut unique_ids: Vec<&String> = Vec::with_capacity(ids.len());
         for download_id in &ids {
+            if !unique_ids.contains(&download_id) {
+                unique_ids.push(download_id);
+            }
+        }
+        let mut detected_total_size_bytes = 0u64;
+        for download_id in unique_ids {
             if let Ok(Some(session)) = self.download_manager.get_download_status(download_id).await
             {
                 if let Some(total_bytes) = session.progress().total_bytes() {

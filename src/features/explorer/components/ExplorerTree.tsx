@@ -151,7 +151,7 @@ export function ExplorerTree({ root }: ExplorerTreeProps) {
             className={cn(
               'row-hover flex cursor-default items-center gap-1.5 pr-2 text-[13px] text-text-primary',
               entry.ignored && 'opacity-50',
-              entry.path === openPath && 'bg-[hsl(var(--text-primary)/0.07)]',
+              entry.path === openPath && 'bg-surface font-medium shadow-xs ring-1 ring-inset ring-border-subtle',
               hasFocus && index === focusedIndex && 'shadow-[inset_0_0_0_1px_hsl(var(--accent)/0.5)]',
             )}
             style={{ height: ROW_HEIGHT, paddingLeft: 8 + row.depth * INDENT_PX }}

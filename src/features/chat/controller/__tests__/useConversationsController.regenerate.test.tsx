@@ -122,4 +122,38 @@ describe('regenerateResponse — a turn that runs', () => {
       )
     );
   });
+
+  it('does not duplicate the prompt into composerDraft when the backend already restored the failed user message', async () => {
+    conversationUiStore.setState({ activeConversationId: CONVERSATION_ID });
+    regenerate.mockResolvedValue({ ok: false, error: 'context window full' });
+    const restoredUser = {
+      id: 'm1',
+      conversationId: CONVERSATION_ID,
+      role: 'user',
+      content: 'Already in thread',
+      status: 'failed',
+      tokens: 1,
+      metadata: JSON.stringify({ error: 'context window full' }),
+      createdAt: '2026-09-05T10:00:00Z',
+    };
+    const getMessages = VaultAPI.getConversationMessages as unknown as ReturnType<typeof vi.fn>;
+    getMessages.mockResolvedValueOnce({ ok: true, data: { messages: [restoredUser] } });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    client.setQueryData(['conversations', 'messages', CONVERSATION_ID], [
+      restoredUser,
+    ]);
+    const { result } = renderHook(() => useConversationsController(), {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      ),
+    });
+
+    const outcome = await result.current.regenerateResponse(CONVERSATION_ID);
+
+    expect(outcome).toBe('failed');
+    expect(conversationUiStore.getState().composerDraft).toBeNull();
+    expect(conversationUiStore.getState().error).toBe('context window full');
+  });
 });

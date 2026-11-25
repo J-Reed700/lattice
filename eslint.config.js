@@ -89,7 +89,6 @@ const VIEW_BACKEND_ALLOWLIST = ratchet('VIEW_BACKEND_ALLOWLIST', [], (text) => v
 const VIEW_NATIVE_ALLOWLIST = ratchet('VIEW_NATIVE_ALLOWLIST', [
   'src/features/explorer/components/ExplorerPage.tsx',
   'src/features/files/components/Ingest/ImportHistory.tsx',
-  'src/features/journal/components/JournalPickerMenu.tsx',
   'src/features/settings/components/AITab/ModelsTab.tsx',
   'src/features/settings/components/IndexingTab.tsx',
   'src/features/settings/components/VaultTab.tsx',

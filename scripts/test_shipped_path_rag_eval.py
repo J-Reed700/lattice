@@ -10,8 +10,11 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def turn(answer, citation_map=None, evidence=None, **extra):
+    parts = answer if isinstance(answer, tuple) else (answer,) if answer else ()
+    text, pieces = said(*parts)
     return {
-        "index": 0, "question": "q", "answer": answer, "error": None, "answered_ms": 10,
+        "index": 0, "question": "q", "answer": text if answer is not None else None, "reply": pieces,
+        "error": None, "answered_ms": 10,
         "evidence": evidence if evidence is not None else [{"document_id": "a"}],
         "citation_map": citation_map if citation_map is not None else {"1": "a"},
         "ranked_ids": ["a"], "model_calls": [], "prompt_tokens": {"cached": 0, "evaluated": 5, "completion": 3},
@@ -34,6 +37,29 @@ def rubric(**fields):
     return base
 
 
+def text_piece(text):
+    return {"type": "text", "text": text}
+
+
+def source_piece(number):
+    return {"type": "reference", "reference": {"written": f"[s{number}]", "kind": "source", "number": number}}
+
+
+def said(*parts):
+    """An answer and the pieces the chat drew it from: a string is text, a number a source it resolved."""
+    pieces = [source_piece(part) if isinstance(part, int) else text_piece(part) for part in parts]
+    return spelled_by(pieces), pieces
+
+
+def spelled_by(pieces):
+    return "".join(piece["text"] if piece["type"] == "text" else piece["reference"]["written"] for piece in pieces)
+
+
+def abstained(*parts):
+    answer, pieces = said(*parts)
+    return spe.abstained(answer, spe.cited_marks({"reply": pieces}))
+
+
 QUESTIONS = {
     "tags": {"t": "a tag", "u": "another"},
     "items": [
@@ -48,7 +74,7 @@ QUESTIONS = {
 
 class MechanicalChecks(unittest.TestCase):
     def test_any_alternative_satisfies_a_group_regardless_of_case_and_emphasis(self):
-        checks = spe.mechanical(rubric(), turn("It is **Fourteen Days** [1]."))
+        checks = spe.mechanical(rubric(), turn(("It is **Fourteen Days** ", 1, ".")))
         self.assertEqual(checks["missing_facts"], [])
         self.assertTrue(checks["passed"])
 
@@ -56,42 +82,42 @@ class MechanicalChecks(unittest.TestCase):
         self.assertTrue(spe.contains("Quote SIG‑84122  please", "SIG-84122"))
 
     def test_missing_fact_fails(self):
-        checks = spe.mechanical(rubric(), turn("It is a fortnight [1]."))
+        checks = spe.mechanical(rubric(), turn(("It is a fortnight ", 1, ".")))
         self.assertEqual(checks["missing_facts"], [["14 days", "fourteen days"]])
         self.assertFalse(checks["passed"])
 
     def test_forbidden_claim_fails(self):
-        checks = spe.mechanical(rubric(must_not_claim=["42 hours"]), turn("14 days, not 42 hours [1]."))
+        checks = spe.mechanical(rubric(must_not_claim=["42 hours"]), turn(("14 days, not 42 hours ", 1, ".")))
         self.assertEqual(checks["forbidden_claims"], ["42 hours"])
         self.assertFalse(checks["passed"])
 
     def test_a_cited_quote_no_passage_holds_fails(self):
         passage = [{"content": "Page Marisol Quenby and quote TCK-1836."}]
-        answer = 'It is 14 days: "page Anneke Voskuil and quote TCK-1836." [1]'
+        answer = ('It is 14 days: "page Anneke Voskuil and quote TCK-1836." ', 1)
         checks = spe.mechanical(rubric(), turn(answer, evidence=passage))
         self.assertEqual(checks["invented_quotes"], ["page Anneke Voskuil and quote TCK-1836."])
         self.assertFalse(checks["passed"])
 
     def test_a_cited_quote_survives_a_line_break_and_an_elision(self):
         passage = [{"content": "the central stor-\ne keeps it, and the 14 days run from the date of the notice"}]
-        for answer in ('It is 14 days: "the central store keeps it" [1]',
-                       'It is 14 days: "[t]he central store keeps it ... from the date of the notice" [1]',
-                       'It is 14 days: "and the 14 days [must] run from the date of the notice" [1]'):
+        for answer in (('It is 14 days: "the central store keeps it" ', 1),
+                       ('It is 14 days: "[t]he central store keeps it ... from the date of the notice" ', 1),
+                       ('It is 14 days: "and the 14 days [must] run from the date of the notice" ', 1)):
             self.assertEqual(spe.mechanical(rubric(), turn(answer, evidence=passage))["invented_quotes"], [], answer)
 
     def test_a_quote_is_checked_only_when_it_is_cited_and_a_whole_phrase(self):
-        for answer in ('It is 14 days [1], and "the wait" is the hold.',
-                       'I searched for "ERR-0001 runbook error code owner" and it is 14 days [1].'):
+        for answer in (('It is 14 days ', 1, ', and "the wait" is the hold.'),
+                       ('I searched for "ERR-0001 runbook error code owner" and it is 14 days ', 1, '.')):
             self.assertEqual(spe.mechanical(rubric(), turn(answer))["invented_quotes"], [], answer)
 
     def test_invented_citation_number_fails(self):
-        checks = spe.mechanical(rubric(), turn("14 days [1][3]."))
+        checks = spe.mechanical(rubric(), turn(("14 days ", 1, 3, ".")))
         self.assertEqual(checks["invalid_citations"], [3])
         self.assertFalse(checks["passed"])
 
     def test_expected_document_must_be_cited_and_is_traced_to_evidence(self):
         checks = spe.mechanical(rubric(expected_citations=["a", "b"]),
-                                turn("14 days [1].", evidence=[{"document_id": "a"}]))
+                                turn(("14 days ", 1, "."), evidence=[{"document_id": "a"}]))
         self.assertEqual(checks["expected_cited"], ["a"])
         self.assertEqual(checks["expected_in_evidence"], ["a"])
         self.assertFalse(checks["passed"])
@@ -105,34 +131,34 @@ class MechanicalChecks(unittest.TestCase):
 
     def test_incidental_missing_information_does_not_turn_a_conclusion_into_abstention(self):
         answer = (
-            "The applicable policy requires 14 days [1]. "
-            "A separate schedule is not provided [2]. "
-            "Therefore the applicable period is 14 days [1]."
+            "The applicable policy requires 14 days ", 1, ". "
+            "A separate schedule is not provided ", 2, ". "
+            "Therefore the applicable period is 14 days ", 1, ".",
         )
-        self.assertFalse(spe.abstained(answer))
+        self.assertFalse(abstained(*answer))
 
     def test_a_negative_premise_followed_by_a_cited_correction_is_not_abstention(self):
-        answer = "There is no mention of using the prior release; instead use v5.7.3 [1]."
-        self.assertFalse(spe.abstained(answer))
+        answer = ("There is no mention of using the prior release; instead use v5.7.3 ", 1, ".")
+        self.assertFalse(abstained(*answer))
 
     def test_a_global_or_concluding_refusal_is_still_abstention(self):
         long_decline = (
             "The answer is not available in the provided documents. "
             + "Several unrelated records are listed. " * 40
         )
-        self.assertTrue(spe.abstained(long_decline))
-        self.assertTrue(spe.abstained("The records discuss timing, but it cannot be determined."))
+        self.assertTrue(abstained(long_decline))
+        self.assertTrue(abstained("The records discuss timing, but it cannot be determined."))
 
     def test_a_caveat_after_the_required_facts_does_not_fail_an_answer(self):
         answer = (
-            "Fourteen days [1]. Two caveats follow. "
-            "The schedule does not state a separate period for contractors."
+            "Fourteen days ", 1, ". Two caveats follow. "
+            "The schedule does not state a separate period for contractors.",
         )
-        self.assertTrue(spe.abstained(answer))
+        self.assertTrue(abstained(*answer))
         self.assertTrue(spe.mechanical(rubric(), turn(answer))["passed"])
 
     def test_a_caveat_does_not_save_an_answer_missing_its_facts(self):
-        answer = "It varies [1]. The schedule does not state a separate period."
+        answer = ("It varies ", 1, ". The schedule does not state a separate period.")
         self.assertFalse(spe.mechanical(rubric(), turn(answer))["passed"])
 
     def test_a_refusal_about_the_question_counts_wherever_the_answer_says_it(self):
@@ -149,7 +175,7 @@ class MechanicalChecks(unittest.TestCase):
             ("What's her mobile number?",
              "I found no phone number for her in the passages."),
             ("What's her mobile number?",
-             "The pager goes to the bench [1]. No mobile number for her appears in the passages."),
+             ("The pager goes to the bench ", 1, ". No mobile number for her appears in the passages.")),
             ("What's her mobile number?",
              "No mobile number for Ilse Brantgard is given anywhere in the excerpts searched."),
             ("What does the Marbleau undertaking oblige?",
@@ -176,9 +202,66 @@ class MechanicalChecks(unittest.TestCase):
         self.assertFalse(spe.mechanical(silent, guess)["passed"])
 
     def test_a_failed_turn_never_passes(self):
-        failed = turn("14 days [1].")
+        failed = turn(("14 days ", 1, "."))
         failed["error"] = "timed out"
         self.assertFalse(spe.mechanical(rubric(), failed)["passed"])
+
+
+class CitationsComeFromTheReplyPieces(unittest.TestCase):
+    def test_a_source_the_app_resolved_is_cited(self):
+        checks = spe.mechanical(rubric(), turn(
+            "It is 14 days [s1].", reply=[text_piece("It is 14 days "), source_piece(1), text_piece(".")]))
+        self.assertEqual(checks["cited_ids"], [1])
+        self.assertTrue(checks["passed"])
+
+    def test_brackets_the_app_left_as_text_are_not_citations(self):
+        checks = spe.mechanical(rubric(), turn("It is 14 days [1].", reply=[text_piece("It is 14 days [1].")]))
+        self.assertEqual(checks["cited_ids"], [])
+        self.assertFalse(checks["passed"])
+
+    def test_a_quote_a_resolved_source_follows_is_checked_against_the_passages(self):
+        quoted = 'It is 14 days: "page Anneke Voskuil and quote TCK-1836." '
+        checks = spe.mechanical(rubric(), turn(quoted + "[s1]", reply=[text_piece(quoted), source_piece(1)]))
+        self.assertEqual(checks["invented_quotes"], ["page Anneke Voskuil and quote TCK-1836."])
+
+    def test_a_quote_followed_by_brackets_the_app_left_as_text_is_not_cited(self):
+        rest = ': "page Anneke Voskuil and quote TCK-1836." [2]'
+        checks = spe.mechanical(rubric(), turn(
+            "It is 14 days [s1]" + rest, reply=[text_piece("It is 14 days "), source_piece(1), text_piece(rest)]))
+        self.assertEqual(checks["invented_quotes"], [])
+
+    def test_a_correction_that_cites_a_resolved_source_is_not_a_refusal(self):
+        lead = "There is no mention of using the prior release; instead use v5.7.3 "
+        checks = spe.mechanical(rubric(must_mention=[["v5.7.3"]]), turn(
+            lead + "[s1].", reply=[text_piece(lead), source_piece(1), text_piece(".")]))
+        self.assertFalse(checks["abstained"])
+
+    def test_rows_written_before_turns_kept_their_pieces_are_refused(self):
+        old = row("one", [turn("14 days [1].")])
+        old["schema"] = "lattice-shipped-path-answers/1"
+        with self.assertRaisesRegex(ValueError, "rescore"):
+            spe.validate_row(old)
+
+    def test_a_turn_without_reply_pieces_is_refused(self):
+        bare = turn("14 days [s1].")
+        bare.pop("reply", None)
+        with self.assertRaisesRegex(ValueError, "reply"):
+            spe.validate_row(row("one", [bare]))
+
+    def test_reply_pieces_must_spell_the_answer(self):
+        drifted = turn("14 days [s1].", reply=[text_piece("14 days "), source_piece(2), text_piece(".")])
+        with self.assertRaisesRegex(ValueError, "spell"):
+            spe.validate_row(row("one", [drifted]))
+
+    def test_a_labelled_run_cites_what_the_app_resolved(self):
+        dataset = {"documents": [{"id": "a", "text": "Kept for 14 days."}, {"id": "b", "text": "Other."}],
+                   "queries": [{"id": "one", "text": "How long?", "relevance": {"a": 3}}]}
+        expectations = {"queries": [{"id": "one", "required_patterns": [["14 days"]],
+                                     "required_citation_docs": ["a"]}]}
+        cited = row("one", [turn("Kept for 14 days [s1].",
+                                 reply=[text_piece("Kept for 14 days "), source_piece(1), text_piece(".")])])
+        scored = spe.score_dataset(dataset, expectations, [cited])
+        self.assertEqual(scored[0]["cited_ids"], [1])
 
 
 class RowShape(unittest.TestCase):
@@ -228,8 +311,8 @@ class Judge(unittest.TestCase):
             calls.append(messages)
             return (len(calls) != 2, "graded")
 
-        rows = [row("one", [turn("14 days [1].")]),
-                row("two", [turn("14 days [1]."), turn("Not recorded in the documents.", citation_map={})])]
+        rows = [row("one", [turn(("14 days ", 1, "."))]),
+                row("two", [turn(("14 days ", 1, ".")), turn("Not recorded in the documents.", citation_map={})])]
         scored = spe.score(QUESTIONS, rows, judge)
         self.assertEqual(len(calls), 3)
         self.assertTrue(all(r["mechanical_checks_passed"] for r in scored))
@@ -309,11 +392,11 @@ class LabelledDataset(unittest.TestCase):
                    "queries": [{"id": "one", "text": "How long?", "relevance": {"a": 3}}]}
         expectations = {"queries": [{"id": "one", "required_patterns": [["14 days"]],
                                      "required_citation_docs": ["a"]}]}
-        good = row("one", [turn("Kept for 14 days [1].")])
+        good = row("one", [turn(("Kept for 14 days ", 1, "."))])
         scored = spe.score_dataset(dataset, expectations, [good])
         self.assertTrue(scored[0]["citations_aligned"])
         self.assertTrue(scored[0]["mechanical_checks_passed"])
-        shuffled = row("one", [turn("Kept for 14 days [2].")])
+        shuffled = row("one", [turn(("Kept for 14 days ", 2, "."))])
         shuffled["citation_map"] = {"1": "b", "2": "a"}
         shuffled["ranked_ids"] = ["a", "b"]
         scored = spe.score_dataset(dataset, expectations, [shuffled])

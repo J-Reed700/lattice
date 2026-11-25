@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   buildPassageTextRenderer,
@@ -128,6 +128,25 @@ describe('findPassagePage', () => {
     };
     const hit = await findPassagePage(pdf, passage);
     expect(hit?.page).toBe(2);
+  });
+
+  it('cleans up each scanned page even when text extraction fails', async () => {
+    const cleanup1 = vi.fn();
+    const cleanup2 = vi.fn();
+    const pdf = {
+      numPages: 2,
+      getPage: async (pageNumber: number) => ({
+        getTextContent: async () => {
+          if (pageNumber === 1) throw new Error('broken text');
+          return { items: passage.split(' ').map((str) => ({ str })) };
+        },
+        cleanup: pageNumber === 1 ? cleanup1 : cleanup2,
+      }),
+    };
+    const hit = await findPassagePage(pdf, passage);
+    expect(hit?.page).toBe(2);
+    expect(cleanup1).toHaveBeenCalledTimes(1);
+    expect(cleanup2).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -15,7 +15,7 @@ fn inventory_of(count: usize) -> Inventory {
                 index,
                 claims: vec![Claim {
                     quote: GOOD.into(),
-                    statement: GOOD.into(),
+                    statement: FIXED.into(),
                 }],
                 non_factual_reason: String::new(),
             })
@@ -155,9 +155,9 @@ async fn a_batch_failing_twice_fails_the_inventory_and_the_other_batches_are_kep
     .await
 }
 
-/// Holds each coverage mapping request until another is in flight, at most
+/// Holds each fidelity audit request until another is in flight, at most
 /// 10 s, and records the most that were in flight together.
-struct Mappings<'m> {
+struct FidelityAudits<'m> {
     inner: &'m Model,
     peak: tokio::sync::watch::Sender<usize>,
     now: AtomicUsize,
@@ -166,12 +166,12 @@ struct Mappings<'m> {
 }
 
 #[async_trait::async_trait]
-impl LLMPort for Mappings<'_> {
+impl LLMPort for FidelityAudits<'_> {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        let mapping = fixture_prompts(request)
+        let fidelity = fixture_prompts(request)
             .iter()
-            .any(|prompt| prompt.starts_with("Audit claim coverage independently."));
-        if mapping {
+            .any(|prompt| prompt.starts_with("Audit inventory fidelity."));
+        if fidelity {
             self.asked.lock().unwrap().extend(fixture_prompts(request));
             let now = self.now.fetch_add(1, Ordering::SeqCst) + 1;
             self.most.fetch_max(now, Ordering::SeqCst);
@@ -186,7 +186,7 @@ impl LLMPort for Mappings<'_> {
         for prompt in fixture_prompts(request) {
             replies.push(self.inner.respond(&prompt).await?);
         }
-        if mapping {
+        if fidelity {
             self.now.fetch_sub(1, Ordering::SeqCst);
         }
         Ok(fixture_completion(request, replies))
@@ -214,7 +214,7 @@ impl LLMPort for Mappings<'_> {
 #[tokio::test]
 async fn each_unit_is_asked_about_on_its_own() -> Result<()> {
     let inner = Model::new();
-    let model = Mappings {
+    let model = FidelityAudits {
         inner: &inner,
         peak: tokio::sync::watch::channel(0).0,
         now: AtomicUsize::new(0),
@@ -232,9 +232,10 @@ async fn each_unit_is_asked_about_on_its_own() -> Result<()> {
     let asked = model.asked.lock().unwrap();
     assert_eq!(asked.len(), 5);
     for prompt in asked.iter() {
-        let unit = &coverage::task_of(prompt).unwrap()["unit"];
-        assert_eq!(unit["passages"].as_array().unwrap().len(), 1);
-        assert_eq!(unit["claims"].as_array().unwrap().len(), 1);
+        let task = fixture_task(prompt).unwrap();
+        assert_eq!(task["section"].as_array().unwrap().len(), 1);
+        assert_eq!(task["inventory"].as_array().unwrap().len(), 1);
+        assert!(task["targetPassage"]["id"].as_str().is_some());
     }
     let indices: Vec<usize> = audited.units.iter().map(|unit| unit.index).collect();
     assert_eq!(indices, vec![0, 1, 2, 3, 4]);
@@ -286,7 +287,7 @@ async fn fidelity_checks_every_passage_of_a_section_at_once() -> Result<()> {
     let fixture = json!({
         "units": [{"index":0,
             "passages":(0..passages).map(|i|json!({"id":format!("p-{i}"),"text":"Equal inputs guarantee identical results."})).collect::<Vec<_>>(),
-            "claims":[{"id":"claim-a","statement":"Equal inputs guarantee identical results."}]}],
+            "claims":[{"id":"claim-a","statement":"Identical inputs yield matching outputs."}]}],
         "judged": (0..passages).map(|i| format!("p-{i}")).collect::<Vec<_>>(),
     });
 

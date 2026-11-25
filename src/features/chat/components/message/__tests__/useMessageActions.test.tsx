@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useMessageActions } from '@/features/chat/components/message/useMessageActions';
 import { VaultAPI } from '@/lib/api';
-import type { ChatModelChoice } from '@/lib/bindings';
+import type { ActiveModels, ChatModelChoice } from '@/lib/bindings';
 import type { GenerationOutcome } from '@/shared/conversations/conversationsStore.types';
 import { useToastStore } from '@/stores/toastStore';
 import { makeAppSettings } from '@/tests/fixtures/appSettings';
@@ -18,12 +18,13 @@ vi.mock('@/features/model/hooks/useCloudModels', () => ({ useCloudModelCatalogs:
 const api = VaultAPI as unknown as Record<string, ReturnType<typeof vi.fn>>;
 
 const state = vi.hoisted(() => ({
-  conversations: [] as Array<{ id: string; modelChoice?: ChatModelChoice }>,
+  conversations: [] as Array<{ id: string; modelChoice?: ChatModelChoice; messages?: Array<{ role: string; status?: string }> }>,
   regenerateResponse: vi.fn(),
   setConversationModelChoice: vi.fn(),
 }));
 const appSettings = vi.hoisted(() => ({ current: undefined as ReturnType<typeof makeAppSettings> | undefined }));
 const models = vi.hoisted(() => ({ current: [] as DownloadedModel[] }));
+const active = vi.hoisted(() => ({ current: null as ActiveModels | null }));
 
 vi.mock('@/shared/conversations/conversationsStore', () => ({
   useConversationsStore: (selector: (_s: typeof state) => unknown) => selector(state),
@@ -31,6 +32,7 @@ vi.mock('@/shared/conversations/conversationsStore', () => ({
 vi.mock('@/features/settings/hooks/useSettingsQuery', () => ({
   useSettingsQuery: () => ({ data: appSettings.current }),
 }));
+vi.mock('@/features/model/hooks/useActiveModels', () => ({ useActiveModels: () => ({ activeModels: active.current }) }));
 vi.mock('@/features/model/hooks/useDownloadedModels', () => ({
   useDownloadedModels: () => ({ downloadedModels: models.current }),
 }));
@@ -69,6 +71,7 @@ describe('Try with another model', () => {
     settings.llm.provider = 'local';
     appSettings.current = settings;
     models.current = [row({ id: 'big' }), row({ id: 'small', model_id: 'ornith-1.5-9b', model_name: 'Ornith-1.5-9B', is_active_for_chat: false })];
+    active.current = { chat: [{ kind: 'local', model_id: 'qwen3.5-27b' }], chat_unset: null, utility: [], llama_cpp: null, ollama: null, ollama_utility_tag: null };
     state.conversations = [{ id: 'chat-a', modelChoice: { kind: 'default' } }];
     state.regenerateResponse = vi.fn().mockResolvedValue('answered' satisfies GenerationOutcome);
     state.setConversationModelChoice = vi.fn().mockResolvedValue({});
@@ -132,5 +135,22 @@ describe('Try with another model', () => {
     expect(toast.title).toBe('Stopped Ornith-1.5-9B');
     expect(toast.message).toBe("You stopped the answer. This chat's model is unchanged.");
     expect(toast.action).toBeUndefined();
+  });
+
+  it('does not claim the question is back in the composer when the failed user message stayed in the thread', async () => {
+    state.conversations = [
+      {
+        id: 'chat-a',
+        modelChoice: { kind: 'default' },
+        messages: [{ role: 'user', status: 'failed' }],
+      },
+    ];
+    state.regenerateResponse = vi.fn().mockResolvedValue('failed' satisfies GenerationOutcome);
+    const result = render();
+    await act(() => result.current.handleRegenerate());
+    const [toast] = useToastStore.getState().toasts;
+    expect(toast.title).toBe("Couldn't regenerate");
+    expect(toast.message).not.toBe('Your question is back in the composer.');
+    expect(toast.message).toContain('stayed in the thread');
   });
 });

@@ -9,6 +9,7 @@
 import { useState, useCallback, useMemo } from 'react';
 
 import { EmptyState } from '@/components/EmptyState/EmptyState';
+import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useApi } from '@/contexts/ApiContext';
 import {
@@ -17,7 +18,6 @@ import {
   useLibraryDocumentActions,
 } from '@/features/files/hooks/useLibraryDocumentActions';
 import { useLibraryDocumentsQuery } from '@/features/files/hooks/useLibraryDocumentsQuery';
-import { isHttpUrl, isWebDocument } from '@/features/files/model/documentMetadata';
 import { useFileBrowserStore } from '@/features/files/stores/fileBrowserStore';
 import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
 import { fromDocumentMetadata } from '@/features/reading/model/sourceAdapter';
@@ -27,6 +27,7 @@ import type { SourceWithMetadata } from '@/types/conversation';
 import { type DocumentMetadata, type SortField, type SortOrder } from '@/types/fileBrowser';
 import { isSupportedFileType } from '@/utils/fileTypeDetector';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
+import { isHttpUrl } from '@/utils/sourcePreview';
 
 import { ContextMenu } from './ContextMenu';
 import { isAbsolutePath } from './fileBrowserHelpers';
@@ -166,16 +167,8 @@ export function FileBrowser() {
   const handleFileOpen = useCallback(async (doc: DocumentMetadata) => {
     setFocusedDocument(doc.id);
 
-    if (isWebDocument(doc)) {
-      const { source } = fromDocumentMetadata(doc);
-      if (!isHttpUrl(doc.filePath)) {
-        const webOpen = await openDocumentFile(doc.id, api);
-        if (webOpen.ok && webOpen.data.action === 'render_internal') {
-          setPreviewSource({ ...source, filePath: webOpen.data.contentPath });
-          return;
-        }
-      }
-      setPreviewSource(source);
+    if (doc.web) {
+      setPreviewSource(fromDocumentMetadata(doc).source);
       return;
     }
 
@@ -297,84 +290,91 @@ export function FileBrowser() {
   };
 
   return (
-    <main className="h-full overflow-y-auto bg-bg">
-      <div
-        className={`mx-auto flex h-full w-full flex-col px-6 pb-10 pt-10 ${
-          isNeighborhoodOpen && focusedDoc ? 'max-w-[1360px]' : 'max-w-[1100px]'
-        }`}
-      >
-        <PageHeader
-          title="Library"
-          meta={headerMeta}
-          actions={
-            <LibraryViewActions
-              viewMode={viewMode}
-              setViewMode={setViewMode}
-              isNeighborhoodOpen={isNeighborhoodOpen}
-              focusedDocumentId={focusedDocumentId}
-              toggleNeighborhood={toggleNeighborhood}
-              handleRefresh={handleRefresh}
-            />
+    <main className="flex h-full overflow-hidden bg-bg">
+      {isRailOpen ? (
+        <LibraryRail
+          scope={scope}
+          onScopeChange={setScope}
+          collections={customCollections}
+          onCreateCollection={handleAsyncEvent(handleCreateCollection)}
+          onRenameCollection={setRenameCollection}
+          onDeleteCollection={setPendingDeleteCollection}
+          collectionCounts={collectionCounts}
+          savedSearches={savedSearches}
+          activeSavedSearchId={activeSavedSearchId}
+          onApplySavedSearch={applySavedSearch}
+          onRenameSavedSearch={(searchId, name) =>
+            openSavedSearchNameDialog('rename', name, searchId)
           }
+          onCreateSavedSearch={handleCreateSavedSearch}
+          themes={themes}
+          themesEnabled={themesEnabled}
+          hasRunThemes={hasRunThemes}
+          isFindingThemes={isFindingThemes}
+          themeProgress={themeProgress}
+          onFindThemes={handleFindThemes}
         />
+      ) : null}
 
-        <LibraryToolbar
-          isRailOpen={isRailOpen}
-          onToggleRail={() => setIsRailOpen((open) => !open)}
-          searchQuery={searchQuery}
-          onSearchQueryChange={setSearchQuery}
-          isContentSearchLoading={isContentSearchLoading}
-          sourceCounts={sourceCounts}
-          filterBySource={filterBySource}
-          onFilterBySourceChange={setFilterBySource}
-          sortField={sortField}
-          sortOrder={sortOrder}
-          onSortChange={handleSortChange}
-          groupByDate={groupByDate}
-          onToggleGroupByDate={toggleGroupByDate}
-        />
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <div
+          className={`mx-auto flex min-h-0 w-full flex-1 flex-col px-8 pb-8 pt-8 ${
+            isNeighborhoodOpen && focusedDoc ? 'max-w-[1280px]' : 'max-w-[1040px]'
+          }`}
+        >
+          <PageHeader
+            title="Library"
+            meta={headerMeta}
+            actions={
+              <LibraryViewActions
+                viewMode={viewMode}
+                setViewMode={setViewMode}
+                isNeighborhoodOpen={isNeighborhoodOpen}
+                focusedDocumentId={focusedDocumentId}
+                toggleNeighborhood={toggleNeighborhood}
+                handleRefresh={handleRefresh}
+              />
+            }
+          />
 
-        {collectionsError ? (
-          <div role="alert" className="mt-3 flex items-center justify-between rounded-md border border-danger/30 bg-danger/5 px-3 py-2 text-sm text-danger">
-            <span>Your collections could not be loaded: {collectionsError}</span>
-            <button type="button" className="underline" onClick={() => { void refreshCollections(); }}>Retry</button>
-          </div>
-        ) : null}
+          <LibraryToolbar
+            isRailOpen={isRailOpen}
+            onToggleRail={() => setIsRailOpen((open) => !open)}
+            searchQuery={searchQuery}
+            onSearchQueryChange={setSearchQuery}
+            isContentSearchLoading={isContentSearchLoading}
+            sourceCounts={sourceCounts}
+            filterBySource={filterBySource}
+            onFilterBySourceChange={setFilterBySource}
+            sortField={sortField}
+            sortOrder={sortOrder}
+            onSortChange={handleSortChange}
+            groupByDate={groupByDate}
+            onToggleGroupByDate={toggleGroupByDate}
+          />
 
-        <div className="flex min-h-0 flex-1 gap-6">
-          {isRailOpen ? (
-            <LibraryRail
-              scope={scope}
-              onScopeChange={setScope}
-              collections={customCollections}
-              onCreateCollection={handleAsyncEvent(handleCreateCollection)}
-              onRenameCollection={setRenameCollection}
-              onDeleteCollection={setPendingDeleteCollection}
-              collectionCounts={collectionCounts}
-              savedSearches={savedSearches}
-              activeSavedSearchId={activeSavedSearchId}
-              onApplySavedSearch={applySavedSearch}
-              onRenameSavedSearch={(searchId, name) =>
-                openSavedSearchNameDialog('rename', name, searchId)
-              }
-              onCreateSavedSearch={handleCreateSavedSearch}
-              themes={themes}
-              themesEnabled={themesEnabled}
-              hasRunThemes={hasRunThemes}
-              isFindingThemes={isFindingThemes}
-              themeProgress={themeProgress}
-              onFindThemes={handleFindThemes}
-            />
+          {collectionsError ? (
+            <div role="alert" className="mb-3 flex items-center justify-between rounded-lg border border-danger/30 bg-danger/5 px-3 py-2 text-sm text-danger">
+              <span>Your collections could not be loaded: {collectionsError}</span>
+              <button type="button" className="underline" onClick={() => { void refreshCollections(); }}>Retry</button>
+            </div>
           ) : null}
 
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <div className="flex items-baseline gap-2 pb-3">
-              <h2 className="min-w-0 truncate text-lg font-medium text-text-secondary">{scopeName}</h2>
-              <span className="text-sm tabular-nums text-text-muted">
+            <div className="flex items-baseline gap-2 pb-2.5">
+              <h2 className="min-w-0 truncate font-sans text-[15px] font-semibold tracking-[-0.015em] text-text-primary">{scopeName}</h2>
+              <span className="text-xs font-medium tabular-nums text-text-muted">
                 {filteredDocuments.length.toLocaleString()}
               </span>
               {activeCollection?.kind === 'manual' ? (
-                <button type="button" onClick={() => setAddDocumentsCollectionId(activeCollection.id)} className="ml-auto shrink-0 rounded-sm border border-border-default px-3 py-1.5 text-sm text-text-primary hover:bg-surface">Add documents</button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setAddDocumentsCollectionId(activeCollection.id)}
+                  className="ml-auto shrink-0"
+                >
+                  Add documents
+                </Button>
               ) : null}
             </div>
             <TypeFacets
@@ -405,13 +405,15 @@ export function FileBrowser() {
               />
             ) : null}
 
-            <div className="min-h-0 flex-1">
+            <div className="flex min-h-0 flex-1 flex-col">
               {activeCollection && collectionCounts.get(activeCollection.id) === 0 ? (
-                <EmptyState
-                  title="This collection is empty."
-                  description={activeCollection.kind === 'manual' ? 'Add documents from your Library to get started.' : 'The documents in this snapshot are no longer in your Library.'}
-                  action={activeCollection.kind === 'manual' ? { label: 'Choose documents', onClick: () => setAddDocumentsCollectionId(activeCollection.id) } : undefined}
-                />
+                <div className="rounded-xl border border-border-subtle bg-surface p-6 shadow-sm">
+                  <EmptyState
+                    title="This collection is empty."
+                    description={activeCollection.kind === 'manual' ? 'Add documents from your Library to get started.' : 'The documents in this snapshot are no longer in your Library.'}
+                    action={activeCollection.kind === 'manual' ? { label: 'Choose documents', onClick: () => setAddDocumentsCollectionId(activeCollection.id) } : undefined}
+                  />
+                </div>
               ) : <>
               {viewMode === 'tree' && <TreeView {...viewProps} />}
               {viewMode === 'list' && <ListView {...viewProps} />}
@@ -425,19 +427,19 @@ export function FileBrowser() {
               </>}
             </div>
           </div>
-
-          {isNeighborhoodOpen && focusedDoc ? (
-            <NeighborhoodPanel
-              documentId={focusedDoc.id}
-              documentTitle={focusedDoc.fileName}
-              documentsById={documentsById}
-              onOpenDocument={openDocumentById}
-              onOpenConversation={openConversation}
-              onClose={toggleNeighborhood}
-            />
-          ) : null}
         </div>
       </div>
+
+      {isNeighborhoodOpen && focusedDoc ? (
+        <NeighborhoodPanel
+          documentId={focusedDoc.id}
+          documentTitle={focusedDoc.fileName}
+          documentsById={documentsById}
+          onOpenDocument={openDocumentById}
+          onOpenConversation={openConversation}
+          onClose={toggleNeighborhood}
+        />
+      ) : null}
 
       {contextMenuPosition && contextMenuDocument && (
         <ContextMenu

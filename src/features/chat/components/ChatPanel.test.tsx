@@ -49,6 +49,7 @@ vi.mock('@/shared/conversations/conversationsStore', async (importOriginal) => (
   useConversationsStore: (selector: (state: Record<string, unknown>) => unknown) => selector(h.store),
 }));
 vi.mock('@/features/settings/hooks/useSettingsQuery', () => ({ useSettingsQuery: () => ({ data: h.settings }) }));
+vi.mock('@/features/model/hooks/useActiveModels', () => ({ useActiveModels: () => ({ activeModels: null }) }));
 vi.mock('@/features/model/hooks/useDownloadedModels', () => ({ useDownloadedModels: () => ({ downloadedModels: h.downloadedModels }) }));
 vi.mock('@/features/model/hooks/useLoadedModels', () => ({
   useLoadedModels: () => h.loadedModels,
@@ -574,6 +575,22 @@ describe('ChatPanel', () => {
       h.composer.textareaRef = { current: { focus } };
       render(<ChatPanel />);
       expect(focus).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('turn error banner', () => {
+    it('surfaces conversation error inline when showErrorBanner is enabled and dismisses it cleanly', () => {
+      const clearError = vi.fn();
+      h.store = makeStore({ error: 'Local model stopped responding', clearError });
+      const view = render(<ChatPanel showErrorBanner />);
+
+      const alert = screen.getByRole('alert');
+      expect(alert).toHaveTextContent('Local model stopped responding');
+      fireEvent.click(screen.getByRole('button', { name: 'Dismiss error' }));
+      expect(clearError).toHaveBeenCalledTimes(1);
+
+      view.rerender(<ChatPanel showErrorBanner={false} />);
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     });
   });
 });

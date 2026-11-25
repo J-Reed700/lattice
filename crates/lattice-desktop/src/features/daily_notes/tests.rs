@@ -66,8 +66,9 @@ fn capture_remaps_only_colliding_citations_without_cascading() {
 }
 
 async fn fresh_pool() -> SqlitePool {
-    let pool = SqlitePool::connect(":memory:").await.unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+        .await
+        .unwrap();
     // The app turns this on at connection time; the cascade from a deleted
     // journal to its pages is silently a no-op without it.
     sqlx::query("PRAGMA foreign_keys = ON")
@@ -724,7 +725,16 @@ fn capture_request(message_id: &str) -> super::dto::CaptureReferenceRequestDto {
 
 #[tokio::test]
 async fn overlapping_captures_share_one_note_and_preserve_both_additions() {
-    let db = Database::new(fresh_pool().await);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("daily-notes.db");
+    lattice_core::shared::testing::sqlite::write_migrated(&path)
+        .await
+        .unwrap();
+    let db = Database::new(
+        SqlitePool::connect_with(lattice_core::shared::testing::sqlite::file_options(&path))
+            .await
+            .unwrap(),
+    );
     let left = DailyNotesRepository::new(db.clone());
     let (first, second) = tokio::join!(
         capture_reference(&db, capture_request("first")),

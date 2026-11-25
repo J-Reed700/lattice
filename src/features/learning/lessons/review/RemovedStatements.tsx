@@ -25,7 +25,7 @@ function SectionPicker({ sections, known, value, onChange, disabled }: {
     <div className="flex flex-wrap items-center gap-2 text-sm">
       <label htmlFor={id} className="text-text-secondary">Put it back at the end of</label>
       <select id={id} value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)}
-        className="h-9 rounded-md border border-border bg-background px-2 text-sm text-text-primary">
+        className="h-9 rounded-md border border-border bg-bg px-2 text-sm text-text-primary">
         {known ? <option value={WHERE_IT_WAS}>Where it was</option> : <option value={NONE} disabled>Choose a section</option>}
         {sections.map((section) => <option key={section.index} value={String(section.index)}>{sectionLabel(section)}</option>)}
       </select>
@@ -74,7 +74,7 @@ function TakenOutRow({ entry, sections, busy, checked, onToggle, onPutBack, onAd
           {editing && <div>
             <label htmlFor={editBox} className="text-xs font-medium text-text-secondary">The sentence to put back</label>
             <textarea id={editBox} value={text} rows={3} onChange={(event) => setText(event.target.value)}
-              className="mt-1 w-full rounded-md border border-border bg-background p-2 font-serif text-base leading-6 text-text-primary" />
+              className="mt-1 w-full rounded-md border border-border bg-bg p-2 font-serif text-base leading-6 text-text-primary" />
           </div>}
           <SectionPicker sections={sections} known={known} value={place} onChange={setPlace} disabled={busy} />
           <div className="flex flex-wrap gap-2">

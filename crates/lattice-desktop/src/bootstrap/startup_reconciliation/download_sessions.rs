@@ -9,17 +9,20 @@ use tracing::{error, info, warn};
 
 /// Reconcile stale download sessions on app startup
 ///
-/// Finds downloads stuck in "Downloading" state (from app crash)
-/// and marks them as Failed to prevent zombie states.
+/// Finds downloads stuck in "Downloading" state (from app crash) or still
+/// "Pending" (queued in memory only, so a restart loses them). Both are marked
+/// Paused (preserving `.part` byte progress if present on disk, or 0 if
+/// missing) so the user can resume them.
 pub async fn reconcile_stale_downloads(
     repository: Arc<dyn DownloadRepository>,
     startup_ts: DateTime<Utc>,
 ) -> Result<usize, DownloadError> {
     info!("Starting download session reconciliation");
 
-    let downloading_sessions = repository
+    let mut downloading_sessions = repository
         .list_by_state(&DownloadState::Downloading)
         .await?;
+    downloading_sessions.extend(repository.list_by_state(&DownloadState::Pending).await?);
 
     // No task from a previous process survives a restart, so a session still
     // marked Downloading that was last touched before this one started is dead
@@ -37,13 +40,42 @@ pub async fn reconcile_stale_downloads(
         return Ok(0);
     }
 
-    warn!("Found {} stale download(s) in 'Downloading' state", count);
+    warn!(
+        "Found {} stale download(s) in 'Downloading' or 'Pending' state",
+        count
+    );
 
     let mut reconciled = 0;
     for mut session in stale_sessions {
         let session_id = session.id().to_string();
 
-        match session.fail("App restarted while downloading".to_string()) {
+        // No transfer survives a restart; mark both Pending and Downloading
+        // sessions Paused. Preserve `.part` progress only when a checksum can
+        // verify the bytes after restart; checksumless downloads discard `.part`
+        // so an upstream change cannot splice stale bytes into a completed file.
+        let part_bytes = if session.checksum().is_some() {
+            match tokio::fs::metadata(session.working_path()).await {
+                Ok(meta) if meta.is_file() => {
+                    let len = meta.len();
+                    if session
+                        .progress()
+                        .total_bytes()
+                        .is_some_and(|total| len > total)
+                    {
+                        0
+                    } else {
+                        len
+                    }
+                }
+                _ => 0,
+            }
+        } else {
+            let _ = tokio::fs::remove_file(session.working_path()).await;
+            0
+        };
+        session.update_progress(part_bytes, 0.0);
+
+        match session.pause() {
             Ok(_) => match repository.update(&session).await {
                 Ok(_) => {
                     info!("Reconciled stale download: {}", session_id);
@@ -54,7 +86,7 @@ pub async fn reconcile_stale_downloads(
                 }
             },
             Err(e) => {
-                error!("Failed to mark session {} as failed: {}", session_id, e);
+                error!("Failed to pause stale session {}: {}", session_id, e);
             }
         }
     }
@@ -175,7 +207,8 @@ mod tests {
 
         assert_eq!(reconciled, 1);
         let session = repository.get("interrupted").await.unwrap().unwrap();
-        assert_eq!(session.state(), &DownloadState::Failed);
+        assert_eq!(session.state(), &DownloadState::Paused);
+        assert_eq!(session.error_message(), None);
     }
 
     #[tokio::test]
@@ -198,12 +231,9 @@ mod tests {
     /// garbage.
     #[tokio::test]
     async fn completed_downloads_keep_their_files_when_no_model_row_names_them() {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(":memory:")
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
             .await
             .unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         let dir = tempfile::tempdir().unwrap();
         let repository = Arc::new(MockDownloadRepository::new());
         let mut files = Vec::new();
@@ -273,10 +303,155 @@ mod tests {
             "SqliteDownloadRepository must preserve updated_at so stale Downloading rows are reconciled"
         );
         let updated = repository.get("sqlite-interrupted").await.unwrap().unwrap();
-        assert_eq!(updated.state(), &DownloadState::Failed);
-        assert_eq!(
-            updated.error_message(),
-            Some("App restarted while downloading")
-        );
+        assert_eq!(updated.state(), &DownloadState::Paused);
+        assert_eq!(updated.progress().bytes_downloaded(), 0);
+        assert_eq!(updated.error_message(), None);
+    }
+
+    #[tokio::test]
+    async fn interrupted_downloading_session_preserves_part_bytes_as_paused_when_checksummed() {
+        use lattice_core::domain::download::{Checksum, ChecksumAlgorithm};
+
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("model.gguf");
+        std::fs::write(
+            lattice_core::domain::download::part_path(&destination),
+            vec![3u8; 640],
+        )
+        .unwrap();
+
+        let checksum = Checksum::new(ChecksumAlgorithm::Sha256, "a".repeat(64)).unwrap();
+        let mut session = DownloadSession::new(
+            "with-part".to_string(),
+            "https://example.com/model.gguf".to_string(),
+            destination,
+            Some(1000),
+            Some(checksum),
+        )
+        .unwrap();
+        session.start().unwrap();
+        session.update_progress(400, 100.0);
+
+        let repository = Arc::new(MockDownloadRepository::new());
+        repository.create(&session).await.unwrap();
+        let startup = Utc::now() + chrono::Duration::milliseconds(5);
+
+        let reconciled = reconcile_stale_downloads(repository.clone(), startup)
+            .await
+            .unwrap();
+
+        assert_eq!(reconciled, 1);
+        let after = repository.get("with-part").await.unwrap().unwrap();
+        assert_eq!(after.state(), &DownloadState::Paused);
+        assert_eq!(after.progress().bytes_downloaded(), 640);
+        assert_eq!(after.error_message(), None);
+    }
+
+    #[tokio::test]
+    async fn interrupted_checksumless_session_discards_part_bytes_as_paused() {
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("checksumless.gguf");
+        let part = lattice_core::domain::download::part_path(&destination);
+        std::fs::write(&part, vec![3u8; 640]).unwrap();
+
+        let mut session = DownloadSession::new(
+            "checksumless-part".to_string(),
+            "https://example.com/checksumless.gguf".to_string(),
+            destination,
+            Some(1000),
+            None,
+        )
+        .unwrap();
+        session.start().unwrap();
+        session.update_progress(400, 100.0);
+
+        let repository = Arc::new(MockDownloadRepository::new());
+        repository.create(&session).await.unwrap();
+        let startup = Utc::now() + chrono::Duration::milliseconds(5);
+
+        let reconciled = reconcile_stale_downloads(repository.clone(), startup)
+            .await
+            .unwrap();
+
+        assert_eq!(reconciled, 1);
+        let after = repository.get("checksumless-part").await.unwrap().unwrap();
+        assert_eq!(after.state(), &DownloadState::Paused);
+        assert_eq!(after.progress().bytes_downloaded(), 0);
+        assert_eq!(after.error_message(), None);
+        assert!(!part.exists());
+    }
+
+    #[tokio::test]
+    async fn a_session_still_queued_at_a_relaunch_is_paused_not_failed() {
+        let repository = Arc::new(MockDownloadRepository::new());
+        let queued = DownloadSession::new(
+            "queued".to_string(),
+            "https://example.com/queued".to_string(),
+            std::env::temp_dir().join("queued"),
+            Some(1000),
+            None,
+        )
+        .unwrap();
+        repository.create(&queued).await.unwrap();
+        repository
+            .create(&downloading("interrupted"))
+            .await
+            .unwrap();
+        let startup = Utc::now() + chrono::Duration::milliseconds(5);
+
+        let reconciled = reconcile_stale_downloads(repository.clone(), startup)
+            .await
+            .unwrap();
+
+        assert_eq!(reconciled, 2);
+        let queued = repository.get("queued").await.unwrap().unwrap();
+        assert_eq!(queued.state(), &DownloadState::Paused);
+        assert_eq!(queued.error_message(), None);
+        let interrupted = repository.get("interrupted").await.unwrap().unwrap();
+        assert_eq!(interrupted.state(), &DownloadState::Paused);
+        assert_eq!(interrupted.error_message(), None);
+    }
+
+    #[tokio::test]
+    async fn a_pending_session_created_by_this_launch_is_left_queued() {
+        let repository = Arc::new(MockDownloadRepository::new());
+        let startup = Utc::now() - chrono::Duration::milliseconds(5);
+        let queued = DownloadSession::new(
+            "fresh".to_string(),
+            "https://example.com/fresh".to_string(),
+            std::env::temp_dir().join("fresh"),
+            Some(1000),
+            None,
+        )
+        .unwrap();
+        repository.create(&queued).await.unwrap();
+
+        let reconciled = reconcile_stale_downloads(repository.clone(), startup)
+            .await
+            .unwrap();
+
+        assert_eq!(reconciled, 0);
+        let session = repository.get("fresh").await.unwrap().unwrap();
+        assert_eq!(session.state(), &DownloadState::Pending);
+    }
+
+    /// Resume queues a session as Pending, so a quit that leaves it waiting for
+    /// a slot is a queued row at the next launch, not a dead transfer.
+    #[tokio::test]
+    async fn a_resumed_session_still_queued_at_shutdown_is_left_paused() {
+        let repository = Arc::new(MockDownloadRepository::new());
+        let mut session = downloading("queued-resume");
+        session.pause().unwrap();
+        session.resume().unwrap();
+        assert_eq!(session.state(), &DownloadState::Pending);
+        repository.create(&session).await.unwrap();
+        let startup = Utc::now() + chrono::Duration::milliseconds(5);
+
+        reconcile_stale_downloads(repository.clone(), startup)
+            .await
+            .unwrap();
+
+        let after = repository.get("queued-resume").await.unwrap().unwrap();
+        assert_eq!(after.state(), &DownloadState::Paused);
     }
 }

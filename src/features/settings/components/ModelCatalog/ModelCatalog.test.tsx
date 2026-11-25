@@ -8,6 +8,7 @@ import type { ModelMetadata, ModelRecommendation } from '@/types/modelCatalog';
 import { modelMetaLine } from './catalogUtils';
 import { ModelFilterPanel } from './ModelFilterPanel';
 import { ModelRow } from './ModelRow';
+import { chooseRadixOption } from '../radixSelectTestUtils';
 
 
 const metadata = (overrides: Partial<ModelMetadata> = {}): ModelMetadata => ({
@@ -86,7 +87,7 @@ describe('ModelFilterPanel', () => {
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     await user.click(toggle);
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByLabelText('Maximum size')).toHaveValue('');
+    expect(screen.getByLabelText('Maximum size')).toHaveTextContent('Any download size');
     expect(screen.getByLabelText('Minimum downloads')).toBeInTheDocument();
     expect(screen.getByLabelText('Capability')).toBeInTheDocument();
     expect(screen.getByLabelText('Estimated fit')).toBeInTheDocument();
@@ -108,7 +109,7 @@ describe('ModelFilterPanel', () => {
     expect(screen.queryByRole('button', { name: 'Reset filters' })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Filters' }));
-    await user.selectOptions(screen.getByLabelText('Maximum size'), '4');
+    await chooseRadixOption(screen.getByLabelText('Maximum size'), 'Up to 4 GB', user);
     expect(useModelCatalogStore.getState().filters.max_size_gb).toBe(4);
 
     await user.click(screen.getByRole('button', { name: 'Reset filters' }));
@@ -120,8 +121,8 @@ describe('ModelFilterPanel', () => {
     const user = userEvent.setup();
     render(<ModelFilterPanel quantizations={['Q4_K_M', 'Q8_0']} />);
     await user.click(screen.getByRole('button', { name: 'Filters' }));
-    await user.selectOptions(screen.getByLabelText('Listed quantization'), 'Q8_0');
-    await user.selectOptions(screen.getByLabelText('Estimated fit'), 'fits');
+    await chooseRadixOption(screen.getByLabelText('Listed quantization'), 'Q8_0', user);
+    await chooseRadixOption(screen.getByLabelText('Estimated fit'), 'Fits comfortably', user);
     expect(useModelCatalogStore.getState().quantizationFilter).toBe('Q8_0');
     expect(useModelCatalogStore.getState().fitFilter).toBe('fits');
     await user.click(screen.getByRole('button', { name: 'Reset filters' }));
@@ -133,11 +134,11 @@ describe('ModelFilterPanel', () => {
     const user = userEvent.setup();
     render(<ModelFilterPanel quantizations={['Q4_K_M', 'Q8_0']} />);
     await user.click(screen.getByRole('button', { name: 'Filters' }));
-    await user.selectOptions(screen.getByLabelText('Listed quantization'), 'Q8_0');
+    await chooseRadixOption(screen.getByLabelText('Listed quantization'), 'Q8_0', user);
     await user.click(screen.getByRole('button', { name: 'Filters · 1' }));
     expect(screen.queryByLabelText('Listed quantization')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Filters · 1' }));
-    expect(screen.getByLabelText('Listed quantization')).toHaveValue('Q8_0');
+    expect(screen.getByLabelText('Listed quantization')).toHaveTextContent('Q8_0');
   });
 
   it('supports keyboard navigation between purpose tabs', async () => {
@@ -220,6 +221,148 @@ describe('ModelRow', () => {
       />,
     );
     expect(screen.getByText('Downloading 42%')).toBeInTheDocument();
+  });
+
+  it('shows Paused state with Resume button instead of Downloading spinner', async () => {
+    const user = userEvent.setup();
+    const onResume = vi.fn();
+    render(
+      <ModelRow
+        model={recommendation()}
+        {...rowProps}
+        onResume={onResume}
+        activeDownload={
+          {
+            id: 'd-paused',
+            url: 'https://example.invalid/model.gguf',
+            destination: '/tmp/model.gguf',
+            state: 'Paused',
+            bytes_downloaded: 84,
+            total_bytes: 200,
+            bytes_per_second: 0,
+            percentage: 42,
+            eta_seconds: null,
+            error_message: null,
+            retry_count: 0,
+            created_at: '2026-09-05T00:00:00Z',
+            started_at: '2026-09-05T00:00:00Z',
+            completed_at: null,
+            model_name: null,
+            model_id: null,
+          }
+        }
+      />,
+    );
+    expect(screen.getByText('Paused · 42%')).toBeInTheDocument();
+    expect(screen.queryByText(/Downloading/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Resume' }));
+    expect(onResume).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows Queued for Pending state and Failed with Retry button', async () => {
+    const user = userEvent.setup();
+    const onRetry = vi.fn();
+    const { rerender } = render(
+      <ModelRow
+        model={recommendation()}
+        {...rowProps}
+        activeDownload={
+          {
+            id: 'd-pending',
+            url: 'https://example.invalid/model.gguf',
+            destination: '/tmp/model.gguf',
+            state: 'Pending',
+            bytes_downloaded: 0,
+            total_bytes: 200,
+            bytes_per_second: 0,
+            percentage: 0,
+            eta_seconds: null,
+            error_message: null,
+            retry_count: 0,
+            created_at: '2026-09-05T00:00:00Z',
+            started_at: null,
+            completed_at: null,
+            model_name: null,
+            model_id: null,
+          }
+        }
+      />,
+    );
+    expect(screen.getByText('Queued')).toBeInTheDocument();
+
+    rerender(
+      <ModelRow
+        model={recommendation()}
+        {...rowProps}
+        onRetry={onRetry}
+        activeDownload={
+          {
+            id: 'd-failed',
+            url: 'https://example.invalid/model.gguf',
+            destination: '/tmp/model.gguf',
+            state: 'Failed',
+            bytes_downloaded: 20,
+            total_bytes: 200,
+            bytes_per_second: 0,
+            percentage: 10,
+            eta_seconds: null,
+            error_message: 'HTTP 401',
+            retry_count: 0,
+            created_at: '2026-09-05T00:00:00Z',
+            started_at: '2026-09-05T00:00:00Z',
+            completed_at: '2026-09-05T00:01:00Z',
+            model_name: null,
+            model_id: null,
+          }
+        }
+      />,
+    );
+    expect(screen.getByText('Failed')).toHaveAttribute('title', 'HTTP 401');
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables Resume and Retry buttons with Starting… feedback while isStarting is true', () => {
+    const pausedRow = {
+      id: 'd-paused',
+      url: 'https://example.invalid/model.gguf',
+      destination: '/tmp/model.gguf',
+      state: 'Paused' as const,
+      bytes_downloaded: 84,
+      total_bytes: 200,
+      bytes_per_second: 0,
+      percentage: 42,
+      eta_seconds: null,
+      error_message: null,
+      retry_count: 0,
+      created_at: '2026-09-05T00:00:00Z',
+      started_at: '2026-09-05T00:00:00Z',
+      completed_at: null,
+      model_name: null,
+      model_id: null,
+    };
+
+    const { rerender } = render(
+      <ModelRow
+        model={recommendation()}
+        {...rowProps}
+        isStarting
+        onResume={vi.fn()}
+        activeDownload={pausedRow}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Starting…' })).toBeDisabled();
+
+    rerender(
+      <ModelRow
+        model={recommendation()}
+        {...rowProps}
+        isStarting
+        onRetry={vi.fn()}
+        activeDownload={{ ...pausedRow, state: 'Failed', error_message: 'HTTP 401' }}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Starting…' })).toBeDisabled();
   });
 
   it('offers the token on a gated row', async () => {

@@ -587,7 +587,11 @@ async fn a_rate_limit_is_resent_only_after_the_wait_the_provider_asked_for() {
         .await;
     let client = client(&server).await;
     let scheduler = Arc::clone(&client.scheduler);
-    let call = tokio::spawn(async move { client.complete(&legacy::completion(legacy::Completion::default())).await });
+    let call = tokio::spawn(async move {
+        client
+            .complete(&legacy::completion(legacy::Completion::default()))
+            .await
+    });
 
     let closed_for = tokio::time::timeout(Duration::from_secs(30), async {
         loop {
@@ -690,7 +694,9 @@ async fn a_streamed_answer_resent_after_a_server_error_is_timed_from_the_resend(
         .await;
     let response = client(&server)
         .await
-        .complete_with_progress(&legacy::completion(legacy::Completion::default()), &|_| Ok(()))
+        .complete_with_progress(&legacy::completion(legacy::Completion::default()), &|_| {
+            Ok(())
+        })
         .await
         .unwrap();
     assert_eq!(server.received_requests().await.unwrap().len(), 2);

@@ -37,5 +37,5 @@ pub mod use_cases;
 #[cfg(test)]
 pub mod mocks;
 
-#[cfg(any(test, feature = "test-utils"))]
+#[cfg(any(test, feature = "test-support"))]
 pub mod mock_repository;

@@ -8,6 +8,7 @@ class FakeNode {
   startedAt: number | null = null;
   stopped = false;
   connect = vi.fn();
+  disconnect = vi.fn();
   start(at: number) {
     this.startedAt = at;
   }
@@ -43,8 +44,23 @@ function clip(seconds: number): SpeechClip {
   return { sampleRate: 10, pcm: btoa(String.fromCharCode(...bytes)), durationMs: seconds * 1000 };
 }
 
-function setup() {
-  const output = new FakeOutput();
+class LateStateOutput extends FakeOutput {
+  private pending: Promise<void> = Promise.resolve();
+  override resume = vi.fn(async () => {
+    this.pending = this.pending.then(() => {
+      this.state = 'running';
+    });
+    await this.pending;
+  });
+  override suspend = vi.fn(async () => {
+    this.pending = this.pending.then(() => {
+      this.state = 'suspended';
+    });
+    await this.pending;
+  });
+}
+
+function setup(output: FakeOutput = new FakeOutput()) {
   const player = new SpeechPlayer(() => output as unknown as AudioOutput);
   return { output, player };
 }
@@ -61,6 +77,9 @@ describe('SpeechPlayer', () => {
 
     output.nodes.at(-1)?.onended?.();
     expect(player.getSnapshot().status).toBe('idle');
+    expect(output.suspend).toHaveBeenCalledTimes(1);
+    expect(output.nodes.at(-1)?.disconnect).toHaveBeenCalledTimes(1);
+    expect(output.nodes.at(-1)?.buffer).toBeNull();
   });
 
   it('plays one thing at a time: a new source stops the old one', async () => {
@@ -71,6 +90,19 @@ describe('SpeechPlayer', () => {
     await player.play('second', ['two'], async () => clip(1));
     expect(firstNode.stopped).toBe(true);
     expect(player.getSnapshot().sourceId).toBe('second');
+  });
+
+  it('keeps playing a new speech started while another plays, when the engine suspends late', async () => {
+    const { output, player } = setup(new LateStateOutput());
+    await player.play('first', ['one'], async () => clip(30));
+    expect(output.nodes).toHaveLength(1);
+
+    await player.play('second', ['two'], async () => clip(1));
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    expect(output.nodes).toHaveLength(2);
+    expect(output.nodes[1].startedAt).not.toBeNull();
+    expect(output.state).toBe('running');
   });
 
   it('stops before a piece still being made is played', async () => {
@@ -111,6 +143,41 @@ describe('SpeechPlayer', () => {
       sourceId: null,
       status: 'idle',
       error: 'The read-aloud voices are not downloaded.',
+    });
+  });
+
+  it('queues suspend when stopped while resume is still pending on a late-state suspended output', async () => {
+    const output = new LateStateOutput();
+    output.state = 'suspended';
+    const { player } = setup(output);
+    const synthesize = vi.fn(async () => clip(1));
+
+    const playing = player.play('answer', ['one'], synthesize);
+    player.stop('answer');
+    await playing;
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    expect(output.suspend).toHaveBeenCalledTimes(1);
+    expect(output.state).toBe('suspended');
+    expect(player.getSnapshot().status).toBe('idle');
+    expect(synthesize).not.toHaveBeenCalled();
+    expect(output.nodes).toHaveLength(0);
+  });
+
+  it('clears the session and publishes an error when output.resume rejects', async () => {
+    const output = new FakeOutput();
+    output.resume.mockRejectedValueOnce(new Error('AudioContext not allowed'));
+    const { player } = setup(output);
+
+    const playing = player.play('answer', ['one'], async () => clip(1));
+    const idle = player.whenIdle();
+
+    await expect(playing).resolves.toBeUndefined();
+    await expect(idle).resolves.toBeUndefined();
+    expect(player.getSnapshot()).toEqual({
+      sourceId: null,
+      status: 'idle',
+      error: 'AudioContext not allowed',
     });
   });
 });
@@ -182,5 +249,19 @@ describe('decodeClip', () => {
 
     player.stop();
     await vi.waitFor(() => expect(done).toHaveBeenCalled());
+  });
+
+  it('suspends rather than resumes audio output when stopped while paused', async () => {
+    const { output, player } = setup();
+    await player.play('answer', ['one'], async () => clip(2));
+    player.pause();
+    output.resume.mockClear();
+    output.suspend.mockClear();
+
+    player.stop('answer');
+
+    expect(output.resume).not.toHaveBeenCalled();
+    expect(output.nodes[0].disconnect).toHaveBeenCalledTimes(1);
+    expect(output.nodes[0].buffer).toBeNull();
   });
 });

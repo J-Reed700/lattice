@@ -1,6 +1,5 @@
 import { useMemo } from 'react';
 
-import { typeBucket } from '@/features/files/model/documentMetadata';
 import { type DocumentMetadata } from '@/types/fileBrowser';
 
 
@@ -25,7 +24,7 @@ export function useCorpusIdentity(documents: DocumentMetadata[]): CorpusIdentity
   return useMemo(() => {
     const counts = new Map<string, number>();
     for (const doc of documents) {
-      const label = typeBucket(doc);
+      const label = doc.typeBucket;
       counts.set(label, (counts.get(label) ?? 0) + 1);
     }
 

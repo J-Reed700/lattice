@@ -480,38 +480,6 @@ impl DailyNotesRepository {
         Ok(())
     }
 
-    /// Import external markdown only while no application-owned mirror intent
-    /// exists. The INSERT and conflict update are both guarded atomically.
-    pub async fn upsert_from_vault_if_unqueued(&self, note: VaultNoteUpsert<'_>) -> Result<bool> {
-        let mut tx = self.db.begin_write().await?;
-        let result = sqlx::query(
-            r#"
-            INSERT INTO daily_notes_workspace (id, title, content, created_at, updated_at)
-            SELECT ?, ?, ?, ?, ?
-            WHERE NOT EXISTS (SELECT 1 FROM vault_write_outbox WHERE note_id = ? AND mirror_complete = 0)
-            ON CONFLICT(id) DO UPDATE SET
-                title = excluded.title,
-                content = excluded.content,
-                updated_at = excluded.updated_at
-            WHERE NOT EXISTS (SELECT 1 FROM vault_write_outbox WHERE note_id = ? AND mirror_complete = 0)
-            "#,
-        )
-        .bind(note.id)
-        .bind(note.title)
-        .bind(note.content)
-        .bind(note.created_at)
-        .bind(note.updated_at)
-        .bind(note.id)
-        .bind(note.id)
-        .execute(&mut *tx)
-        .await
-        .map_err(|error| {
-            AppError::Database(format!("Failed to import vault note {}: {error}", note.id))
-        })?;
-        tx.commit().await?;
-        Ok(result.rows_affected() > 0)
-    }
-
     pub async fn get_timestamp(&self, note_id: &str) -> Result<Option<NoteTimestampRecord>> {
         let mut read = self.db.begin_read().await?;
         let timestamp = sqlx::query(
@@ -555,10 +523,6 @@ impl WorkspaceNotesPort for DailyNotesRepository {
         DailyNotesRepository::get_timestamp(self, note_id).await
     }
 
-    async fn upsert_from_vault_if_unqueued(&self, note: VaultNoteUpsert<'_>) -> Result<bool> {
-        DailyNotesRepository::upsert_from_vault_if_unqueued(self, note).await
-    }
-
     async fn delete_from_vault_if_unqueued(&self, note_id: &str) -> Result<bool> {
         DailyNotesRepository::delete_from_vault_if_unqueued(self, note_id).await
     }
@@ -570,7 +534,7 @@ mod vault_race_tests {
     use sqlx::SqlitePool;
 
     #[tokio::test]
-    async fn vault_import_and_delete_guards_are_atomic_with_outbox_state() {
+    async fn a_vault_delete_waits_for_a_pending_app_write() {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         sqlx::query(
             "CREATE TABLE daily_notes_workspace(id TEXT PRIMARY KEY, title TEXT, content TEXT, created_at TEXT, updated_at TEXT)",
@@ -585,43 +549,13 @@ mod vault_race_tests {
         .await
         .unwrap();
         let repository = DailyNotesRepository::new(Database::new(pool.clone()));
-        let note = VaultNoteUpsert {
-            id: "note",
-            title: "external",
-            content: "disk body",
-            created_at: "2026-01-01T00:00:00Z",
-            updated_at: "2026-01-01T00:00:00Z",
-        };
-
-        // A successful import is queued by the trigger; another import is
-        // blocked until the file mirror itself is recorded complete.
-        assert!(repository
-            .upsert_from_vault_if_unqueued(note.clone())
-            .await
-            .unwrap());
-        assert!(!repository
-            .upsert_from_vault_if_unqueued(note.clone())
-            .await
-            .unwrap());
-        sqlx::query("UPDATE vault_write_outbox SET mirror_complete = 1 WHERE note_id = 'note'")
+        sqlx::query("INSERT INTO daily_notes_workspace VALUES ('note', 'external', 'app body', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')")
             .execute(&pool)
             .await
             .unwrap();
-        // Once the file mirror is durable, pending vector indexing must not
-        // block a newer external edit from being imported.
-        assert!(repository
-            .upsert_from_vault_if_unqueued(note.clone())
-            .await
-            .unwrap());
 
-        // Simulate a committed app edit winning immediately before the
-        // watcher statement. The in-statement guard preserves it.
-        sqlx::query("UPDATE daily_notes_workspace SET content = 'app body' WHERE id = 'note'")
-            .execute(&pool)
-            .await
-            .unwrap();
         assert!(!repository
-            .upsert_from_vault_if_unqueued(note)
+            .delete_from_vault_if_unqueued("note")
             .await
             .unwrap());
         let content: String =
@@ -630,10 +564,6 @@ mod vault_race_tests {
                 .await
                 .unwrap();
         assert_eq!(content, "app body");
-        assert!(!repository
-            .delete_from_vault_if_unqueued("note")
-            .await
-            .unwrap());
 
         sqlx::query("UPDATE vault_write_outbox SET mirror_complete = 1 WHERE note_id = 'note'")
             .execute(&pool)
@@ -643,5 +573,10 @@ mod vault_race_tests {
             .delete_from_vault_if_unqueued("note")
             .await
             .unwrap());
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM daily_notes_workspace")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0);
     }
 }

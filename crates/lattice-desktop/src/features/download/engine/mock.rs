@@ -3,6 +3,8 @@ use super::*;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+type SizeCallHistory = Vec<(String, Option<String>)>;
+
 pub struct MockDownloadEngine {
     file_sizes: Arc<Mutex<HashMap<String, Option<u64>>>>,
     supports_resume: Arc<Mutex<HashMap<String, bool>>>,
@@ -17,6 +19,13 @@ pub struct MockDownloadEngine {
     /// Without it the mock returns instantly and any test that pauses is
     /// racing the completion.
     stall: Arc<Mutex<bool>>,
+    /// When set, `download` writes this many bytes to the options' destination
+    /// (appending after `resume_from`), as the real engine writes its file.
+    write_len: Arc<Mutex<Option<u64>>>,
+    /// Makes `get_file_size` wait on this signal, so a test can hold a HEAD in flight.
+    size_gate: Arc<Mutex<Option<Arc<tokio::sync::Notify>>>>,
+    size_calls: Arc<Mutex<usize>>,
+    size_call_history: Arc<Mutex<SizeCallHistory>>,
 }
 
 impl MockDownloadEngine {
@@ -31,7 +40,36 @@ impl MockDownloadEngine {
             network_error: Arc::new(Mutex::new(None)),
             http_error: Arc::new(Mutex::new(None)),
             stall: Arc::new(Mutex::new(false)),
+            write_len: Arc::new(Mutex::new(None)),
+            size_gate: Arc::new(Mutex::new(None)),
+            size_calls: Arc::new(Mutex::new(0)),
+            size_call_history: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    /// Write `len` bytes to the destination on a successful `download`.
+    pub fn set_write_len(&self, len: Option<u64>) {
+        *self.write_len.lock().unwrap() = len;
+    }
+
+    /// Hold every `get_file_size` until the returned notifier is signalled.
+    pub fn hold_file_size(&self) -> Arc<tokio::sync::Notify> {
+        let gate = Arc::new(tokio::sync::Notify::new());
+        *self.size_gate.lock().unwrap() = Some(gate.clone());
+        gate
+    }
+
+    /// How many times `get_file_size` was called.
+    pub fn file_size_calls(&self) -> usize {
+        *self.size_calls.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Recorded `(url, auth_token)` pairs passed to `get_file_size`.
+    pub fn get_file_size_calls(&self) -> SizeCallHistory {
+        self.size_call_history
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Park `download` indefinitely so pause/cancel can be tested
@@ -97,6 +135,24 @@ impl MockDownloadEngine {
     }
 }
 
+/// Write up to `len` bytes to the destination, appending after `resume_from`.
+fn write_destination(options: &DownloadOptions, len: u64) {
+    use std::io::Write;
+    let already = options.resume_from.unwrap_or(0);
+    if let Some(parent) = options.destination.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(already == 0)
+        .append(already > 0)
+        .open(&options.destination)
+        .unwrap();
+    file.write_all(&vec![7u8; len.saturating_sub(already) as usize])
+        .unwrap();
+}
+
 impl Default for MockDownloadEngine {
     fn default() -> Self {
         Self::new()
@@ -112,6 +168,11 @@ impl DownloadEngine for MockDownloadEngine {
         // Simulate a long transfer: park here until the caller's
         // `tokio::select!` drops this future because it was told to stop.
         if *self.stall.lock().unwrap() {
+            // A real transfer has written part of the file by now.
+            let write_len = *self.write_len.lock().unwrap();
+            if let Some(len) = write_len {
+                write_destination(&options, len / 2);
+            }
             if let Some(callback) = options.progress_callback.as_ref() {
                 callback(1, 1024.0);
             }
@@ -139,6 +200,11 @@ impl DownloadEngine for MockDownloadEngine {
             return Err(DownloadError::NetworkError(
                 "Simulated transient failure".to_string(),
             ));
+        }
+
+        let write_len = *self.write_len.lock().unwrap();
+        if let Some(len) = write_len {
+            write_destination(&options, len);
         }
 
         let results = self.download_results.lock().unwrap();
@@ -170,8 +236,25 @@ impl DownloadEngine for MockDownloadEngine {
         }
     }
 
-    async fn get_file_size(&self, url: &str) -> Result<(Option<u64>, String), DownloadError> {
-        let sizes = self.file_sizes.lock().unwrap();
+    async fn get_file_size(
+        &self,
+        url: &str,
+        auth_token: Option<&str>,
+    ) -> Result<(Option<u64>, String), DownloadError> {
+        *self.size_calls.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+        self.size_call_history
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((url.to_string(), auth_token.map(str::to_string)));
+        let gate = self
+            .size_gate
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(gate) = gate {
+            gate.notified().await;
+        }
+        let sizes = self.file_sizes.lock().unwrap_or_else(|e| e.into_inner());
         let size = sizes.get(url).copied().unwrap_or(Some(1000));
         Ok((size, url.to_string()))
     }

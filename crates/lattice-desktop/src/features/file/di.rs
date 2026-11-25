@@ -18,6 +18,7 @@ use lattice_core::application::ports::{
     ContentExtractionPort, DocumentRepository, DocumentRepositoryPort, FileStoragePort,
     FileSystemPort,
 };
+use lattice_core::domain::ports::article_archive::ArticleArchive;
 use lattice_core::shared::persistence::Database;
 
 #[derive(Clone)]
@@ -42,12 +43,14 @@ pub fn build(
     vault_path: PathBuf,
     database: Database,
     preview_extractor: Arc<dyn ContentExtractionPort>,
+    web_archive: Arc<dyn ArticleArchive>,
 ) -> FileDi {
     FileDi {
         open_file_use_case: Arc::new(OpenFileUseCase::new(
             file_system.clone(),
             file_storage.clone(),
             file_access_config.clone(),
+            web_archive.clone(),
         )),
         open_file_by_id_use_case: Arc::new(OpenFileByIdUseCase::new(
             document_repo.clone(),
@@ -55,6 +58,7 @@ pub fn build(
             file_storage.clone(),
             file_access_config.clone(),
             vault_path.clone(),
+            web_archive,
         )),
         get_file_path_by_id_use_case: Arc::new(GetFilePathByIdUseCase::new(
             document_repo.clone(),

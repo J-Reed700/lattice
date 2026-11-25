@@ -48,7 +48,6 @@ pub(super) async fn review_material(
         if subject.settle_quotes(&mut value, &authoring, attempt) {
             let before = candidate.clone();
             candidate = serde_json::to_string(&value)?;
-            subject.fitted(&json_or_text(&before), &value);
             trace::changed(Stage::TeachingReview, &Cause::none(), &before, &candidate);
             subject.save(&candidate).await?;
         }

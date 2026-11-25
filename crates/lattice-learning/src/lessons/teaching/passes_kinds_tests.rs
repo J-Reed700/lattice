@@ -18,14 +18,6 @@ fn about(check: PlanCheck, words: &str) -> ReviewFinding {
         .with_passage(words)
 }
 
-/// `finding` as the review names it once `passes` has placed it in `candidate`.
-fn placed(passes: &mut Passes, candidate: &Value, finding: ReviewFinding) -> ReviewFinding {
-    let mut one = [finding];
-    passes.place(candidate, &mut one);
-    let [finding] = one;
-    finding
-}
-
 /// Whether `finding` was sent to a repair, which is charged as applied.
 fn repaired(passes: &mut Passes, candidate: &Value, finding: &ReviewFinding) -> bool {
     match passes.next(candidate, vec![finding.clone()]) {
@@ -46,12 +38,11 @@ fn a_plan_finding_about_words_a_reviewer_finding_was_charged_for_is_sent_with_it
     let reviewer = ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "It is wrong.")
         .with_passage(words.as_str());
     let mut passes = Passes::default();
-    let reviewer = placed(&mut passes, &candidate, reviewer);
     for _ in 0..REPAIRS_PER_FINDING {
         assert!(repaired(&mut passes, &candidate, &reviewer));
     }
     assert!(!passes.repairable(&reviewer));
-    let used = placed(&mut passes, &candidate, about(PlanCheck::Used, &words));
+    let used = about(PlanCheck::Used, &words);
     assert!(repaired(&mut passes, &candidate, &used));
     assert_eq!(passes.spent.get(&used.id()), Some(&1));
 }
@@ -60,30 +51,14 @@ fn a_plan_finding_about_words_a_reviewer_finding_was_charged_for_is_sent_with_it
 fn a_repair_carries_the_count_of_every_kind_to_the_words_it_writes() {
     let candidate = candidate_of(&[sentence(0), sentence(1)]);
     let mut passes = Passes::default();
-    let used = placed(
-        &mut passes,
-        &candidate,
-        about(PlanCheck::Used, &sentence(0)),
-    );
+    let used = about(PlanCheck::Used, &sentence(0));
     assert!(repaired(&mut passes, &candidate, &used));
-    let unseen = placed(
-        &mut passes,
-        &candidate,
-        about(PlanCheck::Unseen, &sentence(0)),
-    );
+    let unseen = about(PlanCheck::Unseen, &sentence(0));
     assert!(repaired(&mut passes, &candidate, &unseen));
     assert!(repaired(&mut passes, &candidate, &unseen));
     passes.worked_on(&unseen, [sentence(1)]);
-    let used_again = placed(
-        &mut passes,
-        &candidate,
-        about(PlanCheck::Used, &sentence(1)),
-    );
-    let unseen_again = placed(
-        &mut passes,
-        &candidate,
-        about(PlanCheck::Unseen, &sentence(1)),
-    );
+    let used_again = about(PlanCheck::Used, &sentence(1));
+    let unseen_again = about(PlanCheck::Unseen, &sentence(1));
     assert!(matches!(
         passes.next(&candidate, vec![used_again.clone(), unseen_again.clone()]),
         Next::Repair(_)
@@ -107,7 +82,7 @@ fn alternating_kinds_on_rewritten_words_stop_after_the_limit_of_each_kind() {
         } else {
             PlanCheck::Unseen
         };
-        let finding = placed(&mut passes, &candidate, about(check, &sentence(round)));
+        let finding = about(check, &sentence(round));
         if !repaired(&mut passes, &candidate, &finding) {
             ended = true;
             break;
@@ -123,12 +98,11 @@ fn alternating_kinds_on_rewritten_words_stop_after_the_limit_of_each_kind() {
 fn the_counts_per_kind_survive_a_saved_review() {
     let candidate = candidate_of(&[sentence(0)]);
     let mut passes = Passes::default();
-    let first = placed(
+    assert!(repaired(
         &mut passes,
         &candidate,
-        about(PlanCheck::Used, &sentence(0)),
-    );
-    assert!(repaired(&mut passes, &candidate, &first));
+        &about(PlanCheck::Used, &sentence(0))
+    ));
     let saved = passes.saved().unwrap().to_string();
     let mut resumed = Passes::default();
     resumed.resume(&saved);
@@ -139,12 +113,7 @@ fn the_counts_per_kind_survive_a_saved_review() {
         "Another note.",
     )
     .with_passage(&sentence(0));
-    let same_kind = placed(&mut resumed, &candidate, same_kind);
-    let other_kind = placed(
-        &mut resumed,
-        &candidate,
-        about(PlanCheck::Unseen, &sentence(0)),
-    );
+    let other_kind = about(PlanCheck::Unseen, &sentence(0));
     assert!(matches!(
         resumed.next(&candidate, vec![same_kind.clone(), other_kind.clone()]),
         Next::Repair(_)

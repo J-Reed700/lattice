@@ -1,11 +1,10 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
-use super::scripted::{judged, judged_of_kinds, sound};
+use super::scripted::{judged, sound};
 use super::*;
 use crate::assessment_engine::LearningItemFormat;
 use crate::key_review::scripted::{answering, solved};
 use crate::key_review::SolvePicks;
 use crate::lessons::structured_call::task_messages;
-use crate::review_findings::KeyDefect;
 use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
 use lattice_core::application::services::model_contract::test_support::ScriptedModel;
 
@@ -115,10 +114,7 @@ async fn a_complete_review_is_read() {
     let findings = review_of(&model, &[FIRST, SECOND], &[]).await;
 
     assert!(findings[0].is_sound());
-    assert_eq!(
-        findings[1].defects,
-        [(KeyDefect::Untrue, NEEDS_A_VALUE.to_owned())]
-    );
+    assert_eq!(findings[1].defects, [NEEDS_A_VALUE]);
     assert!(!findings[1].unreviewed);
 }
 
@@ -136,9 +132,14 @@ async fn a_missing_item_is_asked_for_again_alone() {
     let findings = review_of(&model, &[FIRST, SECOND], &[]).await;
 
     assert!(findings.iter().all(Findings::is_sound));
-    let asked = model.inputs::<QuizItemReview>();
+    let asked: Vec<_> = model
+        .sent()
+        .into_iter()
+        .filter(|sent| sent.call.id == QuizItemReview::ID && sent.request.schema().is_some())
+        .collect();
     assert_eq!(asked.len(), 2);
-    assert_eq!(asked[1].items.len(), 1);
+    let second: Input = serde_json::from_value(asked[1].call.input.clone()).unwrap();
+    assert_eq!(second.items.len(), 1);
 }
 
 #[tokio::test]
@@ -153,10 +154,7 @@ async fn an_empty_defect_is_corrected() {
 
     let findings = review_of(&model, &[FIRST], &[]).await;
 
-    assert_eq!(
-        findings[0].defects,
-        [(KeyDefect::Untrue, NEEDS_A_VALUE.to_owned())]
-    );
+    assert_eq!(findings[0].defects, [NEEDS_A_VALUE]);
 }
 
 #[tokio::test]
@@ -182,9 +180,14 @@ async fn an_item_that_could_not_be_solved_is_not_sent_to_the_judge() {
 
     assert!(findings[0].is_sound());
     assert!(findings[1].unreviewed);
-    let asked = model.inputs::<QuizItemReview>();
+    let asked: Vec<_> = model
+        .sent()
+        .into_iter()
+        .filter(|sent| sent.call.id == QuizItemReview::ID && sent.request.schema().is_some())
+        .collect();
     assert_eq!(asked.len(), 1);
-    assert_eq!(asked[0].items.len(), 1);
+    let first: Input = serde_json::from_value(asked[0].call.input.clone()).unwrap();
+    assert_eq!(first.items.len(), 1);
 }
 
 #[tokio::test]
@@ -272,84 +275,4 @@ async fn the_held_questions_are_listed_once_for_the_whole_request() {
         .unwrap();
     let task: Value = serde_json::from_str(task_messages(&sent.request).1).unwrap();
     assert_eq!(task["learnerHas"], json!([{"id": "h1", "prompt": HELD}]));
-}
-
-#[test]
-fn the_kinds_the_application_sets_are_not_words_the_judge_may_write() {
-    for set_by_the_application in [KeyDefect::Disputed, KeyDefect::Repeats] {
-        assert!(!KeyDefect::WORDS
-            .iter()
-            .any(|(_, kind)| *kind == set_by_the_application));
-    }
-}
-
-#[tokio::test]
-async fn the_judge_is_asked_to_name_each_defect_by_a_kind_from_the_eight_words() {
-    let model = model(|task, _| sound(task));
-
-    review_of(&model, &[FIRST], &[]).await;
-
-    let sent = model
-        .sent()
-        .into_iter()
-        .find(|sent| sent.call.id == QuizItemReview::ID)
-        .unwrap();
-    let schema = sent.request.schema().unwrap().as_json();
-    let defect = &schema["properties"]["entries"]["items"]["properties"]["defects"]["items"];
-    let words: Vec<&str> = defect["properties"]["kind"]["enum"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|word| word.as_str().unwrap())
-        .collect();
-    let expected: Vec<&str> = KeyDefect::WORDS.iter().map(|(word, _)| *word).collect();
-    assert_eq!(words, expected);
-    assert_eq!(defect["required"], json!(["kind", "defect"]));
-}
-
-#[tokio::test]
-async fn a_defect_of_a_kind_that_is_not_one_of_the_words_is_asked_for_again() {
-    let model = model(|task, nth| {
-        let mut reply = judged(task, |_| (NEEDS_A_VALUE.into(), vec![]));
-        if nth == 0 {
-            reply["entries"][0]["defects"][0]["kind"] = json!("hopeless");
-        }
-        reply
-    });
-
-    let findings = review_of(&model, &[FIRST], &[]).await;
-
-    assert_eq!(
-        findings[0].defects,
-        [(KeyDefect::Untrue, NEEDS_A_VALUE.to_owned())]
-    );
-    assert_eq!(model.inputs::<QuizItemReview>().len(), 2);
-}
-
-#[tokio::test]
-async fn each_defect_keeps_the_kind_the_judge_gave_it() {
-    let model = model(|task, _| {
-        judged_of_kinds(task, |_| {
-            (
-                vec![
-                    ("value-missing", NEEDS_A_VALUE.to_owned()),
-                    ("reason-misses-why", "A reason is off the case.".to_owned()),
-                ],
-                vec![],
-            )
-        })
-    });
-
-    let findings = review_of(&model, &[FIRST], &[]).await;
-
-    assert_eq!(
-        findings[0].defects,
-        [
-            (KeyDefect::ValueMissing, NEEDS_A_VALUE.to_owned()),
-            (
-                KeyDefect::ReasonMissesWhy,
-                "A reason is off the case.".to_owned()
-            )
-        ]
-    );
 }

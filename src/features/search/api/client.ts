@@ -341,15 +341,25 @@ export const searchApi = {
     }),
 
   /**
-   * Whether the reranker's model is on disk. Search always reranks once it
-   * is; until then it returns its first-stage shortlist.
+   * Whether the reranker's model is on disk, and the path its download
+   * reports as its destination. Search always reranks once it is; until then
+   * it returns its first-stage shortlist.
    */
   getRerankerStatus: async (): Promise<ApiResult<Wire.RerankerStatusDto>> =>
     apiCall('reranker_status'),
 
   /**
-   * Fetches the reranker model, after which search reranks.
+   * Starts the reranker download on the shared download manager and returns
+   * the status as soon as it is registered, not when the file lands. Follow
+   * it in the download list by the status's `path`.
    */
   downloadReranker: async (): Promise<ApiResult<Wire.RerankerStatusDto>> =>
     apiCall('download_reranker'),
+
+  /**
+   * Deletes the reranker's model from disk. Refused while its download runs.
+   * Returns the fresh status, now not installed.
+   */
+  removeReranker: async (): Promise<ApiResult<Wire.RerankerStatusDto>> =>
+    apiCall('remove_reranker'),
 };

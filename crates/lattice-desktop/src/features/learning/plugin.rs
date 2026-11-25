@@ -4,6 +4,7 @@ use super::{
     repository::LearningRepository, service,
 };
 use crate::interfaces::di::Container;
+use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::shared::ipc::ApiError;
 use lattice_core::shared::runtime::jobs::JobKindRegistration;
 use tauri::{
@@ -36,7 +37,7 @@ fn source_library(container: &Container) -> super::source_library::LearningSourc
 fn source_deps(container: &Container) -> crate::features::learning::sources::SourceDeps {
     crate::features::learning::sources::SourceDeps {
         library: container.library_passages(),
-        web: container.web(),
+        web: container.web_service(),
         database: container.database().clone(),
     }
 }
@@ -90,14 +91,7 @@ fn bundled_python<R: Runtime>(
     app: &tauri::AppHandle<R>,
 ) -> Option<super::python_runtime::PythonRuntime> {
     let resources = app.path().resource_dir().ok()?;
-    verified_python(resources.join("resources/learning-python"))
-}
-
-/// The Python bundle in `directory`, if it verifies.
-pub(crate) fn verified_python(
-    directory: std::path::PathBuf,
-) -> Option<super::python_runtime::PythonRuntime> {
-    super::python_runtime::PythonRuntime::verify(directory)
+    super::python_runtime::PythonRuntime::verify(resources.join("resources/learning-python"))
         .inspect_err(|error| {
             tracing::warn!(%error, "Bundled Python runtime could not be configured");
         })
@@ -173,70 +167,6 @@ fn practice_worker(
     }
 }
 
-/// Every kind of job the app runs, each with its worker.
-pub(crate) fn job_kinds(
-    container: &Container,
-    runtimes: BuiltinRuntimes,
-    practice_kinds: lattice_learning::practice::session::kind::Kinds,
-) -> Vec<JobKindRegistration> {
-    let (bank_worker, grading_worker) = quiz_workers(container);
-    // One lock per course for every planner of it.
-    let course_setups = super::course_setup::CourseSetups::default();
-    let mut kinds = vec![
-        JobKindRegistration {
-            kind: super::curriculum_repository::LESSON_PREPARATION.into(),
-            handler: std::sync::Arc::new(generation_worker(
-                container,
-                runtimes.clone(),
-                course_setups.clone(),
-            )),
-            config: super::curriculum_repository::lesson_job_config(),
-        },
-        // Quiz banks and grading resume or settle the same way.
-        JobKindRegistration {
-            kind: super::quiz_bank_jobs::QUIZ_BANK.into(),
-            handler: std::sync::Arc::new(bank_worker),
-            config: super::quiz_bank_jobs::quiz_job_config(),
-        },
-        JobKindRegistration {
-            kind: super::quiz_bank_jobs::QUIZ_GRADING.into(),
-            handler: std::sync::Arc::new(grading_worker),
-            config: super::quiz_bank_jobs::quiz_job_config(),
-        },
-        // A course's topics are planned when its outline is made.
-        JobKindRegistration {
-            kind: super::course_plan::COURSE_PLAN.into(),
-            handler: std::sync::Arc::new(super::course_plan::CoursePlanWorker {
-                database: container.database().clone(),
-                load_llm: course_plan_model(container),
-                course_setups,
-            }),
-            config: super::course_plan::course_plan_job_config(),
-        },
-        // Drills are built one ahead per language, and a build resumes from its
-        // checkpoints. A submitted review is graded by a job that a stop leaves
-        // submitted.
-        JobKindRegistration {
-            kind: super::drills::jobs::DRILL_BUILD.into(),
-            handler: std::sync::Arc::new(drill_worker(container, runtimes.clone())),
-            config: super::drills::jobs::drill_job_config(),
-        },
-        JobKindRegistration {
-            kind: super::drills::jobs::DRILL_GRADING.into(),
-            handler: std::sync::Arc::new(drill_grading_worker(container, runtimes.clone())),
-            config: super::drills::jobs::grading_job_config(),
-        },
-        JobKindRegistration {
-            kind: super::coding::jobs::PRACTICE_BUILD.into(),
-            handler: std::sync::Arc::new(practice_worker(container, practice_kinds, runtimes)),
-            config: super::coding::jobs::practice_job_config(),
-        },
-    ];
-    // Course index builds the last process left running resume.
-    kinds.extend(container.course_indexes().map(|courses| courses.job_kind()));
-    kinds
-}
-
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("learning")
         .setup(|app, _api| {
@@ -248,12 +178,73 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             let practice_kinds = coding::kinds_of(&runtimes)
                 .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
             app.manage(practice_kinds.clone());
-            tauri::async_runtime::block_on(container.jobs().register_all(job_kinds(
-                &container,
-                runtimes,
-                practice_kinds,
-            )));
+            // Registration settles the jobs the last process left running,
+            // then starts delivering saved work. A kind that fails to register
+            // is retried in the background and never fails setup.
+            let (bank_worker, grading_worker) = quiz_workers(&container);
+            // One lock per course for every planner of it.
+            let course_setups = super::course_setup::CourseSetups::default();
+            let mut kinds = vec![
+                JobKindRegistration {
+                    kind: super::curriculum_repository::LESSON_PREPARATION.into(),
+                    handler: std::sync::Arc::new(generation_worker(
+                        &container,
+                        runtimes.clone(),
+                        course_setups.clone(),
+                    )),
+                    config: super::curriculum_repository::lesson_job_config(),
+                },
+                // Quiz banks and grading resume or settle the same way.
+                JobKindRegistration {
+                    kind: super::quiz_bank_jobs::QUIZ_BANK.into(),
+                    handler: std::sync::Arc::new(bank_worker),
+                    config: super::quiz_bank_jobs::quiz_job_config(),
+                },
+                JobKindRegistration {
+                    kind: super::quiz_bank_jobs::QUIZ_GRADING.into(),
+                    handler: std::sync::Arc::new(grading_worker),
+                    config: super::quiz_bank_jobs::quiz_job_config(),
+                },
+                // A course's topics are planned when its outline is made.
+                JobKindRegistration {
+                    kind: super::course_plan::COURSE_PLAN.into(),
+                    handler: std::sync::Arc::new(super::course_plan::CoursePlanWorker {
+                        database: container.database().clone(),
+                        load_llm: course_plan_model(&container),
+                        course_setups,
+                    }),
+                    config: super::course_plan::course_plan_job_config(),
+                },
+                // Drills are built one ahead per language, and a build resumes from its
+                // checkpoints. A submitted review is graded by a job that a stop leaves
+                // submitted.
+                JobKindRegistration {
+                    kind: super::drills::jobs::DRILL_BUILD.into(),
+                    handler: std::sync::Arc::new(drill_worker(&container, runtimes.clone())),
+                    config: super::drills::jobs::drill_job_config(),
+                },
+                JobKindRegistration {
+                    kind: super::drills::jobs::DRILL_GRADING.into(),
+                    handler: std::sync::Arc::new(drill_grading_worker(
+                        &container,
+                        runtimes.clone(),
+                    )),
+                    config: super::drills::jobs::grading_job_config(),
+                },
+                JobKindRegistration {
+                    kind: super::coding::jobs::PRACTICE_BUILD.into(),
+                    handler: std::sync::Arc::new(practice_worker(
+                        &container,
+                        practice_kinds,
+                        runtimes,
+                    )),
+                    config: super::coding::jobs::practice_job_config(),
+                },
+            ];
+            // Course index builds the last process left running resume.
             let courses = container.course_indexes().cloned();
+            kinds.extend(courses.iter().map(|courses| courses.job_kind()));
+            tauri::async_runtime::block_on(container.jobs().register_all(kinds));
             // The indexes of courses deleted meanwhile are removed, and courses
             // whose index is not current are queued.
             if let Some(courses) = courses {
@@ -297,6 +288,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             start_learning_generation_job,
             cancel_learning_generation_job,
             retry_learning_generation_job,
+            prioritize_learning_generation_job,
+            reset_learning_lesson_preparation,
             get_learning_generation_job,
             list_learning_programs,
             get_learning_program,
@@ -309,9 +302,11 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             generate_learning_program,
             cancel_learning_outline,
             repair_learning_outline,
+            list_learning_outline_runs,
             accept_learning_program,
             prepare_learning_lesson,
             prepare_learning_module,
+            prepare_learning_lessons,
             get_learning_course_plan,
             plan_learning_course,
             edit_learning_course_plan_entry,
@@ -434,6 +429,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             code_review_languages,
             course_drills,
             start_practice_build,
+            cancel_practice_build,
             start_practice_session,
             get_practice_session,
             move_practice_stage,

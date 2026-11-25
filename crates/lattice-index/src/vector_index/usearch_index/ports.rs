@@ -9,6 +9,7 @@ use lattice_core::application::ports::VectorSearchPort;
 use lattice_core::shared::error::{AppError, Result};
 use std::collections::HashSet;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 /// How far a compressed vector's approximate rank may misrepresent its true
 /// cosine. Quantization perturbs each component slightly, so a candidate can
@@ -66,7 +67,7 @@ impl VectorSearchPort for USearchVectorIndex {
         let eligible_count = allowed_document_ids.map_or(index_size, |scope| {
             scope
                 .iter()
-                .filter_map(|document_id| state.document_to_keys.get(document_id))
+                .filter_map(|document_id| state.document_to_keys.get(document_id.as_str()))
                 .map(HashSet::len)
                 .sum::<usize>()
         });
@@ -123,7 +124,7 @@ impl VectorSearchPort for USearchVectorIndex {
                     continue;
                 };
                 let (doc_id, chunk_id) = if let Some(m) = state.metadata.get(id) {
-                    (m.document_id.as_str(), m.chunk_id.as_str())
+                    (&*m.document_id, m.chunk_id.as_str())
                 } else {
                     (id.as_str(), id.as_str())
                 };
@@ -261,14 +262,14 @@ impl VectorSearchPort for USearchVectorIndex {
             }
             state.id_to_key.remove(id);
             state.key_to_id.remove(&key);
-            let document_id = state
+            let document_id: Arc<str> = state
                 .metadata
                 .remove(id)
-                .map_or_else(|| id.clone(), |meta| meta.document_id);
-            if let Some(keys) = state.document_to_keys.get_mut(&document_id) {
+                .map_or_else(|| Arc::from(id.as_str()), |meta| meta.document_id);
+            if let Some(keys) = state.document_to_keys.get_mut(&*document_id) {
                 keys.remove(&key);
                 if keys.is_empty() {
-                    state.document_to_keys.remove(&document_id);
+                    state.document_to_keys.remove(&*document_id);
                 }
             }
             changed = true;
@@ -346,7 +347,7 @@ impl SearchServiceTrait for USearchVectorIndex {
                         if let Some(metadata) = state.metadata.get(id) {
                             (
                                 metadata.chunk_id.clone(),
-                                Some(metadata.document_id.clone()),
+                                Some(metadata.document_id.to_string()),
                             )
                         } else if let Some(stripped_chunk_id) = id.strip_prefix("emb_") {
                             // Backward compatibility: legacy indexes may only store embedding IDs.

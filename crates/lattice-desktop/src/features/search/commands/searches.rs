@@ -255,7 +255,7 @@ pub async fn search_documents_impl(
         limit,
         format!("{:?}", search_mode),
         cache_generation,
-        container.search.embedding_identity().map(str::to_owned),
+        container.search.embedding_identity(),
     );
 
     if let Some(cached) = query_cache.get(&cache_key) {

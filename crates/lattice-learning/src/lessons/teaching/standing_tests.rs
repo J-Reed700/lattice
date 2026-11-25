@@ -512,3 +512,86 @@ fn a_site_less_report_that_continues_a_resolved_finding_is_a_new_finding() {
     assert_eq!(new[0].site, None);
     assert_eq!(new[0].note, "Wrong, in an issue.");
 }
+
+fn lesson_with_questions(bodies: &[&str], prompts: &[&str]) -> Value {
+    let mut value = lesson(bodies);
+    value["questions"] = prompts
+        .iter()
+        .map(|prompt| {
+            json!({
+                "kind": "multiple_choice",
+                "prompt": prompt,
+                "options": ["One", "Two"],
+                "correctIndex": 0,
+                "rationales": ["Right.", "Wrong."],
+                "explanation": "Because one.",
+                "sourceIndex": 0,
+                "quote": "q",
+                "citations": []
+            })
+        })
+        .collect();
+    value
+}
+
+#[test]
+fn per_question_digests_track_changed_questions_and_drop_findings_on_unchanged_ones() {
+    let candidate = lesson_with_questions(&[FIRST, SECOND], &["Question one?", "Question two?"]);
+    let (mut standing, _) = reviewed(&candidate, Vec::new());
+
+    let edited = lesson_with_questions(
+        &[FIRST, SECOND],
+        &["Question one?", "Question two, edited?"],
+    );
+    let round = standing.round(&edited).unwrap();
+    assert!(round.sections.is_empty());
+    assert_eq!(round.questions, vec![1]);
+    assert!(!round.first);
+
+    let (_, new) = answer(
+        &mut standing,
+        &edited,
+        Vec::new(),
+        vec![
+            report(Some(FindingSite::Question(0)), "In unchanged Q1.", None),
+            report(Some(FindingSite::Question(1)), "In changed Q2.", None),
+        ],
+    );
+    standing.admit(&edited, new);
+    let notes: Vec<&str> = standing.open().iter().map(|f| f.note.as_str()).collect();
+    assert_eq!(notes, ["In changed Q2."]);
+}
+
+#[test]
+fn citation_only_edits_on_sections_and_questions_give_no_round() {
+    let candidate = lesson_with_questions(&[FIRST, SECOND], &["Question one?"]);
+    let (standing, _) = reviewed(&candidate, Vec::new());
+
+    let mut cited = candidate.clone();
+    cited["blocks"][0]["sourceIndex"] = json!(1);
+    cited["blocks"][0]["quote"] = json!("Updated block quotation.");
+    cited["blocks"][0]["citations"] =
+        json!([{"sentence": FIRST, "sourceIndex": 1, "quote": "Updated block quotation."}]);
+    cited["questions"][0]["sourceIndex"] = json!(1);
+    cited["questions"][0]["quote"] = json!("Updated question quotation.");
+    cited["questions"][0]["citations"] = json!([{"sentence": "Question one?", "sourceIndex": 1, "quote": "Updated question quotation."}]);
+
+    assert!(standing.round(&cited).is_none());
+}
+
+#[test]
+fn deleting_a_question_triggers_a_round_while_citation_only_after_it_does_not() {
+    let candidate = lesson_with_questions(&[FIRST], &["Question one?", "Question two?"]);
+    let (mut standing, _) = reviewed(&candidate, Vec::new());
+
+    let shortened = lesson_with_questions(&[FIRST], &["Question one?"]);
+    let round = standing.round(&shortened).unwrap();
+    assert!(round.sections.is_empty());
+    assert!(round.questions.is_empty());
+    let fresh = standing.judged(&shortened, &round, Judged::default());
+    standing.admit(&shortened, fresh);
+
+    let mut cited = shortened.clone();
+    cited["questions"][0]["quote"] = json!("Different quote.");
+    assert!(standing.round(&cited).is_none());
+}

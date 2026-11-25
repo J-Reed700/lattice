@@ -33,11 +33,9 @@ use crate::features::stats::use_cases::{GetCorpusShapeUseCase, GetSystemStatsUse
 use crate::infrastructure::observability::metrics::Metrics;
 
 // Application Ports
-use lattice_core::application::ports::{BackupPort, SettingsRepositoryPort, SystemInfoPort};
-
-// Service Traits
-use crate::features::model_management::model_manager::ModelManager;
-use crate::infrastructure::services::traits::ModelManagerTrait;
+use lattice_core::application::ports::{
+    BackupPort, EmbeddingPort, SettingsRepositoryPort, SystemInfoPort,
+};
 
 /// System module for application-wide operations
 ///
@@ -53,10 +51,6 @@ pub struct SystemModule {
     stats: crate::features::stats::di::StatsDi,
     initialization: crate::features::initialization::di::InitializationDi,
 
-    // The reranker is downloaded on demand rather than at boot, so a command
-    // needs to reach the manager long after startup is over.
-    model_manager: Arc<dyn ModelManagerTrait>,
-
     // System-info adapter stays here — it's a shared infra concern
     // with no dedicated feature slice.
     system_info: Arc<dyn SystemInfoPort>,
@@ -68,6 +62,7 @@ impl SystemModule {
         database: Database,
         core: Arc<CoreModule>,
         backend_devices: Arc<crate::features::llm::engine::system::BackendDevices>,
+        embedding: Arc<dyn EmbeddingPort>,
     ) -> lattice_core::shared::error::Result<Self> {
         use crate::infrastructure::adapters::system_info::SystemInfoAdapter;
 
@@ -76,6 +71,7 @@ impl SystemModule {
                 .await?;
 
         let db_path = core.data_dir().join("lattice.db");
+        let initialization_db_path = db_path.to_string_lossy().into_owned();
         let backup = crate::features::backup::di::build(
             database.clone(),
             db_path,
@@ -84,16 +80,15 @@ impl SystemModule {
             Arc::clone(core.background()),
         );
 
-        let models_path = core.data_dir().join("models");
-        let model_manager = Arc::new(ModelManager::new(models_path)?) as Arc<dyn ModelManagerTrait>;
-        let initialization = crate::features::initialization::di::build(database.clone());
+        let initialization =
+            crate::features::initialization::di::build(database.clone(), initialization_db_path);
 
         Ok(Self {
             settings,
             backup,
             updates: crate::features::updates::di::build(),
             metrics: crate::features::metrics::di::build(),
-            health: crate::features::health::di::build(database.clone()),
+            health: crate::features::health::di::build(database.clone(), embedding),
             stats: crate::features::stats::di::build(
                 database.clone(),
                 Arc::new(crate::features::tags::repository::TagRepository::new(
@@ -101,7 +96,6 @@ impl SystemModule {
                 )),
             ),
             initialization,
-            model_manager,
             system_info: Arc::new(SystemInfoAdapter::new(backend_devices))
                 as Arc<dyn SystemInfoPort>,
         })
@@ -114,10 +108,6 @@ impl SystemModule {
 
     pub fn initialize_database_use_case(&self) -> &Arc<InitializeDatabaseUseCase> {
         &self.initialization.initialize_database_use_case
-    }
-
-    pub fn model_manager(&self) -> &Arc<dyn ModelManagerTrait> {
-        &self.model_manager
     }
 
     // Settings use case getters

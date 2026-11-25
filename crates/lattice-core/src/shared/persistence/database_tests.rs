@@ -77,3 +77,108 @@ async fn the_open_connections_are_the_pools() {
     assert!(db.is_reachable().await);
     assert_eq!(db.open_connections(), 1);
 }
+
+#[tokio::test]
+async fn begin_write_succeeds_immediately_even_when_all_reader_connections_are_held() {
+    use std::time::Duration;
+
+    let dir = tempfile::tempdir().unwrap();
+    let options = SqliteConnectOptions::new()
+        .filename(dir.path().join("separated.db"))
+        .create_if_missing(true)
+        .busy_timeout(Duration::from_secs(2))
+        .pragma("journal_mode", "WAL");
+    let reader_pool = SqlitePoolOptions::new()
+        .max_connections(2)
+        .acquire_timeout(Duration::from_millis(200))
+        .connect_with(options.clone())
+        .await
+        .unwrap();
+    let writer_pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(Duration::from_millis(200))
+        .connect_with(options)
+        .await
+        .unwrap();
+    let db = Database::with_writer_pool(reader_pool, writer_pool);
+    write_a_note(&db).await;
+
+    let r1 = db.begin_read().await.unwrap();
+    let r2 = db.begin_read().await.unwrap();
+    assert!(
+        db.begin_read().await.is_err(),
+        "reader_pool must be saturated while both ReadTxs are held"
+    );
+
+    let mut tx = tokio::time::timeout(Duration::from_millis(200), db.begin_write())
+        .await
+        .expect("begin_write must not wait on saturated reader_pool")
+        .unwrap();
+    sqlx::query("INSERT INTO notes(body) VALUES('written-while-readers-busy')")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    drop((r1, r2));
+    let mut read = db.begin_read().await.unwrap();
+    assert_eq!(notes(&mut read).await, 2);
+    drop(read);
+    assert_eq!(db.open_connections(), 3);
+    db.close().await;
+}
+
+#[tokio::test]
+async fn vacuum_into_succeeds_when_reader_pool_enforces_query_only() {
+    use std::time::Duration;
+
+    let dir = tempfile::tempdir().unwrap();
+    let base_options = SqliteConnectOptions::new()
+        .filename(dir.path().join("separated.db"))
+        .create_if_missing(true)
+        .busy_timeout(Duration::from_secs(2))
+        .pragma("journal_mode", "WAL");
+    let writer_pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(base_options.clone())
+        .await
+        .unwrap();
+    let reader_pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(base_options.pragma("query_only", "ON"))
+        .await
+        .unwrap();
+    let db = Database::with_writer_pool(reader_pool, writer_pool);
+    write_a_note(&db).await;
+
+    let mut read = db.begin_read().await.unwrap();
+    assert!(
+        sqlx::query("INSERT INTO notes(body) VALUES('rejected')")
+            .execute(&mut *read)
+            .await
+            .is_err(),
+        "reader_pool must reject writes under query_only = ON"
+    );
+    drop(read);
+
+    let copy = dir.path().join("copy.db");
+    db.vacuum_into(copy.to_str().unwrap()).await.unwrap();
+
+    // Ensure the pooled reader connection was restored to query_only = ON.
+    let mut read = db.begin_read().await.unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i32>("PRAGMA query_only")
+            .fetch_one(&mut *read)
+            .await
+            .unwrap(),
+        1
+    );
+    drop(read);
+    db.close().await;
+
+    let mut copied = SqliteConnection::connect_with(&SqliteConnectOptions::new().filename(&copy))
+        .await
+        .unwrap();
+    assert_eq!(notes(&mut copied).await, 1);
+    copied.close().await.unwrap();
+}

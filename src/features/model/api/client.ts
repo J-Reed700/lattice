@@ -77,6 +77,10 @@ export const modelApi = {
   listLoadedModels: async (): Promise<ApiResult<Wire.LoadedModelDto[]>> =>
     apiCall('list_loaded_models'),
 
+  /** Where each model role's latest warm-up stands. */
+  warmupStatus: async (): Promise<ApiResult<Wire.RoleWarmupDto[]>> =>
+    apiCall('warmup_status'),
+
   /**
    * The last learning work refused because the Learning model's window was
    * too small, while that model has not covered the window since; null when
@@ -139,12 +143,9 @@ export const modelApi = {
   getModelDownloadPath: async (): Promise<ApiResult<string>> =>
     apiCall('get_model_download_path'),
 
-  getActiveModels: async (): Promise<
-    ApiResult<{
-      chat_model: DownloadedModel | null;
-      embedding_model: DownloadedModel | null;
-    }>
-  > => apiCall('get_active_models'),
+  /** What a chat on the Settings default and utility work run on now, as the backend decides it. */
+  getActiveModels: async (): Promise<ApiResult<Wire.ActiveModels>> =>
+    apiCall('get_active_models'),
 
   /**
    * Deletes a downloaded model record and optionally its file.

@@ -33,22 +33,15 @@ pub(crate) use pinned::PinnedLlm;
 /// does not run.
 pub(crate) type LaunchProfile = Option<LocalServerOptions>;
 
-/// Output ceiling for the shared utility model.
-///
-/// Sized to the largest cap its callers send (conversation memory extraction
-/// asks for 8192), because a ceiling below a caller's own cap does not shorten
-/// that caller's work — it truncates its reply.
-const UTILITY_MAX_OUTPUT_TOKENS: usize = 8_192;
-
 /// The generation settings a client is built with. Most work generates as
-/// Settings says; the utility and router roles have their own temperature or
-/// output ceiling, baked into the client, so theirs is a client of its own
-/// over the same server.
+/// Settings says; the router role has its own temperature and output ceiling,
+/// baked into the client, so its client is distinct over the same server.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Tuning {
     /// Settings' sampling and output ceiling: chat, learning and maintenance.
     Standard,
-    /// Settings' sampling under the utility role's output ceiling.
+    /// Settings' sampling and output ceiling; callers tighten `max_output_tokens`
+    /// per request when they want a smaller reservation.
     Utility,
     /// The router's own temperature and output ceiling.
     Router,
@@ -58,13 +51,7 @@ impl Tuning {
     pub(crate) fn generation(self, settings: &LLMSettingsDto) -> GenerationConfig {
         let standard = GenerationConfig::from_settings(settings);
         match self {
-            Self::Standard => standard,
-            Self::Utility => GenerationConfig {
-                // A ceiling, not an allowance: each caller sends the cap its own
-                // work needs and `max_output_tokens` only ever tightens this one.
-                max_tokens: UTILITY_MAX_OUTPUT_TOKENS,
-                ..standard
-            },
+            Self::Standard | Self::Utility => standard,
             Self::Router => GenerationConfig {
                 temperature: settings.router.temperature,
                 max_tokens: settings.router.max_tokens as usize,

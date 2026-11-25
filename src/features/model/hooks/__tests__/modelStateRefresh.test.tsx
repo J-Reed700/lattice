@@ -8,6 +8,7 @@ import { VaultAPI } from '@/lib/api';
 import type { LearningWindowShortfallDto, LoadedModelDto } from '@/lib/bindings';
 import { listenValidated } from '@/types/events';
 
+import { useModelWarmupStore } from '../../stores/modelWarmupStore';
 import { LEARNING_WINDOW_SHORTFALL_QUERY_KEY, SHORTFALL_RECHECK_MS, useLearningWindowShortfall } from '../useLearningWindowShortfall';
 import { DEGRADED_RECHECK_MS, LOADED_MODELS_QUERY_KEY, degradedReasonFor, useLoadedModels } from '../useLoadedModels';
 import { useModelWarmupListener } from '../useModelWarmupListener';
@@ -75,6 +76,11 @@ describe('model state that no event ends', () => {
 });
 
 describe('a finished warm-up', () => {
+  beforeEach(() => {
+    useModelWarmupStore.getState().reset();
+    api.warmupStatus = vi.fn().mockResolvedValue({ ok: true, data: [] });
+  });
+
   it('re-reads the loaded models, and the shortfall when it was the Learning model', async () => {
     let deliver: ((event: { payload: unknown }) => void) | undefined;
     vi.mocked(listenValidated).mockImplementation(async (_name, _schema, handler) => {
@@ -87,14 +93,14 @@ describe('a finished warm-up', () => {
     await waitFor(() => expect(deliver).toBeDefined());
     const invalidated = () => invalidate.mock.calls.map(([filters]) => filters?.queryKey);
 
-    deliver?.({ payload: { role: 'learning', phase: 'started' } });
+    deliver?.({ payload: { role: 'learning', phase: 'started', revision: 1 } });
     expect(invalidated()).toEqual([]);
 
-    deliver?.({ payload: { role: 'chat', phase: 'ready' } });
+    deliver?.({ payload: { role: 'chat', phase: 'ready', revision: 2 } });
     expect(invalidated()).toEqual([LOADED_MODELS_QUERY_KEY]);
 
     invalidate.mockClear();
-    deliver?.({ payload: { role: 'learning', phase: 'failed', error: 'no memory' } });
+    deliver?.({ payload: { role: 'learning', phase: 'failed', error: 'no memory', revision: 3 } });
     expect(invalidated()).toEqual([LOADED_MODELS_QUERY_KEY, LEARNING_WINDOW_SHORTFALL_QUERY_KEY]);
   });
 });

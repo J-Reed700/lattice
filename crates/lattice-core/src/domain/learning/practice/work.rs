@@ -167,6 +167,16 @@ pub enum CheckScope {
     Own,
 }
 
+impl CheckScope {
+    /// Whether a check of this scope judges the work. A run of the learner's own input shows what it does.
+    pub fn asks_for_verdict(self) -> bool {
+        match self {
+            Self::Shown | Self::All => true,
+            Self::Own => false,
+        }
+    }
+}
+
 /// How a check as a whole stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
@@ -179,6 +189,29 @@ pub enum CheckStatus {
     Cancelled,
     Interrupted,
     Unavailable,
+}
+
+/// What a check says of the work.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckAnswer {
+    Passed,
+    Failed,
+}
+
+impl CheckStatus {
+    /// What the check says of the work: a timeout fails it, and a check that has not finished, was cancelled or
+    /// interrupted, or found no runtime says nothing.
+    pub fn answer(self) -> Option<CheckAnswer> {
+        match self {
+            Self::Passed => Some(CheckAnswer::Passed),
+            Self::Failed | Self::TimedOut => Some(CheckAnswer::Failed),
+            Self::Pending
+            | Self::Running
+            | Self::Cancelled
+            | Self::Interrupted
+            | Self::Unavailable => None,
+        }
+    }
 }
 
 /// What the reference said about a case the learner wrote.

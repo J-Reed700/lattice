@@ -6,12 +6,13 @@ import type { ApiResult } from '@/types';
 import { queryClient } from './queryClient';
 
 export type StudyTab = 'study' | 'starting_point' | 'lessons' | 'sources' | 'quizzes' | 'plan' | 'portability' | 'workbench' | 'practical' | 'notebook' | 'recall' | 'canvas' | 'tutor' | 'drills';
-export type StudyDestination = { programId?: string; tab?: StudyTab; lessonId?: string; moduleId?: string; formId?: string; deckId?: string; flashcards?: boolean; tangentId?: string;
+export type StudyScreen = 'import' | 'export-all';
+export type StudyDestination = { programId?: string; tab?: StudyTab; lessonId?: string; moduleId?: string; formId?: string; deckId?: string; flashcards?: boolean; tangentId?: string; screen?: StudyScreen;
   /** Open the lesson's claim review screen (`?review=claims`). */
   review?: 'claims' };
 // `withdrawsOn` names the result `outcome` tag that means the request did
 // nothing (a closed save or folder dialog), so its receipt is withdrawn.
-type TaskDescription = { title: string; detail: string; involves: string[]; tab?: StudyTab; quickStart?: boolean; withdrawsOn?: string };
+type TaskDescription = { title: string; detail: string; involves: string[]; tab?: StudyTab; screen?: StudyScreen; quickStart?: boolean; withdrawsOn?: string };
 
 const model = (title: string, tab: StudyTab, ...involves: string[]): TaskDescription => ({
   title, tab, involves, quickStart: true,
@@ -43,10 +44,10 @@ const descriptions: Record<string, TaskDescription> = {
   course_drills: { title: 'Loading your review drills', tab: 'drills', detail: 'This is taking longer than usual. The request is still waiting for a response.', involves: ['Read the course’s lessons and its drills'] },
   start_course_drill: { title: 'Starting your review drill', tab: 'drills', detail: 'Waiting for the app to take a drill or start writing one.', involves: ['Take a ready drill of the lesson, or start writing one'] },
   export_learning_pack: { title: 'Exporting your study pack', tab: 'portability', quickStart: true, detail: 'Larger courses and attachments take longer to package.', involves: ['Collect the selected course material', 'Write the study pack to your chosen location'] },
-  preview_learning_pack_import: { title: 'Checking your study pack', tab: 'portability', quickStart: true, detail: 'Reading the pack and checking its contents before you decide what to import.', involves: ['Read and validate the pack', 'Prepare an import preview'] },
-  apply_learning_pack_import: { title: 'Importing your study pack', tab: 'portability', quickStart: true, detail: 'Saving the selected material into your library.', involves: ['Import the selected material', 'Record the import result'] },
+  preview_learning_pack_import: { title: 'Checking your study pack', tab: 'portability', screen: 'import', quickStart: true, detail: 'Reading the pack and checking its contents before you decide what to import.', involves: ['Read and validate the pack', 'Prepare an import preview'] },
+  apply_learning_pack_import: { title: 'Importing your study pack', tab: 'portability', screen: 'import', quickStart: true, detail: 'Saving the selected material into your library.', involves: ['Import the selected material', 'Record the import result'] },
   save_learning_pack_as: { withdrawsOn: 'cancelled', title: 'Saving your course to a file', tab: 'portability', quickStart: true, detail: 'Choose where to save the file. Larger courses take longer to package.', involves: ['Choose where to save the course file', 'Collect the course and your progress', 'Write the file to the chosen location'] },
-  export_all_learning_packs: { withdrawsOn: 'cancelled', title: 'Exporting all your courses', tab: 'portability', quickStart: true, detail: 'Each course is saved as its own file in the folder you choose. A large library takes a while.', involves: ['Choose a folder', 'Save each course to its own file', 'Report any course that could not be exported'] },
+  export_all_learning_packs: { withdrawsOn: 'cancelled', title: 'Exporting all your courses', tab: 'portability', screen: 'export-all', quickStart: true, detail: 'Each course is saved as its own file in the folder you choose. A large library takes a while.', involves: ['Choose a folder', 'Save each course to its own file', 'Report any course that could not be exported'] },
   change_learning_course_plan_entries: model('Changing the planned topics', 'lessons', 'Read your request and the planned topics', "Rewrite the chosen lessons' topics"),
   attach_learning_claim_evidence: model('Checking statements against your source', 'lessons', 'Save the source to the course', 'Check the waiting statements against it'),
   attach_learning_lesson_source: model('Checking the lesson against your source', 'lessons', 'Save the source to the course', 'Check every open statement of the lesson against it'),
@@ -57,9 +58,9 @@ const descriptions: Record<string, TaskDescription> = {
 // These operations already expose real progress and controls in Studio. A job
 // start/retry response only acknowledges queuing; it is not job completion.
 const dedicatedProgress = new Set([
-  'generate_learning_program', 'repair_learning_outline', 'cancel_learning_outline',
-  'prepare_learning_lesson', 'prepare_learning_module', 'prepare_learning_ahead', 'start_learning_generation_job', 'retry_learning_generation_job',
-  'cancel_learning_generation_job', 'start_learning_practical_run', 'cancel_learning_practical_run',
+  'generate_learning_program', 'repair_learning_outline', 'cancel_learning_outline', 'list_learning_outline_runs',
+  'prepare_learning_lesson', 'prepare_learning_module', 'prepare_learning_lessons', 'prepare_learning_ahead', 'start_learning_generation_job', 'retry_learning_generation_job',
+  'cancel_learning_generation_job', 'prioritize_learning_generation_job', 'reset_learning_lesson_preparation', 'start_learning_practical_run', 'cancel_learning_practical_run',
   'prepare_learning_quiz_bank', 'resume_learning_quiz_grading', 'plan_learning_course',
 ]);
 
@@ -155,6 +156,7 @@ export function beginStudyActivity(domain: string, command: string, args?: Activ
       moduleId: requestModuleId,
       formId: requestFormId,
       flashcards: domain === 'study', deckId: command === 'get_study_deck' ? argsId : undefined,
+      ...(description.screen ? { screen: description.screen } : {}),
     },
     courseTitle: course?.summary?.title ? shortCourseTitle(course.summary.title) : undefined,
     status: 'pending', startedAt: Date.now(),

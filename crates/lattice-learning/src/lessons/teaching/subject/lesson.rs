@@ -2,7 +2,7 @@
 use super::super::contract;
 use super::super::passes::{Next, Outcome, Passes};
 use super::super::quotes::{checked, numbered, quote_checks_in, QuoteCheck};
-use super::super::repair;
+use super::super::repair::{self, refusal};
 use super::super::standing::{versions, Standing};
 use super::super::{
     holds_up_review, quotation_findings, structural_findings, whole_repairs,
@@ -18,19 +18,19 @@ use crate::lessons::copied_wording::Wording;
 use crate::model_call::ErrorClass;
 use crate::reference_collection::ReferenceCollection;
 use crate::review_evidence::Checked;
-use crate::review_findings::{sentences_of, FindingSite, Held, ReviewFinding, SetAside};
+use crate::review_findings::{
+    new_sentences, part_at, sentences_of, FindingSite, Held, ReviewFinding, SetAside,
+};
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
 };
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::borrow::Cow;
+use std::collections::{BTreeMap, HashSet};
 
 /// Why a finding about a sentence a live claim stands on is held.
 const PROTECTED_SENTENCE: &str = "a sentence a live claim stands on";
-
-/// Why a finding that an item of the course plan has no section is held.
-const NO_SECTION: &str = "the lesson has no section of the kind that teaches it";
 
 /// What the lesson's reviewer is given besides the material, by check.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -138,6 +138,28 @@ impl<'a> LessonSubject<'a> {
     }
 }
 
+/// Strips `shape::WORDS` (`"lessonShape"`) from `authoring` when it holds the
+/// policy's `Draft` or `Kept` instructions, so switching from `Phase::Draft` to
+/// `Phase::Kept` after claim repair does not wipe `Standing::reviewed` digests.
+fn basis_authoring(authoring: &Value) -> Cow<'_, Value> {
+    let Some(fields) = authoring.as_object() else {
+        return Cow::Borrowed(authoring);
+    };
+    let policy = crate::lessons::shape::policy();
+    let is_phase_shape = fields
+        .get(crate::lessons::shape::WORDS)
+        .is_some_and(|words| {
+            *words == json!(policy.asked(crate::lessons::shape::Phase::Draft))
+                || *words == json!(policy.asked(crate::lessons::shape::Phase::Kept))
+        });
+    if !is_phase_shape {
+        return Cow::Borrowed(authoring);
+    }
+    let mut stripped = fields.clone();
+    stripped.remove(crate::lessons::shape::WORDS);
+    Cow::Owned(Value::Object(stripped))
+}
+
 #[async_trait::async_trait]
 impl Subject for LessonSubject<'_> {
     fn wording(&self) -> &Wording {
@@ -173,7 +195,9 @@ impl Subject for LessonSubject<'_> {
     }
 
     fn given(&mut self, llm: &dyn LLMPort, authoring: &Value) {
-        let inputs = json!({"authoringContext":authoring,"correctnessPriority":LESSON_PRIORITY});
+        let authoring = basis_authoring(authoring);
+        let inputs =
+            json!({"authoringContext":authoring.as_ref(),"correctnessPriority":LESSON_PRIORITY});
         self.standing.under(&crate::teaching_review::basis(
             llm,
             &ReviewTexts::lesson().joined(),
@@ -208,8 +232,7 @@ impl Subject for LessonSubject<'_> {
 
     async fn find(&mut self, llm: &dyn LLMPort, pass: &Pass<'_>) -> Result<Found> {
         let review_prompt = review_prompt(pass, LESSON_PRIORITY, self.reference_versions());
-        let mut structure = structural_findings(pass.schema, pass.candidate, &self.wording)?;
-        self.passes.place(pass.value, &mut structure);
+        let structure = structural_findings(pass.schema, pass.candidate, &self.wording)?;
         // A rewrite of the whole lesson changes the sentences its checked
         // claims stand on, so once there are any, what only a rewrite can
         // answer waits for the user (claim classes design §3.10).
@@ -258,7 +281,15 @@ impl Subject for LessonSubject<'_> {
                         round.scope(),
                         crate::teaching_review::Remit::Lesson,
                     );
-                    let (judged, plan) = futures::try_join!(review, against_plan)?;
+                    let (judged, plan) = if llm.keeps_read_prompts() {
+                        // Local llama-server shares a unified KV pool: run sequentially
+                        // so review and contract checks do not evict each other's prefixes.
+                        let judged = review.await?;
+                        let plan = against_plan.await?;
+                        (judged, plan)
+                    } else {
+                        futures::try_join!(review, against_plan)?
+                    };
                     (Some(judged), plan.findings)
                 }
                 // The reviewer has seen exactly this lesson: its findings stand.
@@ -307,12 +338,11 @@ impl Subject for LessonSubject<'_> {
             let plan_findings = if reported.is_empty() {
                 plan_findings
             } else {
-                let ruled = contract::check(
+                let ruled = contract::rule_on_reports(
                     llm,
                     pass.authoring,
                     pass.value,
                     self.protected,
-                    &mut self.receipts,
                     &reported,
                 )
                 .await?;
@@ -356,14 +386,6 @@ impl Subject for LessonSubject<'_> {
         };
         let mut findings = issues;
         findings.retain(|finding| !finding.note.trim().is_empty());
-        self.passes.place(pass.value, &mut findings);
-        self.passes.hold(
-            findings
-                .iter()
-                .filter(|finding| finding.lacks_its_section())
-                .map(ReviewFinding::id),
-            NO_SECTION,
-        );
         // A finding about a sentence a live claim stands on waits for
         // the user: the review does not rewrite what passed (§10.3).
         self.passes.hold(
@@ -432,7 +454,6 @@ impl Subject for LessonSubject<'_> {
             }
         }
         if mended.changed {
-            self.passes.carry(previous, &mended.candidate);
             return Ok(Settled::Changed(mended.candidate.to_string()));
         }
         tracing::warn!(
@@ -440,10 +461,6 @@ impl Subject for LessonSubject<'_> {
             "The teaching repair changed nothing that could stay"
         );
         Ok(Settled::Unchanged)
-    }
-
-    fn fitted(&mut self, before: &Value, after: &Value) {
-        self.passes.carry(before, after);
     }
 
     fn settle_rewrite(
@@ -514,34 +531,52 @@ enum Made {
 
 impl LessonSubject<'_> {
     /// A repair that rewrote the whole lesson names no finding: a finding is
-    /// charged as unchanged when its part is still there as it was (the whole
-    /// lesson, for a finding about it), and as applied otherwise.
+    /// charged as applied when its part changed.
     fn settle_whole(
         &mut self,
         previous: &Value,
         send: &[ReviewFinding],
         text: &str,
     ) -> Result<Made> {
-        let value = crate::generation::parse_json::<Value>(text)
+        let repaired = crate::generation::parse_json::<Value>(text)
             .map_err(|error| AppError::ModelAnswerUnusable(error.to_string()))?;
-        reads_as_lesson_or_unusable(&value)?;
-        let standing = self.passes.carry_rewrite(previous, &value);
-        for finding in send {
-            let unchanged = match &finding.unit {
-                Some(unit) => standing.contains(unit),
-                None => value == *previous,
+        let (value, kept) = if self.protected.is_empty() {
+            (repaired, text.to_owned())
+        } else {
+            let value = match super::super::protected::confine_review(
+                previous,
+                &repaired,
+                &touched_by_sites(previous, send),
+                self.protected,
+            )
+            .map_err(|error| AppError::ModelAnswerUnusable(error.to_string()))?
+            {
+                Ok(value) => value,
+                Err(reasons) => {
+                    for finding in send {
+                        self.passes.charge(finding, refusal(&reasons));
+                    }
+                    return Ok(Made::Nothing);
+                }
             };
-            let outcome = if unchanged {
-                Outcome::Unchanged
+            let kept = value.to_string();
+            (value, kept)
+        };
+        reads_as_lesson_or_unusable(&value)?;
+        for finding in send {
+            let site = finding.site.unwrap_or(FindingSite::Lesson);
+            let outcome = if part_at(previous, site) == part_at(&value, site) {
+                Outcome::Unnamed
             } else {
                 Outcome::Applied
             };
             self.passes.charge(finding, outcome);
         }
+        self.record_whole_work(previous, send, &value);
         Ok(if value == *previous {
             Made::Nothing
         } else {
-            Made::Changed(text.to_owned())
+            Made::Changed(kept)
         })
     }
 
@@ -552,6 +587,65 @@ impl LessonSubject<'_> {
             .worked_on(&finding.id(), sentences.iter().cloned());
         self.passes.worked_on(finding, sentences);
     }
+
+    /// What a rewrite puts its findings' words through: the sentences it wrote
+    /// count for the findings it was sent for, and each finding whose part it
+    /// changed counts the words it was applied for.
+    fn record_whole_work(&mut self, previous: &Value, send: &[ReviewFinding], repaired: &Value) {
+        for (site, sentences) in new_sentences(previous, repaired) {
+            let owners: Vec<&ReviewFinding> = send
+                .iter()
+                .filter(|finding| {
+                    matches!(finding.site, None | Some(FindingSite::Lesson))
+                        || finding.site == Some(site)
+                })
+                .collect();
+            let owners = if owners.is_empty() {
+                send.iter().collect()
+            } else {
+                owners
+            };
+            for owner in owners {
+                self.worked_on(owner, sentences.clone());
+            }
+        }
+        for finding in send {
+            let site = finding.site.unwrap_or(FindingSite::Lesson);
+            if part_at(previous, site) != part_at(repaired, site) {
+                self.worked_on(finding, sentences_of(previous, finding));
+            }
+        }
+    }
+}
+
+/// For each part, the findings a rewrite of the whole lesson may touch it
+/// for: those sited there and those about the whole lesson.
+fn touched_by_sites<'a>(
+    previous: &Value,
+    send: &'a [ReviewFinding],
+) -> BTreeMap<String, Vec<&'a ReviewFinding>> {
+    ["blocks", "questions"]
+        .into_iter()
+        .flat_map(|list| {
+            let count = previous
+                .get(list)
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len);
+            (0..count).map(move |index| format!("/{list}/{index}"))
+        })
+        .map(|part| {
+            let here: Vec<&ReviewFinding> = send
+                .iter()
+                .filter(|finding| {
+                    finding
+                        .site
+                        .and_then(FindingSite::pointer)
+                        .is_none_or(|own| own == part)
+                })
+                .collect();
+            (part, here)
+        })
+        .collect()
 }
 
 #[cfg(test)]

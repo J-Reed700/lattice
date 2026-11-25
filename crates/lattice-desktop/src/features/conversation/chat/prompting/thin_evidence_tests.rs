@@ -4,14 +4,13 @@ use crate::features::conversation::chat::retrieval::SufficiencyVerdict;
 
 fn flags() -> SearchFlags {
     SearchFlags {
-        force_kb_search: false,
-        force_web_search: false,
-        web_fallback: false,
-        force_wiki_search: false,
-        deep_research_mode: false,
-        force_followup_mode: false,
-        closed_book: false,
+        strict_sources: true,
+        ..SearchFlags::default()
     }
+}
+
+fn hybrid_flags() -> SearchFlags {
+    SearchFlags::default()
 }
 
 fn weak(reasons: Vec<&'static str>) -> SufficiencyVerdict {
@@ -53,6 +52,25 @@ fn weak_passages_are_named_as_weak_in_the_prompt() {
         prompt.contains("do not fill the gap"),
         "the instruction that stops a confident answer off weak text is the \
              point of the note:\n{prompt}"
+    );
+}
+
+#[test]
+fn hybrid_weak_passages_allow_uncited_general_knowledge_while_protecting_private_facts() {
+    let settings = LLMPromptSettingsDto::default();
+    let prompt = PromptMessageBuilder::new(&settings, "How does MVCC work?", false, hybrid_flags())
+        .with_kb_context(Some("[1] A passage about something else.".to_string()))
+        .with_kb_sufficiency(Some(&weak(vec![reason::LOW_TOP_SCORE])))
+        .build();
+
+    assert!(prompt.contains("Evidence quality:"), "{prompt}");
+    assert!(
+        prompt.contains("answer naturally from general knowledge without citations"),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains("abstain only on private details"),
+        "{prompt}"
     );
 }
 

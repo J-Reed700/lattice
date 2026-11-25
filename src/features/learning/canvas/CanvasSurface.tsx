@@ -1,4 +1,4 @@
-import { Suspense, forwardRef, lazy, useCallback, useImperativeHandle, useMemo, useRef } from 'react';
+import { Suspense, forwardRef, lazy, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 
 import { hasUnsupportedCanvasImage } from '@/features/learning/canvas/canvasPaste';
 import { canvasTextOutline, parseCanvasScene, serializeCanvasScene } from '@/features/learning/canvas/canvasScene';
@@ -10,8 +10,84 @@ import type { AppState, BinaryFiles, ExcalidrawImperativeAPI, ExcalidrawInitialD
 type ExportKind = 'json' | 'svg' | 'png';
 type SceneChange = { sceneJson: string; outline: string[]; elementCount: number };
 
+const SERIALIZE_DEBOUNCE_MS = 250;
+
+type PersistedAppStateSnapshot = {
+  viewBackgroundColor: unknown;
+  theme: unknown;
+  gridSize: unknown;
+};
+
+type ElementSnapshot = {
+  ref: ExcalidrawElement;
+  id: string;
+  version: number | undefined;
+  versionNonce: number | undefined;
+  isDeleted: boolean | undefined;
+};
+
+function captureElementSnapshots(elements: readonly ExcalidrawElement[]): ElementSnapshot[] {
+  return elements.map((element) => ({
+    ref: element,
+    id: element.id,
+    version: element.version,
+    versionNonce: element.versionNonce,
+    isDeleted: element.isDeleted,
+  }));
+}
+
+function capturePersistedAppState(appState: Partial<AppState> | Record<string, unknown>): PersistedAppStateSnapshot {
+  return {
+    viewBackgroundColor: appState.viewBackgroundColor,
+    theme: appState.theme,
+    gridSize: appState.gridSize,
+  };
+}
+
+function areElementsUnchanged(
+  prev: readonly ElementSnapshot[] | null,
+  next: readonly ExcalidrawElement[],
+): boolean {
+  if (!prev) return false;
+  if (prev.length !== next.length) return false;
+  for (let i = 0; i < next.length; i += 1) {
+    const a = prev[i];
+    const b = next[i];
+    // Excalidraw's mutateElement() updates elements in place (same object ref,
+    // new version/versionNonce/isDeleted), so version metadata must be checked
+    // before falling back to reference equality.
+    if (a.version !== undefined && b.version !== undefined) {
+      if (
+        a.id === b.id &&
+        a.version === b.version &&
+        a.versionNonce === b.versionNonce &&
+        a.isDeleted === b.isDeleted
+      ) {
+        continue;
+      }
+      return false;
+    }
+    if (a.ref === b) continue;
+    return false;
+  }
+  return true;
+}
+
+function isPersistedAppStateUnchanged(
+  prev: PersistedAppStateSnapshot | null,
+  next: AppState,
+): boolean {
+  if (!prev) return false;
+  return (
+    prev.viewBackgroundColor === next.viewBackgroundColor &&
+    prev.theme === next.theme &&
+    prev.gridSize === next.gridSize
+  );
+}
+
 export interface CanvasSurfaceHandle {
   exportScene: (kind: ExportKind) => Promise<Blob>;
+  flush?: () => SceneChange | null;
 }
 
 type Props = {
@@ -54,20 +130,73 @@ const LazyExcalidraw = lazy(loadEditor);
 
 const CanvasSurface = forwardRef<CanvasSurfaceHandle, Props>(({ sceneJson, theme, onSceneChange, onImageBlocked, onSceneError }, ref) => {
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
-  const parsedScene = useMemo(() => {
+  const onSceneChangeRef = useRef(onSceneChange);
+  onSceneChangeRef.current = onSceneChange;
+  const onSceneErrorRef = useRef(onSceneError);
+  onSceneErrorRef.current = onSceneError;
+
+  // Parse initialData only once per surface mount (`CanvasPanel` keys this
+  // component by `${selected.id}:${surfaceVersion}` for external resets).
+  const [parsedScene] = useState(() => {
     try { return { scene: parseCanvasScene(sceneJson), error: null as string | null }; }
     catch (error) { return { scene: null, error: error instanceof Error ? error.message : 'Canvas data is invalid.' }; }
-  }, [sceneJson]);
+  });
   const initialData = useMemo(() => parsedScene.scene ? {
     elements: parsedScene.scene.elements,
     appState: parsedScene.scene.appState,
     scrollToContent: parsedScene.scene.elements.length > 0,
   } as ExcalidrawInitialDataState : undefined, [parsedScene.scene]);
+
+  const lastElementsRef = useRef<ElementSnapshot[] | null>(
+    parsedScene.scene ? captureElementSnapshots(parsedScene.scene.elements) : null,
+  );
+  const lastAppStateRef = useRef<PersistedAppStateSnapshot | null>(
+    parsedScene.scene ? capturePersistedAppState(parsedScene.scene.appState) : null,
+  );
+  const pendingSnapshotRef = useRef<{ elements: readonly ExcalidrawElement[]; appState: AppState } | null>(null);
+  const debounceTimerRef = useRef<number | null>(null);
+
+  const flushPending = useCallback((): SceneChange | null => {
+    if (debounceTimerRef.current !== null) {
+      window.clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+    const pending = pendingSnapshotRef.current;
+    if (!pending) return null;
+    pendingSnapshotRef.current = null;
+    try {
+      const nextScene = serializeCanvasScene(pending.elements, pending.appState, {});
+      const safeElements = pending.elements.filter((element) => !element.isDeleted);
+      const change: SceneChange = {
+        sceneJson: nextScene,
+        outline: canvasTextOutline(safeElements),
+        elementCount: safeElements.length,
+      };
+      onSceneChangeRef.current(change);
+      return change;
+    } catch (error) {
+      onSceneErrorRef.current(error instanceof Error ? error.message : 'This drawing could not be saved.');
+      return null;
+    }
+  }, []);
+
+  // Cancel any pending debounce on unmount without invoking onSceneChange:
+  // CanvasPanel calls ref.flush() explicitly before save/switch/checkpoint and on unmount,
+  // whereas reload/restore/template resets bump surfaceVersion to discard local edits.
+  useEffect(() => () => {
+    if (debounceTimerRef.current !== null) {
+      window.clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+    pendingSnapshotRef.current = null;
+  }, []);
+
   const uiOptions = useMemo(() => ({ tools: { image: false }, canvasActions: { clearCanvas: false, export: false, loadScene: false, saveToActiveFile: false, saveAsImage: false, toggleTheme: false } as const }), []);
   const setExcalidrawApi = useCallback((api: ExcalidrawImperativeAPI) => { apiRef.current = api; }, []);
   const renderTopRightUI = useCallback(() => null, []);
 
   useImperativeHandle(ref, () => ({
+    flush: flushPending,
     async exportScene(kind) {
       const { exportToBlob, exportToSvg } = await import('@excalidraw/excalidraw');
       const api = apiRef.current;
@@ -84,7 +213,7 @@ const CanvasSurface = forwardRef<CanvasSurfaceHandle, Props>(({ sceneJson, theme
       }
       return exportToBlob({ elements, appState: state, files: {}, mimeType: 'image/png', exportPadding: 24 });
     },
-  }), []);
+  }), [flushPending]);
 
   const onChange = useCallback((elements: readonly ExcalidrawElement[], appState: AppState, files: BinaryFiles) => {
     const hasImageElement = elements.some((element) => element.type === 'image');
@@ -94,17 +223,26 @@ const CanvasSurface = forwardRef<CanvasSurfaceHandle, Props>(({ sceneJson, theme
       return;
     }
     if (Object.keys(files).length) {
-      onSceneError('Image attachments aren’t available on Canvas yet. You can still draw shapes, lines, and text.');
+      onSceneErrorRef.current('Image attachments aren’t available on Canvas yet. You can still draw shapes, lines, and text.');
       return;
     }
-    try {
-      const nextScene = serializeCanvasScene(elements, appState, {});
-      const safeElements = elements.filter((element) => !element.isDeleted);
-      onSceneChange({ sceneJson: nextScene, outline: canvasTextOutline(safeElements), elementCount: safeElements.length });
-    } catch (error) {
-      onSceneError(error instanceof Error ? error.message : 'This drawing could not be saved.');
+    if (
+      areElementsUnchanged(lastElementsRef.current, elements) &&
+      isPersistedAppStateUnchanged(lastAppStateRef.current, appState)
+    ) {
+      return;
     }
-  }, [onImageBlocked, onSceneChange, onSceneError]);
+    lastElementsRef.current = captureElementSnapshots(elements);
+    lastAppStateRef.current = capturePersistedAppState(appState);
+    pendingSnapshotRef.current = { elements, appState };
+    if (debounceTimerRef.current !== null) {
+      window.clearTimeout(debounceTimerRef.current);
+    }
+    debounceTimerRef.current = window.setTimeout(() => {
+      debounceTimerRef.current = null;
+      flushPending();
+    }, SERIALIZE_DEBOUNCE_MS);
+  }, [flushPending, onImageBlocked]);
 
   const handlePaste = useCallback((data: { files?: BinaryFiles; elements?: readonly ExcalidrawElement[]; mixedContent?: { type: 'text' | 'imageUrl'; value: string }[] }) => {
     const hasImage = hasUnsupportedCanvasImage(data);
@@ -118,7 +256,7 @@ const CanvasSurface = forwardRef<CanvasSurfaceHandle, Props>(({ sceneJson, theme
     if ([...event.dataTransfer.files].some((file) => file.type.startsWith('image/'))) { event.preventDefault(); event.stopPropagation(); onImageBlocked(); }
   }}>
     <style>{'.learning-canvas-surface .collab-button,.learning-canvas-surface .main-menu-trigger,.learning-canvas-surface .library-button,.learning-canvas-surface .ai-button{display:none!important}.learning-canvas-surface .excalidraw{--color-primary:var(--accent)}'}</style>
-    <Suspense fallback={<div role="status" className="grid h-full min-h-[460px] place-items-center bg-[#f5f1ea] text-sm text-text-muted dark:bg-[#20201f]">Opening your canvas…</div>}>
+    <Suspense fallback={<div role="status" className="grid h-full min-h-[460px] place-items-center bg-surface-sunken text-sm text-text-muted">Opening your canvas…</div>}>
       <LazyExcalidraw initialData={initialData} theme={theme} name="Learning Studio Canvas" excalidrawAPI={setExcalidrawApi} onChange={onChange} onPaste={handlePaste} validateEmbeddable={false} aiEnabled={false} UIOptions={uiOptions} renderTopRightUI={renderTopRightUI} />
     </Suspense>
   </div>;

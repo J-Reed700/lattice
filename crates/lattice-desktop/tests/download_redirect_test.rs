@@ -99,6 +99,7 @@ async fn test_download_follows_redirects() {
             resume_from: None,
             progress_callback: None,
             auth_token: None,
+            known_total: None,
         })
         .await
         .unwrap();
@@ -152,7 +153,7 @@ async fn test_get_file_size_returns_final_url() {
     let engine = HttpDownloadEngine::new().unwrap();
 
     let (size, final_url) = engine
-        .get_file_size(&format!("{}/original", mock_server.uri()))
+        .get_file_size(&format!("{}/original", mock_server.uri()), None)
         .await
         .unwrap();
 

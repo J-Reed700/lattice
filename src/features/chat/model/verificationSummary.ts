@@ -12,16 +12,28 @@
 export function verificationSummaryLine(
   claimsEvaluated: number,
   unsupportedCount: number,
-  unverifiedCount = 0
+  unverifiedCount = 0,
+  citedOnly = false
 ): string {
-  const claims = `${claimsEvaluated} claim${claimsEvaluated !== 1 ? 's' : ''}`;
+  const plural = claimsEvaluated !== 1 ? 's' : '';
+  const claims = `${claimsEvaluated} claim${plural}`;
+  const citedClaims = `${claimsEvaluated} cited claim${plural}`;
   const notChecked = unverifiedCount > 0 ? ` · ${unverifiedCount} not checked` : '';
   if (unsupportedCount === 0 && unverifiedCount === 0) {
+    if (citedOnly) {
+      return `All cited claims are grounded in your sources · ${claims} checked · uncited parts may use general knowledge`;
+    }
     return `Every claim is grounded in your sources · ${claims} checked`;
   }
   if (unsupportedCount === 0) {
     const checked = claimsEvaluated - unverifiedCount;
+    if (citedOnly) {
+      return `Every checked cited claim is grounded in your sources · ${checked} of ${citedClaims} checked · uncited parts may use general knowledge`;
+    }
     return `Every checked claim is grounded in your sources · ${checked} of ${claims} checked`;
+  }
+  if (citedOnly) {
+    return `${unsupportedCount} of ${citedClaims} could not be grounded in your sources${notChecked} · uncited parts may use general knowledge`;
   }
   return `${unsupportedCount} of ${claims} could not be grounded in your sources${notChecked}`;
 }

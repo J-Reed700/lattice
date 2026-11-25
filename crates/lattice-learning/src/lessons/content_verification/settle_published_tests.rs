@@ -1333,26 +1333,10 @@ async fn a_batch_asked_for_something_that_needs_one_statement_is_refused_and_wri
 }
 
 /// A waiting teaching note on `section` about `sentence`, as a pass left it.
-fn note_candidate() -> Value {
-    json!({"blocks":[
-        {"title":"One","body":"Body."},{"title":"Two","body":"Body."}
-    ],"questions":[]})
-}
-
-/// The key the repository stores for a quotation note on `section`.
-fn quotation_key(section: usize) -> String {
-    let mut one = [ReviewFinding::of_kind(
-        FindingKind::Quotation,
-        FindingSite::Section(section),
-        "",
-    )];
-    crate::review_findings::Lineage::default().place(&note_candidate(), &mut one);
-    let [finding] = one;
-    finding.id().as_str().to_owned()
-}
-
 async fn note_about(course: &Course, section: usize, sentence: Option<&str>) -> Result<()> {
-    let candidate = note_candidate();
+    let candidate = json!({"blocks":[
+        {"title":"One","body":"Body."},{"title":"Two","body":"Body."}
+    ],"questions":[]});
     let mut finding = ReviewFinding::rule(
         Rule::Quotation,
         FindingKind::Quotation,
@@ -1644,7 +1628,7 @@ async fn a_note_shows_removed_while_the_users_removal_of_its_sentence_stands() -
         .settle(
             &course.program_id,
             &course.lesson_id,
-            &[quotation_key(0)],
+            &["rule/quotation/section-0".to_owned()],
             TeachingSettleDto::Keep,
         )
         .await?;
@@ -1844,7 +1828,9 @@ const NOT_A_SENTENCE: &str =
 /// Waiting teaching notes as a pass left them, one for each `(section, kind,
 /// sentence)`.
 async fn notes_about(course: &Course, notes: &[(usize, FindingKind, &str)]) -> Result<()> {
-    let candidate = note_candidate();
+    let candidate = json!({"blocks":[
+        {"title":"One","body":"Body."},{"title":"Two","body":"Body."}
+    ],"questions":[]});
     let set_aside: Vec<SetAside> = notes
         .iter()
         .map(|(section, kind, sentence)| {
@@ -1905,7 +1891,7 @@ async fn a_notes_sentence_no_claim_stands_on_is_removed_in_one_step_and_the_undo
 
     let removed = remove_notes(
         &course,
-        &[quotation_key(0).as_str()],
+        &["rule/quotation/section-0"],
         before.ledger_revision,
     )
     .await?;
@@ -1964,7 +1950,7 @@ async fn a_note_with_an_exact_claim_removes_through_that_claim_and_creates_none(
 
     let removed = remove_notes(
         &course,
-        &[quotation_key(0).as_str()],
+        &["rule/quotation/section-0"],
         before.ledger_revision,
     )
     .await?;
@@ -2006,7 +1992,7 @@ async fn a_batch_with_one_note_that_is_not_one_whole_sentence_changes_nothing_an
 
     let error = note_removal_refused(
         &course,
-        &[quotation_key(0).as_str(), "reviewer/1"],
+        &["rule/quotation/section-0", "reviewer/1"],
         revision,
     )
     .await;
@@ -2030,7 +2016,7 @@ async fn removing_notes_sentences_with_an_old_revision_writes_nothing() -> Resul
     notes_about(&course, &[(0, FindingKind::Quotation, BRAVO)]).await?;
     let revision = ledger(&course).await?.revision.0;
 
-    let error = note_removal_refused(&course, &[quotation_key(0).as_str()], revision + 1).await;
+    let error = note_removal_refused(&course, &["rule/quotation/section-0"], revision + 1).await;
 
     assert!(error.to_string().contains("changed"), "{error}");
     Ok(())
@@ -2046,7 +2032,7 @@ async fn a_key_naming_no_note_is_refused_and_writes_nothing() -> Result<()> {
 
     let error = note_removal_refused(
         &course,
-        &[quotation_key(0).as_str(), "rule/quotation/section-9"],
+        &["rule/quotation/section-0", "rule/quotation/section-9"],
         revision,
     )
     .await;
@@ -2067,7 +2053,7 @@ async fn a_draft_lessons_notes_cannot_have_their_sentences_removed() -> Result<(
         .await?;
     let revision = ledger(&course).await?.revision.0;
 
-    let error = note_removal_refused(&course, &[quotation_key(0).as_str()], revision).await;
+    let error = note_removal_refused(&course, &["rule/quotation/section-0"], revision).await;
 
     assert!(matches!(error, AppError::InvalidState(_)), "{error:?}");
     let text = error.to_string();
@@ -2088,7 +2074,7 @@ async fn the_same_key_twice_removes_its_sentence_once() -> Result<()> {
 
     let removed = remove_notes(
         &course,
-        &[quotation_key(0).as_str(), quotation_key(0).as_str()],
+        &["rule/quotation/section-0", "rule/quotation/section-0"],
         revision,
     )
     .await?;
@@ -2119,7 +2105,7 @@ async fn two_notes_in_one_section_go_in_one_call_with_one_revision_and_one_undo_
 
     let removed = remove_notes(
         &course,
-        &[quotation_key(0).as_str(), "reviewer/1"],
+        &["rule/quotation/section-0", "reviewer/1"],
         before.ledger_revision,
     )
     .await?;
@@ -2168,7 +2154,7 @@ async fn a_sentence_holding_a_smaller_claim_ends_that_claim_and_the_undo_brings_
 
     let removed = remove_notes(
         &course,
-        &[quotation_key(0).as_str()],
+        &["rule/quotation/section-0"],
         before.ledger_revision,
     )
     .await?;
@@ -2221,12 +2207,7 @@ async fn removing_a_notes_sentence_whose_example_cannot_be_recorded_removes_noth
     let before = stored(&course).await?;
     refuse_examples(&course).await?;
 
-    let result = remove_notes(
-        &course,
-        &[quotation_key(0).as_str()],
-        before.ledger_revision,
-    )
-    .await;
+    let result = remove_notes(&course, &["quotation:section-0"], before.ledger_revision).await;
 
     assert!(result.is_err());
     assert_eq!(stored(&course).await?, before);

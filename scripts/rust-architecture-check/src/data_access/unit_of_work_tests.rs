@@ -491,6 +491,7 @@ fn a_unit_opened_inside_a_closure_is_checked() {
 
 #[test]
 fn the_library_owner_exception_is_honored() {
+    assert!(EXCEPTIONS.is_empty());
     let source = r#"impl Owner {
     pub async fn adopt(&self) -> Result<()> {
         let mut tx = self.pool.begin_write().await?;
@@ -501,12 +502,13 @@ fn the_library_owner_exception_is_honored() {
     }
 }
 "#;
-    assert_eq!(found(OWNER, source), Vec::<String>::new());
+    let ast = syn::parse_file(source).unwrap();
+    let awaits_exempt = [(OWNER, "adopt", Exempt::Awaits, "a reason")];
+    assert_eq!(file_violations_with(OWNER, &ast, &awaits_exempt), Vec::new());
     assert_eq!(
         found(SERVICE, source),
         vec![awaits(SERVICE, 5, "adopt", "tokio::fs::File::create_new()")]
     );
-    let ast = syn::parse_file(source).unwrap();
     assert_eq!(file_violations_with(OWNER, &ast, &[]).len(), 1);
 }
 
@@ -523,8 +525,13 @@ fn the_library_owner_exception_exempts_only_the_awaits_check() {
     }
 }
 "#;
+    let ast = syn::parse_file(source).unwrap();
+    let awaits_exempt = [(OWNER, "adopt", Exempt::Awaits, "a reason")];
     assert_eq!(
-        found(OWNER, source),
+        file_violations_with(OWNER, &ast, &awaits_exempt)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
         vec![on_pool(OWNER, 2, "adopt", 1, 2, "")]
     );
     assert_eq!(
@@ -534,7 +541,6 @@ fn the_library_owner_exception_exempts_only_the_awaits_check() {
             awaits(SERVICE, 6, "adopt", "tokio::fs::File::create_new()"),
         ]
     );
-    let ast = syn::parse_file(source).unwrap();
     let shape = [(OWNER, "adopt", Exempt::Shape, "a reason")];
     assert_eq!(
         file_violations_with(OWNER, &ast, &shape)

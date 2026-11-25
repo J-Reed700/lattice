@@ -13,12 +13,9 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 /// Role models over a migrated in-memory database and `settings`, with the
 /// row `utility` active for the utility role when given.
 async fn role_models(settings: LLMSettingsDto, utility: Option<DownloadedModel>) -> RoleModels {
-    let pool = sqlx::sqlite::SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
         .await
         .unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     let models = Arc::new(DownloadedModelRepository::new(Database::new(pool)));
     if let Some(row) = utility {
         models.save(&row).await.unwrap();
@@ -522,4 +519,87 @@ async fn the_utility_model_runs_on_a_configured_llama_cpp_reference() {
 
     assert_eq!(llm.provider_name(), "llamacpp");
     assert_eq!(llm.model_name(), "qwen3.8-27b.gguf");
+}
+
+fn llama_cpp_model(model: &str) -> ModelRef {
+    ModelRef::LlamaCpp {
+        model: model.into(),
+    }
+}
+
+#[tokio::test]
+async fn active_models_name_what_a_default_chat_pins_under_auto() {
+    let llama = llama_cpp(&["qwen3.5-27b"]).await;
+    let ollama = ollama().await;
+    let settings = LLMSettingsDto {
+        provider: LLMProvider::Auto,
+        ollama_url: ollama.uri(),
+        model: "qwen3:8b".into(),
+        llama_cpp: LlamaCppSettingsDto {
+            url: llama.uri(),
+            model: "qwen3.5-27b".into(),
+            ..LlamaCppSettingsDto::default()
+        },
+        ..LLMSettingsDto::default()
+    };
+    let models = role_models(settings, None).await;
+
+    let active = models.active_models().await.unwrap();
+    let pinned = models.llm_for(&ModelRequest::default_chat()).await.unwrap();
+
+    assert_eq!(
+        active.chat,
+        vec![llama_cpp_model("qwen3.5-27b"), ollama_model("qwen3:8b")]
+    );
+    assert_eq!(active.chat_unset, None);
+    assert_eq!(pinned.resolved.model, active.chat[0]);
+}
+
+#[tokio::test]
+async fn active_models_on_untouched_defaults_have_no_chat_model_and_say_why() {
+    let settings = LLMSettingsDto {
+        provider: LLMProvider::Auto,
+        ..LLMSettingsDto::default()
+    };
+    let models = role_models(settings, None).await;
+
+    let active = models.active_models().await.unwrap();
+
+    assert!(active.chat.is_empty());
+    assert!(active.chat_unset.is_some());
+    assert!(active.utility.is_empty());
+    assert_eq!(active.llama_cpp, None);
+    assert_eq!(active.ollama, None);
+}
+
+#[tokio::test]
+async fn active_models_name_a_remote_utility_row_under_auto_with_llama_cpp() {
+    let llama = llama_cpp(&["chat-model", "utility-model"]).await;
+    let ollama = ollama().await;
+    let settings = LLMSettingsDto {
+        provider: LLMProvider::Auto,
+        ollama_url: ollama.uri(),
+        model: "chat-model".into(),
+        ollama_utility_model: "utility-model".into(),
+        llama_cpp: LlamaCppSettingsDto {
+            url: llama.uri(),
+            model: "chat-model".into(),
+            ..LlamaCppSettingsDto::default()
+        },
+        ..LLMSettingsDto::default()
+    };
+    let models = role_models(settings, Some(remote_utility_row())).await;
+
+    let active = models.active_models().await.unwrap();
+
+    assert_eq!(
+        active.utility,
+        vec![
+            llama_cpp_model("utility-model"),
+            ollama_model("utility-model")
+        ]
+    );
+    assert_eq!(active.llama_cpp, Some(llama_cpp_model("chat-model")));
+    assert_eq!(active.ollama, Some(ollama_model("chat-model")));
+    assert_eq!(active.ollama_utility_tag.as_deref(), Some("utility-model"));
 }

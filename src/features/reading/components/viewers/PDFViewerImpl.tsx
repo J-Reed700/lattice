@@ -4,12 +4,17 @@ import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut , Loader2, AlertCircle } fro
 import { Document, Page, pdfjs } from 'react-pdf';
 
 import { useApi } from '@/contexts/ApiContext';
-import { readSourceBytes } from '@/features/reading/hooks/readSourceFile';
+import {
+  hasTauriAssetProtocol,
+  isScopedAssetPath,
+  readSourceBytes,
+} from '@/features/reading/hooks/readSourceFile';
 import {
   buildItemTextRenderer,
   findPassagePage,
 } from '@/features/reading/model/pdfPassageSearch';
 import type { PassageLocator, PassageMatchTier } from '@/types/conversation';
+import { assetUrl } from '@/utils/assetUrl';
 import { isRemoteFileSource, resolveLocalPathFromViewerSource } from '@/utils/fileSources';
 
 import 'react-pdf/dist/Page/AnnotationLayer.css';
@@ -21,6 +26,10 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
   import.meta.url
 ).toString();
+
+type DestroyablePdfProxy = Parameters<typeof findPassagePage>[0] & {
+  destroy?: () => Promise<void> | void;
+};
 
 export interface PDFViewerProps {
   filePath: string;
@@ -49,9 +58,11 @@ export function PDFViewer({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
+  const [assetSrc, setAssetSrc] = useState<string | null>(null);
   const [isResolvingPassage, setIsResolvingPassage] = useState(false);
   const [passageHit, setPassageHit] = useState<Awaited<ReturnType<typeof findPassagePage>>>(null);
-  const pdfProxyRef = useRef<Parameters<typeof findPassagePage>[0] | null>(null);
+  const pdfProxyRef = useRef<DestroyablePdfProxy | null>(null);
+  const loadIdRef = useRef(0);
   const [proxyReadyAt, setProxyReadyAt] = useState(0);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const onLocationResolvedRef = useRef(onLocationResolved);
@@ -62,52 +73,74 @@ export function PDFViewer({
   const highlightText = highlight?.text ?? '';
   const highlightPage = highlight?.page;
 
+  const destroyCurrentProxy = useCallback(() => {
+    const proxy = pdfProxyRef.current;
+    pdfProxyRef.current = null;
+    if (proxy) {
+      void Promise.resolve(proxy.destroy?.()).catch(() => {});
+    }
+  }, []);
+
+  const loadPdfBytes = useCallback(async (resolvedPath: string, loadId: number, preferIpc = false) => {
+    try {
+      const fileResult = preferIpc
+        ? await api.readFileBytes(resolvedPath)
+        : await readSourceBytes(resolvedPath, api);
+      if (!fileResult.ok) {
+        throw new Error(fileResult.error || 'Failed to read PDF bytes');
+      }
+      if (loadIdRef.current === loadId) {
+        setPdfBytes(fileResult.data);
+      }
+    } catch (loadError: unknown) {
+      if (loadIdRef.current === loadId) {
+        setError(loadError instanceof Error ? loadError.message : 'Failed to load PDF bytes');
+        setIsLoading(false);
+      }
+    }
+  }, [api]);
+
   useEffect(() => {
-    let isMounted = true;
+    loadIdRef.current += 1;
+    const loadId = loadIdRef.current;
 
     setIsLoading(true);
     setError(null);
     setNumPages(0);
     setPageNumber(1);
     setPdfBytes(null);
-    pdfProxyRef.current = null;
+    setAssetSrc(null);
+    destroyCurrentProxy();
     setPassageHit(null);
 
     if (isRemoteSource) {
       return () => {
-        isMounted = false;
+        loadIdRef.current += 1;
+        destroyCurrentProxy();
       };
     }
 
-    const loadPdfBytes = async () => {
-      const resolvedPath = resolveLocalPathFromViewerSource(filePath);
-      const fileResult = await readSourceBytes(resolvedPath, api);
-
-      if (!fileResult.ok) {
-        throw new Error(fileResult.error || 'Failed to read PDF bytes');
-      }
-
-      if (isMounted) {
-        setPdfBytes(fileResult.data);
-      }
-    };
-
-    loadPdfBytes().catch((loadError: unknown) => {
-      if (isMounted) {
-        setError(loadError instanceof Error ? loadError.message : 'Failed to load PDF bytes');
-        setIsLoading(false);
-      }
-    });
+    const resolvedPath = resolveLocalPathFromViewerSource(filePath);
+    if (hasTauriAssetProtocol() && isScopedAssetPath(resolvedPath)) {
+      setAssetSrc(assetUrl(resolvedPath));
+    } else {
+      void loadPdfBytes(resolvedPath, loadId);
+    }
 
     return () => {
-      isMounted = false;
+      loadIdRef.current += 1;
+      destroyCurrentProxy();
     };
-  }, [api, filePath, isRemoteSource]);
+  }, [destroyCurrentProxy, filePath, isRemoteSource, loadPdfBytes]);
 
   const onDocumentLoadSuccess = useCallback((proxy: { numPages: number }) => {
+    const nextProxy = proxy as DestroyablePdfProxy;
+    if (pdfProxyRef.current && pdfProxyRef.current !== nextProxy) {
+      void Promise.resolve(pdfProxyRef.current.destroy?.()).catch(() => {});
+    }
     // Keep the proxy: passage resolution needs `getPage`/`getTextContent`,
     // which only this object exposes.
-    pdfProxyRef.current = proxy as Parameters<typeof findPassagePage>[0];
+    pdfProxyRef.current = nextProxy;
     setProxyReadyAt(Date.now());
     setNumPages(proxy.numPages);
     setIsLoading(false);
@@ -160,19 +193,25 @@ export function PDFViewer({
       ?.scrollIntoView?.({ block: 'center' });
   }, []);
 
-  const onDocumentLoadError = (error: Error) => {
-    console.error('PDF load error:', error);
-    setError(error.message);
+  const onDocumentLoadError = useCallback((loadError: Error) => {
+    if (assetSrc) {
+      setAssetSrc(null);
+      setIsLoading(true);
+      void loadPdfBytes(resolveLocalPathFromViewerSource(filePath), loadIdRef.current, true);
+      return;
+    }
+    console.error('PDF load error:', loadError);
+    setError(loadError.message);
     setIsLoading(false);
-  };
+  }, [assetSrc, filePath, loadPdfBytes]);
 
   const goToPrevPage = () => setPageNumber((p) => Math.max(1, p - 1));
   const goToNextPage = () => setPageNumber((p) => Math.min(numPages, p + 1));
   const zoomIn = () => setScale((s) => Math.min(3.0, s + 0.2));
   const zoomOut = () => setScale((s) => Math.max(0.5, s - 0.2));
   const pdfSource = useMemo(
-    () => (isRemoteSource ? filePath : (pdfBytes ? { data: pdfBytes } : null)),
-    [filePath, isRemoteSource, pdfBytes]
+    () => (isRemoteSource ? filePath : (assetSrc ?? (pdfBytes ? { data: pdfBytes } : null))),
+    [assetSrc, filePath, isRemoteSource, pdfBytes]
   );
 
   if (error) {

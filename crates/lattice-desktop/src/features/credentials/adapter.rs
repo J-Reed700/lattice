@@ -36,6 +36,14 @@ impl CredentialsAdapter {
         }
     }
 
+    /// Explicit OS-keyring constructor for manual `#[ignore]` live evals.
+    pub fn os_keyring(config_path: PathBuf) -> Self {
+        Self {
+            storage: SecureStorage::os_keyring(),
+            config_path,
+        }
+    }
+
     pub fn with_service(service: String, config_path: PathBuf) -> Self {
         Self {
             storage: SecureStorage::with_service(service),

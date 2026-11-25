@@ -166,3 +166,153 @@ describe('fileNameWithinModel', () => {
     expect(fileNameWithinModel({ destination: '/tmp/file.bin', model_id: null })).toBe('file.bin');
   });
 });
+
+describe('applyDownloadSnapshot for a row first seen in an event', () => {
+  const single = (overrides: Partial<TauriEvents.Downloads.Single> = {}): TauriEvents.Downloads.Single => ({
+    kind: 'single', id: 's-9', filename: 'rerank.gguf', bytesDownloaded: 5, totalBytes: 100, bytesPerSecond: 1,
+    percentage: 5, etaSeconds: null, status: 'downloading', ...overrides,
+  });
+
+  it('takes its destination, modelId, and name from the payload', () => {
+    const next = applyDownloadSnapshot(
+      new Map(),
+      single({ destination: '/models/rerank/rerank.gguf', modelId: 'rerank-id', modelName: 'Qwen3 Reranker' }),
+    );
+    expect(next.get('s-9')).toMatchObject({
+      destination: '/models/rerank/rerank.gguf',
+      model_id: 'rerank-id',
+      model_name: 'Qwen3 Reranker',
+    });
+  });
+
+  it('preserves existing model_id when a single snapshot omits modelId', () => {
+    const existing = { ...queuedDownload('s-9', 'rerank.gguf'), model_id: 'existing-id' };
+    const next = applyDownloadSnapshot(
+      new Map([['s-9', existing]]),
+      single({ modelId: undefined }),
+    );
+    expect(next.get('s-9')?.model_id).toBe('existing-id');
+  });
+
+  it('falls back to the file name for an older payload', () => {
+    const next = applyDownloadSnapshot(new Map(), single());
+    expect(next.get('s-9')).toMatchObject({ destination: 'rerank.gguf', model_name: 'rerank.gguf' });
+  });
+
+  it('maps paused and cancelled batch files', () => {
+    const batch: TauriEvents.Downloads.Batch = {
+      kind: 'batch', id: 'm', groupName: 'M',
+      files: [
+        { id: 'a', filename: 'a.bin', bytesDownloaded: 1, totalBytes: 10, status: 'paused' },
+        { id: 'b', filename: 'b.bin', bytesDownloaded: 1, totalBytes: 10, status: 'cancelled' },
+      ],
+      totalFiles: 2, completedFiles: 0, aggregateBytesDownloaded: 2, aggregateTotalBytes: 20, aggregateBytesPerSecond: 0,
+      aggregatePercentage: 10, aggregateEtaSeconds: null, status: 'paused',
+    };
+    const next = applyDownloadSnapshot(new Map(), batch);
+    expect(next.get('m:a.bin')?.state).toBe('Paused');
+    expect(next.get('m:b.bin')?.state).toBe('Cancelled');
+  });
+
+  it('preserves errorMessage from single and batch failed file snapshots', () => {
+    const singleFailed = applyDownloadSnapshot(
+      new Map(),
+      single({ status: 'error', errorMessage: 'HTTP 401: Unauthorized' }),
+    );
+    expect(singleFailed.get('s-9')).toMatchObject({
+      state: 'Failed',
+      error_message: 'HTTP 401: Unauthorized',
+    });
+
+    const batchFailed: TauriEvents.Downloads.Batch = {
+      kind: 'batch',
+      id: 'm-err',
+      groupName: 'M Err',
+      files: [
+        {
+          id: 'f-1',
+          filename: 'weights.bin',
+          bytesDownloaded: 10,
+          totalBytes: 100,
+          status: 'error',
+          errorMessage: 'HTTP 403: Forbidden',
+        },
+        {
+          id: 'f-2',
+          filename: 'config.json',
+          bytesDownloaded: 10,
+          totalBytes: 10,
+          status: 'completed',
+        },
+      ],
+      totalFiles: 2,
+      completedFiles: 1,
+      aggregateBytesDownloaded: 20,
+      aggregateTotalBytes: 110,
+      aggregateBytesPerSecond: 0,
+      aggregatePercentage: 18,
+      aggregateEtaSeconds: null,
+      status: 'error',
+    };
+    const nextBatch = applyDownloadSnapshot(new Map(), batchFailed);
+    expect(nextBatch.get('m-err:weights.bin')).toMatchObject({
+      state: 'Failed',
+      error_message: 'HTTP 403: Forbidden',
+    });
+    expect(nextBatch.get('m-err:config.json')?.error_message).toBeNull();
+  });
+
+  it('clears stale error_message on resumed or retried batch child files and single rows', () => {
+    const staleErrorChild = {
+      ...queuedDownload('f-1', 'weights.bin'),
+      model_id: 'm-err',
+      state: 'Paused' as const,
+      error_message: 'HTTP 403: Forbidden',
+    };
+    const staleErrorSingle = {
+      ...queuedDownload('s-9', 'rerank.gguf'),
+      state: 'Pending' as const,
+      error_message: 'HTTP 401: Unauthorized',
+    };
+    const current = new Map<string, DownloadStatus>([
+      ['m-err:weights.bin', staleErrorChild],
+      ['s-9', staleErrorSingle],
+    ]);
+
+    const nextAfterBatchRetry = applyDownloadSnapshot(current, {
+      kind: 'batch',
+      id: 'm-err',
+      groupName: 'M Err',
+      files: [
+        {
+          id: 'f-1',
+          filename: 'weights.bin',
+          bytesDownloaded: 10,
+          totalBytes: 100,
+          status: 'downloading',
+        },
+      ],
+      totalFiles: 1,
+      completedFiles: 0,
+      aggregateBytesDownloaded: 10,
+      aggregateTotalBytes: 100,
+      aggregateBytesPerSecond: 5,
+      aggregatePercentage: 10,
+      aggregateEtaSeconds: 18,
+      status: 'downloading',
+    });
+    expect(nextAfterBatchRetry.get('m-err:weights.bin')).toMatchObject({
+      state: 'Downloading',
+      error_message: null,
+    });
+
+    const nextAfterSingleRetry = applyDownloadSnapshot(
+      nextAfterBatchRetry,
+      single({ status: 'downloading', errorMessage: undefined }),
+    );
+    expect(nextAfterSingleRetry.get('s-9')).toMatchObject({
+      state: 'Downloading',
+      error_message: null,
+    });
+  });
+});

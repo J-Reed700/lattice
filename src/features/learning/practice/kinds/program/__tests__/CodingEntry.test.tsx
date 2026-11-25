@@ -4,10 +4,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { JobDto } from '@/lib/bindings';
 
+import { sessionApi } from '../../../session/sessionApi';
+import { resetCodingBuildStore } from '../codingBuildStore';
 import { CodingEntry, type CodingBuildChoice } from '../CodingEntry';
 import { programApi } from '../programApi';
 import { programSession } from './fixtures';
-import { sessionApi } from '../../../session/sessionApi';
 
 vi.mock('@/lib/api', () => {
   let count = 0;
@@ -21,6 +22,12 @@ const subscribers = new Set<(job: JobDto) => void>();
 vi.mock('@/features/jobs/api', () => ({
   useJobStatus: (subscriber: (job: JobDto) => void) => {
     subscribers.add(subscriber);
+  },
+  onJobStatus: (subscriber: (job: JobDto) => void) => {
+    subscribers.add(subscriber);
+    return () => {
+      subscribers.delete(subscriber);
+    };
   },
 }));
 
@@ -51,6 +58,7 @@ function job(overrides: Partial<JobDto>): JobDto {
     createdAt: 1,
     startedAt: 1,
     finishedAt: null,
+    revision: 0,
     ...overrides,
   };
 }
@@ -64,6 +72,7 @@ function publish(next: JobDto) {
 describe('CodingEntry', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    resetCodingBuildStore();
     subscribers.clear();
     vi.mocked(programApi.startBuild).mockResolvedValue({ jobId: 'job-1' });
     vi.mocked(sessionApi.startSession).mockResolvedValue(programSession({ sessionId: 'session-9' }));
@@ -132,5 +141,51 @@ describe('CodingEntry', () => {
     const [first, second] = vi.mocked(sessionApi.startSession).mock.calls.map(([request]) => request);
     expect(second.operationId).toBe(first.operationId);
     expect(second.activityId).toBe('activity-7');
+  });
+
+  it('reattaches to an in-flight coding build after unmount and remount without spawning a duplicate build', async () => {
+    const view1 = render(<CodingEntry programId="program-1" choice={choice} onReady={vi.fn()} onCancel={vi.fn()} />);
+    await waitFor(() => expect(programApi.startBuild).toHaveBeenCalledTimes(1));
+
+    publish(job({ status: 'running', progressCurrent: 2 }));
+    expect(screen.getByText('Writing the problem').closest('li')).toHaveTextContent('Done');
+    expect(screen.getByText('Proving it').closest('li')).toHaveTextContent('Done');
+    view1.unmount();
+
+    const onReady = vi.fn();
+    render(<CodingEntry programId="program-1" choice={choice} onReady={onReady} onCancel={vi.fn()} />);
+    expect(programApi.startBuild).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Writing the problem').closest('li')).toHaveTextContent('Done');
+    expect(screen.getByText('Proving it').closest('li')).toHaveTextContent('Done');
+
+    publish(job({ status: 'completed', progressCurrent: 3, resultRef: 'activity-9' }));
+    await waitFor(() => expect(onReady).toHaveBeenCalledWith('session-9'));
+    expect(programApi.startBuild).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails clearly when completed job lacks resultRef and resumes ready session created while unmounted', async () => {
+    const view1 = render(<CodingEntry programId="program-1" choice={choice} onReady={vi.fn()} onCancel={vi.fn()} />);
+    await waitFor(() => expect(programApi.startBuild).toHaveBeenCalledTimes(1));
+    publish(job({ status: 'completed', progressCurrent: 3, resultRef: null, error: null }));
+    expect(await screen.findByText('The built problem could not be opened.')).toBeVisible();
+    view1.unmount();
+
+    resetCodingBuildStore();
+    let resolveStart!: (value: ReturnType<typeof programSession>) => void;
+    vi.mocked(sessionApi.startSession).mockImplementationOnce(() => new Promise((r) => { resolveStart = r; }));
+
+    const view2 = render(<CodingEntry programId="program-1" choice={choice} onReady={vi.fn()} onCancel={vi.fn()} />);
+    await waitFor(() => expect(programApi.startBuild).toHaveBeenCalledTimes(2));
+    publish(job({ id: 'job-1', status: 'completed', progressCurrent: 3, resultRef: 'activity-10' }));
+    await waitFor(() => expect(sessionApi.startSession).toHaveBeenCalledTimes(1));
+    view2.unmount();
+
+    await act(async () => {
+      resolveStart(programSession({ sessionId: 'session-unmounted' }));
+    });
+
+    const onReady = vi.fn();
+    render(<CodingEntry programId="program-1" choice={choice} onReady={onReady} onCancel={vi.fn()} />);
+    await waitFor(() => expect(onReady).toHaveBeenCalledWith('session-unmounted'));
   });
 });

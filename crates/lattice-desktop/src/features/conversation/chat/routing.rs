@@ -1,9 +1,28 @@
+use super::intent::{TriageDocumentAction, UnifiedTurnTriage};
+use super::retrieval::RecentDocumentMetadata;
 use super::*;
 use lattice_core::application::ports::turn_source::TurnSourcePolicy;
+use lattice_core::domain::conversation::DocumentReference;
 
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub(super) const SKIP_KB_CONFIDENCE_THRESHOLD: f32 = 0.75;
+
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 pub(super) struct SearchFlags {
     pub(super) force_kb_search: bool,
+    /// The user explicitly asked for the library ("Your documents" toggle,
+    /// Query turn mode, or pinned focus documents), distinct from an
+    /// intent-inferred vault search.
+    #[serde(default)]
+    pub(super) user_requested_kb: bool,
+    /// Answer strictly from retrieved sources only. When false (hybrid mode,
+    /// the default), cite retrieved passages first and allow uncited general
+    /// knowledge for general or conceptual gaps.
+    #[serde(default)]
+    pub(super) strict_sources: bool,
+    /// High-confidence intent signal (or trivial greeting fast path) in hybrid
+    /// auto mode indicating no vault search is needed for this turn.
+    #[serde(default)]
+    pub(super) skip_auto_kb: bool,
     /// The user asked for the web: the web-search toggle, or the query turn
     /// mode. Searched whatever the vault holds, and beside it.
     pub(super) force_web_search: bool,
@@ -43,6 +62,9 @@ impl SearchFlags {
             // flags can reopen the vault or the network for such a turn.
             return Self {
                 force_kb_search: false,
+                user_requested_kb: false,
+                strict_sources: false,
+                skip_auto_kb: false,
                 force_web_search: false,
                 web_fallback: false,
                 force_wiki_search: false,
@@ -51,8 +73,12 @@ impl SearchFlags {
                 closed_book: true,
             };
         }
+        let user_requested_kb = tool_preferences.knowledge_base || turn_mode_is_query;
         Self {
-            force_kb_search: tool_preferences.knowledge_base || turn_mode_is_query,
+            force_kb_search: user_requested_kb,
+            user_requested_kb,
+            strict_sources: tool_preferences.strict_sources,
+            skip_auto_kb: false,
             force_web_search: tool_preferences.web_search || turn_mode_is_query,
             web_fallback: false,
             force_wiki_search,
@@ -88,24 +114,17 @@ impl InferredIntent {
 }
 
 /// Ask the utility model what an unflagged turn needs, and fold the answer
-/// into the search flags. Skipped the moment the user said anything explicit —
-/// a toggle, a turn mode, a closed book — because inference exists to fill in
-/// defaults, not to second-guess a decision.
-pub(super) async fn infer_turn_intent(
+/// into the search flags. Triage asks only for a turn the user left on its
+/// defaults (`should_infer_turn_intent`) that is more than a greeting:
+/// inference fills in defaults, it does not second-guess a decision.
+async fn infer_turn_intent(
     container: &dyn ChatRuntime,
     chat_llm: &Arc<dyn lattice_core::application::ports::LLMPort>,
-    tool_preferences: Option<&ToolPreferences>,
     search_flags: SearchFlags,
     validated_message: &str,
     context: &[String],
     cancel: tokio_util::sync::CancellationToken,
 ) -> InferredIntent {
-    if !should_infer_turn_intent(tool_preferences, search_flags)
-        || is_trivial_conversational_message(validated_message)
-    {
-        return InferredIntent::as_requested(search_flags);
-    }
-
     // Resolved the way the grounding judge below resolves its model: the
     // utility LLM when one is configured, the chat LLM otherwise, and no
     // classification at all when loading one fails.
@@ -135,6 +154,7 @@ pub(super) async fn infer_turn_intent(
         needs_web = intent.needs_web,
         is_followup = intent.is_followup,
         confidence = intent.confidence,
+        skip_auto_kb = merged.skip_auto_kb,
         web_fallback = merged.web_fallback,
         "chat_with_conversation: inferred turn intent"
     );
@@ -203,23 +223,446 @@ fn is_trivial_conversational_message(message: &str) -> bool {
 /// `needs_web` becomes `web_fallback`, from this turn's intent alone, so a
 /// question the user's files answer stays on the machine. A closed book stays
 /// closed.
-pub(super) fn apply_turn_intent(search_flags: SearchFlags, intent: &TurnIntent) -> SearchFlags {
+///
+/// `document_action` is the unified triage's answer about documents, when it
+/// gave one: a turn it sends to a document never skips the library.
+fn merge_turn_intent(
+    search_flags: SearchFlags,
+    intent: &TurnIntent,
+    document_action: Option<TriageDocumentAction>,
+) -> SearchFlags {
     if search_flags.closed_book {
         return search_flags;
     }
+    let needs_no_document = match document_action {
+        Some(TriageDocumentAction::None) => true,
+        Some(_) => false,
+        None => !intent.is_followup,
+    };
+    let skip_auto_kb = !search_flags.strict_sources
+        && !search_flags.force_kb_search
+        && !search_flags.user_requested_kb
+        && !search_flags.force_web_search
+        && !search_flags.force_wiki_search
+        && !search_flags.force_followup_mode
+        && !search_flags.deep_research_mode
+        && intent.confidence >= SKIP_KB_CONFIDENCE_THRESHOLD
+        && !intent.needs_knowledge_base
+        && !intent.needs_web
+        && needs_no_document;
     SearchFlags {
         force_kb_search: search_flags.force_kb_search || intent.needs_knowledge_base,
+        skip_auto_kb,
         web_fallback: intent.needs_web && !search_flags.force_web_search,
         force_followup_mode: search_flags.force_followup_mode || intent.is_followup,
         ..search_flags
     }
 }
 
-/// Routes the turn and keeps the router's decision, with its confidence and
-/// rationale, for the turn record.
-pub(super) async fn resolve_router_decision(
+/// [`merge_turn_intent`] for a turn classified without a recent document.
+pub(super) fn apply_turn_intent(search_flags: SearchFlags, intent: &TurnIntent) -> SearchFlags {
+    merge_turn_intent(search_flags, intent, None)
+}
+
+/// [`merge_turn_intent`] for a turn the unified triage classified.
+fn apply_turn_triage(search_flags: SearchFlags, triage: &UnifiedTurnTriage) -> SearchFlags {
+    merge_turn_intent(search_flags, &triage.intent, Some(triage.document_action))
+}
+
+pub(super) struct TurnTriageOutcome {
+    pub(super) inferred: InferredIntent,
+    pub(super) decision: RouterDecisionOutcome,
+    pub(super) record: Option<TurnRouterDto>,
+}
+
+pub(super) struct TurnTriageInput<'a> {
+    pub(super) chat_llm: &'a Arc<dyn lattice_core::application::ports::LLMPort>,
+    pub(super) tool_preferences: Option<&'a ToolPreferences>,
+    pub(super) requested_flags: SearchFlags,
+    pub(super) validated_message: &'a str,
+    pub(super) context: &'a [String],
+    pub(super) document_context: &'a [DocumentReference],
+    pub(super) scope: &'a ScopeSnapshot,
+    pub(super) source: Option<TurnSourcePolicy>,
+    pub(super) router_settings: &'a RouterSettingsDto,
+    pub(super) recorder: &'a TurnRecorder,
+    pub(super) cancel: tokio_util::sync::CancellationToken,
+}
+
+/// Runs turn classification and recent-document routing together, using a
+/// single unified utility-LLM call when possible and zero LLM calls on
+/// deterministic fast paths.
+pub(super) async fn triage_turn_with_scope(
     container: &dyn ChatRuntime,
-    conversation_document_context: &[lattice_core::domain::conversation::DocumentReference],
+    input: TurnTriageInput<'_>,
+    metrics: &mut ConversationFlowTimingMetrics,
+) -> Result<TurnTriageOutcome> {
+    let TurnTriageInput {
+        chat_llm,
+        tool_preferences,
+        requested_flags,
+        validated_message,
+        context,
+        document_context,
+        scope,
+        source,
+        router_settings,
+        recorder,
+        cancel,
+    } = input;
+    let router_may_search = source.is_none_or(|s| s.routes_to_library);
+    let infers_intent = source.is_none_or(|s| s.infers_intent);
+
+    if requested_flags.closed_book {
+        return Ok(TurnTriageOutcome {
+            inferred: InferredIntent::as_requested(requested_flags),
+            decision: RouterDecisionOutcome {
+                action: RouterAction::NewSearch,
+                recent_doc_meta: None,
+                clarify_message: None,
+                router_may_search,
+            },
+            record: None,
+        });
+    }
+
+    let recent_doc = if scope.resolved {
+        scope.recent_document.clone()
+    } else if !document_context.is_empty() {
+        load_recent_document_metadata(container, document_context).await
+    } else {
+        None
+    };
+
+    if !infers_intent || !should_infer_turn_intent(tool_preferences, requested_flags) {
+        // A turn the user marked as a follow-up has answered the router's
+        // question, but only where the router would have been asked.
+        if requested_flags.force_followup_mode
+            && !requested_flags.force_kb_search
+            && may_reuse_recent_document(requested_flags, router_may_search)
+            && router_has_a_choice(router_settings, document_context, recent_doc.as_ref())
+        {
+            return Ok(TurnTriageOutcome {
+                inferred: InferredIntent::as_requested(requested_flags),
+                decision: RouterDecisionOutcome {
+                    action: RouterAction::UseLastDocument,
+                    recent_doc_meta: recent_doc,
+                    clarify_message: None,
+                    router_may_search,
+                },
+                record: None,
+            });
+        }
+        let router_start = Instant::now();
+        let (decision, record) = resolve_router_decision_with_recent(
+            container,
+            document_context,
+            recent_doc,
+            validated_message,
+            requested_flags,
+            source,
+            router_settings,
+            recorder,
+            cancel,
+        )
+        .await?;
+        metrics.router_ms = elapsed_ms(router_start);
+        return Ok(TurnTriageOutcome {
+            inferred: InferredIntent::as_requested(requested_flags),
+            decision,
+            record,
+        });
+    }
+
+    if is_trivial_conversational_message(validated_message) {
+        let flags = SearchFlags {
+            skip_auto_kb: !requested_flags.strict_sources,
+            ..requested_flags
+        };
+        let router_start = Instant::now();
+        let (decision, record) = resolve_router_decision_with_recent(
+            container,
+            document_context,
+            recent_doc,
+            validated_message,
+            flags,
+            source,
+            router_settings,
+            recorder,
+            cancel,
+        )
+        .await?;
+        metrics.router_ms = elapsed_ms(router_start);
+        return Ok(TurnTriageOutcome {
+            inferred: InferredIntent::as_requested(flags),
+            decision,
+            record,
+        });
+    }
+
+    if requested_flags.strict_sources && scope.is_known_empty_vault() {
+        return Ok(TurnTriageOutcome {
+            inferred: InferredIntent::as_requested(requested_flags),
+            decision: RouterDecisionOutcome {
+                action: RouterAction::NewSearch,
+                recent_doc_meta: None,
+                clarify_message: None,
+                router_may_search,
+            },
+            record: None,
+        });
+    }
+
+    let can_route_recent_doc = router_may_search
+        && router_has_a_choice(router_settings, document_context, recent_doc.as_ref());
+    let using_default_router_template =
+        router_settings.prompt_template == RouterSettingsDto::default().prompt_template;
+
+    if can_route_recent_doc && using_default_router_template {
+        let router_start = Instant::now();
+        let step = recorder.begin_guarded(TurnStepKind::Route, "Deciding how to answer", None);
+        let classifier_llm = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(super::cancellation::cancelled_error()),
+            loaded = (container.utility_llm_loader())() => match loaded {
+                Ok(Some(utility)) => utility,
+                Ok(None) => Arc::clone(chat_llm),
+                Err(e) => {
+                    if cancel.is_cancelled() {
+                        return Err(super::cancellation::cancelled_error());
+                    }
+                    warn!(
+                        error = %e,
+                        "Utility LLM load failed — skipping unified turn triage"
+                    );
+                    step.failed(Some(
+                        "Could not load the model that decides; searching afresh".to_string(),
+                    ));
+                    metrics.router_ms = elapsed_ms(router_start);
+                    return Ok(TurnTriageOutcome {
+                        inferred: InferredIntent::as_requested(requested_flags),
+                        decision: RouterDecisionOutcome {
+                            action: RouterAction::NewSearch,
+                            recent_doc_meta: recent_doc,
+                            clarify_message: None,
+                            router_may_search,
+                        },
+                        record: None,
+                    });
+                }
+            }
+        };
+        let recent_title = recent_doc
+            .as_ref()
+            .map(|meta| meta.title.as_str())
+            .unwrap_or_default();
+        let classifier = IntentClassifier::new(classifier_llm).with_cancellation(cancel.clone());
+        let triage_input =
+            classifier.input_for_recent_document(validated_message, context, recent_title);
+        let triage = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(super::cancellation::cancelled_error()),
+            triage = classifier.triage_with_recent_document(&triage_input, recent_title) => triage,
+        };
+        if cancel.is_cancelled() {
+            return Err(super::cancellation::cancelled_error());
+        }
+
+        if triage.used_fallback {
+            step.failed(Some(
+                "No decision from the model; searching afresh".to_string(),
+            ));
+            metrics.router_ms = elapsed_ms(router_start);
+            return Ok(TurnTriageOutcome {
+                inferred: InferredIntent::as_requested(requested_flags),
+                decision: RouterDecisionOutcome {
+                    action: RouterAction::NewSearch,
+                    recent_doc_meta: recent_doc,
+                    clarify_message: None,
+                    router_may_search,
+                },
+                record: None,
+            });
+        }
+
+        let mut merged_flags = apply_turn_triage(requested_flags, &triage);
+
+        info!(
+            needs_knowledge_base = triage.intent.needs_knowledge_base,
+            needs_web = triage.intent.needs_web,
+            is_followup = triage.intent.is_followup,
+            document_action = ?triage.document_action,
+            confidence = triage.intent.confidence,
+            skip_auto_kb = merged_flags.skip_auto_kb,
+            web_fallback = merged_flags.web_fallback,
+            "chat_with_conversation: unified turn triage"
+        );
+
+        if merged_flags.skip_auto_kb || merged_flags.web_planned() {
+            let outcome = if merged_flags.skip_auto_kb {
+                "Answering without searching your files"
+            } else {
+                router_action_label(&RouterAction::NewSearch)
+            };
+            step.done(Some(format!(
+                "{outcome} · {:.0}% confident",
+                triage.intent.confidence * 100.0
+            )));
+            metrics.router_ms = elapsed_ms(router_start);
+            return Ok(TurnTriageOutcome {
+                inferred: InferredIntent {
+                    flags: merged_flags,
+                    standalone_question: triage.intent.standalone_question,
+                },
+                decision: RouterDecisionOutcome {
+                    action: RouterAction::NewSearch,
+                    recent_doc_meta: if merged_flags.skip_auto_kb {
+                        None
+                    } else {
+                        recent_doc
+                    },
+                    clarify_message: None,
+                    router_may_search,
+                },
+                record: None,
+            });
+        }
+
+        let action = super::router::settle_unsure(
+            match triage.document_action {
+                TriageDocumentAction::UseLastDocument => RouterAction::UseLastDocument,
+                TriageDocumentAction::Clarify => RouterAction::Clarify,
+                TriageDocumentAction::NewSearch | TriageDocumentAction::None => {
+                    RouterAction::NewSearch
+                }
+            },
+            triage.intent.confidence,
+            router_settings.ambiguity_threshold,
+        );
+        if matches!(
+            action,
+            RouterAction::UseLastDocument | RouterAction::Clarify
+        ) && !requested_flags.user_requested_kb
+        {
+            merged_flags.force_kb_search = false;
+        }
+        let clarify_message = if action == RouterAction::Clarify {
+            Some(
+                triage
+                    .clarify_question
+                    .filter(|q| !q.trim().is_empty())
+                    .unwrap_or_else(|| {
+                        router_settings
+                            .clarify_prompt_template
+                            .replace("{recent_document_title}", recent_title)
+                    }),
+            )
+        } else {
+            None
+        };
+        let action_code = router_action_code(&action);
+        step.done(Some(format!(
+            "{} · {:.0}% confident",
+            router_action_label(&action),
+            triage.intent.confidence * 100.0
+        )));
+        metrics.router_ms = elapsed_ms(router_start);
+        return Ok(TurnTriageOutcome {
+            inferred: InferredIntent {
+                flags: merged_flags,
+                standalone_question: triage.intent.standalone_question,
+            },
+            decision: RouterDecisionOutcome {
+                action,
+                recent_doc_meta: recent_doc,
+                clarify_message,
+                router_may_search,
+            },
+            record: Some(TurnRouterDto {
+                action: action_code,
+                confidence: triage.intent.confidence,
+                rationale: triage.rationale,
+            }),
+        });
+    }
+
+    let inferred = infer_turn_intent(
+        container,
+        chat_llm,
+        requested_flags,
+        validated_message,
+        context,
+        cancel.clone(),
+    )
+    .await;
+
+    if !can_route_recent_doc {
+        let recent_doc_meta = if inferred.flags.skip_auto_kb || inferred.flags.web_planned() {
+            None
+        } else {
+            recent_doc
+        };
+        return Ok(TurnTriageOutcome {
+            inferred,
+            decision: RouterDecisionOutcome {
+                action: RouterAction::NewSearch,
+                recent_doc_meta,
+                clarify_message: None,
+                router_may_search,
+            },
+            record: None,
+        });
+    }
+
+    let router_start = Instant::now();
+    let flags = inferred.flags;
+    let (decision, record) = resolve_router_decision_with_recent(
+        container,
+        document_context,
+        recent_doc,
+        validated_message,
+        flags,
+        source,
+        router_settings,
+        recorder,
+        cancel,
+    )
+    .await?;
+    metrics.router_ms = elapsed_ms(router_start);
+    Ok(TurnTriageOutcome {
+        inferred,
+        decision,
+        record,
+    })
+}
+
+/// Whether the turn may go back to its recent document at all. Not a
+/// closed-book turn, which has nothing to route; not an Explorer turn the user
+/// did not point at the library; not a turn with `skip_auto_kb` (a greeting,
+/// or a confident general-knowledge turn in Hybrid Auto). A turn with the web
+/// in its plan, asked for or as a fallback, searches the vault afresh so the
+/// fallback has a verdict on the vault to go by.
+fn may_reuse_recent_document(search_flags: SearchFlags, router_may_search: bool) -> bool {
+    !search_flags.web_planned()
+        && !search_flags.closed_book
+        && !search_flags.skip_auto_kb
+        && (router_may_search || search_flags.force_kb_search)
+}
+
+/// Whether the router has a choice to make: it is on, and the conversation
+/// has a recent document to go back to.
+fn router_has_a_choice(
+    router_settings: &RouterSettingsDto,
+    document_context: &[DocumentReference],
+    recent_doc: Option<&RecentDocumentMetadata>,
+) -> bool {
+    router_settings.enabled && !document_context.is_empty() && recent_doc.is_some()
+}
+
+async fn resolve_router_decision_with_recent(
+    container: &dyn ChatRuntime,
+    conversation_document_context: &[DocumentReference],
+    recent_doc_meta: Option<RecentDocumentMetadata>,
     validated_message: &str,
     search_flags: SearchFlags,
     source: Option<TurnSourcePolicy>,
@@ -230,15 +673,7 @@ pub(super) async fn resolve_router_decision(
     // In an Explorer turn the question is about the folder on screen, so the
     // router's default "search the library" is not enough to start one.
     let router_may_search = source.is_none_or(|source| source.routes_to_library);
-    // A closed-book turn has nothing to route: the pipeline returns before it
-    // reads this, and asking the router model would only spend time. Nor does
-    // an Explorer turn the user did not point at the library. A turn with the
-    // web in its plan, asked for or as a fallback, searches the vault afresh
-    // so the fallback has a verdict on the vault to go by.
-    if search_flags.web_planned()
-        || search_flags.closed_book
-        || (!router_may_search && !search_flags.force_kb_search)
-    {
+    if !may_reuse_recent_document(search_flags, router_may_search) {
         return Ok((
             RouterDecisionOutcome {
                 action: RouterAction::NewSearch,
@@ -250,11 +685,11 @@ pub(super) async fn resolve_router_decision(
         ));
     }
 
-    let recent_doc_meta =
-        load_recent_document_metadata(container, conversation_document_context).await;
-    let has_recent_document = recent_doc_meta.is_some();
-    if conversation_document_context.is_empty() || !router_settings.enabled || !has_recent_document
-    {
+    if !router_has_a_choice(
+        router_settings,
+        conversation_document_context,
+        recent_doc_meta.as_ref(),
+    ) {
         return Ok((
             RouterDecisionOutcome {
                 action: RouterAction::NewSearch,
@@ -268,23 +703,31 @@ pub(super) async fn resolve_router_decision(
 
     let router_input = RouterInput {
         query: validated_message.to_string(),
-        has_recent_document,
+        has_recent_document: recent_doc_meta.is_some(),
         recent_document_title: recent_doc_meta.as_ref().map(|m| m.title.clone()),
     };
-    let step = recorder.begin(TurnStepKind::Route, "Deciding how to answer", None);
-    let router_llm = container.get_or_load_router_llm().await?;
-    let router = RouterService::new(router_llm, router_settings.clone()).with_cancellation(cancel);
-    let decision = router.route(router_input).await;
+    let step = recorder.begin_guarded(TurnStepKind::Route, "Deciding how to answer", None);
+    let router_llm = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return Err(super::cancellation::cancelled_error()),
+        loaded = container.get_or_load_router_llm() => loaded,
+    }?;
+    let router =
+        RouterService::new(router_llm, router_settings.clone()).with_cancellation(cancel.clone());
+    let decision = tokio::select! {
+        biased;
+        _ = cancel.cancelled() => return Err(super::cancellation::cancelled_error()),
+        decision = router.route(router_input) => decision,
+    };
+    if cancel.is_cancelled() {
+        return Err(super::cancellation::cancelled_error());
+    }
     let action = router_action_code(&decision.action);
-    recorder.end(
-        &step,
-        TurnStepState::Done,
-        Some(format!(
-            "{} · {:.0}% confident",
-            router_action_label(&decision.action),
-            decision.confidence * 100.0
-        )),
-    );
+    step.done(Some(format!(
+        "{} · {:.0}% confident",
+        router_action_label(&decision.action),
+        decision.confidence * 100.0
+    )));
 
     Ok((
         RouterDecisionOutcome {

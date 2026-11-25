@@ -326,6 +326,22 @@ async retryLearningGenerationJob(request: LearningGenerationJobActionRequestDto)
     else return { status: "error", error: e  as any };
 }
 },
+async prioritizeLearningGenerationJob(request: LearningGenerationJobActionRequestDto) : Promise<Result<LearningGenerationJob, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|prioritize_learning_generation_job", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async resetLearningLessonPreparation(request: ResetLearningLessonPreparationRequestDto) : Promise<Result<ResetLearningLessonPreparationResultDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|reset_learning_lesson_preparation", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getLearningGenerationJob(id: string) : Promise<Result<LearningGenerationJob, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_generation_job", { id }) };
@@ -432,6 +448,14 @@ async repairLearningOutline(request: RepairLearningOutlineRequestDto, requestId:
     else return { status: "error", error: e  as any };
 }
 },
+async listLearningOutlineRuns() : Promise<Result<LearningOutlineRunsSnapshotDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|list_learning_outline_runs") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async acceptLearningProgram(request: AcceptLearningProgramRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|accept_learning_program", { request }) };
@@ -451,6 +475,14 @@ async prepareLearningLesson(request: PrepareLearningLessonRequestDto) : Promise<
 async prepareLearningModule(request: PrepareLearningModuleRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|prepare_learning_module", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async prepareLearningLessons(request: StartLearningLessonsJobsRequestDto) : Promise<Result<LearningGenerationJob[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|prepare_learning_lessons", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1579,6 +1611,19 @@ async startPracticeBuild(request: StartPracticeBuildRequestDto) : Promise<Result
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Cancels a coding problem build the learner backed out of, so it stops
+ * using the model and is not picked up again after a reload. A build that
+ * has already finished is left as it is.
+ */
+async cancelPracticeBuild(jobId: string) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|cancel_practice_build", { jobId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async startPracticeSession(request: StartPracticeSessionRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_practice_session", { request }) };
@@ -1861,7 +1906,7 @@ async getActiveEmbeddingModel() : Promise<Result<DownloadedModelResponse | null,
 }
 },
 /**
- * Get active models (both chat and embedding)
+ * What a chat on the Settings default and utility work run on now.
  */
 async getActiveModels() : Promise<Result<ActiveModels, ApiError>> {
     try {
@@ -1943,6 +1988,17 @@ async warmUpLearningModel() : Promise<Result<null, ApiError>> {
 async listLoadedModels() : Promise<Result<LoadedModelDto[], ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:model|list_loaded_models") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Where each model role's latest warm-up stands, for a window that opens after it began.
+ */
+async warmupStatus() : Promise<Result<RoleWarmupDto[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:model|warmup_status") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2290,11 +2346,24 @@ async rerankerStatus() : Promise<Result<RerankerStatusDto, ApiError>> {
 }
 },
 /**
- * Download the reranker's model, after which search reranks.
+ * Start downloading the reranker's model through the shared download
+ * manager, after which search reranks. Follow it in the Downloads list.
  */
 async downloadReranker() : Promise<Result<RerankerStatusDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:search|download_reranker") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Delete the reranker's model. Search keeps its first-stage order until it
+ * is downloaded again. Refused while its download is running.
+ */
+async removeReranker() : Promise<Result<RerankerStatusDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:search|remove_reranker") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4254,9 +4323,49 @@ async removeSourceKey(service: KeyServiceDto) : Promise<Result<SourcesStatusDto,
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * The saved web article whose text file is `path`, with its page, title,
+ * address and links, or nothing when `path` is not one.
+ */
+async savedWebArticle(path: string) : Promise<Result<SavedWebArticleDto | null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:web|saved_web_article", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Settings → Sources: whether `value` is an address the setting `field`
+ * accepts, by the rule the settings check applies on save.
+ */
+async checkSourcingAddress(field: SourcingAddress, value: string) : Promise<Result<boolean, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:web|check_sourcing_address", { field, value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async rescanVault() : Promise<Result<RescanSummary, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:vault|rescan_vault") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listVaultConflicts() : Promise<Result<VaultConflictDto[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:vault|list_vault_conflicts") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async dismissVaultConflicts(ids: string[]) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:vault|dismiss_vault_conflicts", { ids }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4419,7 +4528,35 @@ export const FILE_TYPES = [{"extension":"txt","mimeType":"text/plain","category"
 /** user-defined types **/
 
 export type AcceptLearningProgramRequestDto = { programId: string; expectedRevision: number; title: string }
-export type ActiveModels = { chat_model: DownloadedModelResponse | null; embedding_model: DownloadedModelResponse | null }
+/**
+ * What a chat on the Settings default and utility work run on now, worked
+ * out by the functions the model loader uses. Nothing is probed.
+ */
+export type ActiveModels = {
+/**
+ * The models a chat on the Settings default tries, in order. Empty when none is set.
+ */
+chat: ModelRef[];
+/**
+ * Why `chat` is empty, in the words the refusal uses.
+ */
+chat_unset: string | null;
+/**
+ * The models utility work tries, in order. Empty when none is set.
+ */
+utility: ModelRef[];
+/**
+ * The model the llama.cpp connection serves, when Settings names its server URL and model.
+ */
+llama_cpp: ModelRef | null;
+/**
+ * The chat model the Ollama connection serves, when the connection is saved and names a chat tag.
+ */
+ollama: ModelRef | null;
+/**
+ * The tag utility work asks the Ollama connection for: its utility tag, else its chat tag.
+ */
+ollama_utility_tag: string | null }
 /**
  * One live item, with why it waits and what it holds put into words.
  */
@@ -4485,7 +4622,11 @@ export type ActivityTarget = { type: "course"; course: string } | { type: "lesso
 /**
  * An Explorer folder, by its root as the folder list names it.
  */
-{ type: "folder"; root: string; name: string } | { type: "conversation"; conversation: string }
+{ type: "folder"; root: string; name: string } | { type: "conversation"; conversation: string } |
+/**
+ * The Learning Studio course builder while an outline has no saved draft yet.
+ */
+{ type: "studio_builder" }
 export type ActorDto = "machine" | "user"
 export type AddConversationToJournalRequestDto = { journalSpaceId: string; conversationId: string }
 export type AddLearningDocumentSourceRequestDto = { operationId: string; sourceId: string; versionId: string; programId: string; documentId: string }
@@ -5477,7 +5618,31 @@ export type ClaimEventPayloadDto = { kind: "extracted"; field: string; quote: st
  * A compared passage and who added its source; `addedBy` is null for an
  * execution, which has no source.
  */
-export type ClaimEvidencePassageDto = { passage: LearningEvidencePassageDto; addedBy: SourceAddedByDto | null }
+export type ClaimEvidencePassageDto = { passage: LearningEvidencePassageDto; addedBy: SourceAddedByDto | null;
+/**
+ * The passage's first sentence in its excerpt: what the review marks in
+ * a passage the user added that does not state the claim.
+ */
+opening: ClaimExcerptDto }
+/**
+ * A quote in its passage as the review shows it (UI design §3.4): the
+ * sentences that hold it, with the sentence before and after them when it
+ * is prose, never code.
+ */
+export type ClaimExcerptDto = { before: string;
+/**
+ * The quote as the passage words it; the quote as given when the
+ * passage does not hold it.
+ */
+quote: string; after: string;
+/**
+ * More of the passage comes before `before`.
+ */
+clippedStart: boolean;
+/**
+ * More of the passage comes after `after`.
+ */
+clippedEnd: boolean }
 export type ClaimLocationDto = { unitIndex: number; unitKind: UnitKindDto; unitTitle: string; field: string; quote: string;
 /**
  * Byte span of `quote` in the field; null when it occurs more than once.
@@ -5561,6 +5726,12 @@ place: PutBackPlaceDto | null;
  */
 putBackUnit: number | null;
 /**
+ * For a sentence the machine took out whose place is known: the
+ * sentence of that unit it goes back beside, as the unit's text has it;
+ * null when it goes at the end.
+ */
+putBackBeside: string | null;
+/**
  * For a claim the machine rewrote: what it said and what it says now.
  */
 rewritten: RewrittenDto | null }
@@ -5600,10 +5771,9 @@ standing: LearningTrustLevel | null; counts: ClaimSupportCountsDto;
  */
 quote: string;
 /**
- * Byte span of `quote` inside `passage.text`; null when it is not found
- * there verbatim.
+ * `quote` in its passage.
  */
-quoteSpan: [number, number] | null; passage: LearningEvidencePassageDto }
+excerpt: ClaimExcerptDto; passage: LearningEvidencePassageDto }
 export type ClaimSupportRoleDto = "supports" | "contradicts"
 export type ClassDto = "sourced" | "reasoning" | "common" | "internal"
 export type ClassifiedByDto = "model" | "rule" | "writer" | "evidence"
@@ -6420,7 +6590,15 @@ indexedAt: string;
 /**
  * Word count for document
  */
-wordCount: number }
+wordCount: number;
+/**
+ * True when the file is a saved web article's text in the web archive
+ */
+web: boolean;
+/**
+ * The type bucket the document counts in, as the Library's facets and the corpus shape count it
+ */
+typeBucket: string }
 export type DocumentRefDto = { documentId: string; filePath: string; title: string | null }
 export type DocumentSpaceMembershipDto = { spaceId: string; spaceName: string; isArchived: boolean; createdAt: string | null }
 /**
@@ -6509,7 +6687,13 @@ geometry: VisionGeometry;
 /**
  * The projector download's size, in bytes.
  */
-projector_bytes: number }
+projector_bytes: number;
+/**
+ * Where the projector file lives, as `to_string_lossy()` of the path the
+ * projector download is started with. It equals that download's
+ * `destination`, so the UI can find the download in the list.
+ */
+projector_path: string }
 /**
  * Why the screen reports the draft.
  */
@@ -7590,7 +7774,7 @@ export type IssueResultKind = "found" |
 /**
  * A job as the renderer sees it on [`STATUS_EVENT`].
  */
-export type JobDto = { id: string; kind: string; subjectId: string | null; status: JobStatus; progressCurrent: number; progressTotal: number; progressMessage: string; activity: JsonValue | null; resultRef: string | null; errorCode: string | null; error: string | null; retryOfJobId: string | null; retryCount: number; retryNotBefore: number | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
+export type JobDto = { id: string; kind: string; subjectId: string | null; status: JobStatus; progressCurrent: number; progressTotal: number; progressMessage: string; activity: JsonValue | null; resultRef: string | null; errorCode: string | null; error: string | null; retryOfJobId: string | null; retryCount: number; retryNotBefore: number | null; createdAt: number; startedAt: number | null; finishedAt: number | null; revision: number }
 export type JobStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "interrupted"
 /**
  * A synthesis job and what it was asked: live, finished and waiting to be
@@ -8090,6 +8274,20 @@ export type LearningCardOriginDto = { cardId: string; lessonId: string; origin: 
  * what is revealed once they commit an answer.
  */
 export type LearningCheckDto = { question: string; reveal: string }
+/**
+ * A passage a citation chip of the lesson opens, numbered down the lesson.
+ */
+export type LearningCitationDto = { number: number;
+/**
+ * The saved source the passage's version belongs to; none for an
+ * executed example.
+ */
+sourceId: string | null;
+/**
+ * Its trust is always none: a level belongs to each statement a passage
+ * supports, on that statement's own passages.
+ */
+passage: LearningEvidencePassageDto }
 export type LearningClaimEvidenceDto = { sectionIndex: number;
 /**
  * Exact lesson text selected by the claim inventory. This anchors the
@@ -8128,7 +8326,12 @@ parts?: LearningClaimPartDto[]; unverifiedReason?: UnverifiedReasonDto | null;
  * The claim behind this statement, for acting on it; none in a report
  * from before findings named theirs.
  */
-claimId?: string | null }
+claimId?: string | null;
+/**
+ * The numbers, in the lesson's `citations`, of the passages this
+ * statement stands on; empty when it cites none.
+ */
+cites?: number[] }
 /**
  * One part of a statement as the part-wise check read it.
  */
@@ -8361,7 +8564,11 @@ lessonIds?: string[];
 /**
  * The lessons the job finished by holding them for review.
  */
-heldLessonIds?: string[]; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
+heldLessonIds?: string[];
+/**
+ * Queue rank for ranked job kinds (lower runs first).
+ */
+rank?: number | null; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
 export type LearningGenerationJobActionRequestDto = { operationId: string; programId: string; jobId: string; expectedRevision: number }
 export type LearningGenerationJobKind = "program_outline" | "lesson_preparation" | "assessment_variant" | "adaptive_follow_up" | "practical_activity" |
 /**
@@ -8473,7 +8680,15 @@ export type LearningLessonEvidenceDto = { policy: string; checkedAt: number; che
  * Of `claim_count`, the claims the user confirmed without a supporting
  * passage; shown apart from the machine-verified ones (§5.6).
  */
-confirmedCount: number; executedExamples: number; unexecutedLanguages: string[]; sourcesCurrent: boolean; teachingClaims: LearningClaimEvidenceDto[] }
+confirmedCount: number; executedExamples: number; unexecutedLanguages: string[]; sourcesCurrent: boolean; teachingClaims: LearningClaimEvidenceDto[];
+/**
+ * Every passage of the report, numbered from 1.
+ */
+citations: LearningCitationDto[];
+/**
+ * One per lesson block, in block order.
+ */
+sections: LearningSectionTextDto[] }
 export type LearningLessonNoteDto = { lessonId: string; note: WorkspaceNoteDto }
 export type LearningLessonQuizDto = { lessonId: string; quiz: LearningQuizStatusDto }
 /**
@@ -8552,6 +8767,7 @@ export type LearningOutlineIssueKind =
  * Course-wide: no references could be gathered, so lessons cannot be prepared.
  */
 "references"
+export type LearningOutlineOutcomeDto = { requestId: string; kind: OutlineOperationKind; programId?: string | null; cancelled: boolean; error?: ApiError | null }
 export type LearningOutlineProgressDto = { programId?: string | null; stage: OutlineStage;
 /**
  * Progress inside a long stage ("Subtopic 3 of 8: searching"), so a deep
@@ -8578,6 +8794,8 @@ citationsRemoved: number;
  */
 referencesGathered: number }
 export type LearningOutlineReviewStatus = "unchecked" | "needs_repair" | "passed"
+export type LearningOutlineRunDto = { requestId: string; kind: OutlineOperationKind; goal?: string | null; courseDepth?: LearningCourseDepth | null; progress: LearningOutlineProgressDto }
+export type LearningOutlineRunsSnapshotDto = { active: LearningOutlineRunDto[]; recentOutcomes: LearningOutlineOutcomeDto[] }
 export type LearningPackChangeDto = { entityKind: string; entityId: string; action: string; description: string }
 export type LearningPackConflictDto = { kind: LearningPackConflictKind;
 /**
@@ -8841,6 +9059,11 @@ command: string[]; limits: LearningLabLimits;
 entrypointContract: string }
 export type LearningRuntimePresetId = "csharp" | "rust" | "node" | "python"
 export type LearningRuntimeProfileDto = { id: string; name: string; engine: LearningContainerEngine; imageId: string; command: string[]; limits: LearningLabLimits; enabled: boolean; revision: number; createdAt: number; updatedAt: number }
+/**
+ * One lesson block's body as the frontend draws it: text between citation
+ * chips.
+ */
+export type LearningSectionTextDto = { sectionIndex: number; pieces: ReplyPieceDto[] }
 export type LearningSimulationSessionDto = { id: string; programId: string; activityId: string; activityRevision: number; practiceSessionId: string | null; learnerRole: string; counterpartRole: string; status: LearningSimulationStatus; revision: number; turns: LearningSimulationTurnDto[]; createdAt: number; updatedAt: number; submittedAt: number | null }
 export type LearningSimulationSpeaker = "learner" | "counterpart" | "coach"
 export type LearningSimulationStatus = "active" | "submitted" | "cancelled"
@@ -9849,6 +10072,7 @@ noPassage: number;
  * answering part-way.
  */
 stopped: string | null }
+export type OutlineOperationKind = "generate" | "repair"
 export type OutlineStage = "reading_sources" | "loading_model" | "gathering_references" | "drafting" | "checking_citations" | "reviewing" | "researching" | "repairing" | "checking_repair" | "saving" | "completed" | "cancelled" | "failed"
 export type OverrideLearningQuizGradeRequestDto = { operationId: string; programId: string; formId: string; itemId: string }
 /**
@@ -10260,7 +10484,13 @@ export type RerankerStatusDto = {
 /**
  * The reranker's model is on disk, so search reranks with it.
  */
-installed: boolean; modelName: string; downloadBytes: number }
+installed: boolean; modelName: string; downloadBytes: number;
+/**
+ * Where the model lives, as `to_string_lossy()` of the same path search
+ * loads. It equals the `destination` of the download that fetches it, so
+ * the UI can find that download in the list.
+ */
+path: string }
 export type RescanSummary = { scanned: number; imported: number; deleted: number }
 export type ResearchAttemptDto = { queries: string[]; sourcesAdded: SourceRefDto[]; passagesFound: number; at: number }
 /**
@@ -10288,6 +10518,8 @@ stated: boolean;
  * The `pages_mentioning` versions, newest first.
  */
 relevant: SourceRefDto[] }
+export type ResetLearningLessonPreparationRequestDto = { operationId: string; programId: string; lessonIds: string[]; expectedRevision: number }
+export type ResetLearningLessonPreparationResultDto = { resetLessonIds: string[]; cancelledJobIds: string[]; programRevision: number }
 export type ResolveLearningClaimRequestDto = { programId: string; lessonId: string; claimId: string; action: ClaimActionRequestDto;
 /**
  * The review's revision the user acted on.
@@ -10585,6 +10817,10 @@ export type RewrittenDto = { original: string; rewrite: string;
  */
 why: string | null }
 /**
+ * One model role's latest warm-up, numbered by the backend's one counter.
+ */
+export type RoleWarmupDto = { role: WarmupRole; phase: WarmupPhase; error: string | null; degraded: string | null; revision: number }
+/**
  * Router settings for conversation scope and routing decisions.
  */
 export type RouterSettingsDto = {
@@ -10663,6 +10899,26 @@ export type SaveLearningPracticeProfileRequestDto = { programId: string; details
 expectedRevision: number }
 export type SaveLearningRecallCardRequestDto = { operationId: string; programId: string; cardId: string; expectedContentRevision: number | null; format: LearningRecallCardFormat; content: LearningRecallContentDto; sourceVersionIds: string[]; changeReason: string }
 export type SaveLearningRuntimeProfileRequestDto = { operationId: string; programId: string; profileId: string; expectedRevision: number | null; name: string; engine: LearningContainerEngine; imageId: string; command: string[]; limits: LearningLabLimits }
+/**
+ * A saved web article's files and the facts the archive keeps about it.
+ */
+export type SavedWebArticleDto = {
+/**
+ * The article's text (`article.md`).
+ */
+textPath: string;
+/**
+ * The saved page (`page.html`), when it is still on disk.
+ */
+pagePath: string | null; title: string | null;
+/**
+ * The address the article was saved from.
+ */
+url: string | null;
+/**
+ * Outgoing links captured from the page.
+ */
+links: string[] }
 /**
  * Whether a row was scored.
  */
@@ -11137,6 +11393,11 @@ sourceId: string; sourceVersionId: string; title: string; url: string | null; ad
  */
 export type SourcesStatusDto = { finders: FinderStatusDto[]; keys: KeyStatusDto[] }
 /**
+ * A Sources setting that holds an address the user types: the SearXNG
+ * server, or the polite-pool contact.
+ */
+export type SourcingAddress = "searxngUrl" | "contact"
+/**
  * Source-finding settings.
  */
 export type SourcingSettingsDto = {
@@ -11331,6 +11592,7 @@ title: string;
 heading: string }
 export type StartLearningDiagnosticRequestDto = { operationId: string; programId: string; expectedRevision: number }
 export type StartLearningGenerationJobRequestDto = { operationId: string; programId: string; expectedRevision: number; kind: LearningGenerationJobKind; requestJson: string; progressTotal: number }
+export type StartLearningLessonsJobsRequestDto = { operationId: string; programId: string; lessonIds: string[]; expectedRevision: number }
 export type StartLearningPracticalRunRequestDto = { operationId: string; runId: string; programId: string; activityId: string; expectedActivityRevision: number; practiceSessionId: string | null; learnerFiles: LearningLabFile[] }
 export type StartLearningPracticeSessionRequestDto = { operationId: string; sessionId: string; programId: string; lessonId: string; expectedProgramRevision: number; mode: LearningPracticeMode; taskKind?: LearningPracticeTaskKind; revisesSessionId?: string | null }
 export type StartLearningQuizRequestDto = { operationId: string; formId: string; programId: string; scope: LearningQuizScopeDto; mode: LearningQuizMode; retakeOfFormId: string | null }
@@ -11739,7 +12001,13 @@ getDocumentTemplate: string;
  * Template for semantic_search output
  */
 semanticSearchTemplate: string }
-export type ToolPreferences = { knowledgeBase?: boolean; webSearch?: boolean; deepResearchMode?: boolean; followupMode?: boolean; turnMode?: string | null; enabledTools?: string[] | null;
+export type ToolPreferences = { knowledgeBase?: boolean;
+/**
+ * Answer strictly from retrieved sources only (no general-knowledge
+ * fallback). Orthogonal to `knowledge_base`, which controls whether to
+ * always search the library.
+ */
+strictSources?: boolean; webSearch?: boolean; deepResearchMode?: boolean; followupMode?: boolean; turnMode?: string | null; enabledTools?: string[] | null;
 /**
  * Documents this chat is pinned to; empty or absent means the whole space. A
  * request may only narrow what the turn reads, so these are intersected with
@@ -11820,6 +12088,10 @@ modelReady: boolean;
  * Display name of the model that would be used.
  */
 modelName: string | null;
+/**
+ * Catalog id of the model in use, to remove it with.
+ */
+modelId: string | null;
 /**
  * What to download for a voice conversation.
  */
@@ -12043,6 +12315,7 @@ keywords?: string[] }
  * to; the quote digest it is bound to stays on the backend.
  */
 export type UserActionDto = { action: "confirm"; boundSourceVersionIds: string[] } | { action: "unconfirm" } | { action: "edit"; before: string; after: string } | { action: "remove" } | { action: "research_with_hint"; hint: string } | { action: "put_back"; sentence: string; edited: boolean } | { action: "restore_original"; original: string; rewrite: string }
+export type VaultConflictDto = { kind: "keptCopy"; id: string; noteId: string; noteTitle: string; copyId: string; copyTitle: string } | { kind: "setAside"; id: string; noteId: string; noteTitle: string; setAsidePath: string }
 export type VaultSettingsDto = {
 /**
  * Empty string = `~/Lattice`.
@@ -12205,6 +12478,14 @@ noPassage: number;
  * answering part-way.
  */
 stopped: string | null }
+/**
+ * How far a model role's warm-up has got.
+ */
+export type WarmupPhase = "started" | "ready" | "skipped" | "failed"
+/**
+ * A model role that is warmed up ahead of its first use.
+ */
+export type WarmupRole = "chat" | "utility" | "embedding" | "learning"
 /**
  * Response from web ingestion command
  */
@@ -12409,6 +12690,7 @@ export type CommandArgs = {
 	cancel_learning_outline: { requestId: string };
 	cancel_learning_pack_import_preview: { request: CancelLearningPackImportPreviewRequestDto };
 	cancel_learning_practical_run: { request: CancelLearningPracticalRunRequestDto };
+	cancel_practice_build: { jobId: string };
 	capture_learning_source_snapshot: { request: CaptureLearningSourceSnapshotRequestDto };
 	capture_reference: { request: CaptureReferenceRequestDto };
 	capture_web_page_snapshot: { conversationId: string; url: string };
@@ -12421,6 +12703,7 @@ export type CommandArgs = {
 	check_llm_health: void;
 	check_practice_fit: { request: PracticeFitRequestDto };
 	check_practice_piece: { request: CheckPracticePieceRequestDto };
+	check_sourcing_address: { field: SourcingAddress; value: string };
 	clear_active_chat_model: void;
 	clear_active_embedding_model: void;
 	clear_active_utility_model: void;
@@ -12475,6 +12758,7 @@ export type CommandArgs = {
 	discard_learning_curriculum_revision: { request: DiscardLearningCurriculumRevisionRequestDto };
 	dismiss_journal_synthesis: { jobId: string };
 	dismiss_learning_follow_up: { request: DecideLearningFollowUpRequestDto };
+	dismiss_vault_conflicts: { ids: string[] };
 	download_default_embedding_model: void;
 	download_model: { modelId: string };
 	download_reranker: void;
@@ -12640,6 +12924,7 @@ export type CommandArgs = {
 	list_journal_entry_pins: { journalSpaceId: string };
 	list_journal_syntheses: void;
 	list_journals: void;
+	list_learning_outline_runs: void;
 	list_learning_programs: void;
 	list_learning_tangents: { request: ListLearningTangentsRequestDto };
 	list_leftover_embedding_files: void;
@@ -12650,6 +12935,7 @@ export type CommandArgs = {
 	list_source_trust_overrides: void;
 	list_space_documents: void | { spaceId?: string | null; conversationId?: string | null; query?: string | null; limit?: number | null };
 	list_study_decks: void;
+	list_vault_conflicts: void;
 	list_web_page_snapshots: { conversationId: string };
 	list_workspace_notes: void | { request?: ListWorkspaceNotesRequestDto | null };
 	manage_knowledge: { request: KnowledgeRequestDto };
@@ -12686,11 +12972,13 @@ export type CommandArgs = {
 	practice_due: { request: PracticeDueRequestDto };
 	prepare_learning_ahead: { request: PrepareLearningAheadRequestDto };
 	prepare_learning_lesson: { request: PrepareLearningLessonRequestDto };
+	prepare_learning_lessons: { request: StartLearningLessonsJobsRequestDto };
 	prepare_learning_module: { request: PrepareLearningModuleRequestDto };
 	prepare_learning_quiz_bank: { request: PrepareLearningQuizBankRequestDto };
 	prepare_learning_runtime_preset: { request: PrepareLearningRuntimePresetRequestDto };
 	preview_learning_curriculum_revision: { request: PreviewLearningCurriculumRevisionRequestDto };
 	preview_learning_pack_import: { request: PreviewLearningPackImportRequestDto };
+	prioritize_learning_generation_job: { request: LearningGenerationJobActionRequestDto };
 	promote_conversation_tangent: { request: GetConversationRequestDto };
 	quick_capture: { content: string; sources?: SourceDto[] | null; conversationIds?: string[] | null };
 	read_file_bytes: { path: string };
@@ -12718,6 +13006,7 @@ export type CommandArgs = {
 	remove_indexed_file: { path: string };
 	remove_learning_teaching_sentences: { request: RemoveLearningTeachingSentencesRequestDto };
 	remove_leftover_embedding_files: void;
+	remove_reranker: void;
 	remove_source_key: { service: KeyServiceDto };
 	remove_tag_from_document: { request: RemoveTagRequestDto };
 	remove_watch_folder: { path: string };
@@ -12730,6 +13019,7 @@ export type CommandArgs = {
 	request_learning_tutor_response: { request: RequestLearningTutorResponseRequestDto };
 	reranker_status: void;
 	rescan_vault: void;
+	reset_learning_lesson_preparation: { request: ResetLearningLessonPreparationRequestDto };
 	reset_settings: void;
 	resolve_learning_claim: { request: ResolveLearningClaimRequestDto };
 	resolve_learning_claims: { request: ResolveLearningClaimsRequestDto };
@@ -12762,6 +13052,7 @@ export type CommandArgs = {
 	save_remote_auth_header_value: { server: RemoteServer; value?: string | null };
 	save_source_key: { service: KeyServiceDto; key: string };
 	save_text_file: { suggestedName: string; filters: FileFilterDto[]; contents: string };
+	saved_web_article: { path: string };
 	search_documents: { options: SearchOptions };
 	search_fast: { query: string; limit: number };
 	search_learning_sources: { request: SearchLearningSourcesRequestDto };
@@ -12834,6 +13125,7 @@ export type CommandArgs = {
 	warm_up_active_chat_model: void;
 	warm_up_active_utility_model: void;
 	warm_up_learning_model: void;
+	warmup_status: void;
 };
 
 /** What each command resolves with, keyed by command. */
@@ -12875,6 +13167,7 @@ export type CommandResults = {
 	cancel_learning_outline: boolean;
 	cancel_learning_pack_import_preview: LearningPortabilityWorkspaceDto;
 	cancel_learning_practical_run: LearningPracticalRunDto;
+	cancel_practice_build: null;
 	capture_learning_source_snapshot: SnapshotNoteDto;
 	capture_reference: CaptureReferenceResultDto;
 	capture_web_page_snapshot: WebPageSnapshotDto;
@@ -12887,6 +13180,7 @@ export type CommandResults = {
 	check_llm_health: LLMHealthStatusDto;
 	check_practice_fit: PracticeFitDto;
 	check_practice_piece: PracticeSessionDto;
+	check_sourcing_address: boolean;
 	clear_active_chat_model: null;
 	clear_active_embedding_model: null;
 	clear_active_utility_model: null;
@@ -12941,6 +13235,7 @@ export type CommandResults = {
 	discard_learning_curriculum_revision: LearningPlanDto;
 	dismiss_journal_synthesis: null;
 	dismiss_learning_follow_up: LearningQuizOverviewDto;
+	dismiss_vault_conflicts: null;
 	download_default_embedding_model: string;
 	download_model: DownloadModelResponse;
 	download_reranker: RerankerStatusDto;
@@ -13106,6 +13401,7 @@ export type CommandResults = {
 	list_journal_entry_pins: string[];
 	list_journal_syntheses: JournalSynthesisDto[];
 	list_journals: ConversationJournalDto[];
+	list_learning_outline_runs: LearningOutlineRunsSnapshotDto;
 	list_learning_programs: LearningProgramSummaryDto[];
 	list_learning_tangents: LearningTangentDto[];
 	list_leftover_embedding_files: LeftoverEmbeddingFilesDto;
@@ -13116,6 +13412,7 @@ export type CommandResults = {
 	list_source_trust_overrides: LearningSiteTrustOverrideDto[];
 	list_space_documents: SpaceDocumentDto[];
 	list_study_decks: StudyDeckSummaryDto[];
+	list_vault_conflicts: VaultConflictDto[];
 	list_web_page_snapshots: WebPageSnapshotDto[];
 	list_workspace_notes: ListWorkspaceNotesResponseDto;
 	manage_knowledge: KnowledgeResponseDto;
@@ -13152,11 +13449,13 @@ export type CommandResults = {
 	practice_due: PracticeDueDto;
 	prepare_learning_ahead: LearningProgramDto;
 	prepare_learning_lesson: LearningProgramDto;
+	prepare_learning_lessons: LearningGenerationJob[];
 	prepare_learning_module: LearningProgramDto;
 	prepare_learning_quiz_bank: LearningGenerationJob;
 	prepare_learning_runtime_preset: LearningPracticalWorkspaceDto;
 	preview_learning_curriculum_revision: LearningPlanDto;
 	preview_learning_pack_import: LearningPortabilityWorkspaceDto;
+	prioritize_learning_generation_job: LearningGenerationJob;
 	promote_conversation_tangent: ConversationDto;
 	quick_capture: QuickCaptureResultDto;
 	read_file_bytes: number[];
@@ -13184,6 +13483,7 @@ export type CommandResults = {
 	remove_indexed_file: null;
 	remove_learning_teaching_sentences: RemoveLearningTeachingSentencesResultDto;
 	remove_leftover_embedding_files: LeftoverEmbeddingFilesDto;
+	remove_reranker: RerankerStatusDto;
 	remove_source_key: SourcesStatusDto;
 	remove_tag_from_document: null;
 	remove_watch_folder: null;
@@ -13196,6 +13496,7 @@ export type CommandResults = {
 	request_learning_tutor_response: LearningPracticeWorkspaceDto;
 	reranker_status: RerankerStatusDto;
 	rescan_vault: RescanSummary;
+	reset_learning_lesson_preparation: ResetLearningLessonPreparationResultDto;
 	reset_settings: SettingsDto;
 	resolve_learning_claim: ResolveLearningClaimResultDto;
 	resolve_learning_claims: ResolveLearningClaimResultDto;
@@ -13228,6 +13529,7 @@ export type CommandResults = {
 	save_remote_auth_header_value: null;
 	save_source_key: SourcesStatusDto;
 	save_text_file: boolean;
+	saved_web_article: SavedWebArticleDto | null;
 	search_documents: EnhancedSearchResponse;
 	search_fast: ([string, number])[];
 	search_learning_sources: LearningSourceSearchResultDto[];
@@ -13300,4 +13602,5 @@ export type CommandResults = {
 	warm_up_active_chat_model: null;
 	warm_up_active_utility_model: null;
 	warm_up_learning_model: null;
+	warmup_status: RoleWarmupDto[];
 };

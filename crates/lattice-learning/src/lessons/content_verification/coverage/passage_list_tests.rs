@@ -1,38 +1,13 @@
-//! The coverage mapping: what its answer decides, and which passages a unit leaves to the judge.
+//! Direct passage-to-fidelity routing in `coverage::audit`: empty/reflection
+//! units finish without LLM calls, verbatim passages are skipped deterministically,
+//! and non-verbatim passages go straight to `FidelityAudit`.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
-use super::checkpoints;
-use super::mapping::{
-    judged, passages_of, scripted_decisions, scripted_entries, task_of, Claim, CoverageMapping,
-    Input, Part, Passage,
-};
 use super::*;
 use crate::content_verification::tests::fixture_prompts;
-use crate::lessons::course_generation_tests::{length_bounds, RequestLog};
 use futures::future::BoxFuture;
 use lattice_core::application::ports::llm_port::CompletionResponse;
-use lattice_core::application::services::model_contract::shape::Held;
-use lattice_core::application::services::model_contract::test_support::samples::schema_of;
-use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
 use lattice_core::application::services::model_contract::test_support::{ScriptedModel, Sent};
 use lattice_core::shared::persistence::Database;
-
-const GATE: &str = "The harbour gate opens at first light.";
-const ROTA: &str = "Read the kiln rota before you start.";
-const TABLES: &str = "Tide tables are revised each spring.";
-
-fn unit(index: usize, texts: &[&str], claims: &[&str]) -> Value {
-    json!({"index":index,"kind":"teaching",
-        "passages":texts.iter().enumerate().map(|(n, text)| json!({"id":format!("unit-{index}-passage-{n}"),"field":"/body","text":text})).collect::<Vec<_>>(),
-        "claims":claims.iter().enumerate().map(|(n, statement)| json!({"id":format!("unit-{index}-claim-{n}"),"statement":statement})).collect::<Vec<_>>(),
-        "nonFactualReason":""})
-}
-
-fn ids(index: usize, passages: &[usize]) -> BTreeSet<String> {
-    passages
-        .iter()
-        .map(|n| format!("unit-{index}-passage-{n}"))
-        .collect()
-}
 
 fn reply(text: String) -> BoxFuture<'static, Result<CompletionResponse>> {
     Box::pin(std::future::ready(Ok(CompletionResponse::from_text(text))))
@@ -45,248 +20,171 @@ fn prompt_of(sent: &Sent) -> String {
         .unwrap_or_default()
 }
 
-fn task(sent: &Sent) -> Value {
-    task_of(&prompt_of(sent)).unwrap()
-}
-
-fn texts(entries: &Value) -> Vec<String> {
-    entries
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|entry| entry["text"].as_str().unwrap().to_owned())
+fn structured_sent(model: &ScriptedModel) -> Vec<Sent> {
+    model
+        .sent()
+        .into_iter()
+        .filter(|sent| sent.request.schema().is_some())
         .collect()
 }
 
-fn covered(claims: &[String]) -> Value {
-    json!({"claimIds":claims,"nonFactualReason":"","missingClaims":[]})
-}
-
-fn labelled() -> Value {
-    json!({"claimIds":[],"nonFactualReason":"A label for the kiln rota, not an assertion.","missingClaims":[]})
-}
-
-fn omission(statement: &str) -> Value {
-    json!({"claimIds":[],"nonFactualReason":"","missingClaims":[{"statement":statement}]})
-}
-
-fn empty() -> Value {
-    json!({"claimIds":[],"nonFactualReason":"","missingClaims":[]})
-}
-
-fn by_text(text: &str, claims: &[String]) -> Value {
-    match text {
-        GATE => covered(claims),
-        ROTA => labelled(),
-        _ => omission("Tide tables are revised each spring."),
-    }
+fn scripted_fidelity(
+    decide: impl Fn(&Sent, Value) -> Value + Send + Sync + 'static,
+) -> ScriptedModel {
+    ScriptedModel::new().on_request::<FidelityAudit>(move |sent, _| {
+        if sent.request.schema().is_none() {
+            return reply("Draft reasoning.".into());
+        }
+        let task = crate::content_verification::tests::fixture_task(&prompt_of(sent)).unwrap();
+        reply(decide(sent, task).to_string())
+    })
 }
 
 #[tokio::test]
-async fn a_complete_answer_decides_every_passage() -> Result<()> {
-    let unit = unit(0, &[GATE, ROTA, TABLES], &[GATE]);
-    let model = ScriptedModel::new().on_request::<CoverageMapping>(|sent, _| {
-        reply(scripted_decisions(&prompt_of(sent), by_text))
-    });
-    assert_eq!(judged(&model, &unit, None).await?, ids(0, &[0, 2]));
-    assert_eq!(model.count::<CoverageMapping>(), 1);
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_passage_left_out_is_asked_for_again_alone_and_the_others_stand() -> Result<()> {
-    let unit = unit(0, &[GATE, ROTA, TABLES], &[GATE]);
-    let model = ScriptedModel::new().on_request::<CoverageMapping>(|sent, nth| {
-        let prompt = prompt_of(sent);
-        reply(if nth == 0 {
-            scripted_entries(&prompt, |text, claims| match text {
-                TABLES => None,
-                _ => Some(by_text(text, claims)),
-            })
-        } else {
-            scripted_decisions(&prompt, by_text)
-        })
-    });
-    assert_eq!(judged(&model, &unit, None).await?, ids(0, &[0, 2]));
-    let sent = model.sent();
-    assert_eq!(sent.len(), 2);
-    let (first, second) = (task(&sent[0]), task(&sent[1]));
-    assert_eq!(texts(&first["unit"]["passages"]), [GATE, ROTA, TABLES]);
-    assert!(first["unit"].get("contextPassages").is_none());
-    assert_eq!(texts(&second["unit"]["passages"]), [TABLES]);
-    assert_eq!(
-        texts(&second["unit"]["contextPassages"]),
-        [GATE, ROTA, TABLES]
-    );
-    assert_eq!(second["unit"]["claims"].as_array().unwrap().len(), 1);
-    Ok(())
-}
-
-#[tokio::test]
-async fn an_empty_decision_is_corrected_for_that_passage_alone() -> Result<()> {
-    let unit = unit(0, &[GATE, ROTA], &[GATE]);
-    let model = ScriptedModel::new().on_request::<CoverageMapping>(|sent, nth| {
-        let prompt = prompt_of(sent);
-        reply(if nth == 0 {
-            scripted_decisions(&prompt, |text, claims| match text {
-                GATE => covered(claims),
-                _ => empty(),
-            })
-        } else {
-            scripted_decisions(&prompt, |_, _| labelled())
-        })
-    });
-    assert_eq!(judged(&model, &unit, None).await?, ids(0, &[0]));
-    let sent = model.sent();
-    assert_eq!(sent.len(), 2);
-    assert!(prompt_of(&sent[1]).contains("leaving all three empty"));
-    assert_eq!(texts(&task(&sent[1])["unit"]["passages"]), [ROTA]);
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_blank_missing_claim_is_asked_for_again_for_that_passage_alone() -> Result<()> {
-    let unit = unit(0, &[ROTA, TABLES], &[GATE]);
-    let model = ScriptedModel::new().on_request::<CoverageMapping>(|sent, nth| {
-        let prompt = prompt_of(sent);
-        reply(if nth == 0 {
-            scripted_decisions(&prompt, |text, _| match text {
-                ROTA => json!({"claimIds":[],"nonFactualReason":"","missingClaims":[{"statement":"   "}]}),
-                _ => labelled(),
-            })
-        } else {
-            scripted_decisions(&prompt, |_, _| omission("The kiln rota is read before the start."))
-        })
-    });
-    assert_eq!(judged(&model, &unit, None).await?, ids(0, &[0]));
-    let sent = model.sent();
-    assert_eq!(sent.len(), 2);
-    assert_eq!(texts(&task(&sent[1])["unit"]["passages"]), [ROTA]);
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_passage_left_undecided_is_judged() -> Result<()> {
-    let unit = unit(0, &[GATE, ROTA, TABLES], &[GATE]);
-    let model = ScriptedModel::new()
-        .on_request::<CoverageMapping>(|_, _| reply(json!({"entries":[]}).to_string()));
-    assert_eq!(judged(&model, &unit, None).await?, ids(0, &[0, 1, 2]));
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_claim_the_request_does_not_show_costs_only_that_citation() -> Result<()> {
-    let unit = unit(0, &[GATE, ROTA], &[GATE]);
-    let model = ScriptedModel::new().on_request::<CoverageMapping>(|sent, _| {
-        reply(scripted_decisions(
-            &prompt_of(sent),
-            |text, claims| match text {
-                GATE => covered(&[claims[0].clone(), "c9".to_owned()]),
-                _ => labelled(),
-            },
-        ))
-    });
-    assert_eq!(judged(&model, &unit, None).await?, ids(0, &[0]));
-    assert_eq!(model.count::<CoverageMapping>(), 1);
-    Ok(())
-}
-
-#[tokio::test]
-async fn prompt_snapshot_coverage_mapping() -> Result<()> {
-    let units = [
-        unit(0, &[GATE, ROTA], &[GATE]),
-        unit(1, &[TABLES], &[TABLES]),
+async fn empty_and_reflection_units_produce_complete_true_without_llm_calls() -> Result<()> {
+    let content = vec![
+        json!({"kind": "teaching", "body": ""}),
+        json!({"kind": "teaching", "body": "   \n\t  "}),
+        json!({
+            "kind": "teaching",
+            "role": "reflection",
+            "body": "Reflect on how this rule applies to your own project."
+        }),
     ];
-    let inner = ScriptedModel::new().on_request::<CoverageMapping>(|sent, _| {
-        reply(scripted_decisions(&prompt_of(sent), by_text))
-    });
-    let recording = RequestLog::new(&inner);
-    for unit in &units {
-        judged(&recording, unit, None).await?;
+    let inventory = Inventory {
+        units: (0..content.len())
+            .map(|index| UnitClaims {
+                index,
+                claims: vec![],
+                non_factual_reason: "No factual assertions in this section.".into(),
+            })
+            .collect(),
+    };
+    let silent = ScriptedModel::new();
+    let audited = audit(&silent, &content, &inventory, None).await?;
+    assert_eq!(audited.units.len(), 3);
+    for (index, unit) in audited.units.iter().enumerate() {
+        assert_eq!(unit.index, index);
+        assert!(unit.complete, "unit {index} should be complete");
+        assert!(unit.missing_assertions.is_empty());
+        assert!(!unit.reason.trim().is_empty());
     }
-    recording.assert_snapshot::<CoverageMapping>();
+    assert!(silent.sent().is_empty(), "0 passages must make 0 LLM calls");
     Ok(())
 }
 
-#[test]
-fn the_mapping_request_shows_what_the_model_is_told_and_nothing_internal() {
-    let mut marks = Marks::new();
-    let part = |marks: &mut Marks, field: &str, text: &str| Part {
-        field: marks.told(field.to_owned()),
-        text: marks.told(text.to_owned()),
+#[tokio::test]
+async fn non_empty_passages_route_directly_to_fidelity_audit_skipping_verbatim() -> Result<()> {
+    const VERBATIM: &str = "The harbour gate opens at first light.";
+    const PARAPHRASED: &str = "Tide tables are revised every spring.";
+    let content = vec![
+        json!({"kind": "teaching", "body": VERBATIM}),
+        json!({"kind": "teaching", "body": PARAPHRASED}),
+        json!({"kind": "teaching", "role": "reflection", "body": "Think about tides."}),
+    ];
+    let inventory = Inventory {
+        units: vec![
+            UnitClaims {
+                index: 0,
+                claims: vec![Claim {
+                    quote: VERBATIM.into(),
+                    statement: VERBATIM.into(),
+                }],
+                non_factual_reason: String::new(),
+            },
+            UnitClaims {
+                index: 1,
+                claims: vec![Claim {
+                    quote: PARAPHRASED.into(),
+                    statement: "Every spring, tide tables are updated.".into(),
+                }],
+                non_factual_reason: String::new(),
+            },
+            UnitClaims {
+                index: 2,
+                claims: vec![],
+                non_factual_reason: "Reflection prompt only.".into(),
+            },
+        ],
     };
-    let input = Input {
-        unit: marks.internal(123_456_789_u64),
-        kind: Some(marks.told("assessment".to_owned())),
-        correct_index: Some(marks.told(1_u64)),
-        check_role: Some(marks.told("A check names misconceptions as wrong.".to_owned())),
-        context: vec![part(&mut marks, "/options/0", "The kiln glows at dusk.")],
-        context_role: Some(marks.told("Options are read, never answered.".to_owned())),
-        passages: vec![Passage {
-            id: marks.reference("unit-9-passage-0".to_owned()),
-            field: marks.told("/explanation".to_owned()),
-            text: marks.told("Harbour gates open at first light.".to_owned()),
-        }],
-        section: vec![part(
-            &mut marks,
-            "/rationales/0",
-            "Tide tables are revised each spring.",
-        )],
-        claims: vec![Claim {
-            id: marks.reference("unit-9-claim-0".to_owned()),
-            statement: marks.told("The harbour gate opens at dawn.".to_owned()),
-        }],
-        non_factual_reason: marks.told("The kiln rota is a label.".to_owned()),
-    };
-    holds::<CoverageMapping>(&input, &marks);
-}
 
-#[test]
-fn the_mapping_schema_bounds_no_text_but_a_blank() {
-    let unit = unit(0, &[GATE, ROTA], &[GATE]);
-    let passages = passages_of(&unit);
-    let input = Input::of(&unit, &passages.iter().collect::<Vec<_>>());
-    let schema = schema_of::<CoverageMapping>(&input, Held::Enums).unwrap();
-    let bounds = length_bounds(schema.as_json());
-    assert!(bounds.is_empty(), "{bounds:?}");
+    let complete_model = scripted_fidelity(|_, task| {
+        assert_eq!(task["targetPassage"]["id"], "unit-1-passage-0");
+        json!({"missingAssertions": [], "reason": "Represented."})
+    });
+    let audited = audit(&complete_model, &content, &inventory, None).await?;
+    assert!(audited.units.iter().all(|unit| unit.complete));
+    assert_eq!(structured_sent(&complete_model).len(), 1);
+
+    let gap_model = scripted_fidelity(|_, task| {
+        let sentence_id = task["targetPassage"]["sentences"][0]["id"].clone();
+        json!({
+            "missingAssertions": [{"sentenceId": sentence_id, "statement": PARAPHRASED}],
+            "reason": "The wording was weakened."
+        })
+    });
+    let gapped = audit(&gap_model, &content, &inventory, None).await?;
+    assert!(gapped.units[0].complete);
+    assert!(!gapped.units[1].complete);
+    assert_eq!(gapped.units[1].missing_assertions.len(), 1);
+    assert_eq!(
+        gapped.units[1].missing_assertions[0].passage_id,
+        "unit-1-passage-0"
+    );
+    assert!(gapped.units[2].complete);
+    assert_eq!(structured_sent(&gap_model).len(), 1);
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_saved_mapping_is_reused_and_one_for_other_passages_is_not() -> Result<()> {
+async fn saved_unit_coverage_is_reused_and_invalidated_when_section_or_claims_change() -> Result<()>
+{
+    const BODY: &str = "The harbour gate opens at first light.";
     let pool = crate::tests::pool().await?;
     let db = Database::new(pool.clone());
     let (repo, job, lesson) =
         crate::content_verification::tests::batch_scheduler_tests::setup(&db).await?;
-    let unit = unit(0, &[GATE, ROTA], &[GATE]);
-    let asking = || {
-        ScriptedModel::new().on_request::<CoverageMapping>(|sent, _| {
-            reply(scripted_decisions(&prompt_of(sent), by_text))
-        })
+    let content = vec![json!({"kind": "teaching", "body": BODY})];
+    let inventory = Inventory {
+        units: vec![UnitClaims {
+            index: 0,
+            claims: vec![Claim {
+                quote: BODY.into(),
+                statement: "At dawn, the harbour gate opens.".into(),
+            }],
+            non_factual_reason: String::new(),
+        }],
     };
+    let asking =
+        || scripted_fidelity(|_, _| json!({"missingAssertions": [], "reason": "Represented."}));
+
     let first = asking();
     crate::lesson_drafts::run(&db, &repo, &job, &lesson, async {
-        assert_eq!(judged(&first, &unit, None).await?, ids(0, &[0]));
-        assert_eq!(first.count::<CoverageMapping>(), 1);
+        let audited = audit(&first, &content, &inventory, None).await?;
+        assert!(audited.units[0].complete);
+        assert_eq!(structured_sent(&first).len(), 1);
         Ok(())
     })
     .await?;
+
     let silent = ScriptedModel::new();
     crate::lesson_drafts::run(&db, &repo, &job, &lesson, async {
-        assert_eq!(judged(&silent, &unit, None).await?, ids(0, &[0]));
-        assert_eq!(silent.count::<CoverageMapping>(), 0);
-        crate::lesson_drafts::record_checkpoint(
-            &checkpoints::mapping_key(&silent, &unit),
-            json!({"judged":["unit-9-passage-0"]}),
-        )
-        .await?;
-        let foreign = asking();
-        assert_eq!(judged(&foreign, &unit, None).await?, ids(0, &[0]));
-        assert_eq!(foreign.count::<CoverageMapping>(), 1);
-        let mut changed = unit.clone();
-        changed["passages"][0]["text"] = json!("The harbour gate opens at noon.");
-        let other = asking();
-        judged(&other, &changed, None).await?;
-        assert_eq!(other.count::<CoverageMapping>(), 1);
+        let reused = audit(&silent, &content, &inventory, None).await?;
+        assert!(reused.units[0].complete);
+        assert_eq!(structured_sent(&silent).len(), 0);
+
+        let changed_content =
+            vec![json!({"kind": "teaching", "body": "The harbour gate opens at noon."})];
+        let after_content = asking();
+        audit(&after_content, &changed_content, &inventory, None).await?;
+        assert_eq!(structured_sent(&after_content).len(), 1);
+
+        let mut changed_inventory = inventory.clone();
+        changed_inventory.units[0].claims[0].statement =
+            "The harbour gate opens at sunrise.".into();
+        let after_claims = asking();
+        audit(&after_claims, &content, &changed_inventory, None).await?;
+        assert_eq!(structured_sent(&after_claims).len(), 1);
         Ok(())
     })
     .await

@@ -265,10 +265,28 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
 
     // Background tasks use tokio::spawn - async state is on heap, not stack
 
-    // Reconcile stale downloads from previous app session
+    // Reconcile stale downloads synchronously before DownloadEventBridge starts
+    // so interrupted sessions are Paused and never race initial reconciliation.
     tracing::info!("Reconciling stale downloads from previous session...");
     let reconcile_repo = download_repository.clone();
     let reconcile_startup_ts = Utc::now();
+    match super::startup_reconciliation::reconcile_stale_downloads(
+        reconcile_repo.clone(),
+        reconcile_startup_ts,
+    )
+    .await
+    {
+        Ok(count) if count > 0 => {
+            tracing::info!("Reconciled {} stale download(s) on startup", count);
+        }
+        Ok(_) => {
+            tracing::debug!("No stale downloads to reconcile");
+        }
+        Err(e) => {
+            tracing::error!("Failed to reconcile stale downloads: {}", e);
+        }
+    }
+
     let model_repo_for_cleanup = Arc::new(
         crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository::new(
             container.database().clone(),
@@ -279,20 +297,8 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     let sweep_gate_for_cleanup = Arc::clone(&sweep_gate);
     background.spawn(async move {
         use super::startup_reconciliation::{
-            reconcile_orphaned_files, reconcile_orphaned_sessions, reconcile_stale_downloads,
+            reconcile_orphaned_files, reconcile_orphaned_sessions,
         };
-
-        match reconcile_stale_downloads(reconcile_repo.clone(), reconcile_startup_ts).await {
-            Ok(count) if count > 0 => {
-                tracing::info!("Reconciled {} stale download(s) on startup", count);
-            }
-            Ok(_) => {
-                tracing::debug!("No stale downloads to reconcile");
-            }
-            Err(e) => {
-                tracing::error!("Failed to reconcile stale downloads: {}", e);
-            }
-        }
 
         match reconcile_orphaned_sessions(reconcile_repo, model_repo_for_cleanup.clone()).await {
             Ok(count) if count > 0 => {
@@ -488,10 +494,10 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
         crate::features::download::commands::DownloadCommandState::new(download_manager);
     tracing::info!("Download management initialized");
 
-    // Resume any queued sessions left in pending state from earlier attempts.
-    if let Err(e) = download_state.manager.process_pending_queue().await {
-        tracing::warn!("Failed to process pending download queue on startup: {}", e);
-    }
+    // Nothing to drain here: the queue lives only in memory. Startup
+    // reconciliation pauses sessions a previous run left queued or
+    // mid-transfer so the user can resume them, and the loop above promotes
+    // whatever is queued from now on.
 
     let embedding_state = crate::features::embedding::commands::EmbeddingState::new(
         container.embedding_runtime.clone(),

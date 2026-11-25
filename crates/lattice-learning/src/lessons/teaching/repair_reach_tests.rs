@@ -3,21 +3,15 @@
 use super::*;
 use crate::review_findings::PlanCheck;
 
-fn planned_at(site: FindingSite) -> ReviewFinding {
+const PLANNED: &str = "plan/planned/action-1";
+
+fn planned_at_section_1() -> ReviewFinding {
     ReviewFinding::plan(
         PlanCheck::Planned,
         "action-1",
-        site,
+        FindingSite::Section(1),
         "Alpha holds the line.",
     )
-}
-
-fn planned_at_section_1() -> ReviewFinding {
-    planned_at(FindingSite::Section(1))
-}
-
-fn planned_without_a_section() -> ReviewFinding {
-    planned_at(FindingSite::Lesson)
 }
 
 fn used_at_section_1() -> ReviewFinding {
@@ -38,8 +32,8 @@ fn refuses(reach: &Reach, part: &str) -> Option<String> {
 }
 
 #[test]
-fn a_planned_item_with_no_section_to_fit_may_be_added_in_any_part() {
-    let reach = Reach::of(&[&planned_without_a_section()]);
+fn a_planned_item_may_be_added_in_another_part() {
+    let reach = Reach::of(&[&planned_at_section_1()]);
     assert_eq!(reach, Reach::Anywhere);
     for part in ["/blocks/3", "/blocks/1", "/questions/0"] {
         assert_eq!(refuses(&reach, part), None, "{part}");
@@ -105,15 +99,15 @@ fn findings_that_share_an_id_each_open_their_own_part() {
 }
 
 #[test]
-fn a_planned_item_finding_with_no_section_offers_the_repair_no_part() {
-    let finding = planned_without_a_section();
+fn a_planned_item_finding_offers_the_repair_no_part() {
+    let finding = planned_at_section_1();
     let entry = Issue {
         finding: &finding,
         last_attempt: None,
     }
     .entry();
     assert!(entry["part"].is_null());
-    assert!(entry.get("id").is_none());
+    assert_eq!(entry["id"], PLANNED);
 }
 
 #[test]
@@ -128,12 +122,8 @@ fn a_finding_with_a_part_still_offers_it() {
 }
 
 #[test]
-fn only_a_finding_about_the_whole_material_mends_anywhere() {
-    assert!(planned_without_a_section().mends_anywhere());
-    assert!(!planned_at_section_1().mends_anywhere());
-    assert!(planned_without_a_section().lacks_its_section());
-    assert!(!planned_at_section_1().lacks_its_section());
-    assert!(!used_at_section_1().lacks_its_section());
+fn only_a_finding_about_the_whole_material_or_a_missing_item_mends_anywhere() {
+    assert!(planned_at_section_1().mends_anywhere());
     assert!(ReviewFinding::reviewer(1, None, "Gamma holds the line.").mends_anywhere());
     assert!(
         ReviewFinding::reviewer(2, Some(FindingSite::Lesson), "Gamma holds the line.")
@@ -247,43 +237,10 @@ fn the_rewrite_lists_one_entry_for_each_finding_sent() {
     assert_eq!(
         rewrite_prompt(&sent, Value::Null)["issuesToFix"],
         json!([
-            {"part":"/blocks/0","also":null,"passage":"Passage one.","note":"note one","lastAttempt":"it named no finding"},
-            {"part":"/questions/1","also":null,"passage":"Whole sentence.","note":"note two","lastAttempt":null},
-            {"part":"/blocks/1","also":"/blocks/3","passage":null,"note":"note three","lastAttempt":null},
-            {"part":null,"also":null,"passage":null,"note":"note four","lastAttempt":null}
+            {"id":"reviewer/1","part":"/blocks/0","also":null,"passage":"Passage one.","note":"note one","lastAttempt":"it named no finding"},
+            {"id":"reviewer/4","part":"/questions/1","also":null,"passage":"Whole sentence.","note":"note two","lastAttempt":null},
+            {"id":"reviewer/3","part":"/blocks/1","also":"/blocks/3","passage":null,"note":"note three","lastAttempt":null},
+            {"id":"reviewer/0","part":null,"also":null,"passage":null,"note":"note four","lastAttempt":null}
         ])
-    );
-}
-
-#[test]
-fn a_planned_item_that_fits_a_section_is_mended_in_that_section_only() {
-    let reach = Reach::of(&[&planned_at_section_1()]);
-    assert_eq!(reach, Reach::Parts(vec!["/blocks/1".into()]));
-}
-
-#[test]
-fn a_planned_item_that_belongs_in_some_sections_may_be_added_in_those_only() {
-    let mut finding = planned_without_a_section();
-    finding.within = vec![FindingSite::Section(1), FindingSite::Section(3)];
-    let reach = Reach::of(&[&finding]);
-    assert_eq!(refuses(&reach, "/blocks/1"), None);
-    assert_eq!(refuses(&reach, "/blocks/3"), None);
-    assert!(refuses(&reach, "/blocks/0").is_some());
-    assert!(refuses(&reach, "/questions/0").is_some());
-}
-
-#[test]
-fn a_planned_item_that_belongs_in_some_sections_offers_the_repair_those_parts() {
-    let mut finding = planned_without_a_section();
-    finding.within = vec![FindingSite::Section(1), FindingSite::Section(3)];
-    let entry = Issue {
-        finding: &finding,
-        last_attempt: None,
-    }
-    .entry();
-    assert!(entry["part"].is_null());
-    assert_eq!(
-        entry["within"],
-        serde_json::json!(["/blocks/1", "/blocks/3"])
     );
 }

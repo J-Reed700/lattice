@@ -41,6 +41,7 @@ fn local_client(
         context_window: 8192,
         stall_timeout: Duration::from_secs(30),
         supports_tools: true,
+        supports_thinking: true,
         model_thinking,
         prefill_guard: true,
         vision: None,
@@ -124,6 +125,7 @@ fn a_thinking_request_turns_it_on_and_passes_only_a_real_effort_through() {
     let body = thinking(None);
     assert_eq!(body["chat_template_kwargs"]["enable_thinking"], true);
     assert!(body.get("reasoning_effort").is_none());
+    assert_eq!(thinking(Some("low"))["reasoning_effort"], "low");
     assert_eq!(thinking(Some("high"))["reasoning_effort"], "high");
     assert!(thinking(Some("none")).get("reasoning_effort").is_none());
 }
@@ -244,24 +246,37 @@ fn each_mode_samples_with_its_own_profile_unless_the_caller_overrides() {
         "{thinking}"
     );
 
-    // A verdict stays greedy whichever mode it runs in, and a presence
-    // penalty would push it off a label word the prompt just listed.
-    for mode in [ThinkingMode::Off, ThinkingMode::On] {
-        let greedy = body_of(
-            &client,
-            &legacy::completion(legacy::Completion {
-                input: user("Supported or not?"),
-                thinking: mode,
-                sampling: Some(SamplingOverride::deterministic()),
-                ..Default::default()
-            }),
-        )
-        .unwrap();
-        assert!(
-            close(sampling(&greedy), (0.0, 1.0, 1, 0.0, 1.0)),
-            "{greedy}"
-        );
-    }
+    // A non-thinking verdict stays greedy with no presence penalty, while
+    // thinking mode suppresses greedy deterministic decoding to prevent
+    // `<think>` repetition loops.
+    let greedy_off = body_of(
+        &client,
+        &legacy::completion(legacy::Completion {
+            input: user("Supported or not?"),
+            thinking: ThinkingMode::Off,
+            sampling: Some(SamplingOverride::deterministic()),
+            ..Default::default()
+        }),
+    )
+    .unwrap();
+    assert!(
+        close(sampling(&greedy_off), (0.0, 1.0, 1, 0.0, 1.0)),
+        "{greedy_off}"
+    );
+    let greedy_on = body_of(
+        &client,
+        &legacy::completion(legacy::Completion {
+            input: user("Supported or not?"),
+            thinking: ThinkingMode::On,
+            sampling: Some(SamplingOverride::deterministic()),
+            ..Default::default()
+        }),
+    )
+    .unwrap();
+    assert!(
+        close(sampling(&greedy_on), (1.0, 0.95, 20, 1.5, 1.0)),
+        "{greedy_on}"
+    );
 
     // An override sets only what it names.
     let partial = body_of(
@@ -521,4 +536,75 @@ fn a_schema_of_handles_is_enforced_and_sent_as_written() {
         body["response_format"]["json_schema"]["schema"],
         *schema.as_json()
     );
+}
+
+#[test]
+fn non_thinking_sampling_applies_only_when_resolved_thinking_is_off() {
+    let request = legacy::completion(legacy::Completion {
+        input: user("Extract structured memories"),
+        thinking: ThinkingMode::On,
+        non_thinking_sampling: Some(SamplingOverride::deterministic()),
+        ..Default::default()
+    });
+
+    // When the model thinks, non_thinking_sampling yields to its thinking profile.
+    let thinking_client = local_client(ThinkingPolicy::PerRequest, ThinkingOverrideDto::Auto);
+    let thinking_body = body_of(&thinking_client, &request).unwrap();
+    assert!(
+        close(sampling(&thinking_body), (1.0, 0.95, 20, 1.5, 1.0)),
+        "{thinking_body}"
+    );
+
+    // When the user turns thinking off or the model cannot think, the request
+    // falls back to deterministic decoding instead of chat temperature (0.7).
+    for client in [
+        local_client(ThinkingPolicy::PerRequest, ThinkingOverrideDto::Off),
+        local_client(ThinkingPolicy::AlwaysOff, ThinkingOverrideDto::Auto),
+    ] {
+        let non_thinking_body = body_of(&client, &request).unwrap();
+        assert!(
+            close(sampling(&non_thinking_body), (0.0, 1.0, 1, 0.0, 1.0)),
+            "{non_thinking_body}"
+        );
+    }
+}
+
+#[test]
+fn decoder_flushes_an_unterminated_final_sse_frame_on_eof() {
+    let mut decoder = streaming::Decoder::for_completion();
+    decoder
+        .push(
+            br#"data: {"choices":[{"delta":{"content":"hello"},"finish_reason":null}]}
+data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":3}}"#,
+        )
+        .unwrap();
+    let response = decoder.into_response().unwrap();
+    assert_eq!(response.text, "hello");
+    assert_eq!(response.finish_reason, "stop");
+    assert_eq!(response.output_tokens, 3);
+}
+
+#[test]
+fn initial_requests_omit_dry_sampling_so_verbatim_quotes_stay_intact() {
+    let client = client();
+    let sampled = body_of(
+        &client,
+        &legacy::completion(legacy::Completion {
+            input: user("Audit this passage"),
+            ..Default::default()
+        }),
+    )
+    .unwrap();
+    assert!(sampled.get("dry_multiplier").is_none());
+
+    let deterministic = body_of(
+        &client,
+        &legacy::completion(legacy::Completion {
+            input: user("Verify this claim"),
+            sampling: Some(SamplingOverride::deterministic()),
+            ..Default::default()
+        }),
+    )
+    .unwrap();
+    assert!(deterministic.get("dry_multiplier").is_none());
 }

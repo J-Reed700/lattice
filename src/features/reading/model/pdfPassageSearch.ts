@@ -19,6 +19,7 @@ interface PdfTextItem {
 
 interface PdfPageLike {
   getTextContent(): Promise<{ items: PdfTextItem[] }>;
+  cleanup?: () => void;
 }
 
 interface PdfDocumentLike {
@@ -141,16 +142,19 @@ export async function findPassagePage(
   for (const pageNumber of pages) {
     if (options.signal?.aborted) return null;
 
+    let page: PdfPageLike | null = null;
     let pageText: string;
     let items: PdfTextItem[];
     try {
-      const page = await pdf.getPage(pageNumber);
+      page = await pdf.getPage(pageNumber);
       const content = await page.getTextContent();
       items = content.items;
       pageText = items.map((item) => item.str ?? '').join(' ');
     } catch {
       // A page that will not render is a page we cannot search. Keep going.
       continue;
+    } finally {
+      page?.cleanup?.();
     }
 
     const normalized = normalizeForMatch(pageText);

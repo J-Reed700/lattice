@@ -1,7 +1,7 @@
 import { learnerError } from '@/lib/errorHandling';
 
 /** What went wrong in one plain sentence from the error's code, with the backend's own text under Details. */
-export function PlainError({ error, className = 'mt-4 rounded-xl bg-rose-500/10 p-4 text-sm text-rose-700' }: { error: unknown; className?: string }) {
+export function PlainError({ error, className = 'mt-4 rounded-xl bg-danger-muted p-4 text-sm text-danger-fg' }: { error: unknown; className?: string }) {
   const { headline, raw } = learnerError(error);
   return <div role="alert" className={className}>
     <p>{headline}</p>

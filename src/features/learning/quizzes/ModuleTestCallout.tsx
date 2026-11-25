@@ -14,7 +14,7 @@ export function ModuleTestCallout({ program, module, onOpenForm, onShowTest }: {
   const words = status ? quizStatusWords(status) : null;
   const open = () => (status?.activeFormId ? onOpenForm(status.activeFormId) : onShowTest());
   return <button type="button" onClick={open} title="Take the module test in any order; it covers the lessons prepared so far."
-    className="min-h-11 rounded-full px-3 text-left text-text-secondary hover:bg-background hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent">
+    className="min-h-11 rounded-full px-3 text-left text-text-secondary hover:bg-bg hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent">
     <span className="mr-1.5 text-xs font-semibold tabular-nums text-accent">03</span>Check · Module test
     {words && <span className="ml-1.5 text-xs text-text-muted">· {words.label}</span>} →
   </button>;

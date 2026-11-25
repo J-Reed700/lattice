@@ -42,11 +42,13 @@ fn hf_row(repo: &str, file: &str, downloads: u64) -> DownloadableHfModel {
 
 #[test]
 fn a_catalog_repository_row_becomes_the_catalog_entry() {
-    let mut models = vec![
-        hf_row("unsloth/Qwen3.5-9B-GGUF", "Qwen3.5-9B-Q4_K_M.gguf", 1_000),
-        hf_row("someone/Other-GGUF", "Other-Q4_K_M.gguf", 5),
-    ];
-    merge_curated_chat_models(&mut models, "qwen3.5 9b");
+    let models = catalog_listing(
+        vec![vec![
+            hf_row("unsloth/Qwen3.5-9B-GGUF", "Qwen3.5-9B-Q4_K_M.gguf", 1_000),
+            hf_row("someone/Other-GGUF", "Other-Q4_K_M.gguf", 5),
+        ]],
+        curated_models_matching("qwen3.5 9b"),
+    );
 
     let catalog: Vec<_> = models
         .iter()
@@ -69,14 +71,17 @@ fn a_catalog_repository_row_becomes_the_catalog_entry() {
 }
 
 #[test]
-fn the_catalog_overview_lists_every_chat_entry_once() {
-    let mut models = vec![hf_row(
-        "unsloth/Qwen3.6-35B-A3B-GGUF",
-        "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
-        50,
-    )];
-    merge_curated_chat_models(&mut models, "gguf");
-    let catalog = lattice_core::domain::models::curated::get_curated_llm_models();
+fn the_catalog_overview_lists_every_catalog_entry_once() {
+    let models = catalog_listing(
+        vec![vec![hf_row(
+            "unsloth/Qwen3.6-35B-A3B-GGUF",
+            "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+            50,
+        )]],
+        listed_curated_models(),
+    );
+    let mut catalog = lattice_core::domain::models::curated::get_curated_llm_models();
+    catalog.extend(lattice_core::domain::models::curated::get_curated_embedding_models());
     assert_eq!(models.len(), catalog.len());
     for model in catalog {
         assert_eq!(
@@ -89,6 +94,126 @@ fn the_catalog_overview_lists_every_chat_entry_once() {
             model.id
         );
     }
+}
+
+/// A runnable Hub embedding row as the adapter produces it.
+fn hub_embedding_row(repo: &str, downloads: u64) -> DownloadableHfModel {
+    let mut model = lattice_core::domain::models::curated::get_curated_embedding_models()
+        .into_iter()
+        .next()
+        .expect("catalog has an embedding entry");
+    model.id = format!("hf::{repo}");
+    model.name = repo.into();
+    model.model_id = Some(repo.into());
+    model.files.clear();
+    model.default_filename = Some("model-f16.gguf".into());
+    model.download_url = Some(format!("https://huggingface.co/{repo}"));
+    model.embedding_compatibility = Some(
+        lattice_core::domain::models::selection::EmbeddingCompatibility::Compatible {
+            architecture: "bert".into(),
+        },
+    );
+    DownloadableHfModel {
+        model,
+        downloads,
+        likes: 7,
+    }
+}
+
+/// The Hub's Qwen embedding repository has no GGUF, so a search drops its row.
+#[test]
+fn a_search_for_qwen_finds_the_catalog_embedding_model() {
+    let models = catalog_listing(vec![vec![]], curated_models_matching("Qwen"));
+    let ids: Vec<_> = models.iter().map(|entry| entry.model.id.as_str()).collect();
+    assert!(
+        models
+            .iter()
+            .any(|entry| entry.model.id == "qwen3-embedding-0.6b"
+                && entry.model.category == ModelCategory::Embedding),
+        "{ids:?}"
+    );
+}
+
+#[test]
+fn the_embedding_repository_row_becomes_the_catalog_entry() {
+    let models = catalog_listing(
+        vec![
+            vec![hf_row("someone/Other-GGUF", "Other-Q4_K_M.gguf", 5)],
+            vec![
+                hub_embedding_row("BAAI/bge-m3", 9_000_000),
+                hub_embedding_row("Qwen/Qwen3-Embedding-0.6B", 8_138_659),
+            ],
+        ],
+        listed_curated_models(),
+    );
+
+    let qwen: Vec<_> = models
+        .iter()
+        .filter(|entry| {
+            entry
+                .model
+                .model_id
+                .as_deref()
+                .is_some_and(|repo| repo.eq_ignore_ascii_case("Qwen/Qwen3-Embedding-0.6B"))
+        })
+        .collect();
+    assert_eq!(qwen.len(), 1, "one row for the repository");
+    assert_eq!(
+        qwen[0].model.id, "qwen3-embedding-0.6b",
+        "the entry first run installs"
+    );
+    assert_eq!(
+        qwen[0].downloads, 8_138_659,
+        "keeps the repository's popularity"
+    );
+    assert!(models
+        .iter()
+        .any(|entry| entry.model.id == "hf::BAAI/bge-m3"));
+}
+
+#[test]
+fn the_listing_leaves_out_models_lattice_cannot_run() {
+    let mut no_file = hf_row("b/NoFile-GGUF", "unused.gguf", 20);
+    no_file.model.default_filename = None;
+    no_file.model.files.clear();
+    let mut no_tokenizer = hub_embedding_row("someone/bge-small-gguf", 50);
+    no_tokenizer.model.embedding_compatibility = Some(
+        lattice_core::domain::models::selection::EmbeddingCompatibility::Incompatible {
+            architecture: "bert".into(),
+            reason: "no tokenizer.json".into(),
+        },
+    );
+    let models = catalog_listing(
+        vec![vec![
+            hf_row("a/Chat-GGUF", "Chat-Q4_K_M.gguf", 10),
+            no_file,
+            no_tokenizer,
+        ]],
+        vec![],
+    );
+    let ids: Vec<_> = models.iter().map(|entry| entry.model.id.as_str()).collect();
+    assert_eq!(ids, ["hf::a/Chat-GGUF::Chat-Q4_K_M.gguf"]);
+}
+
+#[test]
+fn the_embedding_gguf_repository_row_becomes_the_catalog_entry() {
+    let mut row = hub_embedding_row("Qwen/Qwen3-Embedding-0.6B-GGUF", 173_053);
+    row.model.embedding_compatibility = Some(
+        lattice_core::domain::models::selection::EmbeddingCompatibility::Incompatible {
+            architecture: "qwen3".into(),
+            reason: "no tokenizer.json".into(),
+        },
+    );
+    let models = catalog_listing(vec![vec![row]], listed_curated_models());
+    let entries: Vec<_> = models
+        .iter()
+        .filter(|entry| entry.model.id == "qwen3-embedding-0.6b")
+        .collect();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].downloads, 173_053);
+    assert!(models
+        .iter()
+        .all(|entry| !entry.model.id.contains("Qwen3-Embedding-0.6B-GGUF")));
 }
 
 #[test]

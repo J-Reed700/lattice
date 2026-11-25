@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { Button } from '@/components/ui/button';
 import {
+  Button,
   Dialog,
   DialogContent,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
+  Textarea,
+} from '@/components/ui';
 import { useWebImport } from '@/features/files/hooks/useWebImport';
 import { useQuickCapture } from '@/features/journal/hooks/useQuickCapture';
 import { toast } from '@/stores/toastStore';
@@ -54,33 +55,47 @@ export function QuickCaptureDialog({
     const content = text.trim();
     if (!content || isBusy) return;
     setIsBusy(true);
-    const result = await quickCapture(content);
-    setIsBusy(false);
-    if (result.ok) {
-      const { noteId, noteTitle } = result.data;
-      // The toast names the page and, where we can navigate, opens it.
-      toast.success(
-        `Saved to ${noteTitle}`,
-        onOpenPage ? { action: { label: 'Open', onClick: () => onOpenPage(noteId) } } : undefined,
-      );
-      setText('');
-      onClose();
-      return;
+    try {
+      const result = await quickCapture(content);
+      if (result.ok) {
+        const { noteId, noteTitle } = result.data;
+        // The toast names the page and, where we can navigate, opens it.
+        toast.success(
+          `Saved to ${noteTitle}`,
+          onOpenPage ? { action: { label: 'Open', onClick: () => onOpenPage(noteId) } } : undefined,
+        );
+        setText('');
+        onClose();
+        return;
+      }
+      toast.error("Couldn't save that", { message: result.error });
+    } catch (error) {
+      toast.error("Couldn't save that", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setIsBusy(false);
     }
-    toast.error("Couldn't save that", { message: result.error });
   };
 
   const handleImportUrl = async () => {
     if (!importUrl || isBusy) return;
     setIsBusy(true);
-    const result = await importPage(importUrl.href);
-    setIsBusy(false);
-    if (result.ok) {
-      toast.success(`Importing ${importUrl.host}`);
-      onClose();
-      return;
+    try {
+      const result = await importPage(importUrl.href);
+      if (result.ok) {
+        toast.success(`Importing ${importUrl.host}`);
+        onClose();
+        return;
+      }
+      toast.error(`Couldn't import ${importUrl.host}`, { message: result.error });
+    } catch (error) {
+      toast.error(`Couldn't import ${importUrl.host}`, {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setIsBusy(false);
     }
-    toast.error(`Couldn't import ${importUrl.host}`, { message: result.error });
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -102,15 +117,15 @@ export function QuickCaptureDialog({
           <DialogTitle>Quick capture</DialogTitle>
         </DialogHeader>
 
-        <textarea
+        <Textarea
           ref={textareaRef}
           value={text}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={handleKeyDown}
           rows={5}
+          resize="none"
           autoFocus
           placeholder="What do you want to keep?"
-          className="w-full resize-none rounded-sm border border-border-default bg-bg px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:ring-2 focus:ring-ring"
         />
 
         {importUrl && text.trim() === '' ? (

@@ -33,9 +33,16 @@ let listening: Promise<UnlistenFn> | null = null;
  */
 export function onJobStatus(subscriber: JobSubscriber): () => void {
   subscribers.add(subscriber);
-  listening ??= listen<JobDto>(JOB_STATUS_EVENT, (event) => {
-    for (const notify of [...subscribers]) notify(event.payload);
-  }).catch(() => () => undefined);
+  if (!listening) {
+    const promise = listen<JobDto>(JOB_STATUS_EVENT, (event) => {
+      for (const notify of [...subscribers]) notify(event.payload);
+    }).catch((err: unknown) => {
+      if (listening === promise) listening = null;
+      console.error('[jobs] Failed to subscribe to job status events:', err);
+      return () => undefined;
+    });
+    listening = promise;
+  }
   return () => {
     subscribers.delete(subscriber);
     if (subscribers.size > 0 || !listening) return;
@@ -60,13 +67,29 @@ export const jobsQueryOptions = (kinds: readonly string[]) =>
     staleTime: Infinity,
   });
 
-/** Replaces `job` in `jobs` by id, or appends it. */
+/** The copy of a job with the higher revision; the incoming one on a tie. */
+export function newerJob(existing: JobDto, incoming: JobDto): JobDto {
+  return incoming.revision >= existing.revision ? incoming : existing;
+}
+
+/** Replaces `job` monotonically in `jobs` by id, or appends it. */
 export function upsertJob(jobs: readonly JobDto[], job: JobDto): JobDto[] {
   const at = jobs.findIndex((existing) => existing.id === job.id);
   if (at < 0) return [...jobs, job];
+  const existing = jobs[at]!;
+  const chosen = newerJob(existing, job);
+  if (chosen === existing) return [...jobs];
   const next = [...jobs];
-  next[at] = job;
+  next[at] = chosen;
   return next;
+}
+
+function mergeJobs(cached: readonly JobDto[], snapshot: readonly JobDto[]): JobDto[] {
+  let merged: JobDto[] = [...snapshot];
+  for (const job of cached) {
+    merged = upsertJob(merged, job);
+  }
+  return merged;
 }
 
 /**
@@ -82,5 +105,13 @@ export function useJobs(kinds: readonly string[]) {
     if (!wanted.current.has(job.kind)) return;
     client.setQueryData<JobDto[]>(key, (jobs) => upsertJob(jobs ?? [], job));
   });
-  return useQuery(jobsQueryOptions(kinds));
+  const base = jobsQueryOptions(kinds);
+  return useQuery({
+    ...base,
+    queryFn: async (ctx) => {
+      const snapshot = await base.queryFn!(ctx);
+      const cached = client.getQueryData<JobDto[]>(key) ?? [];
+      return mergeJobs(cached, snapshot);
+    },
+  });
 }

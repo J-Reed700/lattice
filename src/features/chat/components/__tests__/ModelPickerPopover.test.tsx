@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ModelPickerPopover } from '@/features/chat/components/ModelPickerPopover';
-import type { ChatModelChoice, LoadedModelDto } from '@/lib/bindings';
+import type { ActiveModels, ChatModelChoice, LoadedModelDto } from '@/lib/bindings';
 import { makeAppSettings } from '@/tests/fixtures/appSettings';
 import type { DownloadedModel } from '@/types/downloadedModels';
 import type { CloudModelCatalogs, ChatModelOption } from '@/utils/chatModelSelection';
@@ -21,6 +21,15 @@ const appSettings = vi.hoisted(() => ({
 vi.mock('@/features/model/hooks/useDownloadedModels', () => ({
   useDownloadedModels: () => ({ downloadedModels: models.current }),
 }));
+
+const active = vi.hoisted(() => ({ current: null as ActiveModels | null }));
+vi.mock('@/features/model/hooks/useActiveModels', () => ({
+  useActiveModels: () => ({ activeModels: active.current }),
+}));
+
+const activeWith = (patch: Partial<ActiveModels>): ActiveModels => ({
+  chat: [], chat_unset: null, utility: [], llama_cpp: null, ollama: null, ollama_utility_tag: null, ...patch,
+});
 
 vi.mock('@/features/settings/hooks/useSettingsQuery', () => ({
   useSettingsQuery: () => ({ data: appSettings.current }),
@@ -62,6 +71,7 @@ describe('ModelPickerPopover', () => {
   beforeEach(() => {
     cloud.catalogs = {};
     appSettings.current = undefined;
+    active.current = null;
     models.current = [];
     loaded.current = [];
   });
@@ -101,6 +111,7 @@ describe('ModelPickerPopover', () => {
         backend: 'ollama',
       }),
     ];
+    active.current = activeWith({ chat: [{ kind: 'local', model_id: 'llama-3.2-3b' }] });
     await open();
 
     expect(screen.getByText('Local')).toBeInTheDocument();
@@ -136,6 +147,8 @@ describe('ModelPickerPopover', () => {
     };
     s.llm.ollamaConfigured = false;
     appSettings.current = s;
+    const served = { kind: 'llama_cpp', model: '/models/Qwen3.8-27B-Q5_K_S.gguf' } as const;
+    active.current = activeWith({ chat: [served], llama_cpp: served });
 
     models.current = [
       model({
@@ -209,9 +222,36 @@ describe('ModelPickerPopover', () => {
     await userEvent.click(screen.getByText('Model'));
 
     expect(screen.getByRole('menuitemradio', { name: /^Use default/ })).toHaveAttribute('aria-checked', 'false');
-    expect(screen.getByText('No chat model is selected in Settings → Downloaded.')).toBeInTheDocument();
     expect(screen.getByRole('menuitemradio', { name: /^Ornith-1\.5-9B/ })).toHaveAttribute('aria-checked', 'true');
     expect(screen.getByRole('menuitemradio', { name: /^Llama 3\.2 3B/ })).toHaveAttribute('aria-checked', 'false');
+  });
+
+  const openWithDefaultRow = async () => {
+    models.current = [model({})];
+    render(
+      <ModelPickerPopover
+        choice={{ kind: 'explicit', model: { kind: 'local', model_id: 'llama-3.2-3b' } }}
+        defaultOption={null}
+        onUseDefault={vi.fn()}
+        onSelect={vi.fn()}
+      >
+        <button type="button">Model</button>
+      </ModelPickerPopover>
+    );
+    await userEvent.click(screen.getByText('Model'));
+  };
+
+  it("gives the backend's reason under Use default when it runs a default chat on nothing", async () => {
+    active.current = activeWith({ chat_unset: 'No Ollama chat model is set in Settings → Chat' });
+    await openWithDefaultRow();
+    expect(screen.getByRole('menuitemradio', { name: /^Use default/ })).toHaveTextContent('No Ollama chat model is set in Settings → Chat');
+    expect(screen.queryByText(/Settings → Downloaded/)).not.toBeInTheDocument();
+  });
+
+  it('claims no reason under Use default before the backend has answered', async () => {
+    await openWithDefaultRow();
+    expect(screen.getByRole('menuitemradio', { name: /^Use default/ })).toHaveTextContent('Follows the chat model set in Settings');
+    expect(screen.queryByText(/Settings → Downloaded/)).not.toBeInTheDocument();
   });
 
   it('moves between rows with the arrow keys, Home and End', async () => {
@@ -253,6 +293,7 @@ describe('ModelPickerPopover', () => {
     s.llm.llamaCpp = { url: 'http://127.0.0.1:8080', model: 'served-model', authHeaderName: '' };
     s.llm.visionDeclarations = { 'llamacpp:served-model': { enabled: true, geometry: { kind: 'fixed', side: 896, tokens: 256 } } };
     appSettings.current = s;
+    active.current = activeWith({ llama_cpp: { kind: 'llama_cpp', model: 'served-model' } });
     models.current = [model({ id: 'a' })];
     await open();
 

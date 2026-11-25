@@ -53,11 +53,13 @@ Provide a modern, low-latency, citation-grounded architecture for Lattice that:
 
 ## Where It Lives
 
-- Router: `crates/lattice-desktop/src/infrastructure/services/router.rs` (`RouterService`,
+- Router: `crates/lattice-desktop/src/features/conversation/chat/router.rs` (`RouterService`,
   actions `use_last_document` / `new_search` / `clarify`).
-- Gate: `resolve_router_decision` in
-  `crates/lattice-desktop/src/features/conversation/chat.rs`. Besides the cases above, it
-  skips the router for closed-book turns, forced web search, and Explorer turns
+- Gate: `may_reuse_recent_document` and `router_has_a_choice` in
+  `crates/lattice-desktop/src/features/conversation/chat/routing.rs`, checked both
+  before the router model is asked and before a turn marked as a follow-up goes
+  back to its recent document. Besides the cases above, they skip the router for
+  closed-book turns, forced web search, and Explorer turns
   the user did not point at the library. A turn's record keeps the router's
   decision only when the router actually ran (`chat/turn_record.rs`).
 - Settings: `llm.router` (`RouterSettingsDto` in

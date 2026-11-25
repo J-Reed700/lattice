@@ -27,7 +27,8 @@ export namespace EventSchemas {
       filename: z.string(),
       bytesDownloaded: z.number(),
       totalBytes: z.number(),
-      status: z.enum(['pending', 'downloading', 'completed', 'error']),
+      status: z.enum(['pending', 'downloading', 'paused', 'completed', 'error', 'cancelled']),
+      errorMessage: z.string().nullable().optional(),
     });
 
     export const Single = z.object({
@@ -40,6 +41,11 @@ export namespace EventSchemas {
       percentage: z.number().nullable(),
       etaSeconds: z.number().nullable(),
       status: z.enum(['pending', 'downloading', 'paused', 'completed', 'error', 'cancelled']),
+      // Absent from older payloads.
+      destination: z.string().optional(),
+      modelId: z.string().nullable().optional(),
+      modelName: z.string().nullable().optional(),
+      errorMessage: z.string().nullable().optional(),
     });
 
     export const Batch = z.object({
@@ -86,7 +92,10 @@ export namespace EventSchemas {
       role: z.enum(['chat', 'utility', 'embedding', 'learning']),
       phase: z.enum(['started', 'ready', 'skipped', 'failed']),
       error: z.string().nullable().optional(),
+      degraded: z.string().nullable().optional(),
+      revision: z.number(),
     });
+    export type WarmupStatus = z.infer<typeof WarmupStatus>;
   }
 
   export namespace Vault {
@@ -101,6 +110,26 @@ export namespace EventSchemas {
     export const NoteImported = z.object({
       noteId: z.string(),
     });
+
+    /// A note changed in Lattice and outside it at once; both versions were kept.
+    export const NoteConflict = z.discriminatedUnion('kind', [
+      z.object({
+        kind: z.literal('keptCopy'),
+        id: z.string(),
+        noteId: z.string(),
+        noteTitle: z.string(),
+        copyId: z.string(),
+        copyTitle: z.string(),
+      }),
+      z.object({
+        kind: z.literal('setAside'),
+        id: z.string(),
+        noteId: z.string(),
+        noteTitle: z.string(),
+        setAsidePath: z.string(),
+      }),
+    ]);
+    export type NoteConflict = z.infer<typeof NoteConflict>;
   }
 
   export namespace WebPageSnapshot {
@@ -155,7 +184,7 @@ export namespace TauriEvents {
     /**
      * Per-file status for multi-file downloads
      */
-    export type FileStatus = 'pending' | 'downloading' | 'completed' | 'error';
+    export type FileStatus = 'pending' | 'downloading' | 'paused' | 'completed' | 'error' | 'cancelled';
 
     /**
      * Per-file progress information for batch downloads
@@ -166,6 +195,7 @@ export namespace TauriEvents {
       bytesDownloaded: number;
       totalBytes: number;
       status: FileStatus;
+      errorMessage?: string | null;
     }
 
     /**
@@ -184,6 +214,11 @@ export namespace TauriEvents {
       percentage: number | null;
       etaSeconds: number | null;
       status: DownloadStatus;
+      /** The full final path; absent from older payloads. */
+      destination?: string;
+      modelId?: string | null;
+      modelName?: string | null;
+      errorMessage?: string | null;
     }
 
     /**
@@ -260,8 +295,9 @@ export const TauriEventNames = {
     Event: 'indexing-progress' as const,
   },
   Models: {
-    /// Boot-time pre-warm status for chat/utility/embedding model roles.
-    /// Backend fires `started → ready|skipped|failed` per role.
+    /// Warm-up status of a model role, from the boot pre-warm and from Settings.
+    /// Backend fires `started → ready|skipped|failed` per role, each numbered
+    /// by `revision`.
     WarmupStatus: 'model:warmup-status' as const,
   },
   LLM: {
@@ -281,6 +317,7 @@ export const TauriEventNames = {
   Vault: {
     WriteError: 'vault:write-error' as const,
     NoteImported: 'vault:note-imported' as const,
+    NoteConflict: 'vault:note-conflict' as const,
   },
   WebPageSnapshot: {
     Changed: 'web-page-snapshot:changed' as const,

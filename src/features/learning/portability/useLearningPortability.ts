@@ -1,10 +1,10 @@
 import { useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { open } from '@tauri-apps/plugin-dialog';
 
 import { useApi } from '@/contexts/ApiContext';
 import { invalidateLearningSourceDependents, refreshLearningProgramAfterImport } from '@/features/learning/api/learningInvalidation';
-import { learningRecallKey } from '@/features/learning/api/learningQueryKeys';
+import { LEARNING_PORTABILITY_PREFIX, learningPortabilityKey, learningRecallKey } from '@/features/learning/api/learningQueryKeys';
 import { CONFLICT_KINDS } from '@/features/learning/portability/conflictPolicies';
+import { promptChooseCourseFile, usePortabilityRunStore } from '@/features/learning/portability/portabilityRunStore';
 import type {
   ApplyLearningPackImportRequestDto,
   CancelLearningPackImportPreviewRequestDto,
@@ -28,9 +28,9 @@ import type {
 import { flushPendingSaves } from '@/lib/pendingSaves';
 import { unwrapApiResult as unwrap } from '@/types/api/result';
 
-export const LEARNING_PORTABILITY_PREFIX = ['learning-portability'] as const;
-export const learningPortabilityKey = (programId: string) => [...LEARNING_PORTABILITY_PREFIX, programId] as const;
+export { LEARNING_PORTABILITY_PREFIX, learningPortabilityKey } from '@/features/learning/api/learningQueryKeys';
 export { learningRecallKey } from '@/features/learning/api/learningQueryKeys';
+export { promptChooseCourseFile };
 export const semanticSourcesKey = (request: SearchLearningSourcesSemanticallyRequestDto | null) =>
   ['learning-semantic-sources', request?.programId, request?.query, request?.limit] as const;
 
@@ -69,7 +69,13 @@ function usePortabilityMutation<TRequest, TResult>(
           await invalidateLearningSourceDependents(client, data.programId);
         }
         if ('exports' in data) client.setQueryData(learningPortabilityKey(data.programId), data);
-        if ('cards' in data) client.setQueryData(learningRecallKey(data.programId), data);
+        if ('cards' in data) {
+          client.setQueryData(learningRecallKey(data.programId), data);
+          await Promise.all([
+            client.invalidateQueries({ queryKey: ['study'] }),
+            client.invalidateQueries({ queryKey: ['learning-practice-due'] }),
+          ]);
+        }
       }
       await client.invalidateQueries({ queryKey: learningPortabilityKey(programId) });
     },
@@ -84,18 +90,6 @@ export const useSaveLearningPackAs = (programId: string) => {
   const api = useApi();
   return usePortabilityMutation<ExportLearningPackRequestDto, SaveLearningPackAsResultDto>(api.saveLearningPackAs, programId);
 };
-
-/** Prompt user to choose a course file (.lattice-learning) */
-export async function promptChooseCourseFile(): Promise<string | null> {
-  const chosen = await open({
-    multiple: false,
-    directory: false,
-    title: 'Choose a course file',
-    filters: [{ name: 'Lattice course', extensions: ['lattice-learning'] }],
-  });
-  if (!chosen || Array.isArray(chosen)) return null;
-  return chosen;
-}
 
 /** Import with no course open: preview, apply and cancel are not keyed by a program. */
 export function useImportCourse() {
@@ -147,7 +141,11 @@ export function useExportAllLearningPacks() {
 }
 
 /** True while an export of every course runs, wherever it was started; its results arrive only at the end. */
-export const useExportAllPending = () => useIsMutating({ mutationKey: EXPORT_ALL_MUTATION_KEY }) > 0;
+export function useExportAllPending() {
+  const storePending = usePortabilityRunStore((state) => state.exportAll.pending);
+  const mutating = useIsMutating({ mutationKey: EXPORT_ALL_MUTATION_KEY }) > 0;
+  return storePending || mutating;
+}
 export const useDeleteLearningSourceV2 = (programId: string) => {
   const api = useApi();
   return usePortabilityMutation<DeleteLearningSourceRequestDto, LearningSourceWorkspaceDto>(api.deleteLearningSource, programId);

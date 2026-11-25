@@ -37,6 +37,8 @@ export const ToastItem: React.FC<ToastItemProps> = ({
   const progressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const dismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const remainingTimeRef = useRef<number>(toast.duration || 0);
+  const isPausedRef = useRef(false);
+  isPausedRef.current = isPaused;
 
   const getTypeStyles = () => {
     switch (toast.type) {
@@ -87,8 +89,18 @@ export const ToastItem: React.FC<ToastItemProps> = ({
   }, [onDismiss, toast.id]);
 
   useEffect(() => () => {
-    if (dismissTimerRef.current !== null) clearTimeout(dismissTimerRef.current);
-  }, []);
+    if (dismissTimerRef.current !== null) {
+      clearTimeout(dismissTimerRef.current);
+      dismissTimerRef.current = null;
+      // Clear any paused entry left in `toastStore`'s `dismissTimers` if unmounted mid-exit.
+      const store = useToastStore.getState();
+      if (store.toasts.some((item) => item.id === toast.id)) {
+        store.dismissToast(toast.id);
+      }
+    } else if (isPausedRef.current) {
+      useToastStore.getState().resumeToast?.(toast.id);
+    }
+  }, [toast.id]);
 
   const handleAction = () => {
     if (toast.action) {
@@ -97,14 +109,15 @@ export const ToastItem: React.FC<ToastItemProps> = ({
     }
   };
 
-  // Progress bar animation
+  // Progress bar animation (throttled to 40ms with an exact expiry timer)
   useEffect(() => {
     if (!toast.duration || isPaused || isExiting) return;
     const startedAt = Date.now();
+    const initialRemaining = remainingTimeRef.current;
 
     const updateProgress = () => {
       const elapsed = Date.now() - startedAt;
-      const remaining = Math.max(0, remainingTimeRef.current - elapsed);
+      const remaining = Math.max(0, initialRemaining - elapsed);
       const duration = toast.duration ?? 4000;
       const progressValue = (remaining / duration) * 100;
 
@@ -115,13 +128,20 @@ export const ToastItem: React.FC<ToastItemProps> = ({
       }
     };
 
-    const interval = setInterval(updateProgress, 16); // ~60fps
+    if (initialRemaining <= 0) {
+      handleDismiss();
+      return;
+    }
+
+    const interval = setInterval(updateProgress, 40);
+    const expiryTimer = setTimeout(updateProgress, initialRemaining);
     progressIntervalRef.current = interval;
 
     return () => {
       clearInterval(interval);
+      clearTimeout(expiryTimer);
       progressIntervalRef.current = null;
-      remainingTimeRef.current = Math.max(0, remainingTimeRef.current - (Date.now() - startedAt));
+      remainingTimeRef.current = Math.max(0, initialRemaining - (Date.now() - startedAt));
     };
   }, [isPaused, isExiting, toast.duration, handleDismiss]);
 

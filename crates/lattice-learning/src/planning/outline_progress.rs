@@ -5,12 +5,52 @@ use lattice_core::shared::{
 };
 use serde::Serialize;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     future::Future,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
+
+const MAX_RECENT_OUTCOMES: usize = 8;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum OutlineOperationKind {
+    Generate,
+    Repair,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct LearningOutlineRunDto {
+    pub request_id: String,
+    pub kind: OutlineOperationKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub course_depth: Option<crate::dto::LearningCourseDepth>,
+    pub progress: LearningOutlineProgressDto,
+}
+
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct LearningOutlineOutcomeDto {
+    pub request_id: String,
+    pub kind: OutlineOperationKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub program_id: Option<String>,
+    pub cancelled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<ApiError>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct LearningOutlineRunsSnapshotDto {
+    pub active: Vec<LearningOutlineRunDto>,
+    pub recent_outcomes: Vec<LearningOutlineOutcomeDto>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
@@ -102,6 +142,31 @@ impl Default for OutlineProgress {
 }
 
 impl OutlineProgress {
+    fn new_for_registry(
+        id: String,
+        program_id: Option<String>,
+        publish: impl Fn(LearningOutlineProgressDto) + Send + Sync + 'static,
+        changed: Arc<tokio::sync::watch::Sender<u64>>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            id,
+            started: Instant::now(),
+            state: Mutex::new(State {
+                stage: OutlineStage::ReadingSources,
+                detail: None,
+                waiting: None,
+                program_id,
+                since: Instant::now(),
+                characters: 0,
+                model: None,
+                public_failure: None,
+            }),
+            cancellation: CancellationToken::new(),
+            publish: Some(Box::new(publish)),
+            changed: Some(changed),
+        })
+    }
+
     pub fn saved(&self, id: &str) {
         self.state
             .lock()
@@ -261,13 +326,26 @@ impl OutlineProgress {
     }
 }
 
+struct ActiveRunEntry {
+    kind: OutlineOperationKind,
+    goal: Option<String>,
+    course_depth: Option<crate::dto::LearningCourseDepth>,
+    progress: Arc<OutlineProgress>,
+}
+
+#[derive(Default)]
+struct RegistryState {
+    active: HashMap<String, ActiveRunEntry>,
+    recent_outcomes: VecDeque<LearningOutlineOutcomeDto>,
+}
+
 /// The one registry of in-flight outline runs for this process. Built by the
 /// composition root and handed to the commands that start or stop a run, so a
 /// duplicate request id is rejected against the same map the stop button
 /// consults — and a test never sees a run another test registered.
 #[derive(Clone)]
 pub struct OutlineRunRegistry {
-    active: Arc<Mutex<HashMap<String, Arc<OutlineProgress>>>>,
+    state: Arc<Mutex<RegistryState>>,
     /// Moved when a run starts, moves on, or ends.
     changed: Arc<tokio::sync::watch::Sender<u64>>,
 }
@@ -275,7 +353,7 @@ pub struct OutlineRunRegistry {
 impl Default for OutlineRunRegistry {
     fn default() -> Self {
         Self {
-            active: Arc::default(),
+            state: Arc::default(),
             changed: Arc::new(tokio::sync::watch::channel(0).0),
         }
     }
@@ -290,8 +368,48 @@ impl OutlineRunRegistry {
         Self::default()
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<OutlineProgress>>> {
-        self.active.lock().unwrap_or_else(|e| e.into_inner())
+    fn lock(&self) -> std::sync::MutexGuard<'_, RegistryState> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn validate_request_id(id: Option<String>) -> Result<String> {
+        let id = id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        uuid::Uuid::parse_str(&id)
+            .map_err(|_| AppError::InvalidInput("Invalid outline request ID".into()))?;
+        Ok(id)
+    }
+
+    fn insert_run(
+        &self,
+        state: &mut RegistryState,
+        id: String,
+        kind: OutlineOperationKind,
+        goal: Option<String>,
+        course_depth: Option<crate::dto::LearningCourseDepth>,
+        program_id: Option<String>,
+        publish: impl Fn(LearningOutlineProgressDto) + Send + Sync + 'static,
+    ) -> OutlineRun {
+        let progress = OutlineProgress::new_for_registry(
+            id.clone(),
+            program_id,
+            publish,
+            Arc::clone(&self.changed),
+        );
+        state.active.insert(
+            id,
+            ActiveRunEntry {
+                kind,
+                goal,
+                course_depth,
+                progress: Arc::clone(&progress),
+            },
+        );
+        moved(&self.changed);
+        OutlineRun {
+            progress,
+            kind,
+            registry: self.clone(),
+        }
     }
 
     pub fn register(
@@ -299,38 +417,154 @@ impl OutlineRunRegistry {
         id: Option<String>,
         publish: impl Fn(LearningOutlineProgressDto) + Send + Sync + 'static,
     ) -> Result<OutlineRun> {
-        let id = id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-        uuid::Uuid::parse_str(&id)
-            .map_err(|_| AppError::InvalidInput("Invalid outline request ID".into()))?;
-        let mut active = self.lock();
-        if active.contains_key(&id) {
+        let id = Self::validate_request_id(id)?;
+        let mut state = self.lock();
+        if state.active.contains_key(&id) {
             return Err(AppError::InvalidInput(
                 "This outline request is already running.".into(),
             ));
         }
-        let progress = Arc::new(OutlineProgress {
-            id: id.clone(),
-            publish: Some(Box::new(publish)),
-            changed: Some(Arc::clone(&self.changed)),
-            ..Default::default()
+        Ok(self.insert_run(
+            &mut state,
+            id,
+            OutlineOperationKind::Generate,
+            None,
+            None,
+            None,
+            publish,
+        ))
+    }
+
+    /// Registers an outline generation run, enforcing single-flight generation
+    /// and clearing stale earlier generation outcomes.
+    pub fn register_generate(
+        &self,
+        id: Option<String>,
+        goal: String,
+        course_depth: Option<crate::dto::LearningCourseDepth>,
+        publish: impl Fn(LearningOutlineProgressDto) + Send + Sync + 'static,
+    ) -> Result<OutlineRun> {
+        let id = Self::validate_request_id(id)?;
+        let mut state = self.lock();
+        if state.active.contains_key(&id) {
+            return Err(AppError::InvalidInput(
+                "This outline request is already running.".into(),
+            ));
+        }
+        if state
+            .active
+            .values()
+            .any(|entry| entry.kind == OutlineOperationKind::Generate)
+        {
+            return Err(AppError::Conflict(
+                "A course outline is already being generated. Return to Studio to follow its progress or cancel it first.".into(),
+            ));
+        }
+        state
+            .recent_outcomes
+            .retain(|outcome| outcome.kind != OutlineOperationKind::Generate);
+        Ok(self.insert_run(
+            &mut state,
+            id,
+            OutlineOperationKind::Generate,
+            Some(goal),
+            course_depth,
+            None,
+            publish,
+        ))
+    }
+
+    /// Registers an outline repair run for `program_id`, enforcing single-flight
+    /// per course and pre-populating `program_id` on initial progress.
+    pub fn register_repair(
+        &self,
+        id: Option<String>,
+        program_id: String,
+        publish: impl Fn(LearningOutlineProgressDto) + Send + Sync + 'static,
+    ) -> Result<OutlineRun> {
+        let id = Self::validate_request_id(id)?;
+        let mut state = self.lock();
+        if state.active.contains_key(&id) {
+            return Err(AppError::InvalidInput(
+                "This outline request is already running.".into(),
+            ));
+        }
+        if state.active.values().any(|entry| {
+            entry.progress.snapshot().program_id.as_deref() == Some(program_id.as_str())
+        }) {
+            return Err(AppError::Conflict(
+                "An outline operation is already running for this course.".into(),
+            ));
+        }
+        state.recent_outcomes.retain(|outcome| {
+            !(outcome.kind == OutlineOperationKind::Repair
+                && outcome.program_id.as_deref() == Some(program_id.as_str()))
         });
-        active.insert(id, progress.clone());
-        moved(&self.changed);
-        Ok(OutlineRun {
-            progress,
-            registry: self.clone(),
-        })
+        Ok(self.insert_run(
+            &mut state,
+            id,
+            OutlineOperationKind::Repair,
+            None,
+            None,
+            Some(program_id),
+            publish,
+        ))
     }
 
     /// Every run in flight by its request id, oldest first.
     pub fn running(&self) -> Vec<(String, LearningOutlineProgressDto)> {
-        let mut runs: Vec<(Instant, String, LearningOutlineProgressDto)> = self
-            .lock()
+        let state = self.lock();
+        let mut runs: Vec<(Instant, String, LearningOutlineProgressDto)> = state
+            .active
             .values()
-            .map(|progress| (progress.started, progress.id.clone(), progress.snapshot()))
+            .map(|entry| {
+                (
+                    entry.progress.started,
+                    entry.progress.id.clone(),
+                    entry.progress.snapshot(),
+                )
+            })
             .collect();
         runs.sort_by_key(|(started, _, _)| *started);
         runs.into_iter().map(|(_, id, run)| (id, run)).collect()
+    }
+
+    /// Returns a snapshot of active runs (oldest first) and recent outcomes.
+    pub fn snapshot_runs(&self) -> LearningOutlineRunsSnapshotDto {
+        let state = self.lock();
+        let mut active: Vec<(Instant, LearningOutlineRunDto)> = state
+            .active
+            .values()
+            .map(|entry| {
+                (
+                    entry.progress.started,
+                    LearningOutlineRunDto {
+                        request_id: entry.progress.id.clone(),
+                        kind: entry.kind,
+                        goal: entry.goal.clone(),
+                        course_depth: entry.course_depth,
+                        progress: entry.progress.snapshot(),
+                    },
+                )
+            })
+            .collect();
+        active.sort_by_key(|(started, _)| *started);
+        LearningOutlineRunsSnapshotDto {
+            active: active.into_iter().map(|(_, run)| run).collect(),
+            recent_outcomes: state.recent_outcomes.iter().cloned().collect(),
+        }
+    }
+
+    fn record_outcome(&self, outcome: LearningOutlineOutcomeDto) {
+        let mut state = self.lock();
+        state
+            .recent_outcomes
+            .retain(|existing| existing.request_id != outcome.request_id);
+        state.recent_outcomes.push_back(outcome);
+        while state.recent_outcomes.len() > MAX_RECENT_OUTCOMES {
+            state.recent_outcomes.pop_front();
+        }
+        moved(&self.changed);
     }
 
     /// Moves when a run starts, moves on, or ends.
@@ -339,9 +573,9 @@ impl OutlineRunRegistry {
     }
 
     pub fn cancel(&self, id: &str) -> bool {
-        if let Some(progress) = self.lock().get(id) {
-            if progress.snapshot().stage != OutlineStage::Saving {
-                progress.cancellation.cancel();
+        if let Some(entry) = self.lock().active.get(id) {
+            if entry.progress.snapshot().stage != OutlineStage::Saving {
+                entry.progress.cancellation.cancel();
                 return true;
             }
         }
@@ -351,12 +585,36 @@ impl OutlineRunRegistry {
 
 pub struct OutlineRun {
     pub progress: Arc<OutlineProgress>,
+    kind: OutlineOperationKind,
     registry: OutlineRunRegistry,
+}
+
+impl OutlineRun {
+    pub fn record_completed(&self, program_id: &str) {
+        self.registry.record_outcome(LearningOutlineOutcomeDto {
+            request_id: self.progress.id.clone(),
+            kind: self.kind,
+            program_id: Some(program_id.to_string()),
+            cancelled: false,
+            error: None,
+        });
+    }
+
+    pub fn record_failed(&self, error: &ApiError, cancelled: bool) {
+        let program_id = self.progress.snapshot().program_id;
+        self.registry.record_outcome(LearningOutlineOutcomeDto {
+            request_id: self.progress.id.clone(),
+            kind: self.kind,
+            program_id,
+            cancelled,
+            error: Some(error.clone()),
+        });
+    }
 }
 
 impl Drop for OutlineRun {
     fn drop(&mut self) {
-        self.registry.lock().remove(&self.progress.id);
+        self.registry.lock().active.remove(&self.progress.id);
         moved(&self.registry.changed);
     }
 }
@@ -496,5 +754,153 @@ mod tests {
         progress.answered();
         let answered = serde_json::to_value(progress.snapshot()).unwrap();
         assert!(answered.get("waiting").is_none(), "{answered}");
+    }
+
+    #[test]
+    fn register_generate_enforces_single_flight_until_dropped() {
+        use crate::dto::LearningCourseDepth;
+
+        let registry = registry();
+        let run1 = registry
+            .register_generate(
+                None,
+                "Learn Rust async".into(),
+                Some(LearningCourseDepth::Course),
+                |_| {},
+            )
+            .unwrap();
+
+        let err = match registry.register_generate(
+            None,
+            "Learn Linear Algebra".into(),
+            Some(LearningCourseDepth::Focused),
+            |_| {},
+        ) {
+            Ok(_) => panic!("expected conflict for second concurrent generate"),
+            Err(err) => err,
+        };
+        assert!(matches!(err, AppError::Conflict(_)), "got {err:?}");
+
+        drop(run1);
+
+        let _run2 = registry
+            .register_generate(
+                None,
+                "Learn Linear Algebra".into(),
+                Some(LearningCourseDepth::Focused),
+                |_| {},
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn register_repair_populates_program_id_and_enforces_single_flight_per_course() {
+        let registry = registry();
+        let program_a = uuid::Uuid::new_v4().to_string();
+        let program_b = uuid::Uuid::new_v4().to_string();
+
+        let repair_a = registry
+            .register_repair(None, program_a.clone(), |_| {})
+            .unwrap();
+        assert_eq!(
+            repair_a.progress.snapshot().program_id.as_deref(),
+            Some(program_a.as_str())
+        );
+
+        let err = match registry.register_repair(None, program_a.clone(), |_| {}) {
+            Ok(_) => panic!("expected conflict for concurrent repair on same course"),
+            Err(err) => err,
+        };
+        assert!(matches!(err, AppError::Conflict(_)), "got {err:?}");
+
+        let _repair_b = registry
+            .register_repair(None, program_b.clone(), |_| {})
+            .unwrap();
+        assert_eq!(
+            _repair_b.progress.snapshot().program_id.as_deref(),
+            Some(program_b.as_str())
+        );
+    }
+
+    #[test]
+    fn snapshot_runs_exposes_metadata_and_recent_outcomes_with_stale_generate_cleared() {
+        use crate::dto::LearningCourseDepth;
+
+        let registry = registry();
+        let req1 = uuid::Uuid::new_v4().to_string();
+        let run1 = registry
+            .register_generate(
+                Some(req1.clone()),
+                "Learn category theory".into(),
+                Some(LearningCourseDepth::DeepDive),
+                |_| {},
+            )
+            .unwrap();
+
+        let snap = registry.snapshot_runs();
+        assert_eq!(snap.active.len(), 1);
+        assert_eq!(snap.active[0].request_id, req1);
+        assert_eq!(snap.active[0].kind, OutlineOperationKind::Generate);
+        assert_eq!(
+            snap.active[0].goal.as_deref(),
+            Some("Learn category theory")
+        );
+        assert_eq!(
+            snap.active[0].course_depth,
+            Some(LearningCourseDepth::DeepDive)
+        );
+        assert!(snap.recent_outcomes.is_empty());
+
+        let api_err = ApiError {
+            code: ErrorCode::ServiceNotAvailable,
+            message: "cancelled".into(),
+            details: None,
+        };
+        run1.record_failed(&api_err, true);
+        drop(run1);
+
+        let snap_after_fail = registry.snapshot_runs();
+        assert!(snap_after_fail.active.is_empty());
+        assert_eq!(snap_after_fail.recent_outcomes.len(), 1);
+        assert_eq!(snap_after_fail.recent_outcomes[0].request_id, req1);
+        assert_eq!(
+            snap_after_fail.recent_outcomes[0].kind,
+            OutlineOperationKind::Generate
+        );
+        assert!(snap_after_fail.recent_outcomes[0].cancelled);
+        assert_eq!(
+            snap_after_fail.recent_outcomes[0]
+                .error
+                .as_ref()
+                .map(|e| e.message.as_str()),
+            Some("cancelled")
+        );
+
+        let req2 = uuid::Uuid::new_v4().to_string();
+        let run2 = registry
+            .register_generate(
+                Some(req2.clone()),
+                "Learn compilers".into(),
+                Some(LearningCourseDepth::Course),
+                |_| {},
+            )
+            .unwrap();
+        let snap_new_gen = registry.snapshot_runs();
+        assert!(
+            snap_new_gen.recent_outcomes.is_empty(),
+            "starting a new generate should clear stale generate outcomes"
+        );
+
+        run2.record_completed("prog-123");
+        drop(run2);
+        let snap_done = registry.snapshot_runs();
+        assert_eq!(snap_done.recent_outcomes.len(), 1);
+        assert_eq!(snap_done.recent_outcomes[0].request_id, req2);
+        assert_eq!(
+            snap_done.recent_outcomes[0].program_id.as_deref(),
+            Some("prog-123")
+        );
+        assert!(!snap_done.recent_outcomes[0].cancelled);
+        assert!(snap_done.recent_outcomes[0].error.is_none());
     }
 }

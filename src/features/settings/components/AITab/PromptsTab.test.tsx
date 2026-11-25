@@ -70,7 +70,7 @@ describe('PromptsTab', () => {
       h.llm.llmSettings = { prompts, verification: undefined };
       render(<PromptsTab />);
       expect(screen.getByRole('switch', { name: 'Verify responses' })).toBeChecked();
-      expect(screen.getByLabelText('Top K')).toHaveValue(1);
+      expect(screen.getByLabelText('Top K')).toHaveValue('1');
     });
 
     it('stays quiet when the toggle is refused', async () => {

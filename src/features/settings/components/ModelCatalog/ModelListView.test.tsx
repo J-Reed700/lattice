@@ -16,14 +16,32 @@ const h = vi.hoisted(() => ({
   tokenStatus: undefined as undefined | { isSet: boolean },
   capabilities: { total_ram_gb: 16 },
   startModelDownload: vi.fn(),
+  retryDownload: vi.fn(),
+  resumeDownload: vi.fn(),
+  downloadsByModel: {} as Record<string, Array<Record<string, any>>>,
   addToast: vi.fn(),
   rows: {} as Record<string, Record<string, any>>,
 }));
 
 vi.mock('@/features/model/hooks/useDownloadedModels', () => ({ useDownloadedModels: () => ({ downloadedModels: h.downloadedModels }) }));
-vi.mock('@/features/model/hooks/useDownloadState', () => ({
-  useDownloadState: () => ({ getActiveDownloadForModel: (id: string) => (id === 'busy' ? { state: 'Downloading' } : undefined) }),
+vi.mock('@/features/model/hooks/useDownloads', () => ({
+  useDownloadActions: () => ({
+    retryDownload: h.retryDownload,
+    resumeDownload: h.resumeDownload,
+  }),
 }));
+vi.mock('@/features/model/hooks/useDownloadState', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/features/model/hooks/useDownloadState')>();
+  return {
+    ...actual,
+    useDownloadState: () => ({
+      getActiveDownloadForModel: (id: string) => (id === 'busy' ? { state: 'Downloading' } : undefined),
+      ...(Object.keys(h.downloadsByModel).length > 0
+        ? { getDownloadsByModel: (id: string) => h.downloadsByModel[id] ?? [] }
+        : {}),
+    }),
+  };
+});
 vi.mock('@/features/model/hooks/useModelCatalog', () => ({ useModelCatalog: () => ({ systemCapabilities: h.capabilities }) }));
 vi.mock('@/features/settings/hooks/startModelDownload', () => ({ startModelDownload: h.startModelDownload }));
 vi.mock('@/features/settings/hooks/useHuggingFaceTokenQuery', () => ({ useHuggingFaceTokenStatusQuery: () => ({ data: h.tokenStatus }) }));
@@ -51,8 +69,11 @@ describe('ModelListView', () => {
     vi.clearAllMocks();
     h.rows = {};
     h.downloadedModels = [];
+    h.downloadsByModel = {};
     h.tokenStatus = undefined;
     h.startModelDownload.mockResolvedValue({ alreadyDownloaded: false });
+    h.retryDownload.mockResolvedValue(undefined);
+    h.resumeDownload.mockResolvedValue(undefined);
   });
 
   it('shows placeholders while loading', () => {
@@ -115,5 +136,21 @@ describe('ModelListView', () => {
     expect(h.startModelDownload).toHaveBeenCalledWith({ metadata: model.model, addToast: h.addToast, queryClient }, VaultAPI);
     await act(async () => { pending.resolve({ alreadyDownloaded: false }); await pending.promise; });
     expect(h.rows.fresh.isStarting).toBe(false);
+  });
+
+  it('retries Failed and Cancelled sibling files together from the list view', async () => {
+    h.downloadsByModel = {
+      'multi-file': [
+        { id: 'f-fail', model_id: 'multi-file', state: 'Failed', bytes_downloaded: 10, total_bytes: 100, error_message: 'HTTP 500' },
+        { id: 'f-cancel', model_id: 'multi-file', state: 'Cancelled', bytes_downloaded: 0, total_bytes: 100 },
+      ],
+    };
+    render(<ModelListView models={[rec('multi-file')]} loading={false} onModelSelect={vi.fn()} {...nav} />, { wrapper });
+    expect(h.rows['multi-file'].activeDownload?.state).toBe('Failed');
+    await act(async () => {
+      await h.rows['multi-file'].onRetry();
+    });
+    expect(h.retryDownload).toHaveBeenCalledWith('f-fail');
+    expect(h.retryDownload).toHaveBeenCalledWith('f-cancel');
   });
 });

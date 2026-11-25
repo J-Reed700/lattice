@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
-use crate::review_findings::{KeyDefect, Lineage, PlanCheck, ReviewFinding, Rule};
+use crate::review_findings::{PlanCheck, ReviewFinding};
 use serde_json::json;
 use sqlx::SqlitePool;
 
@@ -54,34 +54,6 @@ fn example_finding() -> SetAside {
 
 fn keys(keys: &[&str]) -> Vec<String> {
     keys.iter().map(|key| (*key).to_owned()).collect()
-}
-
-/// The key the repository stores for `finding` of `lesson()`.
-fn stored_key(finding: &ReviewFinding) -> String {
-    named(&mut Lineage::default(), &lesson(), finding)
-        .id()
-        .as_str()
-        .to_owned()
-}
-
-fn schema_key() -> String {
-    stored_key(&ReviewFinding::of_kind(
-        FindingKind::Structure,
-        FindingSite::Section(1),
-        "",
-    ))
-}
-
-fn answer_key_key() -> String {
-    stored_key(&ReviewFinding::of_kind(
-        FindingKind::AnswerKey,
-        FindingSite::Question(0),
-        "",
-    ))
-}
-
-fn quotation_key(site: FindingSite) -> String {
-    stored_key(&ReviewFinding::of_kind(FindingKind::Quotation, site, ""))
 }
 
 async fn three_waiting(store: &TeachingFindingsRepository) {
@@ -154,11 +126,7 @@ async fn a_set_aside_finding_waits_with_its_note_and_the_part_it_is_about() {
             .iter()
             .map(|f| f.finding_key.as_str())
             .collect::<Vec<_>>(),
-        [
-            "rule/schema/lesson",
-            "reviewer/1",
-            answer_key_key().as_str()
-        ]
+        ["rule/schema/lesson", "reviewer/1", "key/question-0"]
     );
     assert_eq!(listed[0].unit_title, "The whole lesson");
     assert_eq!(listed[0].unit_index, None);
@@ -323,10 +291,7 @@ async fn two_findings_in_one_section_are_two_rows() {
             .iter()
             .map(|f| f.finding_key.as_str())
             .collect::<Vec<_>>(),
-        [
-            stored_key(&first.finding).as_str(),
-            stored_key(&second.finding).as_str()
-        ]
+        [first.finding.id().as_str(), second.finding.id().as_str()]
     );
 }
 
@@ -449,7 +414,7 @@ async fn a_review_that_no_longer_raises_a_finding_removes_it_and_lesson_rules_on
         .unwrap();
     let listed = store.list("l1").await.unwrap();
     assert_eq!(listed.len(), 1);
-    assert_eq!(listed[0].finding_key, schema_key().as_str());
+    assert_eq!(listed[0].finding_key, "rule/schema/section-1");
     store
         .record("l1", "j1", &lesson(), &[], true)
         .await
@@ -514,7 +479,7 @@ async fn settling_keeps_many_findings_in_one_call() {
         .settle(
             "p1",
             "l1",
-            &keys(&["reviewer/1", answer_key_key().as_str()]),
+            &keys(&["reviewer/1", "key/question-0"]),
             TeachingSettleDto::Keep,
         )
         .await
@@ -523,8 +488,11 @@ async fn settling_keeps_many_findings_in_one_call() {
         states(&store).await,
         [
             ("reviewer/1".to_owned(), TeachingFindingStateDto::Kept),
-            (schema_key(), TeachingFindingStateDto::Waiting),
-            (answer_key_key(), TeachingFindingStateDto::Kept),
+            (
+                "rule/schema/section-1".to_owned(),
+                TeachingFindingStateDto::Waiting
+            ),
+            ("key/question-0".to_owned(), TeachingFindingStateDto::Kept),
         ]
     );
 }
@@ -541,7 +509,7 @@ async fn a_settle_with_one_stale_key_is_refused_and_writes_nothing() {
         .settle(
             "p1",
             "l1",
-            &keys(&[schema_key().as_str(), "reviewer/1"]),
+            &keys(&["rule/schema/section-1", "reviewer/1"]),
             TeachingSettleDto::Keep,
         )
         .await
@@ -557,7 +525,7 @@ async fn a_settle_with_one_stale_key_is_refused_and_writes_nothing() {
         .settle(
             "p1",
             "l1",
-            &keys(&[schema_key().as_str(), "reviewer/19"]),
+            &keys(&["rule/schema/section-1", "reviewer/19"]),
             TeachingSettleDto::Keep,
         )
         .await
@@ -566,8 +534,14 @@ async fn a_settle_with_one_stale_key_is_refused_and_writes_nothing() {
         states(&store).await,
         [
             ("reviewer/1".to_owned(), TeachingFindingStateDto::Kept),
-            (schema_key(), TeachingFindingStateDto::Waiting),
-            (answer_key_key(), TeachingFindingStateDto::Waiting),
+            (
+                "rule/schema/section-1".to_owned(),
+                TeachingFindingStateDto::Waiting
+            ),
+            (
+                "key/question-0".to_owned(),
+                TeachingFindingStateDto::Waiting
+            ),
         ]
     );
 }
@@ -594,7 +568,7 @@ async fn a_settle_with_no_keys_or_a_lesson_of_another_course_is_refused() {
 async fn reopening_returns_kept_findings_to_waiting_and_clears_when_they_were_kept() {
     let store = TeachingFindingsRepository::new(Database::new(pool().await));
     three_waiting(&store).await;
-    let both = keys(&["reviewer/1", schema_key().as_str()]);
+    let both = keys(&["reviewer/1", "rule/schema/section-1"]);
     store
         .settle("p1", "l1", &both, TeachingSettleDto::Keep)
         .await
@@ -672,11 +646,11 @@ async fn a_finding_recorded_with_no_summary_is_listed_with_the_plain_line_for_it
                     .to_owned()
             ),
             (
-                schema_key(),
+                "rule/schema/section-1".to_owned(),
                 "Part of this lesson\u{2019}s shape did not pass its check.".to_owned()
             ),
             (
-                answer_key_key(),
+                "key/question-0".to_owned(),
                 "A second, independent solution disagreed with the answer key.".to_owned()
             ),
         ]
@@ -1006,11 +980,11 @@ async fn a_quotation_finding_lists_its_quote_as_a_quotation_and_the_rest_as_the_
         .unwrap();
     let teaching = dto_of(&store, "reviewer/1").await;
     assert_eq!(teaching.passage_role, TeachingPassageRoleDto::Lesson);
-    let quote = dto_of(&store, quotation_key(FindingSite::Section(1)).as_str()).await;
+    let quote = dto_of(&store, "rule/quotation/section-1").await;
     assert_eq!(quote.passage.as_deref(), Some("A quotation of the source."));
     assert_eq!(quote.passage_role, TeachingPassageRoleDto::Quotation);
     // The part's own quote is not borrowed for a finding that cites none.
-    let bare = dto_of(&store, quotation_key(FindingSite::Question(0)).as_str()).await;
+    let bare = dto_of(&store, "rule/quotation/question-0").await;
     assert_eq!(bare.passage, None);
     // A question's prompt is the lesson's text.
     let key = set_aside(
@@ -1023,7 +997,7 @@ async fn a_quotation_finding_lists_its_quote_as_a_quotation_and_the_rest_as_the_
         .record("l1", "j2", &lesson(), &[key], false)
         .await
         .unwrap();
-    let key = dto_of(&store, answer_key_key().as_str()).await;
+    let key = dto_of(&store, "key/question-0").await;
     assert_eq!(key.passage.as_deref(), Some("What is 2 + 2?"));
     assert_eq!(key.passage_role, TeachingPassageRoleDto::Lesson);
 }
@@ -1116,7 +1090,7 @@ async fn a_sentence_recorded_with_a_finding_is_listed_and_the_next_pass_replaces
         .await
         .unwrap();
     assert_eq!(
-        dto_of(&store, quotation_key(FindingSite::Section(0)).as_str())
+        dto_of(&store, "rule/quotation/section-0")
             .await
             .sentence
             .as_deref(),
@@ -1133,7 +1107,7 @@ async fn a_sentence_recorded_with_a_finding_is_listed_and_the_next_pass_replaces
         .await
         .unwrap();
     assert_eq!(
-        dto_of(&store, quotation_key(FindingSite::Section(0)).as_str())
+        dto_of(&store, "rule/quotation/section-0")
             .await
             .sentence
             .as_deref(),
@@ -1144,9 +1118,7 @@ async fn a_sentence_recorded_with_a_finding_is_listed_and_the_next_pass_replaces
         .await
         .unwrap();
     assert_eq!(
-        dto_of(&store, quotation_key(FindingSite::Section(0)).as_str())
-            .await
-            .sentence,
+        dto_of(&store, "rule/quotation/section-0").await.sentence,
         None
     );
 }
@@ -1231,7 +1203,7 @@ async fn settling_source_added_resolves_a_waiting_note_with_that_resolution() {
         .settle(
             "p1",
             "l1",
-            &keys(&[schema_key().as_str()]),
+            &keys(&["rule/schema/section-1"]),
             TeachingSettleDto::SourceAdded,
         )
         .await
@@ -1244,10 +1216,10 @@ async fn settling_source_added_resolves_a_waiting_note_with_that_resolution() {
             TeachingFindingStateDto::Waiting
         ]
     );
-    let added = dto_of(&store, schema_key().as_str()).await;
+    let added = dto_of(&store, "rule/schema/section-1").await;
     assert_eq!(added.resolution, Some(TeachingResolutionDto::SourceAdded));
     assert!(added.resolved_at.is_some());
-    let waiting = dto_of(&store, answer_key_key().as_str()).await;
+    let waiting = dto_of(&store, "key/question-0").await;
     assert_eq!((waiting.resolution, waiting.resolved_at), (None, None));
     let mut read = store.database.begin_read().await.unwrap();
     let kept_at: i64 = sqlx::query_scalar(
@@ -1282,7 +1254,7 @@ async fn a_resolved_note_cannot_be_kept_or_resolved_again_and_one_stale_key_refu
             .settle(
                 "p1",
                 "l1",
-                &keys(&[schema_key().as_str(), "reviewer/1"]),
+                &keys(&["rule/schema/section-1", "reviewer/1"]),
                 settle,
             )
             .await
@@ -1318,7 +1290,7 @@ async fn reopening_takes_kept_and_resolved_notes_back_and_clears_the_resolution(
         .settle(
             "p1",
             "l1",
-            &keys(&[schema_key().as_str()]),
+            &keys(&["rule/schema/section-1"]),
             TeachingSettleDto::Keep,
         )
         .await
@@ -1331,14 +1303,14 @@ async fn reopening_takes_kept_and_resolved_notes_back_and_clears_the_resolution(
     );
     assert!(resolved.resolved_at.is_some());
     assert_eq!(
-        dto_of(&store, schema_key().as_str()).await.state,
+        dto_of(&store, "rule/schema/section-1").await.state,
         TeachingFindingStateDto::Kept
     );
     store
         .settle(
             "p1",
             "l1",
-            &keys(&["reviewer/1", schema_key().as_str()]),
+            &keys(&["reviewer/1", "rule/schema/section-1"]),
             TeachingSettleDto::Reopen,
         )
         .await
@@ -1458,132 +1430,4 @@ async fn a_lesson_with_no_reviewer_finding_holds_none_and_starts_numbering_afres
     let held = store.held("l1", &lesson()).await.unwrap();
     assert!(held.reviewer.is_empty());
     assert_eq!(held.next_number, 0);
-}
-
-fn parcel_questions(prompts: &[&str]) -> Value {
-    let questions: Vec<Value> = prompts
-        .iter()
-        .map(|prompt| json!({"prompt": prompt, "options": ["Left", "Right"]}))
-        .collect();
-    json!({"blocks": [], "questions": questions})
-}
-
-#[tokio::test]
-async fn a_stored_answer_key_finding_holds_for_its_question_after_the_question_moves() {
-    let store = TeachingFindingsRepository::new(Database::new(pool().await));
-    let before = parcel_questions(&["Which bin takes a small parcel?", "Who signs for a parcel?"]);
-    let finding = SetAside {
-        finding: ReviewFinding::answer_key(
-            1,
-            KeyDefect::Untrue,
-            "Its explanation contradicts the key.",
-        ),
-        repairs: 2,
-    };
-    store
-        .record("l1", "j1", &before, std::slice::from_ref(&finding), true)
-        .await
-        .unwrap();
-    let after = parcel_questions(&["Who signs for a parcel?"]);
-    let held = store.held("l1", &after).await.unwrap();
-    let mut lineage = held.lineage.clone();
-    let mut moved = vec![ReviewFinding::answer_key(
-        0,
-        KeyDefect::Untrue,
-        "Its explanation contradicts the key.",
-    )];
-    lineage.place(&after, &mut moved);
-    let moved = &moved[0];
-    assert!(
-        held.ids.contains(&moved.id()),
-        "the finding is about the same question, now first: {:?}",
-        held.ids
-    );
-}
-
-fn title_repeated() -> ReviewFinding {
-    ReviewFinding::rule(
-        Rule::TitleRepeated,
-        FindingKind::Structure,
-        FindingSite::Section(0),
-        "The title repeats an earlier one.",
-    )
-}
-
-#[tokio::test]
-async fn a_finding_recorded_again_without_its_unit_is_still_one_row() {
-    let store = TeachingFindingsRepository::new(Database::new(pool().await));
-    let earlier = lesson();
-    let mut later = lesson();
-    later["blocks"][0]["body"] = json!("The function returns the number 4 to its caller.");
-    let mut lineage = Lineage::default();
-    lineage.place(&earlier, &mut [title_repeated()]);
-    lineage.carry(&earlier, &later);
-    let mut carried = vec![title_repeated()];
-    lineage.place(&later, &mut carried);
-    let carried = carried.remove(0);
-    store
-        .record(
-            "l1",
-            "j1",
-            &later,
-            &[SetAside {
-                finding: carried,
-                repairs: 2,
-            }],
-            true,
-        )
-        .await
-        .unwrap();
-    store
-        .record(
-            "l1",
-            "j1",
-            &later,
-            &[SetAside {
-                finding: title_repeated(),
-                repairs: 0,
-            }],
-            false,
-        )
-        .await
-        .unwrap();
-    assert_eq!(store.list("l1").await.unwrap().len(), 1);
-}
-
-#[tokio::test]
-async fn a_kept_planned_note_raised_again_at_the_lesson_stays_kept_while_its_section_is_unchanged()
-{
-    let store = TeachingFindingsRepository::new(Database::new(pool().await));
-    let planned = |site| SetAside {
-        finding: ReviewFinding::plan(
-            PlanCheck::Planned,
-            "idea-1",
-            site,
-            "The lesson does not yet teach the idea \"sums\".",
-        ),
-        repairs: 0,
-    };
-    store
-        .record(
-            "l1",
-            "j1",
-            &lesson(),
-            &[planned(FindingSite::Section(0))],
-            true,
-        )
-        .await
-        .unwrap();
-    let key = store.list("l1").await.unwrap()[0].finding_key.clone();
-    store
-        .settle("p1", "l1", &keys(&[key.as_str()]), TeachingSettleDto::Keep)
-        .await
-        .unwrap();
-    store
-        .record("l1", "j2", &lesson(), &[planned(FindingSite::Lesson)], true)
-        .await
-        .unwrap();
-    let stored = store.list("l1").await.unwrap();
-    assert_eq!(stored.len(), 1);
-    assert_eq!(stored[0].state, TeachingFindingStateDto::Kept);
 }

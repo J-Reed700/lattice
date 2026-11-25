@@ -12,7 +12,7 @@ use crate::dto::LearningSourceDto;
 use crate::lessons::copied_wording::Wording;
 use crate::lessons::rows::{self, words, Held, Left, Quotes, Rows};
 use crate::lessons::shape::LessonShape;
-use crate::lessons::structured_call::{refusal, Asking};
+use crate::lessons::structured_call::{refusal, Asking, CallKind, ReasonFirst};
 use crate::lessons::text_edits::{
     self, NEVER_SAY_WHERE, QUOTED_WORDING, STEPS_IN_ORDER, UNQUOTED_REMARKS,
 };
@@ -350,7 +350,12 @@ fn narrowed(rows: &Rows, part: &str, item: &Failed, edits: &rows::Edits) -> Narr
     };
     let edits = consistent(kept).ok().map(|sentences| rows::Edits {
         sentences,
-        cite: edits.cite.clone(),
+        cite: edits
+            .cite
+            .iter()
+            .filter(|cite| own.contains(&cite.sentence.reference))
+            .cloned()
+            .collect(),
         recite: edits
             .recite
             .iter()
@@ -363,7 +368,12 @@ fn narrowed(rows: &Rows, part: &str, item: &Failed, edits: &rows::Edits) -> Narr
             .filter(|citation| for_its_sentence(citation))
             .cloned()
             .collect(),
-        keys: edits.keys.clone(),
+        keys: edits
+            .keys
+            .iter()
+            .filter(|key| own.contains(&key.right.reference))
+            .cloned()
+            .collect(),
     });
     Narrowed { edits, put_back }
 }
@@ -597,6 +607,8 @@ fn system(question: bool, cites: bool) -> String {
     ];
     if question {
         parts.push(words::KEYS.to_owned());
+    } else {
+        parts.push(words::NO_KEYS.to_owned());
     }
     parts.push(words::EDITING.to_owned());
     if cites {
@@ -778,7 +790,11 @@ async fn repair_sections(
                 llm,
                 &Asking {
                     progress: None,
-                    reasoning: None,
+                    reasoning: Some(ReasonFirst {
+                        kind: CallKind::Authoring,
+                        subject: "the section correction",
+                        brief: "Review each failed statement and the allowed references, choose the exact unit ids to edit or drop without touching verified claims or editing any unit twice, and write out the corrected wording.",
+                    }),
                 },
                 &mut Scope::for_question(),
                 &input.items,

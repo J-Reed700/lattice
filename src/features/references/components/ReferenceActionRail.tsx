@@ -9,6 +9,8 @@ import {
   Trash2,
 } from 'lucide-react';
 
+import { Button } from '@/components/ui/button';
+
 interface ReferenceActionRailProps {
   isCaptured: boolean;
   captureDestinationLabel: string;
@@ -22,8 +24,8 @@ interface ReferenceActionRailProps {
 }
 
 /**
- * Quiet bottom rail for the reader. Ghost-variant buttons, text+icon pairs.
- * Spec §5.6.
+ * Unified bottom action rail for the reference reader. Compact ghost buttons
+ * with crisp spinning loader feedback and consistent h-8 rounded-lg rhythm.
  */
 export function ReferenceActionRail({
   isCaptured,
@@ -57,66 +59,76 @@ export function ReferenceActionRail({
   };
 
   return (
-    <div className="mt-6 flex items-center justify-between border-t border-[hsl(var(--border-subtle))] pt-4">
-      <div className="flex items-center gap-4">
-        <button
+    <div className="mt-6 flex flex-wrap items-center justify-between gap-2 border-t border-border-subtle pt-4">
+      <div className="flex flex-wrap items-center gap-1">
+        <Button
           type="button"
+          variant="ghost"
+          size="sm"
           onClick={onOpenInChat}
           disabled={originDisabled}
           title={originDisabled ? originDisabledReason : 'Open in Chat'}
-          className="inline-flex items-center gap-1.5 text-xs text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text-secondary))] transition-colors duration-fast disabled:cursor-not-allowed disabled:text-[hsl(var(--text-disabled))] disabled:hover:text-[hsl(var(--text-disabled))]"
+          className="h-8 rounded-lg px-2.5 text-xs text-text-secondary hover:text-text-primary"
         >
-          <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.75} />
+          <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
           Open in Chat
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          variant="ghost"
+          size="sm"
           onClick={() => void handleCopy()}
-          className="inline-flex items-center gap-1.5 text-xs text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text-secondary))] transition-colors duration-fast"
           title="Copy reference content"
+          className="h-8 rounded-lg px-2.5 text-xs text-text-secondary hover:text-text-primary"
         >
           {copiedTick ? (
-            <Check className="h-3.5 w-3.5 text-[hsl(var(--accent))]" strokeWidth={2} />
+            <Check className="h-3.5 w-3.5 text-accent" strokeWidth={2} aria-hidden="true" />
           ) : (
-            <Copy className="h-3.5 w-3.5" strokeWidth={1.75} />
+            <Copy className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
           )}
           Copy
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
+          variant="ghost"
+          size="sm"
           onClick={() => void handleCapture()}
           disabled={capturing}
           title={captureDestinationLabel}
-          className="inline-flex items-center gap-1.5 text-xs text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text-secondary))] transition-colors duration-fast disabled:cursor-not-allowed"
+          className="h-8 rounded-lg px-2.5 text-xs text-text-secondary hover:text-text-primary"
         >
           {capturing ? (
-            <Loader2 className="h-3.5 w-3.5 text-[hsl(var(--text-muted))]" strokeWidth={1.75} />
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-text-muted" strokeWidth={1.75} aria-hidden="true" />
           ) : (
-            <NotebookPen className="h-3.5 w-3.5" strokeWidth={1.75} />
+            <NotebookPen className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
           )}
           {isCaptured ? 'Re-capture' : 'Capture'}
-        </button>
+        </Button>
         {isCaptured && (
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             onClick={onOpenCapturedNote}
-            className="inline-flex items-center gap-1.5 text-xs text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text-secondary))] transition-colors duration-fast"
             title="Open the note this reference was captured to"
+            className="h-8 rounded-lg px-2.5 text-xs text-text-secondary hover:text-text-primary"
           >
-            <NotebookPen className="h-3.5 w-3.5" strokeWidth={1.75} />
+            <NotebookPen className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
             Open captured note
-          </button>
+          </Button>
         )}
       </div>
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        size="sm"
         onClick={onDelete}
-        className="inline-flex items-center gap-1.5 text-xs text-[hsl(var(--text-muted))] hover:text-[hsl(var(--danger-fg))] transition-colors duration-fast"
         title="Delete reference"
+        className="h-8 rounded-lg px-2.5 text-xs text-text-muted hover:bg-danger-muted hover:text-danger-fg"
       >
-        <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+        <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
         Delete
-      </button>
+      </Button>
     </div>
   );
 }

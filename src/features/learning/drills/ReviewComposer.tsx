@@ -66,14 +66,14 @@ export function ReviewComposer({ material = 'code', selection, onClearSelection,
             save();
           }
         }}
-        className="mt-3 w-full resize-y rounded-xl border border-border bg-background px-3 py-2 text-sm leading-6 text-text-primary outline-hidden focus:border-accent focus:ring-2 focus:ring-accent/15"
+        className="mt-3 w-full resize-y rounded-xl border border-border bg-bg px-3 py-2 text-sm leading-6 text-text-primary outline-hidden focus:border-accent focus:ring-2 focus:ring-accent/15"
       />
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
         <select
           aria-label="Severity"
           value={severity ?? ''}
           onChange={(event) => setSeverity(SEVERITIES.find((known) => known === event.target.value) ?? null)}
-          className="rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs text-text-primary outline-hidden focus:border-accent"
+          className="rounded-lg border border-border bg-bg px-2.5 py-1.5 text-xs text-text-primary outline-hidden focus:border-accent"
         >
           <option value="">No severity</option>
           {SEVERITIES.map((known) => (

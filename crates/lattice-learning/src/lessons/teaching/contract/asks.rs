@@ -5,8 +5,8 @@
 //! sentences it was shown; the app reads the words from its own copy.
 use super::sentence::{self, Lesson};
 use super::{
-    Item, ANSWER_TOKENS, CHECK_TASK, FIND_SYSTEM, FIND_TASK, PLANNED_SYSTEM, REPORTED,
-    REPORTS_SYSTEM, REPORTS_TASK,
+    Item, ANSWER_TOKENS, CHECK_TASK, FIND_DELETION_SYSTEM, FIND_EDITED_SYSTEM, FIND_SYSTEM,
+    FIND_TASK, PLANNED_SYSTEM, REPORTED, REPORTS_SYSTEM, REPORTS_TASK,
 };
 use crate::review_findings::{FindingSite, ReviewFinding};
 use lattice_core::application::services::model_contract::ask::{Alone, Answered, Refusal, Says};
@@ -21,6 +21,7 @@ use lattice_core::application::services::model_contract::{Contract, ContractId};
 use lattice_core::shared::error::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
+use std::collections::BTreeMap;
 
 /// One thing the course plan gives the lesson, as the model is asked about it.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -285,6 +286,36 @@ impl Contract for LessonContractFind {
     type Input = Input;
 }
 
+/// How an incremental `LessonContractFindDelta` call is scoped.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) enum DeltaMode {
+    DeletionOnly {
+        from_part_order: usize,
+        focus_part_labels: Vec<Told<String>>,
+    },
+    Edited {
+        from_part_order: usize,
+        focus_part_labels: Vec<Told<String>>,
+        changed_part_labels: Vec<Told<String>>,
+        delta_by_part: Vec<Vec<usize>>,
+    },
+}
+
+/// What a scoped delta request of `LessonContractFindDelta` says.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct DeltaInput {
+    pub(super) input: Input,
+    pub(super) mode: DeltaMode,
+}
+
+/// The incremental ask for a lesson that already passed `LessonContractFind` cleanly.
+pub(crate) struct LessonContractFindDelta;
+
+impl Contract for LessonContractFindDelta {
+    const ID: ContractId = ContractId::new("lesson-contract-find-delta");
+    type Input = DeltaInput;
+}
+
 /// The ask which of a review's reports are of a kind the check decides.
 pub(crate) struct LessonContractReports;
 
@@ -348,6 +379,26 @@ impl Answered for LessonContractCheck {
     }
 }
 
+fn accept_find(finding: &Finding) -> std::result::Result<(), Refusal> {
+    match finding {
+        Finding::Used { what, uses, .. } => {
+            if what.trim().is_empty() {
+                return Err(Refusal("Name in what the thing that is used.".into()));
+            }
+            if uses.is_empty() {
+                return Err(Refusal(
+                    "Cite in uses at least one sentence that asks the learner to use it. Naming words in your answer does not cite them.".into(),
+                ));
+            }
+        }
+        Finding::Unseen { what, .. } if what.trim().is_empty() => {
+            return Err(Refusal("Say in what what the sentence points at.".into()));
+        }
+        Finding::Clash { .. } | Finding::Unseen { .. } => {}
+    }
+    Ok(())
+}
+
 impl Answered for LessonContractFind {
     type Answer = New<Finding>;
     const ALONE: Alone = Alone::Fails;
@@ -372,23 +423,78 @@ impl Answered for LessonContractFind {
     }
 
     fn accept(_input: &Input, finding: &Finding) -> std::result::Result<(), Refusal> {
-        match finding {
-            Finding::Used { what, uses, .. } => {
-                if what.trim().is_empty() {
-                    return Err(Refusal("Name in what the thing that is used.".into()));
+        accept_find(finding)
+    }
+}
+
+impl Answered for LessonContractFindDelta {
+    type Answer = New<Finding>;
+    const ALONE: Alone = Alone::Fails;
+
+    fn says(input: &DeltaInput, showing: &mut Showing<'_>) -> Result<Says> {
+        let texts = input.input.lesson.texts();
+        let shown = sentence::show(&texts, showing)?;
+        let lesson = input
+            .input
+            .lesson
+            .said(&sentence::labelled(&texts, &shown), &[]);
+        let (from_part_order, delta_by_part) = match &input.mode {
+            DeltaMode::DeletionOnly {
+                from_part_order, ..
+            } => (*from_part_order, None),
+            DeltaMode::Edited {
+                from_part_order,
+                delta_by_part,
+                ..
+            } => (*from_part_order, Some(delta_by_part.as_slice())),
+        };
+        let mut per_part_cursor: BTreeMap<usize, usize> = BTreeMap::new();
+        let mut focus_sentences = Vec::new();
+        let mut changed_sentences = Vec::new();
+        for ((whose, _), shown_units) in texts.iter().zip(&shown) {
+            let sentence::Whose::Lesson { part, .. } = whose else {
+                continue;
+            };
+            let cursor = per_part_cursor.entry(*part).or_insert(0);
+            let part_deltas = delta_by_part.and_then(|all| all.get(*part));
+            for (handle, _) in shown_units.iter() {
+                if *part >= from_part_order {
+                    focus_sentences.push(handle.written());
                 }
-                if uses.is_empty() {
-                    return Err(Refusal(
-                        "Cite in uses at least one sentence that asks the learner to use it. Naming words in your answer does not cite them.".into(),
-                    ));
+                if part_deltas.is_some_and(|deltas| deltas.contains(cursor)) {
+                    changed_sentences.push(handle.written());
                 }
+                *cursor += 1;
             }
-            Finding::Unseen { what, .. } if what.trim().is_empty() => {
-                return Err(Refusal("Say in what what the sentence points at.".into()));
-            }
-            Finding::Clash { .. } | Finding::Unseen { .. } => {}
         }
-        Ok(())
+        let mut fields = task_of(FIND_TASK, &input.input, None, lesson);
+        let instructions = match &input.mode {
+            DeltaMode::DeletionOnly {
+                focus_part_labels, ..
+            } => {
+                fields.insert("focusParts".into(), json!(focus_part_labels));
+                fields.insert("focusSentences".into(), json!(focus_sentences));
+                FIND_DELETION_SYSTEM.to_owned()
+            }
+            DeltaMode::Edited {
+                focus_part_labels,
+                changed_part_labels,
+                ..
+            } => {
+                fields.insert("focusParts".into(), json!(focus_part_labels));
+                fields.insert("focusSentences".into(), json!(focus_sentences));
+                fields.insert("changedParts".into(), json!(changed_part_labels));
+                fields.insert("changedSentences".into(), json!(changed_sentences));
+                FIND_EDITED_SYSTEM.to_owned()
+            }
+        };
+        let mut says = Says::new(instructions, Value::Object(fields).to_string());
+        says.output_tokens = ANSWER_TOKENS;
+        Ok(says)
+    }
+
+    fn accept(_input: &DeltaInput, finding: &Finding) -> std::result::Result<(), Refusal> {
+        accept_find(finding)
     }
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 
 import { FileText, Globe2, Library, LoaderCircle, Type, X } from 'lucide-react';
 
@@ -8,6 +8,7 @@ import { ADD_SOURCE_HINT, ADD_SOURCE_LESSON_HINT, addSourceTitle, attachSummary,
 import { useAddSource } from '@/features/learning/lessons/review/useAddSource';
 import type { DroppedSource } from '@/features/learning/lessons/review/useReviewDrop';
 import { LearningDocumentPicker, type LearningDocumentSelection } from '@/features/learning/sources/LearningDocumentPicker';
+import { useSourceRecheckStore } from '@/features/learning/sources/sourceRecheckStore';
 import { useLearningSourceVersion, useLearningSourceWorkspace } from '@/features/learning/sources/useLearningSources';
 import type { AttachEvidenceDto, AttachNextStepDto, AttachScopeDto, ClaimAttachReportDto } from '@/lib/bindings';
 
@@ -71,7 +72,12 @@ export function AddSourceSheet({ programId, lessonId, revision, target, initial,
   onAdded: (report: ClaimAttachReportDto, summary: AttachSummary, scope: string[]) => void;
 }) {
   const id = useId();
-  const add = useAddSource(programId, lessonId);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+  const clearLessonAttachBanner = useSourceRecheckStore((store) => store.clearLessonAttachBanner);
   const [mode, setMode] = useState<Mode>(initial?.kind === 'text' ? 'paste' : initial?.kind === 'document' ? 'file' : 'link');
   const [url, setUrl] = useState(initial?.kind === 'link' ? initial.url : '');
   const [origin, setOrigin] = useState(initial?.kind === 'text' ? initial.origin ?? '' : '');
@@ -85,6 +91,14 @@ export function AddSourceSheet({ programId, lessonId, revision, target, initial,
   const [failed, setFailed] = useState<{ report: ClaimAttachReportDto; host: string | null } | null>(null);
   const [last, setLast] = useState<AttachEvidenceDto | null>(null);
 
+  const ids = target.level === 'claim' && withOthers ? [...target.claimIds, ...(target.others ?? [])] : target.claimIds;
+  const scope: AttachScopeDto = ids.length > 1 ? { scope: 'claims', claimIds: ids } : { scope: 'claim' };
+  const lesson = target.level === 'lesson';
+  const title = addSourceTitle(target.level, target.claimIds.length);
+  const add = useAddSource(programId, lessonId, (report) =>
+    (lesson ? lessonSourceSummary(report) : attachSummary(report, ids.length, Math.max(0, remaining))).line,
+  );
+
   // A later drop or paste while the sheet is open replaces what it holds.
   useEffect(() => {
     if (!initial) return;
@@ -93,11 +107,6 @@ export function AddSourceSheet({ programId, lessonId, revision, target, initial,
     if (initial.kind === 'document') { setMode('file'); setPicking(false); setDocuments([{ id: initial.documentId, title: initial.name, spaceName: 'Library' }]); }
   }, [initial]);
 
-  const ids = target.level === 'claim' && withOthers ? [...target.claimIds, ...(target.others ?? [])] : target.claimIds;
-  const scope: AttachScopeDto = ids.length > 1 ? { scope: 'claims', claimIds: ids } : { scope: 'claim' };
-  const lesson = target.level === 'lesson';
-  const title = addSourceTitle(target.level, target.claimIds.length);
-
   const evidenceFor = (current: Mode): AttachEvidenceDto | string => {
     if (current === 'link') return url.trim() ? { kind: 'attach_link', url: url.trim() } : 'Enter the address of the page.';
     if (current === 'file') return documents[0] ? { kind: 'attach_document', documentId: documents[0].id } : 'Choose a file.';
@@ -105,36 +114,47 @@ export function AddSourceSheet({ programId, lessonId, revision, target, initial,
     return text.trim() ? { kind: 'attach_text', title: origin.trim() || 'Pasted text', text } : "Paste the source's text.";
   };
 
+  const backendPending = add.backendPending;
+  const busy = add.isPending || backendPending;
+  const progress = add.progress;
+
   const run = async (evidence: AttachEvidenceDto) => {
+    if (add.isPending || add.backendPending) return;
     setFormError('');
     setFailed(null);
     setLast(evidence);
     try {
       const report = await add.mutateAsync(lesson ? { lesson: true, expectedRevision: revision, evidence } : { claimId: ids[0], expectedRevision: revision, evidence, scope });
-      if (!report) return; // cancelled
-      const host = evidence.kind === 'attach_link' ? hostOf(evidence.url) : null;
-      if (report.failure || !report.source) { setFailed({ report, host }); return; }
+      if (!report || !mountedRef.current) return; // cancelled or unmounted
+      if (report.failure || !report.source) {
+        clearLessonAttachBanner(programId, lessonId);
+        const host = evidence.kind === 'attach_link' ? hostOf(evidence.url) : null;
+        setFailed({ report, host });
+        return;
+      }
+      clearLessonAttachBanner(programId, lessonId);
       onAdded(report, lesson ? lessonSourceSummary(report) : attachSummary(report, ids.length, Math.max(0, remaining)), ids);
     } catch (error) {
-      setFormError(error instanceof Error ? error.message : 'The source could not be added.');
+      if (mountedRef.current) {
+        setFormError(error instanceof Error ? error.message : 'The source could not be added.');
+      }
     }
   };
 
   const submit = () => {
+    if (busy) return;
     const evidence = evidenceFor(mode);
     if (typeof evidence === 'string') { setFormError(evidence); return; }
     void run(evidence);
   };
 
   const nextStep = (step: AttachNextStepDto) => {
+    if (busy) return;
     setFailed(null);
     if (step.step === 'retry') { if (last) void run(last); return; }
     if (step.step === 'paste_text') { setMode('paste'); if (step.origin && !origin) setOrigin(step.origin); }
     else setMode('file');
   };
-
-  const busy = add.isPending;
-  const progress = add.progress;
   const checking = progress?.stage === 'checking' ? progress : null;
   const modes: Array<{ id: Mode; label: string; icon: typeof Globe2 }> = [
     { id: 'link', label: 'A link', icon: Globe2 },
@@ -163,13 +183,13 @@ export function AddSourceSheet({ programId, lessonId, revision, target, initial,
           <label htmlFor={`${id}-url`} className="sr-only">Page address</label>
           <input id={`${id}-url`} type="url" inputMode="url" autoFocus value={url} disabled={busy} placeholder="https://"
             onChange={(event) => setUrl(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') submit(); }}
-            className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" />
+            className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm" />
         </>}
         {mode === 'paste' && <div className="space-y-2">
           <label htmlFor={`${id}-origin`} className="block text-xs font-medium text-text-secondary">Where it is from</label>
-          <input id={`${id}-origin`} value={origin} disabled={busy} onChange={(event) => setOrigin(event.target.value)} placeholder="Title or address of the original" className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" />
+          <input id={`${id}-origin`} value={origin} disabled={busy} onChange={(event) => setOrigin(event.target.value)} placeholder="Title or address of the original" className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm" />
           <label htmlFor={`${id}-text`} className="block text-xs font-medium text-text-secondary">Text</label>
-          <textarea id={`${id}-text`} value={text} disabled={busy} onChange={(event) => setText(event.target.value)} rows={5} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm" />
+          <textarea id={`${id}-text`} value={text} disabled={busy} onChange={(event) => setText(event.target.value)} rows={5} className="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm" />
         </div>}
         {mode === 'file' && (picking
           ? <LearningDocumentPicker selected={documents} onChange={setDocuments} limit={1} />
@@ -186,8 +206,8 @@ export function AddSourceSheet({ programId, lessonId, revision, target, initial,
       </label>}
 
       {busy && <div role="status" className="mt-3 space-y-1.5">
-        <p className="flex items-center gap-2 text-xs text-text-secondary"><LoaderCircle size={13} className="shrink-0 animate-spin motion-reduce:animate-none" aria-hidden="true" /><span className="min-w-0 truncate" title={progress ? progressLine(progress) : undefined}>{progress ? progressLine(progress) : 'Starting…'}</span></p>
-        {checking && <div role="progressbar" aria-label="Statements checked" aria-valuemin={0} aria-valuemax={checking.total} aria-valuenow={checking.done} className="h-1.5 overflow-hidden rounded-full bg-background">
+        <p className="flex items-center gap-2 text-xs text-text-secondary"><LoaderCircle size={13} className="shrink-0 animate-spin motion-reduce:animate-none" aria-hidden="true" /><span className="min-w-0 truncate" title={progress ? progressLine(progress) : undefined}>{progress ? progressLine(progress) : add.isPending ? 'Starting…' : 'Finishing the previous source check…'}</span></p>
+        {checking && <div role="progressbar" aria-label="Statements checked" aria-valuemin={0} aria-valuemax={checking.total} aria-valuenow={checking.done} className="h-1.5 overflow-hidden rounded-full bg-bg">
           <div className="h-full rounded-full bg-accent transition-[width]" style={{ width: `${checking.total ? (checking.done / checking.total) * 100 : 0}%` }} />
         </div>}
       </div>}
@@ -197,7 +217,7 @@ export function AddSourceSheet({ programId, lessonId, revision, target, initial,
 
       <div className="mt-4 flex justify-end gap-2">
         <Button type="button" variant="ghost" onClick={() => { add.cancel(); onClose(); }}>Cancel</Button>
-        <Button type="button" disabled={busy} onClick={submit}>{busy ? 'Checking…' : 'Add and check'}</Button>
+        <Button type="button" disabled={busy} onClick={submit}>{add.isPending ? 'Checking…' : backendPending ? 'Finishing previous check…' : 'Add and check'}</Button>
       </div>
     </section>
   );

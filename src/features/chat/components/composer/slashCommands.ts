@@ -1,4 +1,4 @@
-import { BookOpen, CornerDownRight, Database, Globe, Scissors, Search, Sparkles, Telescope } from 'lucide-react';
+import { BookOpen, CornerDownRight, Database, Globe, Scissors, Search, ShieldCheck, Sparkles, Telescope } from 'lucide-react';
 
 import type { TurnMode } from '@/types';
 
@@ -18,6 +18,7 @@ export type SlashCommandId =
   | 'web'
   | 'wiki'
   | 'docs'
+  | 'strict'
   | 'followup'
   | 'query'
   | 'auto'
@@ -27,6 +28,7 @@ export type SlashCommandId =
 export interface ComposerModeState {
   turnMode: TurnMode;
   knowledgeBase: boolean;
+  strictSources?: boolean;
   webSearch: boolean;
   wikipedia: boolean;
   deepResearch: boolean;
@@ -69,6 +71,15 @@ export const SLASH_COMMANDS: SlashCommand[] = [
     icon: Database,
     description: 'Search your documents for every answer.',
     state: (mode) => onOff(mode.knowledgeBase),
+    available: always,
+  },
+  {
+    id: 'strict',
+    token: 'strict',
+    aliases: ['sources-only', 'rag-only', 'grounded', 'sources', 'only'],
+    icon: ShieldCheck,
+    description: 'Answer strictly from retrieved sources only.',
+    state: (mode) => onOff(Boolean(mode.strictSources)),
     available: always,
   },
   {

@@ -1,14 +1,17 @@
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { ActiveModels } from '@/lib/bindings';
 import { deferred } from '@/tests/deferred';
 import { render } from '@/tests/renderWithQueryClient';
 
 import { ChatTab } from './ChatTab';
+import { chooseRadixOption } from '../radixSelectTestUtils';
 
 const h = vi.hoisted(() => ({
-  llm: { llmSettings: null as null | Record<string, any>, isLoading: false, authValueSet: { ollama: false, llamaCpp: false }, saveLlmUpdates: vi.fn(), saveAuthHeaderValue: vi.fn(), reload: vi.fn() },
-  models: { activeModel: null as null | Record<string, string>, activeEmbeddingModel: null as null | Record<string, string> },
+  llm: { llmSettings: null as null | Record<string, any>, isLoading: false, authValueSet: { ollama: false, llamaCpp: false }, authValueStatus: 'ready' as 'loading' | 'error' | 'ready', saveLlmUpdates: vi.fn(), saveAuthHeaderValue: vi.fn(), reload: vi.fn() },
+  models: { downloadedModels: [] as Record<string, string>[], activeEmbeddingModel: null as null | Record<string, string> },
+  active: { activeModels: null as ActiveModels | null },
   probe: vi.fn(),
   setCloudApiKey: vi.fn(),
   toast: { success: vi.fn(), error: vi.fn() },
@@ -16,6 +19,7 @@ const h = vi.hoisted(() => ({
 
 vi.mock('./useLlmSettings', () => ({ useLlmSettings: () => h.llm }));
 vi.mock('@/features/model/hooks/useDownloadedModels', () => ({ useDownloadedModels: () => h.models }));
+vi.mock('@/features/model/hooks/useActiveModels', () => ({ useActiveModels: () => h.active }));
 vi.mock('@/features/settings/hooks/connectionProbes', () => ({ probeOllamaServer: h.probe }));
 vi.mock('@/features/settings/hooks/useSettingsQuery', () => ({ useCloudApiKeyMutation: () => ({ setCloudApiKey: h.setCloudApiKey }) }));
 vi.mock('@/stores/toastStore', () => ({ toast: h.toast }));
@@ -33,6 +37,10 @@ const settings = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+const activeChat = (...chat: ActiveModels['chat']): ActiveModels => ({
+  chat, chat_unset: null, utility: [], llama_cpp: null, ollama: null, ollama_utility_tag: null,
+});
+
 const connected = async (models = ['mistral', 'phi']) => {
   h.probe.mockResolvedValueOnce({ ok: true, data: { models, endpoint: 'http://garden.local:11434/api/tags' } });
   fireEvent.click(screen.getByRole('button', { name: 'Test connection' }));
@@ -44,10 +52,12 @@ describe('ChatTab', () => {
     vi.clearAllMocks();
     h.llm.isLoading = false;
     h.llm.authValueSet = { ollama: false, llamaCpp: false };
+    h.llm.authValueStatus = 'ready';
     h.llm.llmSettings = settings();
     h.llm.saveLlmUpdates.mockResolvedValue(true);
     h.llm.saveAuthHeaderValue.mockResolvedValue(true);
-    h.models = { activeModel: null, activeEmbeddingModel: null };
+    h.models = { downloadedModels: [], activeEmbeddingModel: null };
+    h.active = { activeModels: null };
   });
 
   it('shows loading, then a retry when settings cannot be read', () => {
@@ -67,13 +77,13 @@ describe('ChatTab', () => {
 
   describe('provider', () => {
     it.each([
-      ['openai', { provider: 'openai', model: '' }],
-      ['anthropic', { provider: 'anthropic', model: '' }],
-      ['google', { provider: 'google', model: '' }],
-      ['local', { provider: 'local' }],
-    ])('switching to %s saves its defaults', (value, update) => {
+      ['OpenAI', { provider: 'openai', model: '' }],
+      ['Anthropic', { provider: 'anthropic', model: '' }],
+      ['Google', { provider: 'google', model: '' }],
+      ['Local only', { provider: 'local' }],
+    ])('switching to %s saves its defaults', async (label, update) => {
       render(<ChatTab />);
-      fireEvent.change(screen.getByLabelText('Chat provider'), { target: { value } });
+      await chooseRadixOption(screen.getByLabelText('Chat provider'), label);
       expect(h.llm.saveLlmUpdates).toHaveBeenCalledWith(update);
     });
 
@@ -88,9 +98,28 @@ describe('ChatTab', () => {
       second.unmount();
       h.llm.llmSettings = settings({ provider: undefined });
       render(<ChatTab />);
-      expect(screen.getByLabelText('Chat provider')).toHaveValue('auto');
+      expect(screen.getByLabelText('Chat provider')).toHaveTextContent('Auto — local, llama.cpp, then Ollama');
       expect(screen.getByRole('region', { name: 'llama.cpp connection' })).toBeInTheDocument();
       expect(screen.getByText('Ollama server')).toBeInTheDocument();
+    });
+
+    it('keeps llama.cpp visible when learningModel or utilityModel uses llama_cpp', () => {
+      h.llm.llmSettings = settings({
+        provider: 'local',
+        llamaCpp: { url: '', model: '', authHeaderName: '' },
+        learningModel: { kind: 'llama_cpp', model: 'gemma-27b' },
+      });
+      const first = render(<ChatTab />);
+      expect(screen.getByRole('region', { name: 'llama.cpp connection' })).toBeInTheDocument();
+      first.unmount();
+
+      h.llm.llmSettings = settings({
+        provider: 'ollama',
+        llamaCpp: { url: '', model: '', authHeaderName: '' },
+        utilityModel: { kind: 'llama_cpp', model: 'qwen-7b' },
+      });
+      render(<ChatTab />);
+      expect(screen.getByRole('region', { name: 'llama.cpp connection' })).toBeInTheDocument();
     });
   });
 
@@ -135,9 +164,10 @@ describe('ChatTab', () => {
     });
 
     it('names the cloud model as the active chat model', () => {
+      h.active = { activeModels: activeChat({ kind: 'cloud', provider: 'anthropic', model: 'claude-opus-5' }) };
       render(<ChatTab />);
       expect(screen.getAllByText('claude-opus-5').length).toBeGreaterThan(0);
-      expect(screen.getByText('anthropic')).toBeInTheDocument();
+      expect(screen.getByText('cloud:anthropic/claude-opus-5')).toBeInTheDocument();
     });
 
     it('clears an unsaved key when changing cloud providers', () => {
@@ -175,20 +205,20 @@ describe('ChatTab', () => {
       await connected();
       expect(h.toast.success).toHaveBeenCalledWith('Connected. Loaded 2 model(s) from http://garden.local:11434/api/tags.');
       expect(screen.getByText('2 model(s) from http://garden.local:11434/api/tags')).toBeInTheDocument();
-      fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'phi' } });
+      await chooseRadixOption(screen.getByLabelText('Model'), 'phi');
       expect(h.llm.saveLlmUpdates).toHaveBeenCalledWith({ model: 'phi', ollamaConfigured: true });
-      fireEvent.change(screen.getByLabelText('Model'), { target: { value: '' } });
+      await chooseRadixOption(screen.getByLabelText('Model'), 'Select a model');
       expect(h.llm.saveLlmUpdates).toHaveBeenCalledTimes(1);
-      fireEvent.change(screen.getByLabelText('Utility model'), { target: { value: 'phi' } });
+      await chooseRadixOption(screen.getByLabelText('Utility model'), 'phi');
       expect(h.llm.saveLlmUpdates).toHaveBeenLastCalledWith({ ollamaUtilityModel: 'phi' });
-      fireEvent.change(screen.getByLabelText('Utility model'), { target: { value: '' } });
+      await chooseRadixOption(screen.getByLabelText('Utility model'), 'Falls back to the chat model');
       expect(h.llm.saveLlmUpdates).toHaveBeenCalledTimes(2);
     });
 
     it('drops the chosen model when the server does not have it', async () => {
       render(<ChatTab />);
       await connected(['llama3']);
-      expect(screen.getByLabelText('Model')).toHaveValue('');
+      expect(screen.getByLabelText('Model')).toHaveTextContent('Select a model');
       expect(screen.getByRole('button', { name: 'Save Ollama connection' })).toBeDisabled();
     });
 
@@ -304,6 +334,49 @@ describe('ChatTab', () => {
       await waitFor(() => expect(h.llm.saveLlmUpdates).toHaveBeenCalledWith({ ollamaAuthHeaderName: 'Authorization' }));
       expect(h.llm.saveAuthHeaderValue).toHaveBeenCalledWith('ollama', `Basic ${btoa('ada:lovelace')}`);
     });
+
+    it('surfaces Clear header and an inline warning when an Ollama header name has no Keychain value', async () => {
+      h.llm.llmSettings = settings({ ollamaAuthHeaderName: 'Authorization' });
+      h.llm.authValueSet = { ollama: false, llamaCpp: false };
+      render(<ChatTab />);
+      expect(
+        screen.getByText('Header name is saved without a value in Keychain. Enter a value or click Clear header.'),
+      ).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Clear header' }));
+      await waitFor(() => expect(h.llm.saveLlmUpdates).toHaveBeenCalledWith({ ollamaAuthHeaderName: '' }));
+      expect(h.llm.saveAuthHeaderValue).toHaveBeenCalledWith('ollama', null);
+    });
+
+    it('hides broken-header warning and Clear header while Keychain status is loading or errored', async () => {
+      h.llm.llmSettings = settings({ ollamaAuthHeaderName: 'Authorization' });
+      h.llm.authValueSet = { ollama: false, llamaCpp: false };
+      h.llm.authValueStatus = 'loading';
+      const { rerender } = render(<ChatTab />);
+      expect(
+        screen.queryByText('Header name is saved without a value in Keychain. Enter a value or click Clear header.'),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Clear header' })).not.toBeInTheDocument();
+      expect(screen.getByText('Checking Keychain for the saved header value…')).toBeInTheDocument();
+
+      h.llm.authValueStatus = 'error';
+      rerender(<ChatTab />);
+      expect(
+        screen.queryByText('Header name is saved without a value in Keychain. Enter a value or click Clear header.'),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Clear header' })).not.toBeInTheDocument();
+      expect(screen.getByText('Couldn’t check Keychain status. Saved header settings are preserved.')).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Save Ollama connection' }));
+      await waitFor(() =>
+        expect(h.llm.saveLlmUpdates).toHaveBeenCalledWith({
+          ollamaConfigured: true,
+          ollamaUrl: 'http://garden.local:11434',
+          model: 'mistral',
+          ollamaUtilityModel: '',
+          ollamaAuthHeaderName: 'Authorization',
+        }),
+      );
+    });
   });
 
   describe('memory', () => {
@@ -330,21 +403,38 @@ describe('ChatTab', () => {
     it('names the local chat and embedding models and the router', () => {
       h.llm.llmSettings = settings({ provider: 'local' });
       h.models = {
-        activeModel: { model_name: 'Qwen 9B', model_id: 'qwen-9b' },
+        downloadedModels: [{ model_name: 'Qwen 9B', model_id: 'qwen-9b' }],
         activeEmbeddingModel: { model_name: 'BGE small', model_id: 'bge-small' },
       };
+      h.active = { activeModels: activeChat({ kind: 'local', model_id: 'qwen-9b' }) };
       render(<ChatTab />);
       expect(screen.getByText('Qwen 9B')).toBeInTheDocument();
-      expect(screen.getByText('qwen-9b')).toBeInTheDocument();
+      expect(screen.getByText('local:qwen-9b')).toBeInTheDocument();
       expect(screen.getByText('BGE small')).toBeInTheDocument();
       expect(screen.getByText('tiny-router')).toBeInTheDocument();
     });
 
     it('names the llama.cpp model, and says Not set when nothing is chosen', () => {
       h.llm.llmSettings = settings({ provider: 'llamacpp', llamaCpp: { url: 'http://box', model: 'gemma-27b' }, router: { model: ' ' } });
+      h.active = { activeModels: activeChat({ kind: 'llama_cpp', model: 'gemma-27b' }) };
       render(<ChatTab />);
       expect(screen.getByText('gemma-27b')).toBeInTheDocument();
-      expect(screen.getByText('llamacpp')).toBeInTheDocument();
+      expect(screen.getByText('llamacpp:gemma-27b')).toBeInTheDocument();
+      expect(screen.getAllByText('Not set')).toHaveLength(2);
+    });
+
+    it('names the model the backend runs a chat on under Auto when nothing is downloaded', () => {
+      h.llm.llmSettings = settings({ provider: 'auto', llamaCpp: { url: 'http://box', model: 'qwen.gguf' } });
+      h.active = { activeModels: activeChat({ kind: 'llama_cpp', model: 'qwen.gguf' }) };
+      render(<ChatTab />);
+      expect(screen.getByText('qwen.gguf')).toBeInTheDocument();
+      expect(screen.getAllByText('Not set')).toHaveLength(1);
+    });
+
+    it('says Not set when the backend runs a chat on nothing', () => {
+      h.llm.llmSettings = settings({ provider: 'auto', router: { model: 'tiny-router' } });
+      h.active = { activeModels: activeChat() };
+      render(<ChatTab />);
       expect(screen.getAllByText('Not set')).toHaveLength(2);
     });
 

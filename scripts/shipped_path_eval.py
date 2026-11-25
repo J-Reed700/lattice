@@ -40,11 +40,11 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from chat_rag_eval import ABSTENTION_RE, CITATION_RE, aggregate, evaluate_answer
+from chat_rag_eval import ABSTENTION_RE, aggregate, evaluate_answer
 from eval_integrity import SCHEMA_VERSION, digest, unique_records, validate_expectations, wilson
 from rag_eval import validate_dataset
 
-ROW_SCHEMA = "lattice-shipped-path-answers/1"
+ROW_SCHEMA = "lattice-shipped-path-answers/2"
 JUDGE_RUBRIC = "lattice-shipped-path-judge/1"
 MIN_QUOTE_WORDS = 5
 
@@ -71,7 +71,7 @@ QUESTION_WORDS = frozenset(
 TURN_FIELDS = {
     "index": int, "question": str, "answer": (str, type(None)), "error": (str, type(None)),
     "answered_ms": int, "evidence": list, "citation_map": dict, "ranked_ids": list,
-    "model_calls": list, "prompt_tokens": dict,
+    "model_calls": list, "prompt_tokens": dict, "reply": list,
 }
 ROW_FIELDS = {
     "schema": str, "query_id": str, "tags": list, "answer": (str, type(None)),
@@ -119,13 +119,17 @@ def validate_row(row):
         if field not in row or not isinstance(row[field], kind):
             raise ValueError(f"row {row.get('query_id')!r}: field {field} missing or mistyped")
     if row["schema"] != ROW_SCHEMA:
-        raise ValueError(f"row {row['query_id']!r}: schema {row['schema']!r} is not {ROW_SCHEMA}")
+        raise ValueError(f"row {row['query_id']!r}: schema {row['schema']!r} is not {ROW_SCHEMA}; rescore rows "
+                         "written before turns kept their reply pieces with "
+                         "`cargo run --example shipped_path_eval -- --rescore ROWS OUT`")
     if not row["turns"]:
         raise ValueError(f"row {row['query_id']!r}: no turns")
     for turn in row["turns"]:
         for field, kind in TURN_FIELDS.items():
             if field not in turn or not isinstance(turn[field], kind):
                 raise ValueError(f"row {row['query_id']!r} turn: field {field} missing or mistyped")
+        if spelled(turn["reply"]) != (turn["answer"] or ""):
+            raise ValueError(f"row {row['query_id']!r} turn {turn['index']}: its reply pieces do not spell its answer")
     return row
 
 
@@ -203,8 +207,30 @@ def declines(answer, question):
     )
 
 
-def abstained(answer):
+def spelled(pieces):
+    """The text a reply's pieces were drawn from, each reference as it was written."""
+    return "".join(piece["text"] if piece["type"] == "text" else piece["reference"]["written"] for piece in pieces)
+
+
+def cited_marks(turn):
+    """Each source the app resolved in the turn's reply, in order: where its marker begins in the
+    answer, and the source's number. The app parses the reply; nothing here reads citations from text."""
+    marks, at = [], 0
+    for piece in turn["reply"]:
+        if piece["type"] == "text":
+            at += len(piece["text"])
+            continue
+        reference = piece["reference"]
+        if reference["kind"] == "source":
+            marks.append((at, reference["number"]))
+        at += len(reference["written"])
+    return marks
+
+
+def abstained(answer, marks):
     """Whether the answer's disposition is that the requested fact is unavailable.
+
+    `marks` are the reply's resolved sources (`cited_marks`).
 
     Missing-information language can also qualify one source, reject a premise,
     or contrast an incorrect option with the supported answer. Treating any such
@@ -228,7 +254,8 @@ def abstained(answer):
         correction = re.search(r"\b(?:instead|rather|however)\b", rest, re.I)
         if correction:
             corrected = rest[correction.end():]
-            if CITATION_RE.search(corrected) and not says_unavailable(corrected):
+            start = len(answer) - len(answer.lstrip()) + lead_match.end() + correction.end()
+            if any(at >= start for at, _ in marks) and not says_unavailable(corrected):
                 return False
         return True
 
@@ -241,25 +268,34 @@ def letters_and_digits(text):
     return re.sub(r"\W+", "", normalize(text))
 
 
-def cited_quotes(answer):
-    """What `answer` puts in quotation marks and cites, in whole phrases."""
-    for line in (answer or "").replace("\u201c", '"').replace("\u201d", '"').splitlines():
-        parts = line.split('"')
-        for quoted, after in zip(parts[1::2], parts[2::2]):
-            if re.match(r"[.,;:]?\s*\[\d+\]", after):
+def cited_quotes(answer, marks):
+    """What `answer` puts in quotation marks and cites, in whole phrases: a quote is cited when one of
+    `marks` begins right after its closing mark, past at most one of `.,;:` and spaces on that line."""
+    starts = {at for at, _ in marks}
+    text = (answer or "").replace("\u201c", '"').replace("\u201d", '"')
+    line_start = 0
+    for line in text.splitlines(keepends=True):
+        parts = line.splitlines()[0].split('"')
+        offsets = [line_start]
+        for part in parts[:-1]:
+            offsets.append(offsets[-1] + len(part) + 1)
+        for index in range(1, len(parts) - 1, 2):
+            quoted, after = parts[index], parts[index + 1]
+            if offsets[index + 1] + re.match(r"[.,;:]?\s*", after).end() in starts:
                 for span in re.split(r"\.\.\.|\u2026|\[\w{2,}\]", re.sub(r"\[(\w)\]", r"\1", quoted)):
                     if len(span.split()) >= MIN_QUOTE_WORDS:
                         yield span.strip()
+        line_start += len(line)
 
 
-def invented_quotes(answer, evidence):
+def invented_quotes(answer, evidence, marks):
     """Cited quotes that no passage the turn read holds, word for word.
 
     A rubric asks for the facts it names, so a right ticket inside a sentence
     no document contains passes it. Nothing but the passages decides this.
     """
     passages = letters_and_digits(" ".join(entry.get("content") or "" for entry in evidence or []))
-    return [span for span in cited_quotes(answer) if letters_and_digits(span) not in passages]
+    return [span for span in cited_quotes(answer, marks) if letters_and_digits(span) not in passages]
 
 
 def mechanical(rubric, turn):
@@ -268,14 +304,15 @@ def mechanical(rubric, turn):
     groups = rubric.get("must_mention", [])
     missing = [group for group in groups if not any(contains(answer, option) for option in group)]
     forbidden = [claim for claim in rubric.get("must_not_claim", []) if contains(answer, claim)]
-    cited = list(dict.fromkeys(int(n) for n in CITATION_RE.findall(answer)))
+    marks = cited_marks(turn)
+    cited = list(dict.fromkeys(number for _, number in marks))
     citation_map = turn.get("citation_map") or {}
     invalid = [n for n in cited if str(n) not in citation_map]
     cited_docs = list(dict.fromkeys(citation_map[str(n)] for n in cited if str(n) in citation_map))
     expected = rubric.get("expected_citations", [])
     supplied = {entry.get("document_id") for entry in turn.get("evidence") or []}
     expect_abstain = bool(rubric.get("abstain"))
-    did_abstain = abstained(answer)
+    did_abstain = abstained(answer, marks)
     # The rubric knows what the phrases cannot: stating every required fact is
     # an answer whatever caveats follow it.
     if expect_abstain:
@@ -283,7 +320,7 @@ def mechanical(rubric, turn):
     else:
         abstention_ok = not did_abstain or (bool(groups) and not missing)
     expected_cited = [doc for doc in expected if doc in cited_docs]
-    invented = invented_quotes(answer, turn.get("evidence"))
+    invented = invented_quotes(answer, turn.get("evidence"), marks)
     passed = (
         turn.get("error") is None
         and bool(answer.strip())
@@ -694,8 +731,9 @@ def score_dataset(dataset, expectations, rows):
         aligned = numbered == row["ranked_ids"] and len(numbered) == len(citation_map)
         selected = row["ranked_ids"] if aligned else [citation_map.get(str(n), "")
                                                        for n in range(1, max(map(int, citation_map), default=0) + 1)]
+        cited = list(dict.fromkeys(number for _, number in cited_marks(row["turns"][-1])))
         result = evaluate_answer(queries[row["query_id"]], labels[row["query_id"]], row["answer"] or "",
-                                 selected, row["latency_ms"], row["model"])
+                                 selected, row["latency_ms"], row["model"], citations=cited)
         result.update({"citations_aligned": aligned, "error": row["error"],
                        "observed": [observed(t) for t in row["turns"]],
                        "timing": [turn_timing(t) for t in row["turns"]]})

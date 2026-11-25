@@ -1,97 +1,91 @@
 import { type DocumentMetadata } from '@/types/fileBrowser';
 import { formatRelativeTime } from '@/utils/dateUtils';
-import { isHttpUrl } from '@/utils/sourcePreview';
 
 const normalizeToken = (value: string): string => value.trim().toLowerCase();
 
-export { isHttpUrl };
+const INTERNAL_FILES_PATTERN = /(?:^|\/)\.lattice\/files\/[^/]+(?:\/(.+))?$/i;
+const INTERNAL_WEB_ARCHIVE_PATTERN = /(?:^|\/)\.lattice\/web-archive\/([^/]+)(?:\/(.+))?$/i;
 
-export const isWebDocument = (doc: DocumentMetadata): boolean => {
-  const normalizedCategory = normalizeToken(doc.category ?? '').replace(/[_-]+/g, ' ');
-  return (
-    normalizedCategory.includes('web article') ||
-    normalizedCategory === 'web' ||
-    isHttpUrl(doc.filePath) ||
-    doc.filePath.includes('/.lattice/web-archive/')
-  );
-};
-
-/**
- * The closed set of type labels the app uses for a document. Keep in sync with
- * `crates/lattice-desktop/src/features/stats/type_label.rs::type_label` — same words, same order.
- */
-export const TYPE_BUCKETS = [
-  'PDF',
-  'Markdown',
-  'Text',
-  'Word',
-  'Spreadsheet',
-  'HTML',
-  'Code',
-  'Web',
-  'Other',
-] as const;
-
-export type TypeBucketLabel = (typeof TYPE_BUCKETS)[number] | string;
-
-const TYPE_LABELS: Record<string, string> = {
-  pdf: 'PDF',
-  md: 'Markdown',
-  markdown: 'Markdown',
-  txt: 'Text',
-  rtf: 'Text',
-  doc: 'Word',
-  docx: 'Word',
-  xlsx: 'Spreadsheet',
-  xls: 'Spreadsheet',
-  csv: 'Spreadsheet',
-  html: 'HTML',
-  htm: 'HTML',
-  json: 'Code',
-  js: 'Code',
-  jsx: 'Code',
-  ts: 'Code',
-  tsx: 'Code',
-  py: 'Code',
-  rs: 'Code',
-  go: 'Code',
-  java: 'Code',
-};
-
-/**
- * One document → one bucket label. The single rule behind the facet counts and
- * the facet filter, so the two can never disagree.
- */
-export const typeBucket = (doc: DocumentMetadata): TypeBucketLabel => {
-  if (isWebDocument(doc)) return 'Web';
-  const fileType = normalizeToken(doc.fileType ?? '');
-  return TYPE_LABELS[fileType] ?? (fileType ? fileType.toUpperCase() : 'Other');
+export const isInternalLatticePath = (filePath: string | undefined | null): boolean => {
+  if (!filePath) return false;
+  const normalized = filePath.replace(/\\/g, '/');
+  return INTERNAL_FILES_PATTERN.test(normalized) || INTERNAL_WEB_ARCHIVE_PATTERN.test(normalized);
 };
 
 /** Short, plain type word for the meta line — never a badge. */
 export const typeLabel = (doc: DocumentMetadata): string => {
-  if (isWebDocument(doc)) return 'Web';
+  if (doc.web) return 'Web';
   const fileType = normalizeToken(doc.fileType ?? '');
   if (!fileType) return 'File';
   if (fileType === 'md' || fileType === 'markdown') return 'Markdown';
   return fileType.toUpperCase();
 };
 
+/**
+ * Turn raw internal `.lattice/files/<id>/...` or deep filesystem paths into a
+ * concise human-readable relative/source label. Callers should keep the raw
+ * path on a `title` tooltip for power users.
+ */
+export const formatDisplayPath = (filePath: string | undefined | null): string | null => {
+  if (!filePath) return null;
+  const trimmed = filePath.trim();
+  if (!trimmed) return null;
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      return new URL(trimmed).hostname.replace(/^www\./, '');
+    } catch {
+      return trimmed;
+    }
+  }
+
+  const normalized = trimmed.replace(/\\/g, '/');
+
+  const webArchiveMatch = INTERNAL_WEB_ARCHIVE_PATTERN.exec(normalized);
+  if (webArchiveMatch) {
+    const domain = webArchiveMatch[1]?.replace(/^www\./, '');
+    return domain ? `Web archive · ${domain}` : 'Web archive';
+  }
+
+  const internalFilesMatch = INTERNAL_FILES_PATTERN.exec(normalized);
+  if (internalFilesMatch) {
+    const rest = internalFilesMatch[1]?.split('/').filter(Boolean) ?? [];
+    if (rest.length > 1) {
+      return `Imported · ${rest.slice(0, -1).join(' › ')}`;
+    }
+    return 'Imported';
+  }
+
+  const segments = normalized.split('/').filter(Boolean);
+  if (segments.length <= 1) return null;
+  const parents = segments.slice(Math.max(0, segments.length - 3), -1);
+  return parents.join(' › ');
+};
+
+export const formatFolderDisplayName = (folderPath: string): string => {
+  const normalized = folderPath.replace(/\\/g, '/').replace(/\/+$/, '');
+  if (/(?:^|\/)\.lattice\/files(?:\/[^/]+)?$/i.test(normalized)) {
+    return 'Imported files';
+  }
+  if (/(?:^|\/)\.lattice\/web-archive$/i.test(normalized)) {
+    return 'Web archive';
+  }
+  return pathBasename(folderPath);
+};
+
 /** "9,800 words · 1h ago · PDF" */
-export const metaLine = (doc: DocumentMetadata): string =>
-  [
+export const metaLine = (
+  doc: DocumentMetadata,
+  options: { includeType?: boolean } = {},
+): string => {
+  const { includeType = true } = options;
+  return [
     doc.wordCount > 0 ? `${doc.wordCount.toLocaleString()} words` : null,
     formatRelativeTime(doc.modifiedAt),
-    typeLabel(doc),
+    includeType ? typeLabel(doc) : null,
   ]
     .filter(Boolean)
     .join(' · ');
-
-/** The folder a document sits in, as a basename. */
-export const folderName = (filePath: string): string => {
-  if (isHttpUrl(filePath)) return 'Web';
-  const segments = filePath.replace(/\\/g, '/').split('/').filter(Boolean);
-  return segments.length > 1 ? segments[segments.length - 2] : '';
 };
 
 export const pathBasename = (value: string): string => {

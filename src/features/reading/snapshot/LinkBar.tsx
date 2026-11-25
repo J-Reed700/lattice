@@ -54,10 +54,14 @@ export function LinkBar({ conversationId, snapshotId, onOpenFrozenCopy }: LinkBa
     void listenValidated(TauriEventNames.WebPageSnapshot.Link, EventSchemas.WebPageSnapshot.Link, ({ payload }) => {
       if (payload.snapshotId !== snapshotId) return;
       setLink((previous) => ({ url: payload.url, seq: (previous?.seq ?? 0) + 1 }));
-    }).then((stop) => {
-      if (disposed) stop();
-      else unlisten = stop;
-    });
+    })
+      .then((stop) => {
+        if (disposed) stop();
+        else unlisten = stop;
+      })
+      .catch((err: unknown) => {
+        console.error('[LinkBar] failed to subscribe to snapshot link events:', err);
+      });
     return () => {
       disposed = true;
       unlisten?.();
@@ -70,7 +74,7 @@ export function LinkBar({ conversationId, snapshotId, onOpenFrozenCopy }: LinkBa
   const snapshotsQuery = useQuery({
     queryKey: webPageSnapshotListQueryKey(conversationId),
     queryFn: () => listWebPageSnapshots(conversationId),
-    enabled: target !== null,
+    enabled: target !== null && conversationId.trim().length > 0,
     retry: false,
     staleTime: 0,
   });
@@ -96,7 +100,7 @@ export function LinkBar({ conversationId, snapshotId, onOpenFrozenCopy }: LinkBa
   return (
     <div
       role="status"
-      className="flex shrink-0 items-center gap-2 border-b border-subtle bg-surface-raised px-3 py-1.5 text-xs animate-in fade-in-0 slide-in-from-top-1 duration-fast"
+      className="flex shrink-0 items-center gap-2 border-b border-border-subtle bg-surface-raised px-3 py-1.5 text-xs animate-in fade-in-0 slide-in-from-top-1 duration-fast"
     >
       <ArrowUpRight aria-hidden size={13} className="shrink-0 text-[hsl(var(--text-muted))]" />
       <span className="min-w-0 flex-1 truncate text-[hsl(var(--text-secondary))]">

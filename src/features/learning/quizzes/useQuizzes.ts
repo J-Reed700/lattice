@@ -3,8 +3,10 @@ import { useMemo, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
-import { learningPlanKey, learningRecallKey } from '@/features/learning/api/learningQueryKeys';
+import { learningPlanKey, learningProgramKey, learningRecallKey } from '@/features/learning/api/learningQueryKeys';
 import { learningQuizFormKey, learningQuizOverviewKey } from '@/features/learning/quizzes/quizKeys';
+import { useQuizStopStore } from '@/features/learning/quizzes/quizStopStore';
+import { isConflict } from '@/lib/api';
 import type {
   AddLearningQuizMissesToRecallRequestDto,
   ContestLearningQuizGradeRequestDto,
@@ -130,7 +132,16 @@ export const useSubmitQuiz = () => {
 };
 export const useResumeQuizGrading = () => {
   const api = useApi();
-  return useFormMutation<ResumeLearningQuizGradingRequestDto>(api.resumeLearningQuizGrading);
+  const client = useQueryClient();
+  return useMutation({
+    retry: false,
+    mutationFn: async (request: ResumeLearningQuizGradingRequestDto) => unwrap(await api.resumeLearningQuizGrading(request)),
+    onSuccess: async (form) => {
+      useQuizStopStore.getState().clearStopped(form.id);
+      client.setQueryData(learningQuizFormKey(form.id), form);
+      await client.invalidateQueries({ queryKey: learningQuizOverviewKey(form.programId) });
+    },
+  });
 };
 export const useContestQuizGrade = () => {
   const api = useApi();
@@ -170,7 +181,7 @@ export function usePrepareQuizBank() {
   });
 }
 
-/** Stops a grading job; its items stay pending, never failed. */
+/** Stops a grading job; its items stay pending, never failed. Retries once with a fresh revision if stale. */
 export function useStopQuizGrading() {
   const api = useApi();
   const client = useQueryClient();
@@ -178,13 +189,37 @@ export function useStopQuizGrading() {
     retry: false,
     mutationFn: async (request: LearningGenerationJobActionRequestDto & { formId: string }) => {
       const { operationId, programId, jobId, expectedRevision } = request;
-      return unwrap(await api.cancelLearningGenerationJob({ operationId, programId, jobId, expectedRevision }));
+      try {
+        return unwrap(await api.cancelLearningGenerationJob({ operationId, programId, jobId, expectedRevision }));
+      } catch (error) {
+        if (!isConflict(error)) throw error;
+        const fresh = unwrap(await api.getLearningProgram(programId));
+        client.setQueryData(learningProgramKey(programId), fresh);
+        return unwrap(await api.cancelLearningGenerationJob({
+          operationId: newOperationId(),
+          programId,
+          jobId,
+          expectedRevision: fresh.summary.revision,
+        }));
+      }
     },
     onSuccess: async (_job, request) => {
+      useQuizStopStore.getState().markStopped(request.formId, request.jobId);
+      client.setQueryData<LearningAssessmentFormDto>(learningQuizFormKey(request.formId), (current) => {
+        if (!current?.submission) return current;
+        return {
+          ...current,
+          submission: {
+            ...current.submission,
+            gradingJobId: null,
+          },
+        };
+      });
       await Promise.all([
         client.invalidateQueries({ queryKey: learningQuizFormKey(request.formId) }),
         client.invalidateQueries({ queryKey: learningQuizOverviewKey(request.programId) }),
         client.invalidateQueries({ queryKey: learningPlanKey(request.programId) }),
+        client.invalidateQueries({ queryKey: learningProgramKey(request.programId) }),
       ]);
     },
   });

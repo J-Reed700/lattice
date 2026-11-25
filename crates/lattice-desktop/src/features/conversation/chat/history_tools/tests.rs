@@ -10,7 +10,6 @@ use super::*;
 use crate::features::conversation::repository::ConversationRepository;
 use lattice_core::domain::conversation::memory::{compute_digest, SourceRole};
 use lattice_core::shared::persistence::Database;
-use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 
 // ---------------------------------------------------------------------------
@@ -18,8 +17,9 @@ use sqlx::SqlitePool;
 // ---------------------------------------------------------------------------
 
 async fn migrated_pool() -> SqlitePool {
-    let pool = SqlitePoolOptions::new().connect(":memory:").await.unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+        .await
+        .unwrap();
     sqlx::query("PRAGMA foreign_keys = ON")
         .execute(&pool)
         .await

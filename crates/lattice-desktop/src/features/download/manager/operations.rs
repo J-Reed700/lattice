@@ -5,22 +5,31 @@
 
 use super::state::{DownloadManagerService, StopReason};
 use super::task::{send_control_event, send_terminal_event};
+use crate::infrastructure::adapters::fs::model_paths::ModelPaths;
 use async_trait::async_trait;
 use lattice_core::application::ports::download_manager::{
-    DownloadBatchItem, DownloadEvent, DownloadManager, DownloadRequest,
+    is_huggingface_url, DownloadBatchItem, DownloadEvent, DownloadManager, DownloadRequest,
 };
+use lattice_core::application::services::credentials::CredentialKey;
 use lattice_core::domain::download::{DownloadError, DownloadSession, DownloadState};
 use lattice_core::shared::path_safety::reject_parent_components;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
 #[async_trait]
 impl DownloadManager for DownloadManagerService {
     async fn start_download(&self, request: DownloadRequest) -> Result<String, DownloadError> {
+        // Sizing the file is network I/O: it happens before the gate, so a
+        // slow server cannot stall pause, cancel, resume or queue promotion.
+        let prepared = self.prepare_download(request).await?;
         let _queue_guard = self.queue_gate.lock().await;
-        let id = self.enqueue_download(request).await?;
+        let id = self
+            .register_downloads(vec![prepared])
+            .await?
+            .pop()
+            .ok_or_else(|| DownloadError::NetworkError("No download was registered".to_string()))?;
 
         info!(download_id = %id, "→ Calling process_queue()...");
         self.process_queue().await?;
@@ -34,7 +43,6 @@ impl DownloadManager for DownloadManagerService {
         &self,
         items: Vec<DownloadBatchItem>,
     ) -> Result<Vec<String>, DownloadError> {
-        let _queue_guard = self.queue_gate.lock().await;
         let mut prepared = Vec::with_capacity(items.len());
 
         for item in items {
@@ -42,7 +50,12 @@ impl DownloadManager for DownloadManagerService {
             let mut ready = None;
 
             let candidate_count = item.requests.len();
-            for (candidate_index, request) in item.requests.into_iter().enumerate() {
+            for (candidate_index, mut request) in item.requests.into_iter().enumerate() {
+                // The 404 fallback below keys on the prepare-time HEAD, so a
+                // request with alternatives must be sized by one.
+                if candidate_count > 1 {
+                    request.expected_bytes = None;
+                }
                 match self.prepare_download(request).await {
                     Ok(download) => {
                         ready = Some(download);
@@ -71,6 +84,10 @@ impl DownloadManager for DownloadManagerService {
             }
         }
 
+        // Every item is prepared (and sized) before the gate is taken; the
+        // gate then covers only registration and promotion, so the batch
+        // still becomes observable all at once.
+        let _queue_guard = self.queue_gate.lock().await;
         let ids = self.register_downloads(prepared).await?;
         self.process_queue().await?;
         Ok(ids)
@@ -120,8 +137,27 @@ impl DownloadManager for DownloadManagerService {
             .await?
             .ok_or_else(|| DownloadError::SessionNotFound(id.to_string()))?;
 
+        let was_paused = session.state() == &DownloadState::Paused;
         session.resume()?;
+        self.refuse_if_destination_live(&session).await?;
+        if session.checksum().is_none()
+            && (!was_paused || session.progress().bytes_downloaded() == 0)
+        {
+            // Without a checksum we only resume bytes written by a cleanly
+            // paused session; a failed or 0-byte session must start clean.
+            self.discard_working_file(&session).await;
+            session.update_progress(0, 0.0);
+        } else {
+            let partial_bytes = self.valid_partial_bytes(&session).await;
+            if partial_bytes != session.progress().bytes_downloaded() {
+                session.update_progress(partial_bytes, 0.0);
+            }
+        }
         self.repository.update(&session).await?;
+
+        if let Some(token) = self.resolve_auth_token(session.url(), None).await {
+            self.auth_tokens.write().await.insert(id.to_string(), token);
+        }
 
         {
             let mut queue = self.download_queue.write().await;
@@ -161,6 +197,7 @@ impl DownloadManager for DownloadManagerService {
             .write()
             .await
             .retain(|queued| queued != id);
+        self.discard_working_file(&session).await;
         drop(_queue_guard);
         send_terminal_event(
             &self.event_tx,
@@ -197,12 +234,23 @@ impl DownloadManager for DownloadManagerService {
         // Validate before touching the file: retrying a running session must
         // not delete the file underneath its active transfer.
         session.manual_retry()?;
-        let destination = session.destination();
-        if destination.exists() {
-            self.file_cleanup.delete_file_best_effort(destination).await;
+        self.refuse_if_destination_live(&session).await?;
+        // A session with a checksum keeps its valid `.part`: the final hash
+        // catches a bad prefix, and the retry resumes instead of starting over.
+        // With no checksum nothing could catch a changed upstream file or stale
+        // prefix, so the retry starts clean.
+        if session.checksum().is_none() {
+            self.discard_working_file(&session).await;
+        } else {
+            let partial_bytes = self.valid_partial_bytes(&session).await;
+            session.update_progress(partial_bytes, 0.0);
         }
 
         self.repository.update(&session).await?;
+
+        if let Some(token) = self.resolve_auth_token(session.url(), None).await {
+            self.auth_tokens.write().await.insert(id.to_string(), token);
+        }
 
         // Queue for download (reuse existing queue logic)
         {
@@ -225,6 +273,7 @@ impl DownloadManager for DownloadManagerService {
 
     async fn delete_download(&self, id: &str) -> Result<(), DownloadError> {
         let session = self.repository.get(id).await?;
+        let mut queue_guard = None;
 
         if let Some(session) = session {
             // If download is active, cancel it first.
@@ -237,6 +286,20 @@ impl DownloadManager for DownloadManagerService {
                     }
                     Err(e) => return Err(e),
                 }
+            }
+
+            // From here the gate is held to the end: a start of the same file
+            // must not register and begin resuming this `.part` between the
+            // discard and the row delete, then lose it.
+            queue_guard = Some(self.queue_gate.lock().await);
+
+            // A Failed (or Cancelled) row no longer owns anything but its
+            // `.part`; a Completed one owns the finished file, which stays.
+            if matches!(
+                session.state(),
+                DownloadState::Failed | DownloadState::Cancelled
+            ) {
+                self.discard_working_file(&session).await;
             }
 
             self.repository.delete(id).await?;
@@ -260,6 +323,7 @@ impl DownloadManager for DownloadManagerService {
             queue.retain(|download_id| download_id != id);
         }
 
+        drop(queue_guard);
         Ok(())
     }
 
@@ -278,7 +342,29 @@ impl DownloadManager for DownloadManagerService {
     }
 
     async fn delete_pending_by_model(&self, model_id: &str) -> Result<u64, DownloadError> {
-        self.repository.delete_pending_by_model(model_id).await
+        let _queue_guard = self.queue_gate.lock().await;
+        let pending_ids: Vec<String> = self
+            .repository
+            .list_by_state(&DownloadState::Pending)
+            .await?
+            .into_iter()
+            .filter(|session| session.model_id() == Some(model_id))
+            .map(|session| session.id().to_string())
+            .collect();
+        let deleted = self.repository.delete_pending_by_model(model_id).await?;
+        if !pending_ids.is_empty() {
+            {
+                let mut tokens = self.auth_tokens.write().await;
+                for id in &pending_ids {
+                    tokens.remove(id);
+                }
+            }
+            {
+                let mut queue = self.download_queue.write().await;
+                queue.retain(|queued| !pending_ids.iter().any(|id| id == queued));
+            }
+        }
+        Ok(deleted)
     }
 
     async fn process_pending_queue(&self) -> Result<(), DownloadError> {
@@ -337,10 +423,7 @@ impl DownloadManagerService {
         })?;
 
         let cache_root = dirs::cache_dir().map(|p| p.join("lattice"));
-        let dot_cache_root = std::env::var("HOME")
-            .ok()
-            .map(std::path::PathBuf::from)
-            .map(|p| p.join(".cache").join("lattice"));
+        let dot_cache_root = ModelPaths::cache_root().ok();
         // Model files arrive confined, so canonicalized (on Windows with the
         // `\\?\` prefix), while the roots are plain paths: each root is matched
         // in both forms, or no model could ever download on Windows.
@@ -368,8 +451,25 @@ impl DownloadManagerService {
             )));
         }
 
-        let (file_size, _final_url) = self.engine.get_file_size(&request.url).await?;
-        info!(url = %request.url, file_size = ?file_size, "✓ File size retrieved");
+        let auth_token = self
+            .resolve_auth_token(&request.url, request.auth_token)
+            .await;
+
+        let file_size = match request.expected_bytes {
+            Some(bytes) => Some(bytes),
+            None => {
+                let (file_size, _final_url) = self
+                    .engine
+                    .get_file_size(&request.url, auth_token.as_deref())
+                    .await
+                    .inspect_err(|error| {
+                        // The user sees a plain sentence; keep the cause.
+                        warn!(url = %request.url, %error, "Could not size the download");
+                    })?;
+                info!(url = %request.url, file_size = ?file_size, "✓ File size retrieved");
+                file_size
+            }
+        };
 
         let id = Uuid::new_v4().to_string();
         let mut session = DownloadSession::new(
@@ -381,11 +481,15 @@ impl DownloadManagerService {
         )?;
         info!(download_id = %id, url = %request.url, "✓ DownloadSession created");
 
-        if let (Some(model_name), Some(model_id)) =
-            (request.model_name.clone(), request.model_id.clone())
-        {
-            session = session.with_model_metadata(model_name, model_id);
-            info!(download_id = %id, "✓ Model metadata attached to session");
+        match (request.model_name.clone(), request.model_id.clone()) {
+            (Some(model_name), Some(model_id)) => {
+                session = session.with_model_metadata(model_name, model_id);
+                info!(download_id = %id, "✓ Model metadata attached to session");
+            }
+            // A name needs no model id to be shown: a vision projector or a
+            // reranker belongs to no model record.
+            (Some(model_name), None) => session = session.with_model_name(model_name),
+            _ => {}
         }
         if let Some(model_file_name) = request.model_file_name {
             session = session.with_model_file_name(model_file_name);
@@ -393,24 +497,69 @@ impl DownloadManagerService {
 
         Ok(PreparedDownload {
             session,
-            auth_token: request.auth_token,
+            auth_token,
         })
     }
 
     /// Saves prepared downloads, and deletes the sessions they supersede, in one
     /// unit of work; then queues them in order.
+    ///
+    /// A destination holds one file, so an item whose destination already has a
+    /// live session (running or queued), or repeats an earlier item of the same
+    /// batch, is not registered: its slot in the returned ids is that session's
+    /// id. Callers hold `queue_gate`.
     async fn register_downloads(
         &self,
         prepared: Vec<PreparedDownload>,
     ) -> Result<Vec<String>, DownloadError> {
+        let existing = self.repository.list().await?;
         let mut superseded = Vec::new();
-        for download in &prepared {
-            superseded.extend(
-                self.sessions_superseded_by(download.session.destination())
-                    .await?,
-            );
+        let mut ids = Vec::with_capacity(prepared.len());
+        let mut registering: Vec<PreparedDownload> = Vec::new();
+        for download in prepared {
+            let destination = download.session.destination();
+            if let Some(twin) = registering
+                .iter()
+                .find(|earlier| earlier.session.destination() == destination)
+            {
+                ids.push(twin.session.id().to_string());
+                continue;
+            }
+            let history = self.destination_history(destination, None, &existing).await;
+            if let Some(live) = history.live {
+                info!(
+                    download_id = %live,
+                    "A download for this destination is already live; not registering another"
+                );
+                ids.push(live);
+                continue;
+            }
+            superseded.extend(history.superseded);
+            ids.push(download.session.id().to_string());
+            registering.push(download);
         }
-        let sessions: Vec<DownloadSession> = prepared
+        if registering.is_empty() {
+            return Ok(ids);
+        }
+        for download in &mut registering {
+            if download.session.checksum().is_none() {
+                // Bytes already on disk are reused only when a checksum can
+                // vouch for them: a session with none starts from nothing.
+                self.file_cleanup
+                    .delete_file_best_effort(&download.session.working_path())
+                    .await;
+            } else {
+                // Preserve valid `.part` files across re-downloads when a
+                // checksum will verify the assembled file; discard empty or
+                // oversized `.part` files so they start clean.
+                let partial_bytes = self.valid_partial_bytes(&download.session).await;
+                if partial_bytes > 0 {
+                    download.session.update_progress(partial_bytes, 0.0);
+                }
+            }
+        }
+
+        let sessions: Vec<DownloadSession> = registering
             .iter()
             .map(|download| download.session.clone())
             .collect();
@@ -424,46 +573,142 @@ impl DownloadManagerService {
             info!(download_id = %id, "Superseded an earlier session for the same destination");
         }
 
-        let mut ids = Vec::with_capacity(prepared.len());
-        for download in prepared {
+        for download in registering {
             let id = download.session.id().to_string();
             if let Some(token) = download.auth_token {
                 self.auth_tokens.write().await.insert(id.clone(), token);
             }
             self.download_queue.write().await.push_back(id.clone());
             info!(download_id = %id, "✓ Added to download queue");
-            ids.push(id);
         }
         Ok(ids)
     }
 
-    /// A destination holds one file, so an earlier session for it that this
-    /// manager is neither running nor holding in its queue is history: a
-    /// finished or failed attempt, or one a previous launch left behind. Left
-    /// in place it is reported beside the new session as a second row for the
-    /// same file, and that row never moves. The partial file stays where it is;
-    /// the new session resumes from its length.
-    async fn sessions_superseded_by(
+    /// What the sessions in `sessions` say about one destination, apart from
+    /// `except`: the one this manager is running or holding in its queue, if
+    /// any, and the rest, which are history. History is a finished or failed
+    /// attempt, or one a previous launch left behind; left in place it is
+    /// reported beside a new session as a second row for the same file, and
+    /// that row never moves. A live session is never superseded: two tasks
+    /// would write one file. Superseding keeps the `.part`, so the new session
+    /// resumes the old one's bytes.
+    async fn destination_history(
         &self,
         destination: &std::path::Path,
-    ) -> Result<Vec<String>, DownloadError> {
-        let earlier: Vec<String> = self
-            .repository
-            .list()
-            .await?
-            .into_iter()
-            .filter(|session| session.destination() == destination)
-            .map(|session| session.id().to_string())
-            .collect();
-        let mut superseded = Vec::new();
-        for id in earlier {
+        except: Option<&str>,
+        sessions: &[DownloadSession],
+    ) -> DestinationHistory {
+        let mut history = DestinationHistory::default();
+        for session in sessions {
+            if session.destination() != destination || Some(session.id()) == except {
+                continue;
+            }
+            // A finished task lingers in the active table for a moment after
+            // its row is written: only a non-terminal session is live.
+            if session.state().is_terminal() {
+                history.superseded.push(session.id().to_string());
+                continue;
+            }
+            let id = session.id().to_string();
             let running = self.active_downloads.read().await.contains_key(&id);
             let queued = self.download_queue.read().await.contains(&id);
             if running || queued {
-                continue;
+                history.live.get_or_insert(id);
+            } else {
+                history.superseded.push(id);
             }
-            superseded.push(id);
         }
-        Ok(superseded)
+        history
     }
+
+    /// Refuses to bring a session back to life while another session for its
+    /// destination is running or queued. Callers hold `queue_gate`.
+    async fn refuse_if_destination_live(
+        &self,
+        session: &DownloadSession,
+    ) -> Result<(), DownloadError> {
+        let sessions = self.repository.list().await?;
+        let history = self
+            .destination_history(session.destination(), Some(session.id()), &sessions)
+            .await;
+        match history.live {
+            Some(_) => Err(DownloadError::DestinationBusy(
+                session.destination().display().to_string(),
+            )),
+            None => Ok(()),
+        }
+    }
+
+    /// Deletes a session's `.part` file, unless another live session for the
+    /// same destination is writing it.
+    async fn discard_working_file(&self, session: &DownloadSession) {
+        if let Ok(sessions) = self.repository.list().await {
+            let history = self
+                .destination_history(session.destination(), Some(session.id()), &sessions)
+                .await;
+            if history.live.is_some() {
+                return;
+            }
+        }
+        self.file_cleanup
+            .delete_file_best_effort(&session.working_path())
+            .await;
+    }
+
+    /// Returns the existing `.part` file length if it is valid for resuming
+    /// (`0 < len <= total_bytes`, or `len > 0` when `total_bytes` is unknown).
+    /// Empty or oversized `.part` files are removed so the transfer starts clean.
+    async fn valid_partial_bytes(&self, session: &DownloadSession) -> u64 {
+        let part = session.working_path();
+        match tokio::fs::metadata(&part).await {
+            Ok(meta) if meta.is_file() => {
+                let len = meta.len();
+                let oversized = session
+                    .progress()
+                    .total_bytes()
+                    .is_some_and(|total| len > total);
+                if len == 0 || oversized {
+                    self.file_cleanup.delete_file_best_effort(&part).await;
+                    0
+                } else {
+                    len
+                }
+            }
+            _ => 0,
+        }
+    }
+
+    /// Returns `explicit` when provided, or reloads the stored HuggingFace
+    /// token from `CredentialsPort` for HuggingFace hosts so pause/resume,
+    /// retry, and restarts authenticate without persisting tokens to SQLite.
+    pub(super) async fn resolve_auth_token(
+        &self,
+        url: &str,
+        explicit: Option<String>,
+    ) -> Option<String> {
+        if let Some(token) = explicit.filter(|token| !token.trim().is_empty()) {
+            return Some(token);
+        }
+        if !is_huggingface_url(url) {
+            return None;
+        }
+        let credentials = self.credentials.as_ref()?;
+        match credentials
+            .get_api_key(CredentialKey::HuggingFaceToken.as_str())
+            .await
+        {
+            Ok(Some(token)) if !token.trim().is_empty() => Some(token),
+            Ok(_) => None,
+            Err(error) => {
+                warn!(%error, "Failed to read HuggingFace token from credentials store");
+                None
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+struct DestinationHistory {
+    live: Option<String>,
+    superseded: Vec<String>,
 }

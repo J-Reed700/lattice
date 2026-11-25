@@ -192,7 +192,7 @@ export function RuntimeSetupPanel({
             Python and JavaScript are included. Add C#, Rust, or React when you need them.
           </span>
         </span>
-        <span className="rounded-full bg-background px-2.5 py-1 text-xs text-text-muted">
+        <span className="rounded-full bg-bg px-2.5 py-1 text-xs text-text-muted">
           {readyBuiltinCount} included · {enabledProfileCount} prepared
         </span>
         <ChevronDown
@@ -221,7 +221,7 @@ export function RuntimeSetupPanel({
                 return (
                   <div
                     key={runtimeId}
-                    className="rounded-xl border border-border bg-background/45 p-3"
+                    className="rounded-xl border border-border bg-bg/45 p-3"
                   >
                     <div className="flex items-center justify-between gap-2">
                       <h3 className="text-sm font-medium text-text-primary">
@@ -248,7 +248,7 @@ export function RuntimeSetupPanel({
             </div>
           </div>
 
-          <div className="rounded-xl border border-border bg-background/50 p-3">
+          <div className="rounded-xl border border-border bg-bg/50 p-3">
             <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[.12em] text-text-muted">
               <ShieldCheck size={13} /> Container runtime
               <button
@@ -344,7 +344,7 @@ export function RuntimeSetupPanel({
                 {workspace.runtimeProfiles.map((profile) => (
                   <li
                     key={profile.id}
-                    className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2"
+                    className="flex items-center gap-2 rounded-lg border border-border bg-bg px-3 py-2"
                   >
                     <span
                       className={`grid h-6 w-6 place-items-center rounded-full ${profile.enabled ? "bg-success-muted text-success-fg" : "bg-warning-muted text-warning-fg"}`}
@@ -393,7 +393,7 @@ export function RuntimeSetupPanel({
             </div>
           )}
           {catalog.isSuccess && orderedPresets.length === 0 && (
-            <p className="rounded-lg bg-background p-3 text-xs leading-5 text-text-muted">
+            <p className="rounded-lg bg-bg p-3 text-xs leading-5 text-text-muted">
               No language environments are available right now.
             </p>
           )}
@@ -407,7 +407,7 @@ export function RuntimeSetupPanel({
                     onChange={(event) =>
                       setEngine(event.target.value as LearningContainerEngine)
                     }
-                    className="mt-1 block w-full rounded-lg border border-border bg-background px-3 py-2 text-xs"
+                    className="mt-1 block w-full rounded-lg border border-border bg-bg px-3 py-2 text-xs"
                   >
                     {availableEngines.map((availableEngine) => (
                       <option key={availableEngine} value={availableEngine}>
@@ -433,7 +433,7 @@ export function RuntimeSetupPanel({
                   return (
                     <article
                       key={preset.id}
-                      className="flex min-w-0 flex-col rounded-xl border border-border bg-background/45 p-3"
+                      className="flex min-w-0 flex-col rounded-xl border border-border bg-bg/45 p-3"
                     >
                       <h3 className="text-sm font-medium text-text-primary">
                         {preset.name || label}

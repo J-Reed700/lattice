@@ -2,12 +2,37 @@ import { diagnostics } from './diagnostics';
 import { redact, sanitizeErrorMessage } from './redact';
 import { toast } from '../stores/toastStore';
 
+export const BOOT_FAILURE_STORAGE_KEY = 'lattice:boot-last-failure';
 
 const RESIZE_LOOP_NOTICE = /^ResizeObserver loop (?:completed with undelivered notifications|limit exceeded)\.?$/;
 let installed = false;
+
+function consumeBootRecoveryFailure() {
+  try {
+    const raw = sessionStorage.getItem(BOOT_FAILURE_STORAGE_KEY);
+    if (!raw) return;
+    sessionStorage.removeItem(BOOT_FAILURE_STORAGE_KEY);
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return;
+    const record = parsed as Record<string, unknown>;
+    const detail = typeof record.detail === 'string' && record.detail.trim() !== ''
+      ? record.detail.trim()
+      : 'Recovered from pre-mount startup failure';
+    diagnostics.record('warn', detail, 'Boot Supervisor', {
+      kind: typeof record.kind === 'string' ? record.kind : 'unknown',
+      url: typeof record.url === 'string' ? record.url : undefined,
+      occurredAt: typeof record.occurredAt === 'string' ? record.occurredAt : undefined,
+    });
+    diagnostics.flush();
+  } catch {
+    // Corrupted or unavailable sessionStorage must never disrupt startup.
+  }
+}
+
 export function installGlobalDiagnostics(): () => void {
   if (installed) return () => {};
   installed = true;
+  consumeBootRecoveryFailure();
   let lastNotice = 0;
   const report = (error: unknown, source: string) => {
     diagnostics.capture(error, source);

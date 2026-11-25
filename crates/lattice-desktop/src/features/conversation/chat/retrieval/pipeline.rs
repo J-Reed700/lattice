@@ -25,6 +25,7 @@ pub(super) async fn run_retrieval_pipeline(
     conversation_document_context: &[lattice_core::domain::conversation::DocumentReference],
     evidence: EvidenceBudget,
     attachment_digest: Option<&str>,
+    scope_snapshot: Option<&crate::features::conversation::chat::scope::ScopeSnapshot>,
 ) -> RetrievalPipelineOutcome {
     let retrieval_start = Instant::now();
     let ChatTurn {
@@ -73,44 +74,8 @@ pub(super) async fn run_retrieval_pipeline(
         return outcome;
     }
 
-    // Held until KB retrieval has reported. This is the single honest source for
-    // the "answered without your documents" line: the frontend must never
-    // infer it.
-    let mut embedding_unavailable_reason: Option<String> = None;
-    if let Err(e) = container.get_or_load_embedding().await {
-        debug!(error = %e, "Embedding model not available for RAG — search will be skipped");
-        embedding_unavailable_reason = Some("the embedding model is not ready".to_string());
-    }
-
-    let utility_llm: Arc<dyn lattice_core::application::ports::LLMPort> =
-        match (container.utility_llm_loader())().await {
-            Ok(Some(util)) => {
-                tracing::debug!("Using configured utility LLM for HyDE/query-rewrite");
-                util
-            }
-            Ok(None) => {
-                tracing::debug!(
-                    "No utility LLM configured — external search rewriting may use the chat LLM \
-                 (set one in Settings → Model Catalog to speed up retrieval)"
-                );
-                Arc::clone(llm)
-            }
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    "Utility LLM load failed — external search rewriting may use the chat LLM"
-                );
-                Arc::clone(llm)
-            }
-        };
-
     let tuning = &search_settings.retrieval_tuning;
-    // The embedding and utility models may both have been cold.
     let turn_cancellation = container.turn_cancellation();
-    if turn_cancellation.is_cancel_requested(request_id) {
-        return outcome;
-    }
-
     let mut retrieval_plan = RetrievalPlan::from_router(
         router_settings,
         router_decision,
@@ -121,6 +86,10 @@ pub(super) async fn run_retrieval_pipeline(
     let mut kb_has_results = false;
     let mut kb_low_confidence = true;
     outcome.short_circuit_response = retrieval_plan.short_circuit_response.take();
+
+    if turn_cancellation.is_cancel_requested(request_id) {
+        return outcome;
+    }
 
     if outcome.short_circuit_response.is_none()
         && retrieval_plan.route_action == RouterAction::UseLastDocument
@@ -139,6 +108,14 @@ pub(super) async fn run_retrieval_pipeline(
         )
         .await;
     }
+    if outcome.short_circuit_response.is_none()
+        && retrieval_plan.route_action == RouterAction::UseLastDocument
+        && outcome.followup_context.is_none()
+        && !search_flags.skip_auto_kb
+        && router_decision.router_may_search
+    {
+        retrieval_plan.should_search_kb = true;
+    }
     // The follow-up document is charged before the passages and pages are sized
     // from what is left.
     let mut evidence = evidence;
@@ -153,7 +130,6 @@ pub(super) async fn run_retrieval_pipeline(
         conversation_id,
         request_id,
         validated_message,
-        utility_llm: &utility_llm,
         search_flags,
         highlight_terms,
         excerpt_chars: tool_output_settings.excerpt_chars as usize,
@@ -175,6 +151,7 @@ pub(super) async fn run_retrieval_pipeline(
             search_settings.similarity_threshold,
             tuning,
             &turn_cancellation.turn_token(request_id),
+            scope_snapshot,
         )
         .await;
         (kb_outcome, elapsed_ms(kb_retrieval_start))
@@ -187,27 +164,41 @@ pub(super) async fn run_retrieval_pipeline(
     }
 
     let run_kb = outcome.short_circuit_response.is_none() && retrieval_plan.should_search_kb;
+    let external_planned = outcome.short_circuit_response.is_none() && external.is_planned();
     // KB and the external phase overlap only when no KB result can close the
     // external-lookup gate. The low-confidence clarify below needs no wiki or
     // web search planned, so it never applies to a turn that takes this path.
     // A web search the intent step guessed at never takes it: the vault is
     // searched first and decides whether the web is asked at all.
     let kb_alongside_external =
-        run_kb && external.is_planned() && kb_can_run_alongside_external(search_flags);
+        run_kb && external_planned && kb_can_run_alongside_external(search_flags);
     let mut external_phase: Option<ExternalPhaseOutcome> = None;
     let kb_result = if kb_alongside_external {
         // The external phase interprets the turn itself instead of waiting on
-        // KB's interpretation, so it starts from the raw message. `allow_lookup`
-        // is true on the promise of `kb_can_run_alongside_external`: no KB
-        // result can close the gate on a turn that takes this path. The merge
-        // below re-checks the gate and complains if that promise ever breaks.
+        // KB's interpretation, so it starts from the raw message. It searches on
+        // the promise of `kb_can_run_alongside_external`: no KB result can close
+        // the gate on a turn that takes this path. The merge below re-checks the
+        // gate and complains if that promise ever breaks.
         let external_base = outcome.interpretation.clone();
         let interpret = external_base.hyde_text.is_none();
-        let (kb_result, phase) = tokio::join!(
-            kb_search,
-            external.run(&external_base, interpret, true, WebSearchReason::Requested)
-        );
-        external_phase = Some(phase);
+        let external_future = async {
+            let utility_llm = resolve_external_utility_llm(container, llm).await;
+            if turn_cancellation.is_cancel_requested(request_id) {
+                return None;
+            }
+            Some(
+                external
+                    .run(
+                        &utility_llm,
+                        &external_base,
+                        interpret,
+                        WebSearchReason::Requested,
+                    )
+                    .await,
+            )
+        };
+        let (kb_result, phase) = tokio::join!(kb_search, external_future);
+        external_phase = phase;
         Some(kb_result)
     } else if run_kb {
         Some(kb_search.await)
@@ -230,7 +221,9 @@ pub(super) async fn run_retrieval_pipeline(
         kb_has_results = !outcome.search_response.results.is_empty();
         kb_low_confidence = kb_outcome.low_confidence;
 
-        if kb_outcome.low_confidence
+        if router_settings.enabled
+            && search_flags.strict_sources
+            && kb_outcome.low_confidence
             && !retrieval_plan.should_search_web
             && !retrieval_plan.should_search_wiki
             && outcome.short_circuit_response.is_none()
@@ -248,14 +241,6 @@ pub(super) async fn run_retrieval_pipeline(
                 conversation_id = conversation_id,
                 "Low-confidence retrieval triggered clarify fallback"
             );
-        }
-    }
-
-    // Only when the turn really answered without the vault: keyword search can
-    // still return passages with the embedder down.
-    if let Some(reason) = embedding_unavailable_reason {
-        if outcome.sources.is_empty() {
-            outcome.kb_unavailable_reason.get_or_insert(reason);
         }
     }
 
@@ -310,17 +295,19 @@ pub(super) async fn run_retrieval_pipeline(
         return outcome;
     }
 
-    if external_phase.is_none() && outcome.short_circuit_response.is_none() && external.is_planned()
+    if external_phase.is_none()
+        && outcome.short_circuit_response.is_none()
+        && external_planned
+        && allow_external_lookup
     {
+        let utility_llm = resolve_external_utility_llm(container, llm).await;
+        if turn_cancellation.is_cancel_requested(request_id) {
+            return outcome;
+        }
         let interpret = outcome.interpretation.hyde_text.is_none();
         external_phase = Some(
             external
-                .run(
-                    &outcome.interpretation,
-                    interpret,
-                    allow_external_lookup,
-                    web_reason,
-                )
+                .run(&utility_llm, &outcome.interpretation, interpret, web_reason)
                 .await,
         );
     }
@@ -437,6 +424,32 @@ fn pages_the_budget_carries(budget_chars: usize) -> usize {
     (budget_chars / useful_page_share(budget_chars)).max(1)
 }
 
+async fn resolve_external_utility_llm(
+    container: &dyn ChatRuntime,
+    chat_llm: &Arc<dyn lattice_core::application::ports::LLMPort>,
+) -> Arc<dyn lattice_core::application::ports::LLMPort> {
+    match (container.utility_llm_loader())().await {
+        Ok(Some(util)) => {
+            tracing::debug!("Using configured utility LLM for HyDE/query-rewrite");
+            util
+        }
+        Ok(None) => {
+            tracing::debug!(
+                "No utility LLM configured — external search rewriting may use the chat LLM \
+                 (set one in Settings → Model Catalog to speed up retrieval)"
+            );
+            Arc::clone(chat_llm)
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "Utility LLM load failed — external search rewriting may use the chat LLM"
+            );
+            Arc::clone(chat_llm)
+        }
+    }
+}
+
 struct ExternalLookup<'a> {
     container: &'a dyn ChatRuntime,
     /// The turn's stop button, resolved once from the runtime above.
@@ -445,7 +458,6 @@ struct ExternalLookup<'a> {
     conversation_id: &'a str,
     request_id: &'a str,
     validated_message: &'a str,
-    utility_llm: &'a Arc<dyn lattice_core::application::ports::LLMPort>,
     search_flags: SearchFlags,
     highlight_terms: &'a [String],
     excerpt_chars: usize,

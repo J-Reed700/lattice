@@ -15,7 +15,7 @@ use std::borrow::Cow;
 use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::{
     tokens_for_chars, window_refusal, CompletionInput, CompletionRequest, RequestSize,
-    ThinkingMode, TEMPLATE_TOKENS_FOR_ANSWER, TEMPLATE_TOKENS_PER_MESSAGE,
+    SamplingOverride, ThinkingMode, TEMPLATE_TOKENS_FOR_ANSWER, TEMPLATE_TOKENS_PER_MESSAGE,
 };
 use lattice_core::shared::error::Result;
 
@@ -119,6 +119,21 @@ impl<'r> Fitted<'r> {
         self.thinking
     }
 
+    /// Caller-requested sampling resolved for the model's actual thinking
+    /// state: explicit `request.sampling` wins except greedy `deterministic()`
+    /// when thinking is on (which causes `<think>` loops); `non_thinking_sampling`
+    /// supplies deterministic decoding only when the backend has thinking off.
+    pub(crate) fn effective_sampling(&self) -> Option<SamplingOverride> {
+        let explicit = self.request.sampling.filter(|sampling| {
+            !(self.thinking.is_on() && *sampling == SamplingOverride::deterministic())
+        });
+        explicit.or_else(|| {
+            (!self.thinking.counts_toward_the_ceiling())
+                .then_some(self.request.non_thinking_sampling)
+                .flatten()
+        })
+    }
+
     /// The reply ceiling to send, cut to the room.
     pub(crate) fn ceiling(&self) -> Option<u32> {
         self.ceiling
@@ -192,22 +207,27 @@ pub(crate) async fn fit<'r>(
     let margined =
         (estimate.saturating_mul(ESTIMATE_MARGIN) / ESTIMATE_MARGIN_DIVISOR).saturating_add(fixed);
     let reply = usize::try_from(wanted.unwrap_or(0).max(1)).unwrap_or(usize::MAX);
-    let prompt = if margined.saturating_add(reply) <= window {
+    let opaque_tokens = tokens_for_chars(native_chars(request), ratio);
+    let mut prompt = if margined.saturating_add(opaque_tokens).saturating_add(reply) <= window {
         plain
     } else {
         match counter.exact(&prompt_text(request)).await {
             Some(exact) => PromptMeasure {
                 tokens: exact.saturating_add(fixed),
-                counted_exactly: true,
+                counted_exactly: opaque_tokens == 0,
             },
             None => plain,
         }
     };
-    if prompt.tokens >= window {
+    if opaque_tokens > 0 {
+        prompt.counted_exactly = false;
+    }
+    let used = prompt.tokens.saturating_add(opaque_tokens);
+    if used >= window {
         return Err(window_refusal(
             backend.model_name(),
             RequestSize {
-                prompt_tokens: prompt.tokens,
+                prompt_tokens: used,
                 counted_exactly: prompt.counted_exactly,
                 output_tokens: 0,
                 image_tokens,
@@ -216,14 +236,14 @@ pub(crate) async fn fit<'r>(
             window,
         ));
     }
-    let room = u32::try_from(window - prompt.tokens).unwrap_or(u32::MAX);
+    let room = u32::try_from(window - used).unwrap_or(u32::MAX);
     Ok(Fitted {
         request,
         thinking,
         ceiling: cut(wanted, room),
         prompt,
         room,
-        opaque_tokens: tokens_for_chars(native_chars(request), ratio),
+        opaque_tokens,
         slot: None,
     })
 }

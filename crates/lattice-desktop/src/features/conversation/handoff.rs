@@ -10,7 +10,7 @@ use super::branching_dto::{
 use crate::features::conversation::chat::ports::ChatRuntime;
 use lattice_core::application::ports::conversation_memory::ConversationMemoryPort;
 use lattice_core::application::ports::llm_port::{
-    chars_within_tokens, InferencePriority, ModelRequirements, SamplingOverride,
+    chars_within_tokens, InferencePriority, ModelRequirements,
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::{
@@ -277,8 +277,10 @@ fn summary_request(
         cancel: None,
         cache_key: Some(conversation_id.to_string()),
         // A summary needs no hidden chain of thought, and a reasoning model
-        // left to it can spend the whole budget before writing a word.
-        sampling: Some(SamplingOverride::deterministic()),
+        // left to it can spend the whole budget before writing a word. Keep
+        // the configured non-thinking sampling profile rather than greedy
+        // decoding so long summaries do not loop on Qwen3.5/3.6.
+        reasoning_effort: Some("none".into()),
         time_budget: Some(CALL_TIME_BUDGET),
         ..Default::default()
     };
@@ -294,6 +296,11 @@ async fn ask_model(llm: &dyn LLMPort, request: GroundedRequest) -> Result<String
         input_budget = output.accounting.input_budget,
         "Continue in new chat: request planned"
     );
+    if output.finish() == lattice_core::application::ports::llm_port::Finish::CutOff {
+        return Err(ApiError::from(AppError::AnswerCutOff(
+            "The conversation summary was cut off before it finished.".to_string(),
+        )));
+    }
     let text = output.text.trim();
     if text.is_empty() {
         return Err(ApiError::from(AppError::Other(

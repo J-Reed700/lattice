@@ -9,24 +9,9 @@ use tokio::io::{AsyncReadExt, BufReader};
 pub async fn extract_csv_file(
     path: &Path,
     mime_type: &str,
-    max_file_size: u64,
+    max_file_size: Option<u64>,
 ) -> Result<ExtractedContent> {
-    let metadata = tokio::fs::metadata(path)
-        .await
-        .map_err(|e| IndexingError::Io {
-            message: e.to_string(),
-            kind: format!("{:?}", e.kind()),
-        })?;
-
-    let file_size = metadata.len();
-
-    if file_size > max_file_size {
-        return Err(IndexingError::FileTooLarge {
-            path: path.display().to_string(),
-            size_bytes: file_size,
-            max_size_bytes: max_file_size,
-        });
-    }
+    super::check_file_size(path, max_file_size).await?;
 
     let file = tokio::fs::File::open(path)
         .await
@@ -131,7 +116,7 @@ mod tests {
         let path = temp_file.path().with_extension("csv");
         std::fs::copy(temp_file.path(), &path).unwrap();
 
-        let result = extract_csv_file(&path, "text/csv", 50 * 1024 * 1024).await;
+        let result = extract_csv_file(&path, "text/csv", None).await;
 
         assert!(result.is_ok());
         let content = result.unwrap();

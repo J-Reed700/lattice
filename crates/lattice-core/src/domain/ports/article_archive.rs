@@ -1,16 +1,34 @@
 //! Article Archive Port
 //!
 //! Some documents keep their file in an archive the app maintains for them,
-//! such as saved web articles. Deleting one of those documents has to go
-//! through the archive, and only the archive can say which paths are its own.
+//! such as saved web articles. The archive is the one place that knows which
+//! paths are its own and how an article is laid out, so deleting one of those
+//! documents, opening it and naming it all ask the archive.
 
 use crate::shared::error::Result;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-/// The part of an article archive that document deletion needs.
+/// A saved web article's files and the facts the archive keeps about it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavedArticle {
+    /// The article's text (`article.md`), the file its document indexes.
+    pub text: PathBuf,
+    /// The saved page (`page.html`), when it is still on disk.
+    pub page: Option<PathBuf>,
+    pub title: Option<String>,
+    /// The address the article was saved from.
+    pub url: Option<String>,
+    /// Outgoing links captured from the page.
+    pub links: Vec<String>,
+}
+
+/// What the rest of the app asks of an article archive: which paths are its
+/// own, which of them are saved articles, and how to remove one.
 #[async_trait::async_trait]
 pub trait ArticleArchive: Send + Sync {
     /// Remove the article at `path`. Succeeds when the file is already gone.
+    /// Fails, deleting nothing, when what it would delete is the archive
+    /// itself or lies outside it once every link is followed.
     async fn delete_article(&self, path: &Path) -> Result<()>;
 
     /// True when `path` is inside this archive.
@@ -20,4 +38,14 @@ pub trait ArticleArchive: Send + Sync {
     /// file the user keeps somewhere of their own. Only the archive knows
     /// where its own base directory is, so only it can answer.
     fn owns(&self, path: &Path) -> bool;
+
+    /// True when `path` is a saved article's text file inside this archive,
+    /// the file its document indexes.
+    fn is_saved_article(&self, path: &Path) -> bool;
+
+    /// The saved article whose text file is `path`, or `None` when
+    /// [`Self::is_saved_article`] does not hold for `path`, the file is gone,
+    /// or it lies outside the archive once every link is followed. Its page
+    /// and facts are read only from inside the archive too.
+    async fn saved_article(&self, path: &Path) -> Option<SavedArticle>;
 }

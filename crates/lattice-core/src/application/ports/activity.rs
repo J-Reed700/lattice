@@ -52,6 +52,8 @@ pub enum ActivityTarget {
     Conversation {
         conversation: String,
     },
+    /// The Learning Studio course builder while an outline has no saved draft yet.
+    StudioBuilder,
 }
 
 /// How far an item has come, in its own unit ("passages", "files").

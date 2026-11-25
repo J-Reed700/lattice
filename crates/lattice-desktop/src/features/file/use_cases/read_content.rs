@@ -9,12 +9,13 @@ use lattice_core::shared::error::{AppError, Result};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
-/// Maximum file size for reading (10 MB)
+/// Maximum file size for in-app text preview (100 MiB).
 ///
-/// This limit prevents:
-/// - Memory exhaustion attacks (CWE-400)
-/// - Denial of service via large file reads (CWE-770)
-pub const MAX_FILE_SIZE_BYTES: u64 = 10 * 1024 * 1024; // 10 MB
+/// Preview reads materialize the entire file in Rust memory and send it over
+/// Tauri JSON IPC into the WebView renderer. Keeping a 100 MiB UI/IPC OOM
+/// guard prevents multi-gigabyte binaries or logs from exhausting memory
+/// (CWE-400 / CWE-770) while still allowing large local documents.
+pub const MAX_FILE_SIZE_BYTES: u64 = lattice_core::shared::constants::MAX_FILE_SIZE_BYTES;
 
 /// Use case for reading file content as text.
 ///

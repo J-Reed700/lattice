@@ -3,7 +3,9 @@ use super::assemble::{PlannedRequest, RenderedPrompt};
 use super::prepare::PreparedTurn;
 use super::research::Rounds;
 use super::*;
-use crate::features::conversation::chat::tool_loop::LoopRequest;
+use crate::features::conversation::chat::tool_loop::{
+    run_agentic_tool_loop_with_partial, LoopRequest,
+};
 
 /// The answer and what it cites, before it is saved.
 pub(super) struct GeneratedAnswer {
@@ -17,8 +19,17 @@ pub(super) struct GeneratedAnswer {
     pub(super) summary_refold: Option<lattice_core::domain::conversation::memory::SummaryRefold>,
 }
 
+pub(super) enum GenerateOutcome {
+    Completed(GeneratedAnswer),
+    Cancelled {
+        error: AppError,
+        partial: Option<GeneratedAnswer>,
+    },
+}
+
 /// `research` saves each round of a research turn, and resumes one after the
 /// rounds it saved.
+#[cfg(test)]
 pub(super) async fn generate_answer(
     container: &dyn ChatRuntime,
     turn: &PreparedTurn,
@@ -29,6 +40,28 @@ pub(super) async fn generate_answer(
     emit: &ChatEventSink,
     metrics: &mut ConversationFlowTimingMetrics,
 ) -> Result<GeneratedAnswer> {
+    match generate_answer_outcome(
+        container, turn, flags, prompt, request, research, emit, metrics,
+    )
+    .await?
+    {
+        GenerateOutcome::Completed(answer) => Ok(answer),
+        GenerateOutcome::Cancelled { error, .. } => Err(error),
+    }
+}
+
+/// Runs generation while capturing any partial streamed reply on user cancellation.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn generate_answer_outcome(
+    container: &dyn ChatRuntime,
+    turn: &PreparedTurn,
+    flags: SearchFlags,
+    prompt: RenderedPrompt,
+    request: PlannedRequest,
+    research: Option<Rounds<'_>>,
+    emit: &ChatEventSink,
+    metrics: &mut ConversationFlowTimingMetrics,
+) -> Result<GenerateOutcome> {
     let RenderedPrompt {
         mut sources,
         mut retrieval_trace,
@@ -47,12 +80,13 @@ pub(super) async fn generate_answer(
     turn.names.save().await?;
     let generation_start = Instant::now();
     let mut tokens = TurnTokensDto::default();
+    let mut partial_text: Option<String> = None;
     let response = match short_circuit_response {
         Some(response) => {
             metrics.generation_subtimings = Some(ToolLoopTimingMetrics::default());
             Ok(response)
         }
-        None => run_agentic_tool_loop(
+        None => run_agentic_tool_loop_with_partial(
             container,
             turn.chat_turn(),
             emit,
@@ -75,6 +109,7 @@ pub(super) async fn generate_answer(
             &mut retrieval_trace,
             pages_read,
             turn.source.as_ref(),
+            &mut partial_text,
         )
         .await
         .map(|outcome| {
@@ -87,12 +122,28 @@ pub(super) async fn generate_answer(
         }),
     };
     metrics.generation_ms = elapsed_ms(generation_start);
-    Ok(GeneratedAnswer {
-        response: response?,
-        sources,
-        retrieval_trace,
-        tokens,
-        memory_usage,
-        summary_refold,
-    })
+    match response {
+        Ok(response) => Ok(GenerateOutcome::Completed(GeneratedAnswer {
+            response,
+            sources,
+            retrieval_trace,
+            tokens,
+            memory_usage,
+            summary_refold,
+        })),
+        Err(error)
+            if crate::features::conversation::chat::cancellation::is_cancellation(&error) =>
+        {
+            let partial = partial_text.map(|text| GeneratedAnswer {
+                response: text,
+                sources,
+                retrieval_trace,
+                tokens,
+                memory_usage,
+                summary_refold,
+            });
+            Ok(GenerateOutcome::Cancelled { error, partial })
+        }
+        Err(error) => Err(error),
+    }
 }

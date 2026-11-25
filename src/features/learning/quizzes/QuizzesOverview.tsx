@@ -14,16 +14,16 @@ import { useQuizLauncher, type QuizLauncher } from '@/features/learning/quizzes/
 import { allQuizStatuses, useQuizOverview } from '@/features/learning/quizzes/useQuizzes';
 import type { LearningModuleQuizzesDto, LearningProgramDto, LearningQuizOverviewDto } from '@/lib/bindings';
 
-const card = 'rounded-2xl border border-border bg-surface px-5 shadow-sm sm:px-6';
+const card = 'rounded-xl border border-border-subtle bg-surface px-5 shadow-sm sm:px-6';
 const headerButton = quietPill.replace('px-4', 'px-3');
 
-function OverviewHeader({ overview, onSettings, onPrepareAll, preparable }: { overview: LearningQuizOverviewDto; onSettings: () => void; onPrepareAll: () => void; preparable: number }) {
+function OverviewHeader({ overview, onSettings, onPrepareAll, preparable, preparingAll }: { overview: LearningQuizOverviewDto; onSettings: () => void; onPrepareAll: () => void; preparable: number; preparingAll: boolean }) {
   const { settings, quizzesPassed, quizzesTotal } = overview;
-  return <header className={`${parchmentBand} overflow-hidden rounded-2xl border px-5 py-5 sm:px-7`}>
+  return <header className={`${parchmentBand} overflow-hidden rounded-xl border px-5 py-5 sm:px-7`}>
     <div className="grid items-start gap-5 md:grid-cols-[minmax(0,1fr)_auto]">
       <div className="min-w-0 max-w-2xl">
         <div className={`${eyebrow} flex items-center gap-1.5`}><GraduationCap size={14} aria-hidden="true" /> Quizzes &amp; tests</div>
-        <h2 className="mt-1 font-serif text-[1.75rem] leading-tight text-text-primary">Check what stuck, whenever you like</h2>
+        <h2 className="mt-1 font-sans text-2xl font-semibold leading-tight tracking-[-0.025em] text-text-primary">Check what stuck, whenever you like</h2>
         <p className="mt-1.5 text-sm leading-6 text-text-secondary">Every lesson has a quiz, every module a test, and the course an exam. Nothing is locked: take any of them in any order.</p>
         <p className="mt-1 text-xs text-text-muted">Pass marks: quiz {percent(settings.quizPass)} · test {percent(settings.testPass)} · exam {percent(settings.examPass)}</p>
       </div>
@@ -33,7 +33,7 @@ function OverviewHeader({ overview, onSettings, onPrepareAll, preparable }: { ov
         <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-black/10 dark:bg-white/10"><div className="h-full rounded-full bg-accent transition-all" style={{ width: `${quizzesTotal ? (quizzesPassed / quizzesTotal) * 100 : 0}%` }} /></div>
         <div className="mt-3 flex flex-wrap gap-1.5 md:flex-nowrap md:justify-end">
           <button type="button" onClick={onSettings} className={headerButton}><Settings2 size={14} aria-hidden="true" /> Settings</button>
-          {preparable > 0 && <button type="button" onClick={onPrepareAll} className={headerButton}><Sparkles size={14} aria-hidden="true" /> Prepare all</button>}
+          {preparable > 0 && <button type="button" disabled={preparingAll} onClick={onPrepareAll} className={headerButton}><Sparkles size={14} aria-hidden="true" /> {preparingAll ? 'Preparing all…' : 'Prepare all'}</button>}
         </div>
       </div>
     </div>
@@ -79,7 +79,7 @@ export function QuizzesOverview({ program, formId, onFormIdChange, focusModuleId
   if (formId) return <QuizFormView formId={formId} program={program} overview={overview.data} onBack={() => onFormIdChange(null)} onOpenForm={onFormIdChange} completionFor={completionFor} />;
   if (overview.isLoading) return <div role="status" className="flex items-center gap-2 rounded-2xl border border-border bg-surface p-8 text-sm text-text-muted"><LoaderCircle size={16} className="animate-spin motion-reduce:animate-none" aria-hidden="true" /> Loading your quizzes…</div>;
   if (overview.isError || !overview.data) return <section role="alert" className="rounded-2xl border border-border bg-surface p-6">
-    <h3 className="font-serif text-xl text-text-primary">Quizzes could not be loaded</h3>
+    <h3 className="font-sans text-lg font-semibold tracking-[-0.02em] text-text-primary">Quizzes could not be loaded</h3>
     <p className="mt-2 text-sm text-text-secondary">{overview.error?.message ?? 'Try again in a moment.'}</p>
     <button type="button" onClick={() => void overview.refetch()} className={`${quietPill} mt-4`}>Try again</button>
   </section>;
@@ -87,10 +87,10 @@ export function QuizzesOverview({ program, formId, onFormIdChange, focusModuleId
   const data = overview.data;
   const readyLessons = new Set(program.modules.flatMap((module) => module.lessons.filter((lesson) => lesson.preparation === 'ready').map((lesson) => lesson.id)));
   const preparable = allQuizStatuses(data).filter((status) => (status.bankStatus === 'not_prepared' || status.bankStatus === 'failed') && (status.scope.kind !== 'lesson' || readyLessons.has(status.scope.id ?? '')));
-  const prepareAll = async () => { for (const status of preparable) await launcher.prepareBank(status); };
+  const prepareAll = () => launcher.prepareAll(preparable);
 
   return <div className="space-y-5" data-testid="quizzes-overview">
-    <OverviewHeader overview={data} preparable={preparable.length} onSettings={() => setSettingsOpen((open) => !open)} onPrepareAll={() => void prepareAll()} />
+    <OverviewHeader overview={data} preparable={preparable.length} preparingAll={launcher.preparingAll} onSettings={() => setSettingsOpen((open) => !open)} onPrepareAll={() => void prepareAll()} />
     {settingsOpen && <QuizSettingsCard programId={program.summary.id} settings={data.settings} onClose={() => setSettingsOpen(false)} />}
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(280px,340px)]">
       <div className="min-w-0 space-y-4">

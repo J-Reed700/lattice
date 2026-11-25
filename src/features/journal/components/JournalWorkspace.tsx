@@ -2,6 +2,15 @@ import { useCallback, useMemo, useState } from 'react';
 
 import { useSearchParams } from 'react-router';
 
+import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui';
 import { useJournalsQuery } from '@/features/journal/api/queries';
 import { EntryEditor } from '@/features/journal/components/EntryEditor';
 import { EntryList } from '@/features/journal/components/EntryList';
@@ -105,6 +114,10 @@ export function JournalWorkspace() {
 
 
   const [sidebarCollapsed, setSidebarCollapsed] = useSidebarCollapsed();
+  const [openContextRequest, setOpenContextRequest] = useState(0);
+  const handleOpenContext = useCallback(() => {
+    setOpenContextRequest((count) => count + 1);
+  }, []);
 
   useFollowNoteIdParam({ requestedNoteIdParam, searchParams, setSearchParams, setRequestedNoteId });
 
@@ -147,6 +160,10 @@ export function JournalWorkspace() {
     handleNewPage,
     handleRenamePage,
     handleDeletePage,
+    pagePendingDelete,
+    isDeletingPage,
+    confirmDeletePage,
+    cancelDeletePage,
   } = useJournalPageActions({
     journalSpace,
     requestedJournalSpaceId,
@@ -221,7 +238,7 @@ export function JournalWorkspace() {
     handleNewPage,
   });
 
-  useJournalShortcuts({ entries, selectedId, setSelectedId, saveNow, handleNewPage, setSidebarCollapsed });
+  useJournalShortcuts({ entries, selectedId, setSelectedId, saveNow, setSidebarCollapsed });
 
   const journalName = journalSpace?.name ?? 'Journal';
   const pinnedEntryCount = [...pinnedIds].length;
@@ -268,6 +285,7 @@ export function JournalWorkspace() {
           onRenamePage={handleRenamePage}
           onDeletePage={handleDeletePage}
           displayPageTitle={displayPageTitle}
+          onOpenContext={handleOpenContext}
         />
       )}
 
@@ -303,9 +321,46 @@ export function JournalWorkspace() {
         onSynthesize={handleSynthesize}
         weekCandidates={weekCandidates}
         onNotify={notify}
+        openContextRequest={openContextRequest}
       />
 
       {notice && <JournalNoticeToast notice={notice} onDismiss={() => setNotice(null)} />}
+
+      <Dialog
+        open={Boolean(pagePendingDelete)}
+        onOpenChange={(open) => {
+          if (!open && !isDeletingPage) cancelDeletePage();
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              Delete &ldquo;{pagePendingDelete ? displayPageTitle(pagePendingDelete) : ''}&rdquo;?
+            </DialogTitle>
+            <DialogDescription>
+              The page and its highlights are deleted. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={cancelDeletePage}
+              disabled={isDeletingPage}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void confirmDeletePage()}
+              disabled={isDeletingPage}
+            >
+              {isDeletingPage ? 'Deleting…' : 'Delete page'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

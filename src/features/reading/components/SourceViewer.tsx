@@ -7,6 +7,7 @@ import { ImageViewer } from '@/features/reading/components/viewers/ImageViewer';
 import { MarkdownViewer } from '@/features/reading/components/viewers/MarkdownViewer';
 import { PDFViewer } from '@/features/reading/components/viewers/PDFViewer';
 import { TextViewer } from '@/features/reading/components/viewers/TextViewer';
+import type { SavedWebArticleDto } from '@/lib/bindings';
 import type {
   PassageLocator,
   PassageMatchTier,
@@ -30,8 +31,8 @@ interface SourceViewerProps {
   initialLocator: PassageLocator | null;
   onLocationResolved: (_label: string) => void;
   onMatch: (_tier: PassageMatchTier) => void;
-  isWebArchiveArticle: boolean;
-  webArchiveHtmlPath: string | null;
+  /** The web archive's record of the file, when it is a saved article. */
+  savedArticle: SavedWebArticleDto | null;
   /** The web citation's view, when the source shows as a web article. */
   webArticle: ReactNode;
   onOpenPrimary: () => void;
@@ -52,8 +53,7 @@ export const SourceViewer = ({
   initialLocator,
   onLocationResolved,
   onMatch,
-  isWebArchiveArticle,
-  webArchiveHtmlPath,
+  savedArticle,
   webArticle,
   onOpenPrimary,
 }: SourceViewerProps) => {
@@ -103,7 +103,7 @@ export const SourceViewer = ({
     if (savedCitationText) {
       return (
         <div className="flex min-h-full flex-col">
-          <p role="status" className="mb-4 rounded-md border border-subtle bg-surface-raised px-4 py-3 text-sm text-[hsl(var(--text-secondary))]">
+          <p role="status" className="mb-4 rounded-md border border-border-subtle bg-surface-raised px-4 py-3 text-sm text-[hsl(var(--text-secondary))]">
             The original file is unavailable. Showing saved citation text; this is not a full file snapshot.
           </p>
           <TextViewer content={savedCitationText} language="text" />
@@ -119,8 +119,8 @@ export const SourceViewer = ({
   }
 
   // Web archive articles should render from captured HTML snapshot, not raw markdown text.
-  if (isWebArchiveArticle && webArchiveHtmlPath) {
-    return <HTMLViewer htmlPath={webArchiveHtmlPath} />;
+  if (savedArticle) {
+    return <HTMLViewer article={savedArticle} />;
   }
 
   // Route to appropriate viewer based on MIME type

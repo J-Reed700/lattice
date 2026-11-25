@@ -4,6 +4,7 @@
 //! are built in `Container::new`; the accessors over them belong to this
 //! feature.
 
+use crate::features::vault::events::VaultConflictDto;
 use crate::features::vault::watcher::RescanSummary;
 use crate::features::vault::writeback::VaultWriterHandle;
 use crate::interfaces::di::Container;
@@ -50,14 +51,25 @@ impl Container {
                     .to_string(),
             )
         })?;
+        let app_handle_cell = std::sync::Arc::new(std::sync::RwLock::new(Some(app_handle)));
         crate::features::vault::watcher::rescan_vault(
             self.core.database().clone(),
             vault_root,
             self.vault_write_suppression.clone(),
             &self.vault_rescan_lock,
-            app_handle,
+            app_handle_cell,
             std::sync::Arc::clone(self.core.background()),
+            Some(&self.vault_writer),
         )
         .await
+    }
+
+    pub async fn list_vault_conflicts(&self) -> Result<Vec<VaultConflictDto>> {
+        crate::features::vault::repository::list_vault_conflicts(self.core.database()).await
+    }
+
+    pub async fn dismiss_vault_conflicts(&self, ids: Vec<String>) -> Result<()> {
+        crate::features::vault::repository::dismiss_vault_conflicts(self.core.database(), &ids)
+            .await
     }
 }

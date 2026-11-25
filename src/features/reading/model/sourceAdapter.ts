@@ -1,7 +1,7 @@
 /**
  * Single canonical source-of-truth adapter: turns every source or document
  * representation across Lattice into a `SourceWithMetadata` + optional
- * `PassageLocator` for `SourceReaderBody` / `FilePreviewModal` / `ChatReaderPane`.
+ * `PassageLocator` for `SourceReaderBody` / `FilePreviewModal` / `ReaderPane`.
  *
  * No surface constructs ad-hoc reader payloads or kicks users out to external
  * browsers or legacy viewers: every surface speaks through these constructors.
@@ -12,6 +12,7 @@ import type {
   LearningEvidencePassageDto,
   LearningSourceLibraryItemDto,
   LearningSourceVersionDto,
+  LearningSourceVersionSummaryDto,
   RecentDocument,
   StudySourceDto,
 } from '@/lib/bindings';
@@ -80,10 +81,7 @@ export function fromFilePath(filePath: string, title?: string): ResolvedReaderTa
 
 /** Library (`FileBrowser`) document -> unified reader target. */
 export function fromDocumentMetadata(doc: DocumentMetadata): ResolvedReaderTarget {
-  const web =
-    isHttpUrl(doc.filePath) ||
-    doc.category.toLowerCase().includes('web') ||
-    doc.fileType.toLowerCase().includes('web');
+  const web = doc.web;
   return {
     source: {
       documentId: doc.id,
@@ -424,13 +422,18 @@ export function fromLearningSource(
   };
 }
 
-/** Learning Studio lesson evidence passage (`LearningEvidencePassageDto`) -> unified reader target. */
+/** The web address a lesson's evidence passage was saved from; none when it has no http page. */
+export function learningPassageUrl(passage: Pick<LearningEvidencePassageDto, 'url'>): string | null {
+  return passage.url?.trim() && isHttpUrl(passage.url) ? passage.url.trim() : null;
+}
+
+/** Learning Studio lesson evidence passage (`LearningEvidencePassageDto`) -> unified reader target. A web passage's saved page is its snapshot; its content is the passage, which a reader marks, or the whole text when there is no passage. */
 export function fromLearningEvidencePassage(
   passage: LearningEvidencePassageDto,
   index = 0,
   fullText?: string | null,
 ): ResolvedReaderTarget {
-  const url = passage.url?.trim() && isHttpUrl(passage.url) ? passage.url.trim() : null;
+  const url = learningPassageUrl(passage);
   const web = Boolean(url);
   const text = passage.text?.trim() || '';
   const documentId = url ? `web:${url}` : passage.sourceVersionId || `passage-${index}`;
@@ -444,7 +447,7 @@ export function fromLearningEvidencePassage(
       filePath: url ?? passage.sourceVersionId,
       mimeType: web ? 'text/html' : 'text/plain',
       category: web ? 'web' : 'document',
-      content: fullText?.trim() || text,
+      content: text || fullText?.trim() || '',
       excerpt: text || undefined,
       webSnapshot:
         web && (fullText?.trim() || text)
@@ -468,4 +471,70 @@ export function fromLearningEvidencePassage(
         }
       : null,
   };
+}
+
+export interface LearningSourceVersionReading {
+  /** The words a citation quotes from the version; the reader opens on them. */
+  quote?: string | null;
+  /** The citation's number where the text that cites it numbers them. */
+  number?: number;
+  /** The saved text as it should be read, when that differs from the immutable capture. */
+  readerText?: string;
+}
+
+/**
+ * A Learning Studio saved source version (`LearningSourceVersionDto`) -> unified reader target.
+ *
+ * Every version is course material, read exactly as saved: an article from its
+ * saved text, with no file and no live page behind it. A web version keeps its
+ * address only to name the site in the header. The quote, when there is one,
+ * is the passage the reader marks.
+ */
+export function fromLearningSourceVersion(
+  detail: Pick<LearningSourceVersionDto, 'sourceId' | 'fullText'> & { version: LearningSourceVersionSummaryDto },
+  reading: LearningSourceVersionReading = {},
+): ResolvedReaderTarget {
+  const { version } = detail;
+  const url = version.resolvedUrl?.trim() && isHttpUrl(version.resolvedUrl) ? version.resolvedUrl.trim() : null;
+  const text = (reading.readerText ?? detail.fullText).trim();
+  const quote = reading.quote?.trim() || '';
+  const title = version.title?.trim() || (url ? fileNameFromPathOrUrl(url) : 'Saved source');
+  const acquired = Number.isFinite(version.acquiredAt) ? new Date(version.acquiredAt).toISOString() : null;
+  const chunkId = quote ? `${version.id}#${quoteKey(quote)}` : `${version.id}#0`;
+
+  return {
+    source: {
+      // `course:` plus the version id, as the backend's course citations are:
+      // the saved text, with no file actions and no fetch of the live page.
+      documentId: `course:${version.id}`,
+      chunkId,
+      fileName: title,
+      filePath: '',
+      mimeType: 'text/html',
+      category: url ? 'web' : 'saved text',
+      content: quote,
+      excerpt: quote || undefined,
+      webSnapshot: {
+        url: url ?? '',
+        title,
+        text,
+        fetchedAt: acquired,
+        truncated: version.truncated,
+      },
+      score: 1,
+      fileSizeBytes: 0,
+      modifiedAt: acquired ?? new Date(0).toISOString(),
+      citationId: reading.number,
+    },
+    locator: quote ? { text: quote, chunkId } : null,
+  };
+}
+
+/** A short stable key for a quote, so two quotes from one version are two citations. */
+function quoteKey(quote: string): string {
+  let hash = 0;
+  for (let index = 0; index < quote.length; index += 1) {
+    hash = (hash * 31 + quote.charCodeAt(index)) | 0;
+  }
+  return (hash >>> 0).toString(36);
 }

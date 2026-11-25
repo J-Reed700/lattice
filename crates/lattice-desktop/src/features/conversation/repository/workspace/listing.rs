@@ -141,20 +141,22 @@ impl<'a> ConversationListing<'a> {
                 SELECT m.content
                 FROM conversation_messages m
                 WHERE m.conversation_id = c.id
-                ORDER BY m.created_at DESC
+                ORDER BY m.sequence DESC, m.rowid DESC
                 LIMIT 1
             ) AS last_message_preview,
             (
                 SELECT m.metadata
                 FROM conversation_messages m
                 WHERE m.conversation_id = c.id
-                ORDER BY m.created_at DESC
+                ORDER BY m.sequence DESC, m.rowid DESC
                 LIMIT 1
             ) AS last_message_metadata
         FROM conversations c
         WHERE c.tangent_parent_id IS NULL
+          AND c.id != 
         "#,
         );
+        qb.push_bind(super::super::conversations::INTERNAL_LIBRARY_SNAPSHOTS_ID);
 
         if let Some(journal_space_id) = self.journal_space_id {
             qb.push(

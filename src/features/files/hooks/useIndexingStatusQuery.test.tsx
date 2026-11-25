@@ -5,6 +5,7 @@ import { listen } from '@tauri-apps/api/event';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { CORPUS_SHAPE_QUERY_KEY } from '@/features/corpus-shape/hooks/useCorpusShapeQuery';
 import { deferred } from '@/tests/deferred';
 
 import { INDEXED_FOLDERS_QUERY_KEY } from './useIndexedFoldersQuery';
@@ -18,6 +19,7 @@ import {
   useRemoveIndexedFileMutation,
   useRetryIndexedFileMutation,
 } from './useIndexingStatusQuery';
+import { LIBRARY_DOCUMENTS_QUERY_KEY } from './useLibraryDocumentsQuery';
 
 const h = vi.hoisted(() => ({
   api: {
@@ -91,6 +93,77 @@ describe('useIndexingStatusQuery', () => {
     await act(async () => { subscribed.resolve(unlisten); await subscribed.promise; });
     expect(unlisten).toHaveBeenCalled();
   });
+
+  it('shares one indexing://progress listener across mounts and recovers if listen fails', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(listen).mockRejectedValueOnce(new Error('bus offline'));
+    const failed = renderHook(() => useIndexingStatusQuery(), { wrapper });
+    await waitFor(() => expect(listen).toHaveBeenCalledTimes(1));
+    failed.unmount();
+
+    const unlisten = vi.fn();
+    let emit!: (event: { payload: unknown }) => void;
+    vi.mocked(listen).mockImplementationOnce(async (_name, handler) => {
+      emit = handler as never;
+      return unlisten;
+    });
+    const first = renderHook(() => useIndexingStatusQuery(), { wrapper });
+    const second = renderHook(() => useIndexingStatusQuery(), { wrapper });
+    await waitFor(() => expect(listen).toHaveBeenCalledTimes(2));
+
+    act(() => emit({ payload: { status: 'processing', processed: 1, totalFiles: 2 } }));
+    await waitFor(() => expect(first.result.current.data?.status).toBe('processing'));
+
+    first.unmount();
+    expect(unlisten).not.toHaveBeenCalled();
+    second.unmount();
+    await waitFor(() => expect(unlisten).toHaveBeenCalledTimes(1));
+    error.mockRestore();
+  });
+
+  it('invalidates library documents, indexed folders, dashboard, corpus shape, and activities when indexing transitions to idle', async () => {
+    let emit!: (event: { payload: unknown }) => void;
+    vi.mocked(listen).mockImplementationOnce(async (_name, handler) => { emit = handler as never; return () => undefined; });
+    h.api.getIndexProgress.mockResolvedValueOnce(ok(snapshot));
+    const { result } = renderHook(() => useIndexingStatusQuery(), { wrapper });
+    await waitFor(() => expect(result.current.data?.status).toBe('processing'));
+
+    act(() => emit({ payload: { status: 'idle', processed: 10, percentage: 100 } }));
+    expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: LIBRARY_DOCUMENTS_QUERY_KEY });
+    expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: INDEXED_FOLDERS_QUERY_KEY });
+    expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['dashboard'] });
+    expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: CORPUS_SHAPE_QUERY_KEY });
+    expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: INDEXING_ACTIVITIES_QUERY_KEY });
+  });
+
+  it.each(['complete', 'error', 'cancelled'] as const)(
+    'invalidates all views when indexing transitions from active to %s via live event or poll',
+    async (terminalStatus) => {
+      let emit!: (event: { payload: unknown }) => void;
+      vi.mocked(listen).mockImplementationOnce(async (_name, handler) => { emit = handler as never; return () => undefined; });
+      h.api.getIndexProgress.mockResolvedValueOnce(ok(snapshot));
+      const { result, unmount } = renderHook(() => useIndexingStatusQuery(), { wrapper });
+      await waitFor(() => expect(result.current.data?.status).toBe('processing'));
+
+      act(() => emit({ payload: { status: terminalStatus, processed: 10, percentage: 100 } }));
+      expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: LIBRARY_DOCUMENTS_QUERY_KEY });
+      expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: INDEXED_FOLDERS_QUERY_KEY });
+      expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['dashboard'] });
+      expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: CORPUS_SHAPE_QUERY_KEY });
+      expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: INDEXING_ACTIVITIES_QUERY_KEY });
+      unmount();
+
+      vi.mocked(client.invalidateQueries).mockClear();
+      client.setQueryData(INDEXING_STATUS_QUERY_KEY, snapshot, { updatedAt: 0 });
+      vi.mocked(listen).mockImplementationOnce(async () => () => undefined);
+      h.api.getIndexProgress.mockResolvedValueOnce(ok({ ...snapshot, status: terminalStatus }));
+      const pollView = renderHook(() => useIndexingStatusQuery(), { wrapper });
+      await waitFor(() => expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: CORPUS_SHAPE_QUERY_KEY }));
+      expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: INDEXING_ACTIVITIES_QUERY_KEY });
+      expect(client.invalidateQueries).toHaveBeenCalledWith({ queryKey: ['dashboard'] });
+      pollView.unmount();
+    },
+  );
 
   it('surfaces progress it cannot read', async () => {
     h.api.getIndexProgress.mockResolvedValueOnce(refused('indexer offline'));

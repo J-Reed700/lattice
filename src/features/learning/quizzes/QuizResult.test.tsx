@@ -6,14 +6,15 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { QuizResult, type LessonCompletion } from '@/features/learning/quizzes/QuizResult';
+import { resetQuizStopStore } from '@/features/learning/quizzes/quizStopStore';
 import { criterion, formItem, itemResult, quizForm, rationale, reveal, submission } from '@/features/learning/quizzes/quizTestData';
 import type { LearningAssessmentFormDto, LearningGradeContestDto } from '@/lib/bindings';
 
 vi.mock('@/components/TiptapEditor', () => ({ TiptapViewer: ({ content }: { content: string }) => <div>{content}</div> }));
 
-const api = vi.hoisted(() => ({ resume: vi.fn(), cancel: vi.fn(), contest: vi.fn(), override: vi.fn(), report: vi.fn(), misses: vi.fn() }));
+const api = vi.hoisted(() => ({ resume: vi.fn(), cancel: vi.fn(), program: vi.fn(), contest: vi.fn(), override: vi.fn(), report: vi.fn(), misses: vi.fn() }));
 vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: {
-  resumeLearningQuizGrading: api.resume, cancelLearningGenerationJob: api.cancel, contestLearningQuizGrade: api.contest,
+  resumeLearningQuizGrading: api.resume, cancelLearningGenerationJob: api.cancel, getLearningProgram: api.program, contestLearningQuizGrade: api.contest,
   overrideLearningQuizGrade: api.override, reportLearningQuizItem: api.report, addLearningQuizMissesToRecall: api.misses,
 } }));
 
@@ -30,7 +31,10 @@ function show(form: LearningAssessmentFormDto, completion?: LessonCompletion) {
 const submitted = (overrides: Partial<LearningAssessmentFormDto['submission'] & object>) => quizForm({ status: 'submitted', submittedAt: Date.UTC(2026, 9, 23), items: [choice, written], submission: submission(overrides) });
 
 describe('quiz result', () => {
-  beforeEach(() => vi.resetAllMocks());
+  beforeEach(() => {
+    vi.resetAllMocks();
+    resetQuizStopStore();
+  });
 
   it('never reads as a fail while a written answer is grading', () => {
     show(submitted({ passed: null, score: 0, pendingItems: 1, gradingJobId: 'job-1', itemResults: [
@@ -109,5 +113,96 @@ describe('quiz result', () => {
     rerender(<QuizResult form={after} sources={[]} programRevision={3} onBack={vi.fn()} onRetake={vi.fn()} retakePending={false} />);
     expect(screen.getAllByText('Overridden by you').length).toBeGreaterThan(0);
     expect(screen.getByText(/Score includes your override \(1 answer overridden by you\)/)).toBeVisible();
+  });
+
+  it('preserves Grading stopped across unmount and retries Stop on stale revision conflict', async () => {
+    const user = userEvent.setup();
+    const pendingForm = submitted({
+      passed: null,
+      score: 0,
+      pendingItems: 1,
+      gradingJobId: 'job-1',
+      itemResults: [
+        itemResult({ itemId: 'choice', pointsEarned: 1, pointsPossible: 1 }),
+        itemResult({ itemId: 'written', gradeStatus: 'pending', pointsEarned: 0, pointsPossible: 4, correct: null }),
+      ],
+    });
+    api.cancel
+      .mockResolvedValueOnce({ ok: false, error: 'Program changed; reload and retry.', details: { code: 'CONFLICT' } })
+      .mockResolvedValueOnce(ok({ id: 'job-1', status: 'cancelled' }));
+    api.program.mockResolvedValueOnce(ok({ summary: { id: 'program-1', revision: 7 } }));
+
+    const view1 = show(pendingForm);
+    await user.click(screen.getByRole('button', { name: /Stop/ }));
+    expect(await screen.findByText(/Grading stopped · 1 written answer waiting\./)).toBeVisible();
+    expect(api.cancel).toHaveBeenCalledTimes(2);
+    expect(api.cancel).toHaveBeenNthCalledWith(1, expect.objectContaining({ expectedRevision: 3, jobId: 'job-1' }));
+    expect(api.cancel).toHaveBeenNthCalledWith(2, expect.objectContaining({ expectedRevision: 7, jobId: 'job-1' }));
+
+    view1.unmount();
+    const afterReloadForm = submitted({
+      passed: null,
+      score: 0,
+      pendingItems: 1,
+      gradingJobId: null,
+      itemResults: [
+        itemResult({ itemId: 'choice', pointsEarned: 1, pointsPossible: 1 }),
+        itemResult({ itemId: 'written', gradeStatus: 'pending', pointsEarned: 0, pointsPossible: 4, correct: null, feedback: 'Grading stopped. Resume grading to finish.' }),
+      ],
+    });
+    show(afterReloadForm);
+    expect(screen.getByText(/Grading stopped · 1 written answer waiting\./)).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Resume grading' })).toBeVisible();
+  });
+
+  it('derives Grading stopped from backend cancelled feedback even with a fresh store', () => {
+    show(submitted({
+      passed: null,
+      score: 0,
+      pendingItems: 1,
+      gradingJobId: null,
+      itemResults: [
+        itemResult({ itemId: 'choice', pointsEarned: 1, pointsPossible: 1 }),
+        itemResult({ itemId: 'written', gradeStatus: 'pending', pointsEarned: 0, pointsPossible: 4, correct: null, feedback: 'Grading stopped. Resume grading to finish.' }),
+      ],
+    }));
+    expect(screen.getByText(/Grading stopped · 1 written answer waiting\./)).toBeVisible();
+    expect(screen.getByText('Grading stopped')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Resume grading' })).toBeVisible();
+  });
+
+  it('marks grading stopped via hook onSuccess even if QuizResult unmounts before cancel resolves', async () => {
+    const user = userEvent.setup();
+    let resolveCancel!: (v: unknown) => void;
+    api.cancel.mockImplementationOnce(() => new Promise((r) => { resolveCancel = r; }));
+
+    const pendingForm = submitted({
+      passed: null,
+      score: 0,
+      pendingItems: 1,
+      gradingJobId: 'job-unmount',
+      itemResults: [
+        itemResult({ itemId: 'choice', pointsEarned: 1, pointsPossible: 1 }),
+        itemResult({ itemId: 'written', gradeStatus: 'pending', pointsEarned: 0, pointsPossible: 4, correct: null }),
+      ],
+    });
+    const view1 = show(pendingForm);
+    await user.click(screen.getByRole('button', { name: /Stop/ }));
+    view1.unmount();
+
+    resolveCancel(ok({ id: 'job-unmount', status: 'cancelled' }));
+    await waitFor(() => expect(api.cancel).toHaveBeenCalledTimes(1));
+
+    show(submitted({
+      passed: null,
+      score: 0,
+      pendingItems: 1,
+      gradingJobId: null,
+      itemResults: [
+        itemResult({ itemId: 'choice', pointsEarned: 1, pointsPossible: 1 }),
+        itemResult({ itemId: 'written', gradeStatus: 'pending', pointsEarned: 0, pointsPossible: 4, correct: null }),
+      ],
+    }));
+    expect(await screen.findByText(/Grading stopped · 1 written answer waiting\./)).toBeVisible();
   });
 });

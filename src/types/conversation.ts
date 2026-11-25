@@ -13,6 +13,7 @@ import type {
   ConversationMessageBookmarkDto,
   CreateConversationRequestDto,
   ExplorerFocusDto,
+  ModelOrigin,
   ReplyPieceDto,
   SpaceDocumentDto,
   WebPageDto,
@@ -115,7 +116,7 @@ export const SourceWithMetadataSchema = z.object({
   modifiedAt: z.string(), // ISO 8601
   citationId: z.number().int().min(1).optional(),
   conversationId: z.string().optional(),
-}).strict(); // Reject unknown properties
+}).strip(); // Ignore additive fields from newer persisted metadata versions
 
 /**
  * Validate an array of sources.
@@ -174,7 +175,7 @@ export const ClaimVerdictSchema = z.object({
   /** The judge's probability for `verdict`, when its provider reports one. */
   confidence: z.number().min(0).max(1).nullable().optional(),
   unverifiedReason: z.enum(['judge_failed', 'no_text', 'low_confidence']).nullable().optional(),
-}).strict();
+}).strip();
 
 export type ClaimVerdict = z.infer<typeof ClaimVerdictSchema>;
 
@@ -200,11 +201,13 @@ export const MessageVerificationSummarySchema = z.object({
     unsupported: z.number().min(0),
     /** Claims nothing checked. Not counted in `unsupported`. */
     unverified: z.number().min(0),
-  }).strict().optional(),
+  }).strip().optional(),
   claimVerdicts: z.array(ClaimVerdictSchema).optional(),
   /** Whether any claim in this turn was judged by a model rather than by overlap. */
   judgeUsed: z.boolean().optional(),
-}).strict();
+  groundingMode: z.enum(['hybrid', 'strict']).optional(),
+  citedOnly: z.boolean().optional(),
+}).strip();
 
 export type MessageVerificationSummary = z.infer<typeof MessageVerificationSummarySchema>;
 
@@ -223,6 +226,7 @@ export type TurnMode = 'auto' | 'followup' | 'query';
 export interface ToolPreferences {
   knowledgeBase: boolean;
   webSearch: boolean;
+  strictSources?: boolean;
   deepResearchMode?: boolean;
   followupMode?: boolean;
   turnMode?: TurnMode;
@@ -278,6 +282,8 @@ export interface ConversationMessage {
   createdAt: string;
   status: MessageStatus;
   metadata?: string | null;
+  /** Human-readable failure reason extracted from `metadata.error`, when failed. */
+  error?: string;
   sources?: SourceWithMetadata[];
   /** The reply as pieces, text and references in reply order. An assistant message has one. */
   reply?: ReplyPieceDto[] | null;
@@ -417,7 +423,7 @@ export const RetrievalTraceSchema = z.object({
   kbPlannerSkipped: z.boolean().optional(),
   sufficiencyReasons: z.array(z.string()).optional(),
   focusedDocuments: z.number().int().min(0).optional(),
-}).strict();
+}).strip();
 
 /**
  * What a turn did, step by step.
@@ -451,7 +457,7 @@ export type TurnStepKind = z.infer<typeof TurnStepKindSchema>;
 export const TurnStepLinkSchema = z.object({
   url: z.string().min(1),
   title: z.string().nullable().optional(),
-}).strict();
+}).strip();
 
 export type TurnStepLink = z.infer<typeof TurnStepLinkSchema>;
 
@@ -470,28 +476,28 @@ export const TurnStepSchema = z.object({
   durationMs: z.number().int().min(0).nullable().optional(),
   /** What it produced: "8 passages from 3 files", "not enough support: …". */
   result: z.string().nullable().optional(),
-  /** The backend caps Unicode characters, not JavaScript UTF-16 code units. */
-  reasoning: z.string().max(48_000).refine(text => [...text].length <= 24_000).nullable().optional(),
+  /** Full reasoning trace emitted for the step, when present. */
+  reasoning: z.string().nullable().optional(),
   /**
    * For a search, the pages it found; for a page read, the page. A read knows
    * its address from the start and a search only at the end, so either event
    * may carry it. Absent on every step that went nowhere on the web.
    */
   links: z.array(TurnStepLinkSchema).optional(),
-}).strict();
+}).strip();
 
 export type TurnStep = z.infer<typeof TurnStepSchema>;
 
 /** A model a chat or a role names; mirrors the generated `ModelRef`. */
 export const ModelRefSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('local'), model_id: z.string() }).strict(),
-  z.object({ kind: z.literal('ollama'), model: z.string() }).strict(),
-  z.object({ kind: z.literal('llama_cpp'), model: z.string() }).strict(),
+  z.object({ kind: z.literal('local'), model_id: z.string() }).strip(),
+  z.object({ kind: z.literal('ollama'), model: z.string() }).strip(),
+  z.object({ kind: z.literal('llama_cpp'), model: z.string() }).strip(),
   z.object({
     kind: z.literal('cloud'),
     provider: z.enum(['openai', 'anthropic', 'google']),
     model: z.string(),
-  }).strict(),
+  }).strip(),
 ]);
 
 /**
@@ -503,15 +509,22 @@ export const TurnModelSchema = z.object({
   id: z.string(),
   name: z.string(),
   model: ModelRefSchema.nullable().optional(),
-  origin: z.enum(['default', 'chat_override', 'request_override', 'learning_role']).nullable().optional(),
+  origin: z
+    .enum(['default', 'chat_override', 'request_override', 'learning_role', 'verifier_role'])
+    .nullable()
+    .optional(),
   provider: z.string().nullable().optional(),
   contextTokens: z.number().int().min(0).nullable().optional(),
   degraded: z.string().nullable().optional(),
   /** Whether the model was shown the turn's pictures; absent on older records. */
   seesImages: z.boolean().optional(),
-}).strict();
+}).strip();
 
 export type TurnModel = z.infer<typeof TurnModelSchema>;
+
+type AssertExtends<T extends U, U> = T;
+export type AssertModelOriginMatchesTurnModel = AssertExtends<ModelOrigin, NonNullable<TurnModel['origin']>>;
+export type AssertTurnModelOriginMatchesBindings = AssertExtends<NonNullable<TurnModel['origin']>, ModelOrigin>;
 
 export const TurnRecordSchema = z.object({
   /** The model that answered **this** turn, which the conversation's may not be. */
@@ -526,11 +539,11 @@ export const TurnRecordSchema = z.object({
     verificationMs: z.number().int().min(0),
     /** Time inside tool calls — part of `generationMs`, not beside it. */
     toolMs: z.number().int().min(0),
-  }).strict(),
+  }).strip(),
   tokens: z.object({
     completion: z.number().int().min(0).nullable(),
     contextUsed: z.number().int().min(0).nullable(),
-  }).strict(),
+  }).strip(),
   /**
    * What the router decided and how sure it was. `null` on every turn where no
    * router ran — a forced web search, a closed-book turn, a chat with nothing
@@ -540,8 +553,8 @@ export const TurnRecordSchema = z.object({
     action: z.string(),
     confidence: z.number().min(0).max(1),
     rationale: z.string().nullable(),
-  }).strict().nullable(),
-}).strict();
+  }).strip().nullable(),
+}).strip();
 
 export type TurnRecord = z.infer<typeof TurnRecordSchema>;
 

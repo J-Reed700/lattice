@@ -423,9 +423,40 @@ impl ConversationServiceTrait for MockConversationService {
 
     async fn set_message_metadata_fields(
         &self,
-        _message_id: &str,
-        _fields: Vec<(String, serde_json::Value)>,
+        message_id: &str,
+        fields: Vec<(String, serde_json::Value)>,
     ) -> Result<()> {
+        let mut conversations = self
+            .conversations
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for aggregate in conversations.values_mut() {
+            if !aggregate.messages().iter().any(|m| m.id == message_id) {
+                continue;
+            }
+            let mut messages = aggregate.messages().to_vec();
+            if let Some(message) = messages.iter_mut().find(|m| m.id == message_id) {
+                let mut map = message
+                    .metadata
+                    .as_deref()
+                    .and_then(|raw| {
+                        serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(raw).ok()
+                    })
+                    .unwrap_or_default();
+                for (key, value) in fields {
+                    map.insert(key, value);
+                }
+                message.metadata = serde_json::to_string(&serde_json::Value::Object(map)).ok();
+                *aggregate =
+                    lattice_core::domain::conversation::ConversationAggregate::from_persistence(
+                        aggregate.conversation().clone(),
+                        messages,
+                        aggregate.document_context().to_vec(),
+                        aggregate.compaction().cloned(),
+                    );
+            }
+            break;
+        }
         Ok(())
     }
 }

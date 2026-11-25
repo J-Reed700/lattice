@@ -5,7 +5,10 @@
 //! (validation, checksum verification, terminal state and event emission).
 
 use super::state::{ActiveDownload, DownloadManagerService, StopReason};
-use super::validation::{recover_resume_offset, validate_downloaded_file};
+use super::validation::{
+    adopt_in_place_partial, final_file_already_complete, recover_resume_offset, replace_file,
+    validate_downloaded_file,
+};
 use crate::features::download::engine::{DownloadOptions, ProgressCallback};
 use lattice_core::application::ports::download_manager::DownloadEvent;
 use lattice_core::domain::download::DownloadError;
@@ -101,11 +104,19 @@ impl DownloadManagerService {
         let session_id_for_task = session_id.clone();
         let url = session.url().to_string();
         let destination = session.destination().clone();
+        // The transfer writes here and only a verified file is renamed onto
+        // `destination`, so that path never holds a partial file.
+        let part = session.working_path();
         let checksum = session.checksum().cloned();
+        let known_total = session.progress().total_bytes();
 
         let auth_token = {
             let tokens = auth_tokens.read().await;
             tokens.get(&session_id).cloned()
+        };
+        let auth_token = match auth_token {
+            Some(token) => Some(token),
+            None => self.resolve_auth_token(&url, None).await,
         };
 
         // Latest progress occupies one slot regardless of callback rate or
@@ -120,13 +131,53 @@ impl DownloadManagerService {
         let task_handle = self.background.spawn(async move {
             info!(session_id = %session_id_for_task, "Download started");
 
+            // The finished file is already in place: complete with no
+            // transfer and no rename.
+            if final_file_already_complete(
+                &destination,
+                &part,
+                known_total,
+                checksum.as_ref(),
+                &file_cleanup,
+            )
+            .await
+            {
+                info!(session_id = %session_id_for_task, "Destination already holds the complete file");
+                if let Ok(Some(mut session)) = repository.get(&session_id_for_task).await {
+                    session.update_progress(known_total.unwrap_or(0), 0.0);
+                    if let Err(e) = session.complete() {
+                        error!(session_id = %session_id_for_task, error = %e, "Failed to mark session as completed");
+                    }
+                    if let Err(e) = repository.update(&session).await {
+                        error!(session_id = %session_id_for_task, error = %e, "Failed to update session in database");
+                    }
+                }
+                active_downloads.write().await.remove(&session_id_for_task);
+                auth_tokens.write().await.remove(&session_id_for_task);
+                send_terminal_event(
+                    &event_tx,
+                    &shutdown,
+                    DownloadEvent::Completed {
+                        id: session_id_for_task.clone(),
+                    },
+                )
+                .await;
+                return;
+            }
+
             let resume_from =
                 if let Ok(Some(current_session)) = repository.get(&session_id_for_task).await {
-                    match tokio::fs::metadata(&destination).await {
+                    let recorded = current_session.progress().bytes_downloaded();
+                    let total = current_session.progress().total_bytes();
+                    // An earlier build wrote the destination in place; a
+                    // strictly partial file there becomes the `.part` to resume.
+                    // Only a checksum can vouch for bytes the new session did not write.
+                    if checksum.is_some() {
+                        adopt_in_place_partial(&destination, &part, total).await;
+                    }
+                    match tokio::fs::metadata(&part).await {
                         Ok(metadata) => {
                             let file_size = metadata.len();
-                            let recorded = current_session.progress().bytes_downloaded();
-                            let total = current_session.progress().total_bytes();
                             let offset = recover_resume_offset(recorded, file_size, total);
 
                             if let Some(offset) = offset {
@@ -149,7 +200,7 @@ impl DownloadManagerService {
                             }
                         }
                         Err(_) => {
-                            if current_session.progress().bytes_downloaded() > 0 {
+                            if recorded > 0 {
                                 warn!(
                                     session_id = %session_id_for_task,
                                     "Partial file missing, starting fresh"
@@ -167,7 +218,8 @@ impl DownloadManagerService {
             // the session keeps its concurrency slot and auth token.
             let transfer = engine.download(DownloadOptions {
                 url: url.clone(),
-                destination: destination.clone(),
+                destination: part.clone(),
+                known_total,
                 resume_from,
                 progress_callback: Some(progress_callback),
                 auth_token,
@@ -253,25 +305,38 @@ impl DownloadManagerService {
                             .progress()
                             .total_bytes()
                             .unwrap_or(result.bytes_downloaded);
+
+                        // A size or checksum failure discards the `.part`
+                        // (never the destination) and fails the row with one
+                        // plain sentence; the detail stays in the log.
+                        let mut rejection = None;
                         if let Err(validation_error) =
-                            validate_downloaded_file(&destination, expected_size).await
+                            validate_downloaded_file(&part, expected_size).await
                         {
                             error!(
                                 session_id = %session_id_for_task,
                                 error = %validation_error,
                                 "Downloaded file validation failed"
                             );
+                            rejection = Some(validation_error.user_message());
+                        } else if let Some(expected_checksum) = &checksum {
+                            if let Err(e) = expected_checksum.verify(&result.sha256_checksum) {
+                                error!(
+                                    session_id = %session_id_for_task,
+                                    expected = expected_checksum.value(),
+                                    actual = %result.sha256_checksum,
+                                    "Checksum verification failed"
+                                );
+                                rejection = Some(e.user_message());
+                            }
+                        }
 
-                            file_cleanup.delete_file_best_effort(&destination).await;
-
+                        if let Some(message) = rejection {
+                            file_cleanup.delete_file_best_effort(&part).await;
                             session.update_progress(0, 0.0);
-
-                            if let Err(e) = session
-                                .fail(format!("File validation failed: {}", validation_error))
-                            {
+                            if let Err(e) = session.fail(message.clone()) {
                                 error!(session_id = %session_id_for_task, error = %e, "Failed to mark session as failed");
                             }
-
                             if let Err(e) = repository.update(&session).await {
                                 error!(session_id = %session_id_for_task, error = %e, "Failed to update session in database");
                             }
@@ -283,49 +348,42 @@ impl DownloadManagerService {
                                 &shutdown,
                                 DownloadEvent::Failed {
                                     id: session_id_for_task.clone(),
-                                    error: format!("File validation failed: {}", validation_error),
+                                    error: message,
                                 },
                             )
                             .await;
                             return;
                         }
 
-                        if let Some(expected_checksum) = &checksum {
-                            if let Err(e) = expected_checksum.verify(&result.sha256_checksum) {
-                                error!(
-                                    session_id = %session_id_for_task,
-                                    expected = expected_checksum.value(),
-                                    actual = %result.sha256_checksum,
-                                    "Checksum verification failed"
-                                );
-
-                                file_cleanup.delete_file_best_effort(&destination).await;
-
-                                session.update_progress(0, 0.0);
-
-                                if let Err(fail_err) =
-                                    session.fail(format!("Checksum verification failed: {}", e))
-                                {
-                                    error!(session_id = %session_id_for_task, error = %fail_err, "Failed to mark session as failed");
-                                }
-
-                                if let Err(update_err) = repository.update(&session).await {
-                                    error!(session_id = %session_id_for_task, error = %update_err, "Failed to update session in database");
-                                }
-
-                                active_downloads.write().await.remove(&session_id_for_task);
-                                auth_tokens.write().await.remove(&session_id_for_task);
-                                send_terminal_event(
-                                    &event_tx,
-                                    &shutdown,
-                                    DownloadEvent::Failed {
-                                        id: session_id_for_task.clone(),
-                                        error: format!("Checksum mismatch: {}", e),
-                                    },
-                                )
-                                .await;
-                                return;
+                        // Verified: only now does the file appear at its final
+                        // path, and only then is the session Completed.
+                        if let Err(e) = replace_file(&part, &destination).await {
+                            error!(
+                                session_id = %session_id_for_task,
+                                error = %e,
+                                "Could not move the verified download into place"
+                            );
+                            let message =
+                                "The download finished but the file couldn't be moved into place. Try again."
+                                    .to_string();
+                            if let Err(e) = session.fail(message.clone()) {
+                                error!(session_id = %session_id_for_task, error = %e, "Failed to mark session as failed");
                             }
+                            if let Err(e) = repository.update(&session).await {
+                                error!(session_id = %session_id_for_task, error = %e, "Failed to update session in database");
+                            }
+                            active_downloads.write().await.remove(&session_id_for_task);
+                            auth_tokens.write().await.remove(&session_id_for_task);
+                            send_terminal_event(
+                                &event_tx,
+                                &shutdown,
+                                DownloadEvent::Failed {
+                                    id: session_id_for_task.clone(),
+                                    error: message,
+                                },
+                            )
+                            .await;
+                            return;
                         }
 
                         // Mark as completed
@@ -352,7 +410,7 @@ impl DownloadManagerService {
                     );
 
                     if let Ok(Some(mut session)) = repository.get(&session_id_for_task).await {
-                        if let Err(fail_err) = session.fail(format!("{}", e)) {
+                        if let Err(fail_err) = session.fail(e.user_message()) {
                             error!(session_id = %session_id_for_task, error = %fail_err, "Failed to mark session as failed");
                         }
 
@@ -362,7 +420,7 @@ impl DownloadManagerService {
 
                         terminal_event = Some(DownloadEvent::Failed {
                             id: session_id_for_task.clone(),
-                            error: format!("{}", e),
+                            error: e.user_message(),
                         });
                     }
                 }

@@ -13,12 +13,13 @@
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
 
+use lattice_core::application::ports::llm_port::ThinkingMode;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::model_contract::ask::{
-    ask_new, Alone, Answered, Metered, Plain, Refusal, Says, Why,
+    ask, Alone, Answered, Metered, Plain, Refusal, Says, Settled, Why,
 };
 use lattice_core::application::services::model_contract::shape::{
-    Authored, Count, Fields, Form, Found, New, Union, Vocabulary, STATEMENTS,
+    Authored, Count, Fields, Form, Union, Value, Vocabulary,
 };
 use lattice_core::application::services::model_contract::shown::{
     Drawn, Internal, Kind, Picked, Scope, Showing, Shown, Told,
@@ -247,9 +248,55 @@ fn places(cited: Vec<Picked<Sentence>>) -> Vec<Place> {
     cited.into_iter().map(|picked| picked.reference).collect()
 }
 
-const EVIDENCE: Count = Count("evidence");
+const ADDITIONS: Count = Count("add");
+const TRANSITIONS: Count = Count("transitions");
+const QUOTES: Count = Count("quotes");
 
-/// A quotation of an addition: the sentences it quotes and what they do.
+/// Closed candidate handle (`c1`..`c32`) naming an addition inside one batch so
+/// `transitions` can reference an earlier or replacement addition without
+/// free-text ids or lookahead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct CandidateCode(&'static str);
+
+impl Vocabulary for CandidateCode {
+    const WORDS: &'static [(&'static str, Self)] = &[
+        ("c1", Self("c1")),
+        ("c2", Self("c2")),
+        ("c3", Self("c3")),
+        ("c4", Self("c4")),
+        ("c5", Self("c5")),
+        ("c6", Self("c6")),
+        ("c7", Self("c7")),
+        ("c8", Self("c8")),
+        ("c9", Self("c9")),
+        ("c10", Self("c10")),
+        ("c11", Self("c11")),
+        ("c12", Self("c12")),
+        ("c13", Self("c13")),
+        ("c14", Self("c14")),
+        ("c15", Self("c15")),
+        ("c16", Self("c16")),
+        ("c17", Self("c17")),
+        ("c18", Self("c18")),
+        ("c19", Self("c19")),
+        ("c20", Self("c20")),
+        ("c21", Self("c21")),
+        ("c22", Self("c22")),
+        ("c23", Self("c23")),
+        ("c24", Self("c24")),
+        ("c25", Self("c25")),
+        ("c26", Self("c26")),
+        ("c27", Self("c27")),
+        ("c28", Self("c28")),
+        ("c29", Self("c29")),
+        ("c30", Self("c30")),
+        ("c31", Self("c31")),
+        ("c32", Self("c32")),
+    ];
+}
+
+/// A quotation of an addition: its purpose, then the sentences it quotes.
+/// Keys sort alphabetically in natural writing order (`purpose` -> `sentences`).
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Quote {
     pub(super) purpose: Purpose,
@@ -260,135 +307,123 @@ impl Authored for Quote {
     fn form() -> Form {
         Form::new()
             .word::<Purpose>("purpose")
-            .cite::<Sentence>("sentences")
+            .cite_some::<Sentence>("sentences")
     }
 
     fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
         let purpose = fields.word::<Purpose>("purpose")?;
-        let places = places(fields.cite::<Sentence>("sentences"));
+        let places = places(fields.cite_some::<Sentence>("sentences")?);
         Some(Self { purpose, places })
     }
 }
 
-/// The sentences that justify a change.
-#[derive(Debug, Clone, PartialEq)]
-pub(super) struct Grounds {
-    pub(super) places: Vec<Place>,
-}
-
-impl Authored for Grounds {
-    fn form() -> Form {
-        Form::new().cite::<Sentence>("sentences")
-    }
-
-    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
-        Some(Self {
-            places: places(fields.cite::<Sentence>("sentences")),
-        })
-    }
-}
-
 /// A new memory the model proposes.
+/// Keys sort alphabetically in natural writing order (`code` -> `kind` -> `label` -> `quotes`),
+/// so grammar compilers that sort object properties alphabetically ask for the item's
+/// kind and label before its cited sentences.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Addition {
-    pub(super) evidence: Vec<Quote>,
+    pub(super) code: CandidateCode,
     pub(super) kind: Sort,
     pub(super) label: String,
+    pub(super) quotes: Vec<Quote>,
 }
 
 impl Authored for Addition {
     fn form() -> Form {
         Form::new()
-            .counted::<Quote>("evidence", &EVIDENCE)
+            .word::<CandidateCode>("code")
             .word::<Sort>("kind")
             .text("label")
+            .counted::<Quote>("quotes", &QUOTES)
     }
 
     fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
-        let evidence = fields.list::<Quote>("evidence")?;
+        let code = fields.word::<CandidateCode>("code")?;
         let kind = fields.word::<Sort>("kind")?;
         let label = fields.text("label")?;
+        let quotes = fields.list::<Quote>("quotes")?;
         Some(Self {
-            evidence,
+            code,
             kind,
             label,
+            quotes,
         })
     }
 }
 
-/// One change the model proposes.
+/// One state transition proposed after `add` has been written.
+/// Every branch's keys sort alphabetically after `kind` (`kind` -> `memory`/`older` ->
+/// `replacement` -> `sentences`), so the discriminator is always generated first.
 #[derive(Debug, Clone, PartialEq)]
-pub(super) enum Proposal {
-    Add(Addition),
-    Supersede {
-        grounds: Vec<Grounds>,
-        item: MemoryId,
-        replacement: Addition,
+pub(super) enum Transition {
+    SupersedeExisting {
+        memory: MemoryId,
+        replacement: CandidateCode,
+        sentences: Vec<Place>,
     },
-    Resolve {
-        grounds: Vec<Grounds>,
-        item: MemoryId,
+    ResolveExisting {
+        memory: MemoryId,
+        sentences: Vec<Place>,
     },
-    Correct {
-        grounds: Vec<Grounds>,
-        earlier: Addition,
-        later: Addition,
+    SupersedeCandidate {
+        older: CandidateCode,
+        replacement: CandidateCode,
+        sentences: Vec<Place>,
     },
 }
 
-impl Union for Proposal {
+impl Union for Transition {
     fn forms() -> Vec<(&'static str, Form)> {
         vec![
-            ("add", Form::new().group::<Addition>("addition")),
             (
-                "supersede",
+                "supersede_existing",
                 Form::new()
-                    .counted::<Grounds>("evidence", &EVIDENCE)
-                    .point::<Memory>("item_id")
-                    .group::<Addition>("replacement"),
+                    .point::<Memory>("memory")
+                    .word::<CandidateCode>("replacement")
+                    .cite_some::<Sentence>("sentences"),
             ),
             (
-                "resolve",
+                "resolve_existing",
                 Form::new()
-                    .counted::<Grounds>("evidence", &EVIDENCE)
-                    .point::<Memory>("item_id"),
+                    .point::<Memory>("memory")
+                    .cite_some::<Sentence>("sentences"),
             ),
             (
-                "correct",
+                "supersede_candidate",
                 Form::new()
-                    .counted::<Grounds>("evidence", &EVIDENCE)
-                    .group::<Addition>("earlier")
-                    .group::<Addition>("later"),
+                    .word::<CandidateCode>("older")
+                    .word::<CandidateCode>("replacement")
+                    .cite_some::<Sentence>("sentences"),
             ),
         ]
     }
 
     fn read(kind: &str, fields: &mut Fields<'_, '_>) -> Option<Self> {
         match kind {
-            "add" => Some(Self::Add(fields.group::<Addition>("addition")?)),
-            "supersede" => {
-                let grounds = fields.list::<Grounds>("evidence")?;
-                let item = fields.point::<Memory>("item_id")?.reference;
-                let replacement = fields.group::<Addition>("replacement")?;
-                Some(Self::Supersede {
-                    grounds,
-                    item,
+            "supersede_existing" => {
+                let memory = fields.point::<Memory>("memory")?.reference;
+                let replacement = fields.word::<CandidateCode>("replacement")?;
+                let sentences = places(fields.cite_some::<Sentence>("sentences")?);
+                Some(Self::SupersedeExisting {
+                    memory,
                     replacement,
+                    sentences,
                 })
             }
-            "resolve" => {
-                let grounds = fields.list::<Grounds>("evidence")?;
-                let item = fields.point::<Memory>("item_id")?.reference;
-                Some(Self::Resolve { grounds, item })
+            "resolve_existing" => {
+                let memory = fields.point::<Memory>("memory")?.reference;
+                let sentences = places(fields.cite_some::<Sentence>("sentences")?);
+                Some(Self::ResolveExisting { memory, sentences })
             }
-            "correct" => {
-                let grounds = fields.list::<Grounds>("evidence")?;
-                let earlier = fields.group::<Addition>("earlier")?;
-                let later = fields.group::<Addition>("later")?;
-                Some(Self::Correct {
-                    grounds,
-                    earlier,
-                    later,
+            "supersede_candidate" => {
+                let older = fields.word::<CandidateCode>("older")?;
+                let replacement = fields.word::<CandidateCode>("replacement")?;
+                let sentences = places(fields.cite_some::<Sentence>("sentences")?);
+                Some(Self::SupersedeCandidate {
+                    older,
+                    replacement,
+                    sentences,
                 })
             }
             _ => None,
@@ -396,33 +431,61 @@ impl Union for Proposal {
     }
 }
 
-/// One item of the answer.
+/// One transition entry in `transitions`.
 #[derive(Debug, Clone, PartialEq)]
-pub(super) struct Entry {
-    pub(super) proposal: Proposal,
+pub(super) struct TransitionEntry {
+    pub(super) transition: Transition,
 }
 
-impl Authored for Entry {
+impl Authored for TransitionEntry {
     fn form() -> Form {
-        Form::new().one_of::<Proposal>("proposal")
+        Form::new().one_of::<Transition>("transition")
     }
 
     fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
         Some(Self {
-            proposal: fields.one_of::<Proposal>("proposal")?,
+            transition: fields.one_of::<Transition>("transition")?,
         })
     }
 }
 
-const HOW_TO_ANSWER: &str = "Answer with an items list holding one item for each change you propose. Each item holds a proposal whose kind is add, supersede, resolve or correct. An add proposal holds one addition. A supersede proposal names an existing item in item_id and holds the complete replacement for it. A resolve proposal names an existing item in item_id. A correct proposal holds the earlier addition and the later addition that corrects it. What the instructions call an addition or add is an add proposal, or the replacement or the two additions inside a supersede or correct proposal. An addition holds its evidence, then its kind and its label; each piece of evidence cites in sentences the labelled sentences it quotes and gives their purpose. A supersede, resolve or correct proposal also holds evidence: the labelled sentences of the later user passage that justify the change.";
+/// One extraction answer: chronological additions first (`add`), then transitions (`transitions`).
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct Patch {
+    pub(super) add: Vec<Addition>,
+    pub(super) transitions: Vec<TransitionEntry>,
+}
+
+impl Authored for Patch {
+    fn form() -> Form {
+        Form::new()
+            .counted::<Addition>("add", &ADDITIONS)
+            .counted::<TransitionEntry>("transitions", &TRANSITIONS)
+    }
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        let add = fields.list::<Addition>("add")?;
+        let transitions = fields.list::<TransitionEntry>("transitions")?;
+        Some(Self { add, transitions })
+    }
+}
+
+fn how_to_answer(has_existing: bool) -> &'static str {
+    if has_existing {
+        "Answer with an object holding add (new items in chronological order) and transitions (changes to earlier items). Each entry in add holds code (c1, c2, ...), kind, label, and quotes (each with purpose and non-empty sentences citing the labelled sentence handles shown in the passages). Each entry in transitions holds a transition object whose kind is supersede_existing (naming an existing item handle in memory, the new item's code in replacement, and the later user sentences in sentences), resolve_existing (naming memory and sentences), or supersede_candidate (naming an earlier add item's code in older, the later add item's code in replacement, and the later user sentences in sentences). Every transition's sentences must cite only the later user passage that justifies the change."
+    } else {
+        "Answer with an object holding add (new items in chronological order) and transitions (changes to earlier items in add). Each entry in add holds code (c1, c2, ...), kind, label, and quotes (each with purpose and non-empty sentences citing the labelled sentence handles shown in the passages). Because existing_items is empty, every entry in transitions must use kind supersede_candidate (naming an earlier add item's code in older, the later add item's code in replacement, and only the later user passage's sentences in sentences)."
+    }
+}
 
 impl Answered for MemoryExtraction {
-    type Answer = New<Entry>;
+    type Answer = Value<Patch>;
     const ALONE: Alone = Alone::Pending;
 
     fn says(input: &Input, showing: &mut Showing<'_>) -> Result<Says> {
-        showing.asks(&STATEMENTS, 0..=MAX_OPERATIONS_PER_RESPONSE);
-        showing.asks(&EVIDENCE, 0..=MAX_EVIDENCE_PER_ITEM);
+        showing.asks(&ADDITIONS, 0..=MAX_OPERATIONS_PER_RESPONSE);
+        showing.asks(&TRANSITIONS, 0..=MAX_OPERATIONS_PER_RESPONSE);
+        showing.asks(&QUOTES, 1..=MAX_EVIDENCE_PER_ITEM);
         let mut segments = Vec::with_capacity(input.segments.len());
         for segment in &input.segments {
             let shown = showing.show(&segment.sentences)?;
@@ -458,32 +521,70 @@ impl Answered for MemoryExtraction {
                 last_changed_at_sequence: memory.last_changed_at_sequence.0,
             })
             .collect();
+        let answer_guide = how_to_answer(!existing.is_empty());
         let mut says = Says::new(
-            format!("{EXTRACTOR_SYSTEM} {HOW_TO_ANSWER}"),
+            format!("{EXTRACTOR_SYSTEM} {answer_guide}"),
             render_extractor_prompt(&segments, &context, &existing),
         );
         says.output_tokens = EXTRACTOR_OUTPUT_TOKENS;
         Ok(says)
     }
 
-    fn accept(input: &Input, entry: &Entry) -> std::result::Result<(), Refusal> {
-        let part = Fragment::of(&entry.proposal, 0, input.messages.value());
-        match check(
-            part.add,
-            part.transitions,
-            Vec::new(),
-            input.messages.value(),
-            input.active.value(),
-        ) {
-            Ok(_) => Ok(()),
-            Err(error) => {
-                debug!(code = error.code(), "Memory proposal refused");
-                Err(Refusal(
-                    "Leave this item out, or give it evidence that follows the rules for its kind."
-                        .into(),
-                ))
-            }
+    fn accept(input: &Input, patch: &Patch) -> std::result::Result<(), Refusal> {
+        let filtered = filter_patch(patch, input.messages.value(), input.active.value());
+        if let Some(error) = filtered.transition_error {
+            debug!(code = error.code(), "Memory extraction transition refused");
+            return Err(Refusal(refusal_reason(&error)));
         }
+        if filtered.add.is_empty() && filtered.transitions.is_empty() && filtered.refused > 0 {
+            if let Some(error) = filtered.first_error {
+                debug!(code = error.code(), "Memory extraction patch refused");
+                return Err(Refusal(refusal_reason(&error)));
+            }
+            return Err(Refusal(
+                "Leave invalid entries out, or give them evidence that follows the rules for their kind."
+                    .into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn refusal_reason(error: &MemoryValidationError) -> String {
+    match error {
+        MemoryValidationError::NoEvidence(_) => {
+            "Each item needs at least one quote citing the sentences that support it, or leave it out."
+                .to_owned()
+        }
+        MemoryValidationError::TooMuchEvidence(_, _) => {
+            format!("Give at most {MAX_EVIDENCE_PER_ITEM} quotes per item, or leave it out.")
+        }
+        MemoryValidationError::NoUserAssertion(_) | MemoryValidationError::NonUserAuthority(_) => {
+            "Only established_fact may rest on an assistant assertion; every other kind needs at least one user sentence cited with purpose assertion, or leave it out."
+                .to_owned()
+        }
+        MemoryValidationError::NoAssertion(_) => {
+            "An established_fact needs at least one sentence cited with purpose assertion, or leave it out."
+                .to_owned()
+        }
+        MemoryValidationError::TransitionNotLater(_) => {
+            "A transition's sentences must cite a later user passage whose sequence is strictly after the earlier assertion."
+                .to_owned()
+        }
+        MemoryValidationError::DuplicateCandidate(_) => {
+            "Give each entry in add a unique code (c1, c2, c3, ...).".to_owned()
+        }
+        MemoryValidationError::UnknownTransitionTarget(_)
+        | MemoryValidationError::UnknownReplacement(_, _) => {
+            "A transition must name a listed existing item handle from existing_items or a code from add (c1, c2, ...)."
+                .to_owned()
+        }
+        MemoryValidationError::QuoteTooLong(_, _) => {
+            "Cite only the sentences that state the item; the combined quote exceeded the byte limit."
+                .to_owned()
+        }
+        _ => "Leave invalid entries out, or give them evidence that follows the rules for their kind."
+            .to_owned(),
     }
 }
 
@@ -502,77 +603,137 @@ fn rows(shown: &Shown<'_, Sentence>) -> String {
         .join("\n")
 }
 
-/// The additions and transitions of one or more proposals, in the domain's own form.
-#[derive(Debug, Clone, Default)]
-struct Fragment {
+/// Filtered additions and transitions that satisfy domain rules.
+struct FilteredPatch {
     add: Vec<ProposedItem>,
     transitions: Vec<ProposedTransition>,
+    refused: usize,
+    first_error: Option<MemoryValidationError>,
+    transition_error: Option<MemoryValidationError>,
 }
 
-impl Fragment {
-    /// The patch parts of `proposal`; its additions are named after the `first` already minted.
-    fn of(proposal: &Proposal, first: usize, messages: &[SourceMessage]) -> Self {
-        let candidate = |offset: usize| format!("c{}", first + offset + 1);
-        let item = |addition: &Addition, id: String| ProposedItem {
-            candidate_id: id,
-            kind: addition.kind.0.to_owned(),
-            label: addition.label.clone(),
-            evidence: addition
-                .evidence
-                .iter()
-                .flat_map(|quote| evidence(&quote.places, quote.purpose.0, messages))
-                .collect(),
-        };
-        let grounds = |grounds: &[Grounds]| -> Vec<ProposedEvidence> {
-            grounds
-                .iter()
-                .flat_map(|grounds| evidence(&grounds.places, "transition", messages))
-                .collect()
-        };
-        match proposal {
-            Proposal::Add(addition) => Self {
-                add: vec![item(addition, candidate(0))],
-                transitions: Vec::new(),
-            },
-            Proposal::Supersede {
-                grounds: because,
-                item: target,
-                replacement,
-            } => Self {
-                add: vec![item(replacement, candidate(0))],
-                transitions: vec![ProposedTransition {
-                    item_id: target.as_str().to_owned(),
-                    state: "superseded".to_owned(),
-                    replacement_candidate_id: Some(candidate(0)),
-                    evidence: grounds(because),
-                }],
-            },
-            Proposal::Resolve {
-                grounds: because,
-                item: target,
-            } => Self {
-                add: Vec::new(),
-                transitions: vec![ProposedTransition {
-                    item_id: target.as_str().to_owned(),
-                    state: "resolved".to_owned(),
-                    replacement_candidate_id: None,
-                    evidence: grounds(because),
-                }],
-            },
-            Proposal::Correct {
-                grounds: because,
-                earlier,
-                later,
-            } => Self {
-                add: vec![item(earlier, candidate(0)), item(later, candidate(1))],
-                transitions: vec![ProposedTransition {
-                    item_id: candidate(0),
-                    state: "superseded".to_owned(),
-                    replacement_candidate_id: Some(candidate(1)),
-                    evidence: grounds(because),
-                }],
-            },
+fn to_proposed_item(addition: &Addition, messages: &[SourceMessage]) -> ProposedItem {
+    ProposedItem {
+        candidate_id: addition.code.0.to_owned(),
+        kind: addition.kind.0.to_owned(),
+        label: addition.label.clone(),
+        evidence: addition
+            .quotes
+            .iter()
+            .flat_map(|quote| evidence(&quote.places, quote.purpose.0, messages))
+            .collect(),
+    }
+}
+
+fn to_proposed_transition(
+    transition: &Transition,
+    messages: &[SourceMessage],
+) -> ProposedTransition {
+    match transition {
+        Transition::SupersedeExisting {
+            memory,
+            replacement,
+            sentences,
+        } => ProposedTransition {
+            item_id: memory.as_str().to_owned(),
+            state: "superseded".to_owned(),
+            replacement_candidate_id: Some(replacement.0.to_owned()),
+            evidence: evidence(sentences, "transition", messages),
+        },
+        Transition::ResolveExisting { memory, sentences } => ProposedTransition {
+            item_id: memory.as_str().to_owned(),
+            state: "resolved".to_owned(),
+            replacement_candidate_id: None,
+            evidence: evidence(sentences, "transition", messages),
+        },
+        Transition::SupersedeCandidate {
+            older,
+            replacement,
+            sentences,
+        } => ProposedTransition {
+            item_id: older.0.to_owned(),
+            state: "superseded".to_owned(),
+            replacement_candidate_id: Some(replacement.0.to_owned()),
+            evidence: evidence(sentences, "transition", messages),
+        },
+    }
+}
+
+/// Keep every addition and transition that passes domain validation; leave out
+/// any single entry that violates a domain rule so valid entries still stand.
+fn filter_patch(
+    patch: &Patch,
+    quotable: &[SourceMessage],
+    existing: &[MemoryItem],
+) -> FilteredPatch {
+    let mut add: Vec<ProposedItem> = Vec::new();
+    let mut transitions: Vec<ProposedTransition> = Vec::new();
+    let mut refused = 0_usize;
+    let mut first_error: Option<MemoryValidationError> = None;
+    let mut transition_error: Option<MemoryValidationError> = None;
+
+    for addition in &patch.add {
+        let item = to_proposed_item(addition, quotable);
+        let mut candidate_add = add.clone();
+        candidate_add.push(item);
+        match check(
+            candidate_add.clone(),
+            Vec::new(),
+            Vec::new(),
+            quotable,
+            existing,
+        ) {
+            Ok(_) => {
+                add = candidate_add;
+            }
+            Err(error) => {
+                refused += 1;
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
+            }
         }
+    }
+
+    for entry in &patch.transitions {
+        let transition = to_proposed_transition(&entry.transition, quotable);
+        let mut candidate_transitions = transitions.clone();
+        candidate_transitions.push(transition);
+        match check(
+            add.clone(),
+            candidate_transitions.clone(),
+            Vec::new(),
+            quotable,
+            existing,
+        ) {
+            Ok(_) => {
+                transitions = candidate_transitions;
+            }
+            Err(error) => {
+                refused += 1;
+                if transition_error.is_none()
+                    && matches!(
+                        error,
+                        MemoryValidationError::UnknownTransitionTarget(_)
+                            | MemoryValidationError::UnknownReplacement(_, _)
+                            | MemoryValidationError::TransitionNotLater(_)
+                    )
+                {
+                    transition_error = Some(error.clone());
+                }
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
+            }
+        }
+    }
+
+    FilteredPatch {
+        add,
+        transitions,
+        refused,
+        first_error,
+        transition_error,
     }
 }
 
@@ -659,14 +820,13 @@ fn check(
 
 const ALL_LEFT_OUT: &str = "every proposal of the answer was left out";
 
-/// Why an answer with nothing that stands leaves the batch unprocessed;
-/// `left_out` counts its proposals that were left out.
-fn unread(why: &Why, left_out: usize) -> MemoryValidationError {
+/// Why an unanswered extraction leaves the batch unprocessed.
+fn unread(why: &Why) -> MemoryValidationError {
     MemoryValidationError::Malformed(
         match why {
             Why::CutOff => "the answer was cut off before it ended",
             Why::Declined => "the model declined to answer",
-            _ if left_out > 0 => ALL_LEFT_OUT,
+            Why::Refused(_) => ALL_LEFT_OUT,
             _ => "the answer could not be read",
         }
         .to_owned(),
@@ -676,8 +836,8 @@ fn unread(why: &Why, left_out: usize) -> MemoryValidationError {
 /// Extract memory from one batch of segments.
 ///
 /// `quotable` is every message the batch is allowed to cite: the segments' own
-/// messages plus the bounded adjacent context. A proposal the domain's rules
-/// refuse is left out and the others stand.
+/// messages plus the bounded adjacent context. An addition or transition the
+/// domain's rules refuse is left out and the others stand.
 ///
 /// # Errors
 ///
@@ -697,72 +857,55 @@ pub async fn extract_segments(
 ) -> std::result::Result<ExtractionOutcome, CompactionError> {
     let manifest = segment_ids(segments);
     let input = Input::of(segments, quotable, context, existing);
-    let options = deadline.call_options()?;
+    let mut options = deadline.call_options()?;
+    options.thinking = ThinkingMode::On;
+    // Thinking models enter repetition loops under greedy decoding; let the
+    // backend's thinking profile supply sampling while non-thinking backends
+    // fall back to deterministic decoding instead of chat temperature.
+    options.sampling = None;
+    options.non_thinking_sampling =
+        Some(lattice_core::application::ports::llm_port::SamplingOverride::deterministic());
+    options.reasoning_effort = Some("low".to_owned());
     let transport = Metered::new(&Plain);
-    let asked = ask_new::<MemoryExtraction>(
+    let asked = ask::<MemoryExtraction>(
         llm,
         &transport,
         &mut Scope::for_question(),
-        input,
-        |_| None,
+        &input,
         &options,
     )
     .await;
     let attempts = usize::try_from(transport.used().sends).unwrap_or(usize::MAX);
-    let Found {
-        items,
-        rest,
-        left_out,
-        ..
-    } = match asked {
-        Ok(found) => found,
+    let settled = match asked {
+        Ok(settled) => settled,
         Err(error) => {
             // A hard limit stops the job; anything else is the model failing.
             deadline.check()?;
             return Err(CompactionError::Model(error.to_string()));
         }
     };
-    if let Some(why) = rest {
-        let error = unread(&why, left_out);
-        warn!(
-            code = error.code(),
-            segments = segments.len(),
-            "Memory extraction answer did not end — these segments stay unprocessed"
-        );
-        return Err(CompactionError::Rejected(error));
-    }
-
-    let mut add: Vec<ProposedItem> = Vec::new();
-    let mut transitions: Vec<ProposedTransition> = Vec::new();
-    let mut refused = 0_usize;
-    for entry in &items {
-        let part = Fragment::of(&entry.proposal, add.len(), quotable);
-        let mut with_add = add.clone();
-        with_add.extend(part.add);
-        let mut with_transitions = transitions.clone();
-        with_transitions.extend(part.transitions);
-        match check(
-            with_add.clone(),
-            with_transitions.clone(),
-            Vec::new(),
-            quotable,
-            existing,
-        ) {
-            Ok(_) => {
-                add = with_add;
-                transitions = with_transitions;
-            }
-            Err(error) => {
-                refused += 1;
-                warn!(
-                    code = error.code(),
-                    segments = segments.len(),
-                    "Memory extraction proposal refused — left out"
-                );
-            }
+    let raw_patch = match settled {
+        Settled::Answered(patch) => patch,
+        Settled::Unanswered(why) => {
+            let error = unread(&why);
+            warn!(
+                code = error.code(),
+                segments = segments.len(),
+                "Memory extraction answer did not settle — these segments stay unprocessed"
+            );
+            return Err(CompactionError::Rejected(error));
         }
+    };
+
+    let filtered = filter_patch(&raw_patch, quotable, existing);
+    if filtered.refused > 0 {
+        warn!(
+            refused = filtered.refused,
+            segments = segments.len(),
+            "Memory extraction left out invalid proposal(s)"
+        );
     }
-    if add.is_empty() && transitions.is_empty() && left_out + refused > 0 {
+    if filtered.add.is_empty() && filtered.transitions.is_empty() && filtered.refused > 0 {
         let error = MemoryValidationError::Malformed(ALL_LEFT_OUT.to_owned());
         warn!(
             code = error.code(),
@@ -771,7 +914,14 @@ pub async fn extract_segments(
         );
         return Err(CompactionError::Rejected(error));
     }
-    let patch = check(add, transitions, manifest, quotable, existing).map_err(|error| {
+    let patch = check(
+        filtered.add,
+        filtered.transitions,
+        manifest,
+        quotable,
+        existing,
+    )
+    .map_err(|error| {
         warn!(
             code = error.code(),
             segments = segments.len(),

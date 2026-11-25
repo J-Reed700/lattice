@@ -789,13 +789,21 @@ async fn fits(llm: &dyn LLMPort, request: &GroundedRequest) -> bool {
         .is_ok_and(|measured| measured.fits())
 }
 
-/// The step `sent` answers with twice the output room, when the backend has the room.
+/// The step `sent` answers with twice the output room, when the backend has the room
+/// and the planner's cap leaves the doubled room larger than the room it had.
 async fn larger_if_room(llm: &dyn LLMPort, sent: &Sent) -> Option<Followup> {
     if sent.request.output_fills_window() {
         return None;
     }
     let larger = at_its_largest(&sent.request);
-    fits(llm, &larger).await.then_some(Followup(larger))
+    let grows = matches!(
+        (
+            grounded_generation::output_room(llm, &larger),
+            grounded_generation::output_room(llm, &sent.request),
+        ),
+        (Ok(doubled), Ok(had)) if doubled > had
+    );
+    (grows && fits(llm, &larger).await).then_some(Followup(larger))
 }
 
 /// The step that asks again after `sent`, quoting `told`; restated when the reply does not fit.
@@ -842,18 +850,41 @@ async fn alone<C: Answered, P>(
     let asked = request.clone();
     let mut sent = match transport.send(llm, request).await {
         Ok(sent) => sent,
-        Err(error)
-            if C::ALONE == Alone::Pending && ErrorClass::of(&error) == ErrorClass::DoesNotFit =>
-        {
-            trace::<C>(handle, reason(&Why::NoRoom));
-            return Ok(Settled::Unanswered(Why::NoRoom));
+        Err(error) => {
+            if matches!(
+                ErrorClass::of(&error),
+                ErrorClass::Unusable | ErrorClass::DoesNotFit
+            ) {
+                transport.unanswered(llm, &asked).await?;
+            }
+            if C::ALONE == Alone::Pending && ErrorClass::of(&error) == ErrorClass::DoesNotFit {
+                trace::<C>(handle, reason(&Why::NoRoom));
+                return Ok(Settled::Unanswered(Why::NoRoom));
+            }
+            return Err(error);
         }
-        Err(error) => return Err(error),
     };
     let mut settled = settle::<C, P>(&sent, handle, &read, &accept);
     if matches!(settled, Settled::Unanswered(Why::CutOff)) {
         if let Some(larger) = larger_if_room(llm, &sent).await {
-            sent = transport.follow(llm, larger).await?;
+            sent = match transport.follow(llm, larger).await {
+                Ok(sent) => sent,
+                Err(error) => {
+                    if matches!(
+                        ErrorClass::of(&error),
+                        ErrorClass::Unusable | ErrorClass::DoesNotFit
+                    ) {
+                        transport.unanswered(llm, &asked).await?;
+                    }
+                    if C::ALONE == Alone::Pending
+                        && ErrorClass::of(&error) == ErrorClass::DoesNotFit
+                    {
+                        trace::<C>(handle, reason(&Why::NoRoom));
+                        return Ok(Settled::Unanswered(Why::NoRoom));
+                    }
+                    return Err(error);
+                }
+            };
             settled = settle::<C, P>(&sent, handle, &read, &accept);
         }
     }
@@ -864,7 +895,24 @@ async fn alone<C: Answered, P>(
         };
         if let Some(due) = due {
             if let Some(again) = correction_for(llm, &sent, &due).await {
-                let reply = transport.follow(llm, again).await?;
+                let reply = match transport.follow(llm, again).await {
+                    Ok(reply) => reply,
+                    Err(error) => {
+                        if matches!(
+                            ErrorClass::of(&error),
+                            ErrorClass::Unusable | ErrorClass::DoesNotFit
+                        ) {
+                            transport.unanswered(llm, &asked).await?;
+                        }
+                        if C::ALONE == Alone::Pending
+                            && ErrorClass::of(&error) == ErrorClass::DoesNotFit
+                        {
+                            trace::<C>(handle, reason(&Why::NoRoom));
+                            return Ok(Settled::Unanswered(Why::NoRoom));
+                        }
+                        return Err(error);
+                    }
+                };
                 settled = settle::<C, P>(&reply, handle, &read, &accept);
             }
         }
@@ -883,12 +931,7 @@ async fn alone<C: Answered, P>(
 
 /// The written handle `showing` gives `item`; `None` when it shows none.
 fn handle_of<K: Kind>(showing: &Showing<'_>, item: &K) -> Option<String> {
-    let reference = item.reference();
-    showing
-        .shown::<K>()
-        .into_iter()
-        .find(|picked| picked.reference == reference)
-        .map(|picked| picked.handle.written())
+    showing.handle(item).map(|handle| handle.written())
 }
 
 /// What a reply said about the item `reference` names.

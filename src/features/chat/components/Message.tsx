@@ -4,8 +4,6 @@ import { Paperclip } from 'lucide-react';
 
 import { TiptapViewer, textWithFormulas } from '@/components/TiptapEditor';
 import { ClaimActionsPopover } from '@/features/chat/components/actions/ClaimActionsPopover';
-import { CitationFootnote } from '@/features/chat/components/CitationFootnote';
-import { CitationHoverCard } from '@/features/chat/components/CitationHoverCard';
 import { ClaimHoverCard } from '@/features/chat/components/ClaimHoverCard';
 import { EvidenceMargin } from '@/features/chat/components/EvidenceMargin';
 import { MessageHeader } from '@/features/chat/components/message/MessageHeader';
@@ -22,13 +20,17 @@ import { useMessageEvidence } from '@/features/chat/hooks/useMessageEvidence';
 import { useRevealStreamingRef } from '@/features/chat/hooks/useRevealStreamingRef';
 import { useChatFigures } from '@/features/chat/images/useChatFigures';
 import { openInFolder, revealInFolder } from '@/features/chat/model/folderThreadHost';
+import { CitationHoverCard } from '@/features/reading/components/CitationHoverCard';
+import { CitationSourcesRow } from '@/features/reading/components/CitationSourcesRow';
 import { SourceCitations } from '@/features/reading/components/SourceCitations';
-import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
+import { useReaderStore } from '@/features/reading/stores/readerStore';
 import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { useDrawnReply } from '@/shared/conversations/useDrawnReply';
 import type { DisplayMessage, SourceWithMetadata } from '@/types/conversation';
+
+const NO_SOURCES: SourceWithMetadata[] = [];
 
 /** The answer as the reader sees it, each formula as its source. */
 function readAnswer(answer: HTMLElement | null): string {
@@ -65,30 +67,77 @@ export const Message = memo(({
   const isUser = message.role === 'user';
   const isPending = message.status === 'pending';
   const isFailed = message.status === 'failed';
-  const errorMessage = 'error' in message ? message.error : undefined;
+  const { errorMessage, isCancelled } = useMemo(() => {
+    let parsedError: string | undefined;
+    let cancelled = false;
+    if ('metadata' in message && message.metadata) {
+      try {
+        const parsed: unknown = JSON.parse(message.metadata);
+        if (parsed && typeof parsed === 'object') {
+          if ('error' in parsed && typeof parsed.error === 'string') {
+            const trimmed = parsed.error.trim();
+            if (trimmed) parsedError = trimmed;
+          }
+          if ('cancelled' in parsed && parsed.cancelled === true) {
+            cancelled = true;
+          }
+        }
+      } catch {
+        // Malformed historical metadata
+      }
+    }
+    const directError = 'error' in message && typeof message.error === 'string' && message.error.trim()
+      ? message.error.trim()
+      : undefined;
+    return {
+      errorMessage: directError ?? (isFailed ? parsedError : undefined),
+      isCancelled: cancelled,
+    };
+  }, [isFailed, message]);
+
+  const messageId = 'id' in message ? message.id : undefined;
+  const conversationId = 'conversationId' in message ? message.conversationId : undefined;
 
   const activeConversationId = useConversationsStore((s) => s.activeConversationId);
-  const messageBookmarkMap = useConversationsStore((s) => s.messageBookmarkMap);
-  const messageVerificationMap = useConversationsStore((s) => s.messageVerification);
+  const messageBookmark = useConversationsStore((s) =>
+    messageId ? s.messageBookmarkMap.get(messageId) : undefined,
+  );
+  const verificationSummary = useConversationsStore((s) =>
+    messageId ? s.messageVerification.get(messageId) : undefined,
+  );
   const dismissFailedMessage = useConversationsStore((s) => s.dismissFailedMessage);
   const retryFailedMessage = useConversationsStore((s) => s.retryFailedMessage);
-  const lastMessageSources = useConversationsStore((s) => s.lastMessageSources);
-  const messageRetrieval = useConversationsStore((s) => s.messageRetrieval);
-  const liveRetrieval = useConversationsStore((s) => s.liveRetrieval);
-  const liveSteps = useConversationsStore((s) => s.liveSteps);
-  const liveModel = useConversationsStore((s) => s.liveModel);
-  const messageTurn = useConversationsStore((s) => s.messageTurn);
-  const inFlightGenerations = useConversationsStore((s) => s.inFlightGenerations);
+  const storedSources = useConversationsStore((s) =>
+    messageId ? s.lastMessageSources.get(messageId) : undefined,
+  );
+  const persistedRetrieval = useConversationsStore((s) =>
+    !isUser && !isPending && messageId ? s.messageRetrieval.get(messageId) ?? null : null,
+  );
+  const liveRetrievalForTurn = useConversationsStore((s) =>
+    !isUser && isPending && conversationId ? s.liveRetrieval.get(conversationId) ?? null : null,
+  );
+  const liveStepsForTurn = useConversationsStore((s) =>
+    isPending && conversationId ? s.liveSteps.get(conversationId) ?? null : null,
+  );
+  const liveModelForTurn = useConversationsStore((s) =>
+    isPending && conversationId ? s.liveModel.get(conversationId) ?? null : null,
+  );
+  const turnRecord = useConversationsStore((s) =>
+    messageId ? s.messageTurn.get(messageId) ?? null : null,
+  );
+  const answeredBy = useConversationsStore((s) =>
+    isUser && nextMessageId ? s.messageTurn.get(nextMessageId)?.model?.name ?? null : null,
+  );
+  const isBusy = useConversationsStore((s) =>
+    Boolean(conversationId && s.inFlightGenerations.has(conversationId)),
+  );
   const selectConversation = useConversationsStore((s) => s.selectConversation);
 
   // One reader serves the whole thread. A message hands it a citation to show
   // and reads back where the viewer found it.
-  const resolvedLocations = useChatReaderStore((s) => s.resolvedLocations);
+  const resolvedLocations = useReaderStore((s) => s.resolvedLocations);
   const showCitations = useCitationDisplayStore((s) => s.visible);
 
-  const messageId = 'id' in message ? message.id : undefined;
-  const messageBookmark = messageId ? messageBookmarkMap.get(messageId) : undefined;
-  const verificationSummary = messageId ? messageVerificationMap.get(messageId) : undefined;
   const isMessageBookmarked = Boolean(messageBookmark);
   const canBookmarkMessage = Boolean(activeConversationId && messageId);
   const canDeleteMessage = Boolean(messageId);
@@ -98,17 +147,13 @@ export const Message = memo(({
     if ('sources' in message && message.sources && message.sources.length > 0) {
       return message.sources;
     }
-    if (messageId) {
-      return lastMessageSources.get(messageId) ?? [];
-    }
-    return [];
-  }, [message, messageId, lastMessageSources]);
+    return storedSources ?? NO_SOURCES;
+  }, [message, storedSources]);
 
   const isAssistantWithSources = !isUser && sources.length > 0;
 
   const { attachmentNames, pictures, picturesSeen, continuedFrom } = useMessageMetadata(message, isUser);
 
-  const conversationId = 'conversationId' in message ? message.conversationId : undefined;
   const conversationTitle = useConversationsStore(
     (s) => s.conversations.find((c) => c.id === conversationId)?.title ?? null,
   );
@@ -120,15 +165,10 @@ export const Message = memo(({
     (s) => s.conversations.find((c) => c.id === conversationId)?.explorerRoot ?? null,
   );
   const showsCodeRefs = !isUser && Boolean(explorerRoot);
-  const isBusy = Boolean(conversationId && inFlightGenerations.has(conversationId));
 
   // In flight, the live event stream is the trace; once persisted, the message
   // metadata is. Never both, and never a stale one.
-  const retrievalTrace = useMemo(() => {
-    if (isUser) return null;
-    if (isPending && conversationId) return liveRetrieval.get(conversationId) ?? null;
-    return messageId ? messageRetrieval.get(messageId) ?? null : null;
-  }, [isUser, isPending, conversationId, liveRetrieval, messageId, messageRetrieval]);
+  const retrievalTrace = !isUser && isPending ? liveRetrievalForTurn : persistedRetrieval;
 
   /**
    * When this turn began, for the clocks on its running steps.
@@ -187,7 +227,8 @@ export const Message = memo(({
     handleBodyClick, handleBodyMouseOver, handleBodyMouseLeave,
     hoveredSource, hoveredVerdict, activeEvidence, hasEvidenceMargin, setLit,
   } = useMessageEvidence({
-    sources, ownerKey: messageId ?? domMessageId ?? '', isAssistantWithSources,
+    sources, ownerKey: messageId ?? domMessageId ?? '', conversationId: conversationId ?? activeConversationId ?? null,
+    isAssistantWithSources,
     showCitations, claimVerdicts, showsCodeRefs, revealInExplorer: revealInFolder, openInExplorer: openInFolder,
   });
   const figures = useChatFigures(message, citationMap);
@@ -199,19 +240,15 @@ export const Message = memo(({
     if (!showCitations || !isAssistantWithSources || citationMap.size === 0) return null;
     const entries = Array.from(citationMap.entries()).sort(([a], [b]) => a - b);
     return (
-      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
-        <span className="text-xxs text-text-muted">Sources</span>
-        {entries.map(([num, source], position) => (
-          <CitationFootnote
-            key={`cite-${num}`}
-            number={num}
-            source={source}
-            provenanceLabel={provenanceBySource.get(source.chunkId)}
-            resolvedLocation={resolvedLocations.get(source.chunkId)}
-            onViewFile={() => openCitation(position)}
-          />
-        ))}
-      </div>
+      <CitationSourcesRow
+        entries={entries.map(([num, source], position) => ({
+          number: num,
+          source,
+          provenanceLabel: provenanceBySource.get(source.chunkId),
+          resolvedLocation: resolvedLocations.get(source.chunkId),
+          onView: () => openCitation(position),
+        }))}
+      />
     );
   }, [showCitations, isAssistantWithSources, citationMap, provenanceBySource, resolvedLocations, openCitation]);
 
@@ -235,6 +272,7 @@ export const Message = memo(({
           isUser={isUser}
           isPending={isPending}
           isFailed={isFailed}
+          isCancelled={isCancelled}
           errorMessage={errorMessage}
           isLastTurn={isLastTurn}
           isBusy={isBusy}
@@ -263,13 +301,14 @@ export const Message = memo(({
 
         <TurnRecord
           trace={retrievalTrace}
-          record={messageId ? messageTurn.get(messageId) ?? null : null}
-          liveSteps={isPending && conversationId ? liveSteps.get(conversationId) ?? null : null}
-          liveModel={isPending && conversationId ? liveModel.get(conversationId) ?? null : null}
+          record={turnRecord}
+          liveSteps={liveStepsForTurn}
+          liveModel={liveModelForTurn}
           turnStartedAt={turnStartedAt}
           isPending={!isUser && isPending}
           isWriting={message.content.trim().length > 0}
           verification={verificationSummary ?? null}
+          conversationId={conversationId ?? activeConversationId ?? null}
         />
 
         {/* Body prose — tiptap.css styles inherit `font-family` from this wrapper. */}
@@ -289,7 +328,7 @@ export const Message = memo(({
           onMouseLeave={isUser || !showCitations ? undefined : handleBodyMouseLeave}
           className={`wrap-break-word wrap-anywhere ${
             isUser
-              ? 'ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-surface px-4 py-2.5 font-sans text-[15px] leading-[1.55] shadow-sheet'
+              ? 'ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-sm border border-border-subtle bg-surface px-4 py-2.5 font-sans text-[15px] leading-[1.55] text-text-primary shadow-sm'
               : 'chat-answer max-w-none font-serif text-[16.5px] leading-[1.7]'
           }`}
         >
@@ -324,7 +363,7 @@ export const Message = memo(({
           <UserPictures
             pictures={pictures}
             picturesSeen={picturesSeen}
-            answeredBy={nextMessageId ? messageTurn.get(nextMessageId)?.model?.name ?? null : null}
+            answeredBy={answeredBy}
             restageIn={messageId && conversationId && chatModelSeesImages ? conversationId : null}
           />
         )}
@@ -335,7 +374,7 @@ export const Message = memo(({
             {attachmentNames.map((name) => (
               <span
                 key={name}
-                className="inline-flex items-center gap-1 rounded-full bg-surface px-2 py-0.5 text-[11px] text-[hsl(var(--text-secondary))] shadow-sheet"
+                className="inline-flex items-center gap-1 rounded-full border border-border-subtle bg-surface px-2.5 py-0.5 text-[11px] text-text-secondary shadow-sm"
               >
                 <Paperclip className="h-3 w-3" strokeWidth={1.6} />
                 {name}
@@ -383,7 +422,7 @@ export const Message = memo(({
           answerMarkdown={isUser ? undefined : normalizedMarkdownContent}
           answerVerification={verificationSummary ?? null}
           conversationTitle={conversationTitle}
-          answerTurn={messageId ? messageTurn.get(messageId) : undefined}
+          answerTurn={turnRecord ?? undefined}
           listen={!isUser && messageId && !isPending && !isFailed && message.status !== 'processing' && normalizedMarkdownContent.trim()
             ? { sourceId: `message:${messageId}`, markdown: normalizedMarkdownContent }
             : undefined}

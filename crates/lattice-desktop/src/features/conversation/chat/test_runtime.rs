@@ -15,7 +15,7 @@ use lattice_core::application::ports::llm_port::{
 use lattice_core::application::ports::{ChatImagesPort, ImageTurnScope};
 use lattice_core::application::ports::{EmbeddingPort, LLMPort};
 use lattice_core::application::services::chat_model_resolution::{
-    resolve, resolve_learning, DefaultChatModel,
+    resolve, resolve_learning, Candidates, DefaultChatModel,
 };
 use lattice_core::application::services::model_contract::kept::{
     KeptNames, MemoryNames, TurnNames,
@@ -24,6 +24,7 @@ use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::JobRuntime;
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 const UNUSED: &str = "not provided to the test";
@@ -44,6 +45,43 @@ pub(super) fn default_model() -> ModelRef {
     }
 }
 
+#[derive(Default)]
+pub(in crate::features::conversation) struct LoaderCounts {
+    pub(super) router_llm_calls: AtomicUsize,
+    pub(super) utility_loader_calls: AtomicUsize,
+    pub(super) embedding_calls: AtomicUsize,
+}
+
+impl LoaderCounts {
+    pub(super) fn router_llm_calls(&self) -> usize {
+        self.router_llm_calls.load(Ordering::SeqCst)
+    }
+    pub(super) fn utility_loader_calls(&self) -> usize {
+        self.utility_loader_calls.load(Ordering::SeqCst)
+    }
+    pub(super) fn embedding_calls(&self) -> usize {
+        self.embedding_calls.load(Ordering::SeqCst)
+    }
+}
+
+pub(in crate::features::conversation) struct FakeEmbedding;
+
+#[async_trait::async_trait]
+impl EmbeddingPort for FakeEmbedding {
+    async fn embed_single(&self, _text: &str) -> Result<Vec<f32>> {
+        Ok(vec![0.0; 4])
+    }
+    async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        Ok(texts.iter().map(|_| vec![0.0; 4]).collect())
+    }
+    fn dimension(&self) -> usize {
+        4
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
 #[derive(Clone)]
 pub(in crate::features::conversation) struct FakeRuntime {
     /// The Settings default chat model, named [`default_model`].
@@ -52,6 +90,11 @@ pub(in crate::features::conversation) struct FakeRuntime {
     pub(super) models: Vec<(ModelRef, Arc<dyn LLMPort>)>,
     /// The Learning model set in Settings, if any.
     pub(super) learning_model: Option<ModelRef>,
+    pub(super) router_llm: Option<Arc<dyn LLMPort>>,
+    pub(super) utility_llm: Option<Arc<dyn LLMPort>>,
+    pub(super) embedding: Option<Arc<dyn EmbeddingPort>>,
+    pub(super) documents: Option<Arc<dyn lattice_core::application::ports::DocumentRepository>>,
+    pub(super) loader_counts: Arc<LoaderCounts>,
     pub(super) tools: Option<Arc<dyn ChatTools>>,
     pub(super) jobs: Option<Arc<JobRuntime>>,
     /// The library retrieval searches. Without one, a turn that reaches the
@@ -91,6 +134,11 @@ impl Default for FakeRuntime {
             llm: None,
             models: Vec::new(),
             learning_model: None,
+            router_llm: None,
+            utility_llm: None,
+            embedding: None,
+            documents: None,
+            loader_counts: Arc::default(),
             tools: None,
             jobs: None,
             vault: None,
@@ -422,12 +470,19 @@ impl ChatModels for FakeRuntime {
         _requirements: ModelRequirements,
     ) -> Result<PinnedModel> {
         let choice = self.conversations.model_choice(conversation_id)?;
-        let default =
-            DefaultChatModel(self.llm.as_ref().map(|_| default_model()).ok_or_else(|| {
-                AppError::AiModelsNotInstalled(
-                    "No chat model is selected in Settings → Downloaded".into(),
-                )
-            }));
+        let default = DefaultChatModel(
+            self.llm
+                .as_ref()
+                .map(|_| Candidates {
+                    models: vec![default_model()],
+                    auto: false,
+                })
+                .ok_or_else(|| {
+                    AppError::AiModelsNotInstalled(
+                        "No chat model is selected in Settings → Downloaded".into(),
+                    )
+                }),
+        );
         self.pinned(resolve(request_override, &choice, &default)?)
     }
     async fn learning_llm(&self, _requirements: ModelRequirements) -> Result<PinnedModel> {
@@ -441,16 +496,37 @@ impl ChatModels for FakeRuntime {
         self.loaded(&default_model())
     }
     async fn get_or_load_router_llm(&self) -> Result<Arc<dyn LLMPort>> {
-        unreachable!("{UNUSED}")
+        self.loader_counts
+            .router_llm_calls
+            .fetch_add(1, Ordering::SeqCst);
+        match &self.router_llm {
+            Some(llm) => Ok(Arc::clone(llm)),
+            None => unreachable!("{UNUSED}"),
+        }
     }
     async fn get_or_load_utility_llm(&self) -> Result<Option<Arc<dyn LLMPort>>> {
-        Ok(None)
+        Ok(self.utility_llm.clone())
     }
     fn utility_llm_loader(&self) -> lattice_core::application::ports::llm_port::OptionalLlmLoader {
-        Arc::new(|| Box::pin(async { Ok(None) }))
+        let counts = Arc::clone(&self.loader_counts);
+        let utility_llm = self.utility_llm.clone();
+        Arc::new(move || {
+            let counts = Arc::clone(&counts);
+            let utility_llm = utility_llm.clone();
+            Box::pin(async move {
+                counts.utility_loader_calls.fetch_add(1, Ordering::SeqCst);
+                Ok(utility_llm)
+            })
+        })
     }
     async fn get_or_load_embedding(&self) -> Result<Arc<dyn EmbeddingPort>> {
-        Err(AppError::ServiceNotAvailable("no embedding model".into()))
+        self.loader_counts
+            .embedding_calls
+            .fetch_add(1, Ordering::SeqCst);
+        match &self.embedding {
+            Some(embedding) => Ok(Arc::clone(embedding)),
+            None => Err(AppError::ServiceNotAvailable("no embedding model".into())),
+        }
     }
 }
 
@@ -478,6 +554,9 @@ impl ChatStorage for FakeRuntime {
         unreachable!("{UNUSED}")
     }
     fn document_repository(&self) -> Arc<dyn lattice_core::application::ports::DocumentRepository> {
+        if let Some(documents) = &self.documents {
+            return Arc::clone(documents);
+        }
         assert!(self.vault.is_some(), "{UNUSED}");
         Arc::new(lattice_core::domain::repositories::mocks::DddMockDocumentRepository::new())
     }

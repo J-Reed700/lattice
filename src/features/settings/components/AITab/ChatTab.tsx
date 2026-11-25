@@ -3,75 +3,77 @@
  * currently doing the work.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useState } from 'react';
 
-import { PageHeader, SettingsRow, SettingsSection, Switch } from "@/components/ui";
+import { Button, Input, PageHeader, SettingsRow, SettingsSection, Switch } from '@/components/ui';
 import { useApi } from '@/contexts/ApiContext';
-import { useDownloadedModels } from "@/features/model/hooks/useDownloadedModels";
-import { probeOllamaServer } from "@/features/settings/hooks/connectionProbes";
-import { cn } from "@/lib/utils";
-import { toast } from "@/stores/toastStore";
-import type { LLMSettings as ApiLLMSettings } from "@/types/api/settings";
-import { isCloudProvider } from '@/utils/chatModelSelection';
+import { useActiveModels } from '@/features/model/hooks/useActiveModels';
+import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
+import { probeOllamaServer } from '@/features/settings/hooks/connectionProbes';
+import { cn } from '@/lib/utils';
+import { toast } from '@/stores/toastStore';
+import type { LLMSettings as ApiLLMSettings } from '@/types/api/settings';
+import { isCloudProvider, modelRefKey, modelRefLabel } from '@/utils/chatModelSelection';
 import { handleAsyncEvent, voidAsync } from '@/utils/promiseHandlers';
 
 import { CloudConnection } from './CloudConnection';
-import { LlamaCppConnection } from "./LlamaCppConnection";
-import {
-  GHOST_BUTTON_CLASS,
-  INPUT_CLASS,
-  SECONDARY_BUTTON_CLASS,
-  SWITCH_CLASS,
-} from "./shared";
-import { useLlmSettings } from "./useLlmSettings";
+import { LlamaCppConnection } from './LlamaCppConnection';
+import { SWITCH_CLASS } from './shared';
+import { useLlmSettings } from './useLlmSettings';
+import { SettingsSelect } from '../SettingControls';
 
-const PROVIDERS: Array<{ value: ApiLLMSettings["provider"]; label: string }> = [
-  { value: "auto", label: "Auto — local, llama.cpp, then Ollama" },
-  { value: "local", label: "Local only" },
-  { value: "ollama", label: "Ollama" },
-  { value: "llamacpp", label: "llama.cpp" },
-  { value: "openai", label: "OpenAI" },
-  { value: "anthropic", label: "Anthropic" },
-  { value: "google", label: "Google" },
+const PROVIDERS: Array<{ value: ApiLLMSettings['provider']; label: string }> = [
+  { value: 'auto', label: 'Auto — local, llama.cpp, then Ollama' },
+  { value: 'local', label: 'Local only' },
+  { value: 'ollama', label: 'Ollama' },
+  { value: 'llamacpp', label: 'llama.cpp' },
+  { value: 'openai', label: 'OpenAI' },
+  { value: 'anthropic', label: 'Anthropic' },
+  { value: 'google', label: 'Google' },
 ];
 
 export function ChatTab() {
   const api = useApi();
-  const { llmSettings, isLoading, authValueSet, saveLlmUpdates, saveAuthHeaderValue, reload } = useLlmSettings();
-  const [ollamaUrlDraft, setOllamaUrlDraft] = useState("");
-  const [ollamaModelDraft, setOllamaModelDraft] = useState("");
-  const [ollamaUtilityModelDraft, setOllamaUtilityModelDraft] = useState("");
-  const [ollamaHeaderNameDraft, setOllamaHeaderNameDraft] = useState("");
-  const [ollamaHeaderValueDraft, setOllamaHeaderValueDraft] = useState("");
-  const [ollamaBasicUserDraft, setOllamaBasicUserDraft] = useState("");
-  const [ollamaBasicPassDraft, setOllamaBasicPassDraft] = useState("");
-  const [ollamaAvailableModels, setOllamaAvailableModels] = useState<string[]>(
-    [],
-  );
-  const [ollamaModelsEndpoint, setOllamaModelsEndpoint] = useState("");
-  const [isTestingOllamaConnection, setIsTestingOllamaConnection] =
-    useState(false);
+  const {
+    llmSettings,
+    isLoading,
+    authValueSet,
+    authValueStatus = 'ready',
+    saveLlmUpdates,
+    saveAuthHeaderValue,
+    reload,
+  } = useLlmSettings();
+  const [ollamaUrlDraft, setOllamaUrlDraft] = useState('');
+  const [ollamaModelDraft, setOllamaModelDraft] = useState('');
+  const [ollamaUtilityModelDraft, setOllamaUtilityModelDraft] = useState('');
+  const [ollamaHeaderNameDraft, setOllamaHeaderNameDraft] = useState('');
+  const [ollamaHeaderValueDraft, setOllamaHeaderValueDraft] = useState('');
+  const [ollamaBasicUserDraft, setOllamaBasicUserDraft] = useState('');
+  const [ollamaBasicPassDraft, setOllamaBasicPassDraft] = useState('');
+  const [ollamaAvailableModels, setOllamaAvailableModels] = useState<string[]>([]);
+  const [ollamaModelsEndpoint, setOllamaModelsEndpoint] = useState('');
+  const [isTestingOllamaConnection, setIsTestingOllamaConnection] = useState(false);
   const [isSavingOllamaConnection, setIsSavingOllamaConnection] = useState(false);
   const [showOllamaAuth, setShowOllamaAuth] = useState(false);
 
-  // The active models come from the downloaded-models query, which model
-  // changes invalidate.
-  const { activeModel: activeChatModel, activeEmbeddingModel } = useDownloadedModels();
+  const { downloadedModels, activeEmbeddingModel } = useDownloadedModels();
+  const { activeModels } = useActiveModels();
+  const chatRef = activeModels?.chat[0] ?? null;
 
   useEffect(() => {
     if (!llmSettings) return;
     setOllamaUrlDraft(llmSettings.ollamaUrl);
     setOllamaModelDraft(llmSettings.model);
-    setOllamaUtilityModelDraft(llmSettings.ollamaUtilityModel || "");
-    setOllamaHeaderNameDraft(llmSettings.ollamaAuthHeaderName || "");
-    setOllamaHeaderValueDraft("");
+    setOllamaUtilityModelDraft(llmSettings.ollamaUtilityModel || '');
+    setOllamaHeaderNameDraft(llmSettings.ollamaAuthHeaderName || '');
+    setOllamaHeaderValueDraft('');
     if (llmSettings.ollamaAuthHeaderName || authValueSet.ollama) {
       setShowOllamaAuth(true);
     }
   }, [llmSettings, authValueSet.ollama]);
 
-  const provider = llmSettings?.provider ?? "auto";
-  const showOllamaSettings = provider === "ollama" || provider === "auto";
+  const provider = llmSettings?.provider ?? 'auto';
+  const showOllamaSettings = provider === 'ollama' || provider === 'auto';
 
   // New and legacy settings both default to enabled; an explicit saved false
   // remains an opt-out.
@@ -83,13 +85,11 @@ export function ChatTab() {
     const ok = await saveLlmUpdates({ boundedConversationMemory: enabled });
     if (ok) {
       toast.success(
-        enabled
-          ? "Conversation memory on"
-          : "Conversation memory off",
+        enabled ? 'Conversation memory on' : 'Conversation memory off',
         {
           message: enabled
-            ? "New messages will be scanned for requirements, each kept with its source quotation."
-            : "Nothing new will be recorded, and nothing recorded is added to prompts.",
+            ? 'New messages will be scanned for requirements, each kept with its source quotation.'
+            : 'Nothing new will be recorded, and nothing recorded is added to prompts.',
         },
       );
     }
@@ -97,21 +97,32 @@ export function ChatTab() {
 
   const trimmedHeaderName = ollamaHeaderNameDraft.trim();
   const trimmedHeaderValue = ollamaHeaderValueDraft.trim();
-  // The value is write-only: the saved one never comes back, only whether
-  // one is set (`authValueSet`), so a blank value field means "keep the stored one".
   const headerValueStored = authValueSet.ollama;
+  const authStatusKnown = authValueStatus === 'ready';
+  const savedOllamaHeaderName = llmSettings?.ollamaAuthHeaderName ?? '';
+  const hasSavedOllamaHeaderName = Boolean(savedOllamaHeaderName.trim());
+  const isOllamaHeaderHalfConfigured =
+    authStatusKnown && !headerValueStored && hasSavedOllamaHeaderName;
+  const showClearOllamaHeader =
+    authStatusKnown && (headerValueStored || hasSavedOllamaHeaderName);
+  const keepsExistingOllamaHeader =
+    !authStatusKnown &&
+    hasSavedOllamaHeaderName &&
+    trimmedHeaderName === savedOllamaHeaderName.trim();
   const isHeaderPartialPair =
-    (trimmedHeaderName !== "" && trimmedHeaderValue === "" && !headerValueStored) ||
-    (trimmedHeaderName === "" && trimmedHeaderValue !== "");
+    (trimmedHeaderName !== '' &&
+      trimmedHeaderValue === '' &&
+      !headerValueStored &&
+      !keepsExistingOllamaHeader) ||
+    (trimmedHeaderName === '' && trimmedHeaderValue !== '');
   const headerDraftDiffersFromSaved =
-    trimmedHeaderName !== (llmSettings?.ollamaAuthHeaderName ?? "").trim() ||
-    trimmedHeaderValue !== "";
+    trimmedHeaderName !== (llmSettings?.ollamaAuthHeaderName ?? '').trim() ||
+    trimmedHeaderValue !== '';
 
-  // The value goes first: the backend refuses a name with no value behind it.
   const storeTypedHeaderValue = async (): Promise<boolean> => {
-    if (trimmedHeaderValue === "") return true;
-    if (!(await saveAuthHeaderValue("ollama", trimmedHeaderValue))) return false;
-    setOllamaHeaderValueDraft("");
+    if (trimmedHeaderValue === '') return true;
+    if (!(await saveAuthHeaderValue('ollama', trimmedHeaderValue))) return false;
+    setOllamaHeaderValueDraft('');
     return true;
   };
   const handleHeaderBlur = () => {
@@ -124,22 +135,22 @@ export function ChatTab() {
     })();
   };
   const handleClearHeader = async () => {
-    if (!(await saveLlmUpdates({ ollamaAuthHeaderName: "" }))) return;
-    if (await saveAuthHeaderValue("ollama", null)) {
-      setOllamaHeaderNameDraft("");
-      setOllamaHeaderValueDraft("");
+    if (!(await saveLlmUpdates({ ollamaAuthHeaderName: '' }))) return;
+    if (await saveAuthHeaderValue('ollama', null)) {
+      setOllamaHeaderNameDraft('');
+      setOllamaHeaderValueDraft('');
     }
   };
 
   const handleApplyBasicAuth = () => {
     if (!ollamaBasicUserDraft.trim()) {
-      toast.error("Enter a username for basic auth");
+      toast.error('Enter a username for basic auth');
       return;
     }
     const token = btoa(`${ollamaBasicUserDraft}:${ollamaBasicPassDraft}`);
     voidAsync(async () => {
-      if (await saveAuthHeaderValue("ollama", `Basic ${token}`)) {
-        await saveLlmUpdates({ ollamaAuthHeaderName: "Authorization" });
+      if (await saveAuthHeaderValue('ollama', `Basic ${token}`)) {
+        await saveLlmUpdates({ ollamaAuthHeaderName: 'Authorization' });
       }
     })();
   };
@@ -148,23 +159,27 @@ export function ChatTab() {
     const ollamaUrl = ollamaUrlDraft.trim();
     const model = ollamaModelDraft.trim();
     if (!ollamaUrl || !model) {
-      toast.error("Set a server URL and model first");
+      toast.error('Set a server URL and model first');
       return;
     }
     if (isHeaderPartialPair) {
-      toast.error("Set both the header name and value, or clear both");
+      toast.error('Set both the header name and value, or clear both');
       return;
     }
     setIsSavingOllamaConnection(true);
     try {
       if (!(await storeTypedHeaderValue())) return;
-      if (await saveLlmUpdates({
-        ollamaConfigured: true,
-        ollamaUrl,
-        model,
-        ollamaUtilityModel: ollamaUtilityModelDraft.trim(),
-        ollamaAuthHeaderName: trimmedHeaderName,
-      })) toast.success("Ollama settings saved");
+      if (
+        await saveLlmUpdates({
+          ollamaConfigured: true,
+          ollamaUrl,
+          model,
+          ollamaUtilityModel: ollamaUtilityModelDraft.trim(),
+          ollamaAuthHeaderName: trimmedHeaderName,
+        })
+      ) {
+        toast.success('Ollama settings saved');
+      }
     } finally {
       setIsSavingOllamaConnection(false);
     }
@@ -176,31 +191,38 @@ export function ChatTab() {
     const authHeaderValue = ollamaHeaderValueDraft.trim();
 
     if (!ollamaUrl) {
-      toast.error("Enter an Ollama server URL first");
+      toast.error('Enter an Ollama server URL first');
       return;
     }
 
     if (
-      (authHeaderName && !authHeaderValue && !headerValueStored) ||
+      (authHeaderName &&
+        !authHeaderValue &&
+        !headerValueStored &&
+        !keepsExistingOllamaHeader) ||
       (!authHeaderName && authHeaderValue)
     ) {
-      toast.error("Set both the header name and value, or clear both");
+      toast.error('Set both the header name and value, or clear both');
       return;
     }
 
     setIsTestingOllamaConnection(true);
-    const result = await probeOllamaServer({
-      ollamaUrl,
-      authHeaderName,
-      authHeaderValue,
-    }, api);
+    const result = await probeOllamaServer(
+      {
+        ollamaUrl,
+        authHeaderName,
+        authHeaderValue,
+      },
+      api,
+    );
     setIsTestingOllamaConnection(false);
 
     if (!result.ok) {
       setOllamaAvailableModels([]);
-      setOllamaModelsEndpoint("");
+      setOllamaModelsEndpoint('');
       toast.error("Couldn't reach the Ollama server", {
-        message: typeof result.details?.details === "string" ? result.details.details : result.error,
+        message:
+          typeof result.details?.details === 'string' ? result.details.details : result.error,
       });
       return;
     }
@@ -209,7 +231,7 @@ export function ChatTab() {
     setOllamaModelsEndpoint(result.data.endpoint);
 
     if (!result.data.models.includes(ollamaModelDraft)) {
-      setOllamaModelDraft("");
+      setOllamaModelDraft('');
     }
 
     toast.success(
@@ -219,9 +241,32 @@ export function ChatTab() {
 
   const routerModel = llmSettings?.router?.model?.trim();
 
+  const ollamaModelOptions = [
+    {
+      value: '',
+      label:
+        ollamaAvailableModels.length === 0 ? 'Test the connection first' : 'Select a model',
+    },
+    ...ollamaAvailableModels.map((modelName) => ({ value: modelName, label: modelName })),
+  ];
+
+  const ollamaUtilityOptions = [
+    {
+      value: '',
+      label:
+        ollamaAvailableModels.length === 0
+          ? 'Test the connection first'
+          : 'Falls back to the chat model',
+    },
+    ...ollamaAvailableModels.map((modelName) => ({ value: modelName, label: modelName })),
+  ];
+
   return (
     <>
-      <PageHeader title="Chat" description="Choose your provider and how conversations use models and memory." />
+      <PageHeader
+        title="Chat"
+        description="Choose your provider and how conversations use models and memory."
+      />
 
       <SettingsSection title="Provider">
         {isLoading ? (
@@ -229,52 +274,51 @@ export function ChatTab() {
             Loading…
           </div>
         ) : !llmSettings ? (
-          <div className="flex items-center gap-2 border-b border-border-subtle py-3">
-            <p className="text-sm text-text-muted">
-              Couldn&apos;t read chat settings.
-            </p>
-            <button
-              type="button"
-              onClick={reload}
-              className="text-sm text-text-secondary transition-colors duration-fast hover:text-text-primary"
-            >
+          <div className="flex items-center gap-3 border-b border-border-subtle py-3">
+            <p className="text-sm text-text-muted">Couldn&apos;t read chat settings.</p>
+            <Button type="button" variant="outline" size="sm" onClick={reload}>
               Retry
-            </button>
+            </Button>
           </div>
         ) : (
           <SettingsRow label="Chat provider" htmlFor="chatProvider">
-            <select
+            <SettingsSelect
               id="chatProvider"
               value={provider}
-              onChange={handleAsyncEvent((event) =>
-                saveLlmUpdates({
-                  provider: event.target.value as ApiLLMSettings["provider"],
-                  ...(isCloudProvider(event.target.value as ApiLLMSettings['provider'])
-                    ? { model: '' }
-                    : {}),
-                }))
-              }
-              className={INPUT_CLASS}
-            >
-              {PROVIDERS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+              onValueChange={(next) => {
+                const nextProvider = next as ApiLLMSettings['provider'];
+                void saveLlmUpdates({
+                  provider: nextProvider,
+                  ...(isCloudProvider(nextProvider) ? { model: '' } : {}),
+                });
+              }}
+              options={PROVIDERS}
+            />
           </SettingsRow>
         )}
       </SettingsSection>
 
-      {llmSettings && isCloudProvider(provider) && <CloudConnection key={provider} provider={provider}
-        model={llmSettings.model} onSaveModel={(model) => saveLlmUpdates({ model })} />}
+      {llmSettings && isCloudProvider(provider) && (
+        <CloudConnection
+          key={provider}
+          provider={provider}
+          model={llmSettings.model}
+          onSaveModel={(model) => saveLlmUpdates({ model })}
+        />
+      )}
 
-      {llmSettings && (provider === "llamacpp" || provider === "auto" || llmSettings.llamaCpp?.url.trim()) && <LlamaCppConnection />}
+      {llmSettings &&
+        (provider === 'llamacpp' ||
+          provider === 'auto' ||
+          Boolean(llmSettings.llamaCpp?.url.trim()) ||
+          Boolean(llmSettings.llamaCpp?.authHeaderName?.trim()) ||
+          llmSettings.learningModel?.kind === 'llama_cpp' ||
+          llmSettings.utilityModel?.kind === 'llama_cpp') && <LlamaCppConnection />}
 
       {llmSettings && showOllamaSettings ? (
         <SettingsSection title="Ollama server">
           <SettingsRow label="Server URL" htmlFor="ollamaUrl">
-            <input
+            <Input
               id="ollamaUrl"
               type="text"
               value={ollamaUrlDraft}
@@ -285,35 +329,24 @@ export function ChatTab() {
                 }
               }}
               placeholder="http://localhost:11434"
-              className={INPUT_CLASS}
             />
           </SettingsRow>
 
           <SettingsRow label="Model" htmlFor="ollamaModel">
-            <select
+            <SettingsSelect
               id="ollamaModel"
-              value={ollamaModelDraft}
-              onChange={(e) => {
-                const selectedModel = e.target.value;
+              value={ollamaAvailableModels.includes(ollamaModelDraft) ? ollamaModelDraft : ''}
+              onValueChange={(selectedModel) => {
                 setOllamaModelDraft(selectedModel);
                 if (selectedModel) {
-                  voidAsync(() => saveLlmUpdates({ model: selectedModel, ollamaConfigured: true }))();
+                  voidAsync(() =>
+                    saveLlmUpdates({ model: selectedModel, ollamaConfigured: true }),
+                  )();
                 }
               }}
               disabled={ollamaAvailableModels.length === 0}
-              className={INPUT_CLASS}
-            >
-              <option value="">
-                {ollamaAvailableModels.length === 0
-                  ? "Test the connection first"
-                  : "Select a model"}
-              </option>
-              {ollamaAvailableModels.map((modelName) => (
-                <option key={modelName} value={modelName}>
-                  {modelName}
-                </option>
-              ))}
-            </select>
+              options={ollamaModelOptions}
+            />
           </SettingsRow>
 
           <SettingsRow
@@ -321,30 +354,22 @@ export function ChatTab() {
             hint="Used for routing and short calls. Blank reuses the chat model."
             htmlFor="ollamaUtilityModel"
           >
-            <select
+            <SettingsSelect
               id="ollamaUtilityModel"
-              value={ollamaUtilityModelDraft}
-              onChange={(e) => {
-                const selected = e.target.value;
+              value={
+                ollamaAvailableModels.includes(ollamaUtilityModelDraft)
+                  ? ollamaUtilityModelDraft
+                  : ''
+              }
+              onValueChange={(selected) => {
                 setOllamaUtilityModelDraft(selected);
-                if (selected !== (llmSettings.ollamaUtilityModel || "")) {
+                if (selected !== (llmSettings.ollamaUtilityModel || '')) {
                   voidAsync(() => saveLlmUpdates({ ollamaUtilityModel: selected }))();
                 }
               }}
               disabled={ollamaAvailableModels.length === 0}
-              className={INPUT_CLASS}
-            >
-              <option value="">
-                {ollamaAvailableModels.length === 0
-                  ? "Test the connection first"
-                  : "Falls back to the chat model"}
-              </option>
-              {ollamaAvailableModels.map((modelName) => (
-                <option key={modelName} value={modelName}>
-                  {modelName}
-                </option>
-              ))}
-            </select>
+              options={ollamaUtilityOptions}
+            />
           </SettingsRow>
 
           <SettingsRow
@@ -355,32 +380,37 @@ export function ChatTab() {
                 : undefined
             }
           >
-            <div className="flex items-center gap-2">
-              <button
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
                 type="button"
+                variant="outline"
                 onClick={handleAsyncEvent(handleTestOllamaConnection)}
                 disabled={isTestingOllamaConnection || isSavingOllamaConnection}
-                className={SECONDARY_BUTTON_CLASS}
               >
-                {isTestingOllamaConnection ? "Testing…" : "Test connection"}
-              </button>
-              <button
+                {isTestingOllamaConnection ? 'Testing…' : 'Test connection'}
+              </Button>
+              <Button
                 type="button"
+                variant="outline"
                 aria-label="Save Ollama connection"
                 onClick={() => void handleSaveOllamaConnection()}
-                disabled={isTestingOllamaConnection || isSavingOllamaConnection || !ollamaUrlDraft.trim() || !ollamaModelDraft.trim()}
-                className={SECONDARY_BUTTON_CLASS}
+                disabled={
+                  isTestingOllamaConnection ||
+                  isSavingOllamaConnection ||
+                  !ollamaUrlDraft.trim() ||
+                  !ollamaModelDraft.trim()
+                }
               >
-                {isSavingOllamaConnection ? "Saving…" : "Save connection"}
-              </button>
-              <button
+                {isSavingOllamaConnection ? 'Saving…' : 'Save connection'}
+              </Button>
+              <Button
                 type="button"
+                variant="ghost"
                 onClick={() => setShowOllamaAuth(!showOllamaAuth)}
                 aria-expanded={showOllamaAuth}
-                className={GHOST_BUTTON_CLASS}
               >
-                {showOllamaAuth ? "Hide auth" : "Auth"}
-              </button>
+                {showOllamaAuth ? 'Hide auth' : 'Auth'}
+              </Button>
             </div>
           </SettingsRow>
 
@@ -389,40 +419,56 @@ export function ChatTab() {
               <SettingsRow
                 label="Auth header"
                 hint={
-                  isHeaderPartialPair
-                    ? "Fill in both name and value, or clear both."
-                    : undefined
+                  isOllamaHeaderHalfConfigured
+                    ? 'Header name is saved without a value in Keychain. Enter a value or click Clear header.'
+                    : authValueStatus === 'loading' && hasSavedOllamaHeaderName
+                      ? 'Checking Keychain for the saved header value…'
+                      : authValueStatus === 'error' && hasSavedOllamaHeaderName
+                        ? 'Couldn’t check Keychain status. Saved header settings are preserved.'
+                        : isHeaderPartialPair
+                          ? 'Fill in both name and value, or clear both.'
+                          : undefined
                 }
                 stacked
               >
                 <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={ollamaHeaderNameDraft}
-                    onChange={(e) => setOllamaHeaderNameDraft(e.target.value)}
-                    onBlur={handleHeaderBlur}
-                    placeholder="Header name (e.g. Authorization)"
-                    aria-label="Auth header name"
-                    className={INPUT_CLASS}
-                  />
-                  <input
-                    type="password"
-                    autoComplete="off"
-                    value={ollamaHeaderValueDraft}
-                    onChange={(e) => setOllamaHeaderValueDraft(e.target.value)}
-                    onBlur={handleHeaderBlur}
-                    placeholder={headerValueStored ? "Value is set. Type to replace it" : "Header value (e.g. Bearer …)"}
-                    aria-label="Auth header value"
-                    className={INPUT_CLASS}
-                  />
-                  {headerValueStored ? (
-                    <button
+                  <div className="min-w-0 flex-1">
+                    <Input
+                      type="text"
+                      value={ollamaHeaderNameDraft}
+                      onChange={(e) => setOllamaHeaderNameDraft(e.target.value)}
+                      onBlur={handleHeaderBlur}
+                      placeholder="Header name (e.g. Authorization)"
+                      aria-label="Auth header name"
+                    />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <Input
+                      type="password"
+                      autoComplete="off"
+                      value={ollamaHeaderValueDraft}
+                      onChange={(e) => setOllamaHeaderValueDraft(e.target.value)}
+                      onBlur={handleHeaderBlur}
+                      placeholder={
+                        headerValueStored
+                          ? 'Value is set. Type to replace it'
+                          : authValueStatus === 'loading' && hasSavedOllamaHeaderName
+                            ? 'Checking Keychain…'
+                            : authValueStatus === 'error' && hasSavedOllamaHeaderName
+                              ? 'Keychain status unavailable. Type to replace'
+                              : 'Header value (e.g. Bearer …)'
+                      }
+                      aria-label="Auth header value"
+                    />
+                  </div>
+                  {showClearOllamaHeader ? (
+                    <Button
                       type="button"
+                      variant="outline"
                       onClick={() => void handleClearHeader()}
-                      className={SECONDARY_BUTTON_CLASS}
                     >
                       Clear header
-                    </button>
+                    </Button>
                   ) : null}
                 </div>
               </SettingsRow>
@@ -433,29 +479,27 @@ export function ChatTab() {
                 stacked
               >
                 <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={ollamaBasicUserDraft}
-                    onChange={(e) => setOllamaBasicUserDraft(e.target.value)}
-                    placeholder="Username"
-                    aria-label="Basic auth username"
-                    className={INPUT_CLASS}
-                  />
-                  <input
-                    type="password"
-                    value={ollamaBasicPassDraft}
-                    onChange={(e) => setOllamaBasicPassDraft(e.target.value)}
-                    placeholder="Password"
-                    aria-label="Basic auth password"
-                    className={INPUT_CLASS}
-                  />
-                  <button
-                    type="button"
-                    onClick={handleApplyBasicAuth}
-                    className={SECONDARY_BUTTON_CLASS}
-                  >
+                  <div className="min-w-0 flex-1">
+                    <Input
+                      type="text"
+                      value={ollamaBasicUserDraft}
+                      onChange={(e) => setOllamaBasicUserDraft(e.target.value)}
+                      placeholder="Username"
+                      aria-label="Basic auth username"
+                    />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <Input
+                      type="password"
+                      value={ollamaBasicPassDraft}
+                      onChange={(e) => setOllamaBasicPassDraft(e.target.value)}
+                      placeholder="Password"
+                      aria-label="Basic auth password"
+                    />
+                  </div>
+                  <Button type="button" variant="outline" onClick={handleApplyBasicAuth}>
                     Set header
-                  </button>
+                  </Button>
                 </div>
               </SettingsRow>
             </>
@@ -480,24 +524,8 @@ export function ChatTab() {
       <SettingsSection title="Active models">
         <SettingsRow label="Chat">
           <ModelValue
-            name={
-              provider === "llamacpp" ? llmSettings?.llamaCpp?.model || null :
-              provider === "ollama" ||
-              provider === "openai" ||
-              provider === "anthropic" ||
-              provider === "google"
-                ? llmSettings?.model || null
-                : (activeChatModel?.model_name ?? null)
-            }
-            id={
-              provider === "llamacpp" ||
-              provider === "ollama" ||
-              provider === "openai" ||
-              provider === "anthropic" ||
-              provider === "google"
-                ? provider
-                : (activeChatModel?.model_id ?? null)
-            }
+            name={chatRef ? modelRefLabel(chatRef, downloadedModels) : null}
+            id={chatRef ? modelRefKey(chatRef) : null}
           />
         </SettingsRow>
         <SettingsRow label="Router">
@@ -522,9 +550,7 @@ function ModelValue({ name, id }: { name: string | null; id: string | null }) {
     <div className="min-w-0 text-right">
       <div className="truncate text-sm text-text-primary">{name}</div>
       {id ? (
-        <div className={cn("truncate font-mono text-xs text-text-muted")}>
-          {id}
-        </div>
+        <div className={cn('truncate font-mono text-xs text-text-muted')}>{id}</div>
       ) : null}
     </div>
   );

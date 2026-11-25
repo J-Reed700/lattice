@@ -2,12 +2,15 @@
 
 use super::state::DownloadManagerService;
 use lattice_core::domain::download::DownloadError;
-use tracing::{debug, error};
+use tracing::{debug, error, trace};
 
 impl DownloadManagerService {
     pub(super) async fn process_queue(&self) -> Result<(), DownloadError> {
         loop {
             if self.shutdown.is_cancelled() {
+                break;
+            }
+            if self.download_queue.read().await.is_empty() {
                 break;
             }
             // Count all active downloads (not just Downloading state)
@@ -17,7 +20,7 @@ impl DownloadManagerService {
             };
 
             if active_count >= self.max_concurrent_downloads {
-                debug!(
+                trace!(
                     active = active_count,
                     max = self.max_concurrent_downloads,
                     "Download queue processing stopped: max concurrent limit reached"
@@ -41,6 +44,7 @@ impl DownloadManagerService {
                             error = %e,
                             "Failed to start download task - marking as failed and continuing queue processing"
                         );
+                        self.auth_tokens.write().await.remove(&id);
 
                         // Mark the download as failed in database since it was popped from queue
                         if let Ok(Some(mut session)) = self.repository.get(&id).await {

@@ -165,16 +165,11 @@ pub(crate) fn structural_findings(
         issues.extend(errors.map(|error| {
             let (at, rule_at) = (error.instance_path.to_string(), error.schema_path.to_string());
             let rule = plain_rule(schema.value().pointer(&rule_at));
-            let site = FindingSite::of_pointer(&at);
-            let inside = site
-                .pointer()
-                .and_then(|part| at.strip_prefix(part.as_str()))
-                .unwrap_or(&at);
             ReviewFinding::rule_about(
                 Rule::Schema,
                 FindingKind::Structure,
-                site,
-                &format!("{inside} {rule_at}"),
+                FindingSite::of_pointer(&at),
+                &format!("{at} {rule_at}"),
                 format!("Fix the schema violation at {at}: the value there does not meet {rule_at}{rule}."),
             )
         }));

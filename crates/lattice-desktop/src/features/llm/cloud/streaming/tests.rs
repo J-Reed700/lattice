@@ -193,7 +193,7 @@ fn incomplete_answers_keep_their_status_but_truncated_streams_fail() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn stalled_streams_and_oversized_events_fail() {
+async fn stalled_streams_fail() {
     // The answer started, then went silent.
     let started = frames(&[json!({"type":"response.output_text.delta","delta":"Hel"})]);
     let pending =
@@ -209,14 +209,6 @@ async fn stalled_streams_and_oversized_events_fail() {
     .await
     .unwrap_err();
     assert!(error.to_string().contains("stalled"));
-    let mut decoder = Decoder::new(protocols(CloudProvider::Openai).completion);
-    assert!(decoder
-        .push(
-            &vec![b'x'; Decoder::MAX_EVENT_BYTES + 1],
-            &|_| Ok(()),
-            &|_| Ok(())
-        )
-        .is_err());
 }
 
 #[test]

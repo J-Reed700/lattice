@@ -84,30 +84,3 @@ export function statusLine(
   const calls = health.calls === 1 ? '1 call' : `${health.calls} calls`;
   return { text: `Healthy · ${calls}${median}${lastError}`, tone: 'ok' };
 }
-
-/** An http(s) address with a host, as the backend requires of SearXNG. */
-export function isHttpUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return (url.protocol === 'http:' || url.protocol === 'https:') && url.hostname !== '';
-  } catch {
-    return false;
-  }
-}
-
-/** An email address or an http(s) address, as the backend requires of a contact. */
-export function isContact(value: string): boolean {
-  if (value === '' || /\s/.test(value)) return false;
-  const at = value.indexOf('@');
-  if (at >= 0) {
-    const local = value.slice(0, at);
-    const domain = value.slice(at + 1);
-    return (
-      local !== '' &&
-      !domain.includes('@') &&
-      domain.includes('.') &&
-      domain.split('.').every((label) => label !== '')
-    );
-  }
-  return isHttpUrl(value);
-}

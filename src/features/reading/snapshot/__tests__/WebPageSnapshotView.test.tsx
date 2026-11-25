@@ -132,6 +132,10 @@ describe('WebPageSnapshotView states', () => {
     fire('web-page-snapshot:changed', { conversationId: CONVERSATION, url: URL_CITED, snapshot: dto() });
     expect(await frame()).toBeTruthy();
     expect(mocks.getWebPageSnapshot).toHaveBeenCalledTimes(1);
+
+    // A stale pending event for the same snapshot must never regress a ready copy.
+    fire('web-page-snapshot:changed', { conversationId: CONVERSATION, url: URL_CITED, snapshot: dto({ status: 'pending' }) });
+    expect(await frame()).toBeTruthy();
   });
 
   it('explains a failure and offers to try again or open the live page', async () => {
@@ -257,6 +261,22 @@ describe('WebPageSnapshotView link bar', () => {
 
     const switched = (await screen.findByTitle('Frozen copy of example.org')) as HTMLIFrameElement;
     expect(switched.getAttribute('src')).toBe('lattice-snapshot://localhost/snap-2%2Findex.html?clean=1');
+  });
+
+  it('uses snapshot.conversationId for LinkBar when opened from a non-chat reader without a conversationId', async () => {
+    mocks.listWebPageSnapshots.mockResolvedValue(
+      ok([
+        dto({ conversationId: 'conv-origin' }),
+        dto({ id: 'snap-2', conversationId: 'conv-origin', requestedUrl: 'https://example.org/path', normalizedUrl: 'https://example.org/path' }),
+      ]),
+    );
+    mocks.getWebPageSnapshot.mockResolvedValue(ok(dto({ conversationId: 'conv-origin' })));
+    renderView({ conversationId: '' });
+    await frame();
+
+    fire('web-page-snapshot:link', { snapshotId: 'snap-1', url: 'https://example.org/path' });
+    await waitFor(() => expect(mocks.listWebPageSnapshots).toHaveBeenCalledWith('conv-origin'));
+    expect(await screen.findByRole('button', { name: 'Open frozen copy' })).toBeTruthy();
   });
 
   it('goes away by itself after twelve seconds', async () => {

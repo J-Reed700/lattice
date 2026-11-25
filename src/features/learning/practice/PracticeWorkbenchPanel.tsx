@@ -11,10 +11,11 @@ import {
   RubricPanel,
 } from '@/features/learning/practice/PracticeRubricPanel';
 import {
-  CitationCards,
-  ExactSourceReader,
   FrozenSourceRail,
+  PracticeCitations,
+  sourceClosedReason,
   sourceForVersion,
+  usePracticeSourceReader,
 } from '@/features/learning/practice/PracticeSourceRail';
 import { StatusLine } from '@/features/learning/practice/shared/StatusLine';
 import { usePracticeSession } from '@/features/learning/practice/usePracticeSession';
@@ -24,7 +25,7 @@ import { NewAttempt } from '@/features/learning/practice/workbench/NewAttempt';
 import { ProposalList } from '@/features/learning/practice/workbench/ProposalList';
 import { ResponseEditor } from '@/features/learning/practice/workbench/ResponseEditor';
 import { TutorConversation } from '@/features/learning/practice/workbench/TutorConversation';
-import { useLearningSourceVersion, useLearningSourceWorkspace } from '@/features/learning/sources/useLearningSources';
+import { useLearningSourceWorkspace } from '@/features/learning/sources/useLearningSources';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import type {
   LearningLessonDto,
@@ -73,7 +74,6 @@ export function PracticeWorkbenchPanel({
     solutionConfirm,
     setSolutionConfirm,
     selectedSource,
-    setSelectedSource,
     hintUsed,
     text,
     setText,
@@ -92,8 +92,9 @@ export function PracticeWorkbenchPanel({
   } = sessionState;
 
   const solutionTriggerRef = useRef<HTMLButtonElement>(null);
-  const sourceRequest = selectedSource ? { programId, sourceId: selectedSource.sourceId, versionId: selectedSource.versionId } : null;
-  const sourceVersion = useLearningSourceVersion(sourceRequest);
+  // One reader for the attempt, embedded or full: what it opens shows in the docked reader.
+  const sourceOwner = `practice:${sessionId ?? 'new'}`;
+  usePracticeSourceReader(programId, sourceOwner, selectedSource);
 
   const sessionList = workspace.data?.sessions ?? [];
   if (workspace.isLoading) {
@@ -113,9 +114,9 @@ export function PracticeWorkbenchPanel({
 
   const otherFailure = failure?.kind === 'tutor' ? null : failure;
 
-  const openCitation = (citation: { sourceId: string; versionId: string }) => {
+  const openCitation = (citation: { sourceId: string; versionId: string; quote?: string }) => {
     const src = sourceForVersion(sourceWorkspace.data?.sources ?? [], citation.sourceId, citation.versionId);
-    if (src) void doOpenSource(src, citation.versionId, saveNow);
+    if (src) void doOpenSource(src, citation.versionId, saveNow, citation.quote);
   };
 
   return (
@@ -280,6 +281,7 @@ export function PracticeWorkbenchPanel({
               {session.summary.revisesSessionId && <PreviousFeedback session={session} />}
 
               <TutorConversation
+                programId={programId}
                 sessionId={session.summary.id}
                 turns={session.tutorTurns}
                 mode={mode}
@@ -306,8 +308,9 @@ export function PracticeWorkbenchPanel({
                     <TiptapViewer content={session.revealedSolution} />
                   </div>
                   {showCitations && session.revealedSolutionCitations.length > 0 && (
-                    <CitationCards
-                      disabled={!sourceOpeningAllowed || busy}
+                    <PracticeCitations
+                      programId={programId}
+                      disabledReason={sourceClosedReason(sourceOpeningAllowed, busy)}
                       citations={session.revealedSolutionCitations}
                       onOpen={openCitation}
                     />
@@ -329,16 +332,9 @@ export function PracticeWorkbenchPanel({
               <FrozenSourceRail
                 programId={programId}
                 versionIds={session.summary.sourceVersionIds}
-                disabledReason={
-                  !sourceOpeningAllowed
-                    ? 'Sources are closed with No help.'
-                    : busy
-                      ? 'Another workbench action is in progress.'
-                      : undefined
-                }
+                disabledReason={sourceClosedReason(sourceOpeningAllowed, busy)}
                 onOpen={(src, verId) => void doOpenSource(src, verId, saveNow)}
               />
-              {selectedSource && <ExactSourceReader query={sourceVersion} onClose={() => setSelectedSource(null)} />}
               <RubricPanel rubric={session.rubric} result={session.result} />
               <AssistanceLedger events={session.assistance} />
               {solutionAllowed && !session.revealedSolution && (

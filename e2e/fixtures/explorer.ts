@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test';
 import type { ChatModelChoice, DownloadedModelResponse, ExplorerFileDto, ExplorerFolderDto, ExplorerEntryDto } from '../../src/lib/bindings';
 import { makeAppSettings } from '../../src/tests/fixtures/appSettings';
+import { mockActiveModels } from './activeModels';
 import { installTauriMock, serveCommands, type MockArgs } from './tauri';
 
 export const ROOT = '/fixtures/Project café';
@@ -25,6 +26,7 @@ export async function installExplorerFixture(page: Page) {
   };
   page.on('pageerror', error => pageErrors.push(error.message));
   const mock = await installTauriMock(page);
+  await mockActiveModels(page);
   const thread = (args: MockArgs) => threads.find(item => item.id === (args.request as { conversationId?: string } | undefined)?.conversationId);
   const indexStatus = (args: MockArgs) => ({ root: String(args.root), indexRoot: String(args.root), state: 'ready' as const, filesTotal: 6, filesIndexed: 6, passagesTotal: 8, passagesEmbedded: 8, passagesPerSecond: null, etaSeconds: null, message: null });
   const served = await serveCommands(page, () => ({
@@ -56,6 +58,7 @@ export async function installExplorerFixture(page: Page) {
     get_indexed_folders: () => [],
     list_downloaded_models: () => state.models,
     list_loaded_models: () => [],
+    warmup_status: () => [],
     last_learning_window_shortfall: () => null,
     list_journals: () => [],
     list_conversation_tangents: () => [],

@@ -11,7 +11,7 @@ use crate::curriculum::{
 use crate::persistence::hash;
 use crate::plan_dto::{
     LearningGenerationJobActionRequestDto, StartLearningGenerationJobRequestDto,
-    StartLearningModuleJobsRequestDto,
+    StartLearningLessonsJobsRequestDto, StartLearningModuleJobsRequestDto,
 };
 use crate::planning::preparation_request::PreparationRequest;
 use crate::quiz_bank_jobs::{QUIZ_BANK, QUIZ_GRADING};
@@ -125,6 +125,72 @@ impl LearningCurriculumRepository {
             request.expected_revision,
         )
         .await
+    }
+
+    /// Saves a job for each selected preparable outline lesson across any modules,
+    /// in curriculum order; the caller dispatches them.
+    pub async fn start_selected_lesson_jobs(
+        &self,
+        request: &StartLearningLessonsJobsRequestDto,
+    ) -> Result<Vec<LearningGenerationJob>> {
+        validate_operation_id(&request.operation_id)?;
+        let deduped = validate_program_and_lessons(&request.program_id, &request.lesson_ids)?;
+        let lesson_json = serde_json::to_string(&deduped)?;
+        let mut tx = self.db.begin_write().await?;
+        let exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM learning_programs WHERE id=?)")
+                .bind(&request.program_id)
+                .fetch_one(&mut *tx)
+                .await?;
+        if !exists {
+            return Err(AppError::NotFound("Learning program not found".into()));
+        }
+        let owned_count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM learning_lessons WHERE program_id=? AND id IN (SELECT value FROM json_each(?))",
+        )
+        .bind(&request.program_id)
+        .bind(&lesson_json)
+        .fetch_one(&mut *tx)
+        .await?;
+        if owned_count as usize != deduped.len() {
+            return Err(AppError::InvalidInput(
+                "Selected lessons must belong to this course.".into(),
+            ));
+        }
+        let lessons: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? AND l.id IN (SELECT value FROM json_each(?)) AND {PREPARABLE_LESSON} AND {NOT_HELD_FOR_REVIEW} ORDER BY m.ordinal,l.ordinal"
+        )))
+        .bind(&request.program_id)
+        .bind(&lesson_json)
+        .fetch_all(&mut *tx)
+        .await?;
+        if lessons.is_empty() {
+            check_program_open(&mut tx, &request.program_id, request.expected_revision).await?;
+            tx.commit().await?;
+            return Ok(Vec::new());
+        }
+        let ids = Self::admit_lessons(
+            &mut tx,
+            &request.program_id,
+            &lessons,
+            request.expected_revision,
+            |lesson| format!("{}:{lesson}", request.operation_id),
+        )
+        .await?;
+        let mut jobs = Vec::with_capacity(ids.len());
+        for id in &ids {
+            let job = Self::job_on(&mut tx, id).await?;
+            let job = Self::retry_replayed_job_if_stopped(
+                &mut tx,
+                &request.program_id,
+                request.expected_revision,
+                job,
+            )
+            .await?;
+            jobs.push(job);
+        }
+        tx.commit().await?;
+        Ok(jobs)
     }
 
     /// Saves a job for each untried lesson of the lesson's module and the next,
@@ -439,6 +505,88 @@ impl LearningCurriculumRepository {
         self.job_action(request, JobAction::ContinueReview).await
     }
 
+    /// Moves a queued pending lesson-preparation job to the front of its course
+    /// queue by lowering its rank strictly below all other unfinished lesson
+    /// jobs for that course. Running jobs are an idempotent no-op.
+    pub async fn prioritize_job(
+        &self,
+        request: &LearningGenerationJobActionRequestDto,
+    ) -> Result<LearningGenerationJob> {
+        validate_operation_id(&request.operation_id)?;
+        uuid::Uuid::parse_str(&request.program_id)
+            .map_err(|_| AppError::InvalidInput("Invalid program ID.".into()))?;
+        uuid::Uuid::parse_str(&request.job_id)
+            .map_err(|_| AppError::InvalidInput("Invalid generation job ID.".into()))?;
+        let payload = hash(request)?;
+        let operation = curriculum_operation(
+            &request.operation_id,
+            &request.program_id,
+            "prioritize_job",
+            &payload,
+            "Operation ID was reused with different job action data.",
+        );
+        let mut tx = self.db.begin_write().await?;
+        if let Some(id) = operation.replay::<String>(&mut tx).await? {
+            let job = Self::job_on(&mut tx, &id).await?;
+            tx.commit().await?;
+            return Ok(job);
+        }
+        check_program_open(&mut tx, &request.program_id, request.expected_revision).await?;
+        let scope = job_scope(&mut tx, &request.job_id)
+            .await?
+            .filter(|scope| scope.program_id == request.program_id)
+            .ok_or_else(|| AppError::NotFound("Generation job not found".into()))?;
+        let existing = JobStore::find_in(&mut tx, &request.job_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Generation job not found".into()))?;
+        if existing.kind != LESSON_PREPARATION {
+            return Err(AppError::InvalidState(
+                "Only lesson preparation jobs can be prioritized.".into(),
+            ));
+        }
+        match existing.status {
+            JobStatus::Running => {
+                operation.record(&mut tx, &existing.id).await?;
+                let job = learning_job(existing, scope)?;
+                tx.commit().await?;
+                return Ok(job);
+            }
+            JobStatus::Pending => {}
+            _ => {
+                return Err(AppError::InvalidState(
+                    "Only queued or running lesson preparation jobs can be prioritized.".into(),
+                ));
+            }
+        }
+        let other_min: Option<i64> = sqlx::query_scalar(
+            "SELECT MIN(j.rank) FROM jobs j JOIN learning_jobs lj ON lj.job_id=j.id WHERE lj.program_id=? AND j.kind=? AND j.status IN ('pending','running') AND j.id<>? AND j.rank IS NOT NULL",
+        )
+        .bind(&request.program_id)
+        .bind(LESSON_PREPARATION)
+        .bind(&request.job_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        let already_strict_min = matches!(
+            (existing.rank, other_min),
+            (Some(current), Some(other)) if current < other
+        ) || matches!((existing.rank, other_min), (Some(_), None));
+        if !already_strict_min {
+            let all_min: Option<i64> = sqlx::query_scalar(
+                "SELECT MIN(j.rank) FROM jobs j JOIN learning_jobs lj ON lj.job_id=j.id WHERE lj.program_id=? AND j.kind=? AND j.status IN ('pending','running') AND j.rank IS NOT NULL",
+            )
+            .bind(&request.program_id)
+            .bind(LESSON_PREPARATION)
+            .fetch_one(&mut *tx)
+            .await?;
+            let new_rank = all_min.unwrap_or(0).saturating_sub(1);
+            JobStore::set_rank_in(&mut tx, &request.job_id, new_rank).await?;
+        }
+        operation.record(&mut tx, &request.job_id).await?;
+        let job = Self::job_on(&mut tx, &request.job_id).await?;
+        tx.commit().await?;
+        Ok(job)
+    }
+
     async fn job_action(
         &self,
         request: &LearningGenerationJobActionRequestDto,
@@ -619,8 +767,30 @@ pub(crate) async fn lesson_rank_in(
     .map_err(AppError::from)
 }
 
+/// Validates a program ID and returns non-empty deduplicated lesson IDs.
+pub(super) fn validate_program_and_lessons(
+    program_id: &str,
+    lesson_ids: &[String],
+) -> Result<Vec<String>> {
+    uuid::Uuid::parse_str(program_id)
+        .map_err(|_| AppError::InvalidInput("Invalid program ID.".into()))?;
+    if lesson_ids.is_empty() {
+        return Err(AppError::InvalidInput("Select at least one lesson.".into()));
+    }
+    let mut seen = HashSet::with_capacity(lesson_ids.len());
+    let mut deduped = Vec::with_capacity(lesson_ids.len());
+    for id in lesson_ids {
+        uuid::Uuid::parse_str(id)
+            .map_err(|_| AppError::InvalidInput("Invalid lesson ID.".into()))?;
+        if seen.insert(id.clone()) {
+            deduped.push(id.clone());
+        }
+    }
+    Ok(deduped)
+}
+
 /// The outline revision of a program that is active at `expected_revision`.
-async fn check_program_open(
+pub(super) async fn check_program_open(
     tx: &mut sqlx::SqliteConnection,
     program_id: &str,
     expected_revision: i64,
@@ -773,6 +943,7 @@ fn learning_job(job: JobRecord, scope: JobScope) -> Result<LearningGenerationJob
         ended_by_update,
         lesson_ids,
         held_lesson_ids,
+        rank: job.rank,
         retry_of_job_id: job.retry_of_job_id,
         created_at: job.created_at,
         started_at: job.started_at,

@@ -16,12 +16,13 @@
  * messy; a context keeps the cards decoupled and the mutation path unified.
  */
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useMemo } from 'react';
 import type { ReactNode } from 'react';
 
+import { useActiveModels } from '@/features/model/hooks/useActiveModels';
 import { useDownloadedModels } from '@/features/model/hooks/useDownloadedModels';
 import { useSettingsQuery, useUpdateSettingsMutation } from '@/features/settings/hooks/useSettingsQuery';
-import type { ModelRef } from '@/lib/bindings';
+import type { ActiveModels, ModelRef } from '@/lib/bindings';
 import { toast } from '@/stores/toastStore';
 import type { LLMSettings } from '@/types/api/settings';
 import type { DownloadedModel } from '@/types/downloadedModels';
@@ -36,7 +37,11 @@ interface ModelRolesContextValue {
   chatProvider: LLMSettings['provider'] | undefined;
   /** The saved LLM settings; Chat and Learning read their state from them. */
   llmSettings: LLMSettings | undefined;
+  /** What a chat on the Settings default and utility work run on now. */
+  activeModels: ActiveModels | null;
   isLoading: boolean;
+  /** The model list has been re-read since this page opened. */
+  modelsFetchedAfterMount: boolean;
   /** Why the last refresh failed; null once one succeeds. */
   error: string | null;
   /** Refresh the model list from the backend. */
@@ -61,12 +66,19 @@ interface ProviderProps {
   children: ReactNode;
 }
 
+const EMPTY_MODELS: DownloadedModel[] = [];
+
 export function ModelRolesProvider({ children }: ProviderProps) {
   const { data: settings } = useSettingsQuery();
   const { mutateAsync: updateSettings } = useUpdateSettingsMutation();
   const llmSettings = settings?.llm;
   const chatProvider = llmSettings?.provider;
+  const { activeModels } = useActiveModels();
   const {
+    downloadedModels: models = EMPTY_MODELS,
+    isLoading = false,
+    isFetchedAfterMount: modelsFetchedAfterMount = false,
+    error = null,
     fetchDownloadedModels,
     setActiveChatModel,
     setActiveEmbeddingModel,
@@ -74,31 +86,15 @@ export function ModelRolesProvider({ children }: ProviderProps) {
     clearActiveChatModel,
     clearActiveEmbeddingModel,
     clearActiveUtilityModel,
-  } = useDownloadedModels();
+  } = useDownloadedModels({ refetchOnMount: 'always' });
 
-  const [models, setModels] = useState<DownloadedModel[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  // Caught here, not by callers: the mount effect fires and forgets, so an
-  // uncaught failure would be an unhandled rejection and an empty list that
-  // claims no models are downloaded.
   const refresh = useCallback(async () => {
-    setIsLoading(true);
     try {
-      const all = await fetchDownloadedModels();
-      setModels(all);
-      setError(null);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setIsLoading(false);
+      await fetchDownloadedModels();
+    } catch {
+      // React Query records the failure on `useDownloadedModels().error`.
     }
   }, [fetchDownloadedModels]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
 
   const assignRole = useCallback(
     async (modelId: string | null, role: RoleId) => {
@@ -204,13 +200,15 @@ export function ModelRolesProvider({ children }: ProviderProps) {
       ollamaModels,
       chatProvider,
       llmSettings,
+      activeModels,
       isLoading,
+      modelsFetchedAfterMount,
       error,
       refresh,
       assignRole,
       assignUtilityReference,
     };
-  }, [models, chatProvider, llmSettings, isLoading, error, refresh, assignRole, assignUtilityReference]);
+  }, [models, chatProvider, llmSettings, activeModels, isLoading, modelsFetchedAfterMount, error, refresh, assignRole, assignUtilityReference]);
 
   return <ModelRolesContext.Provider value={value}>{children}</ModelRolesContext.Provider>;
 }

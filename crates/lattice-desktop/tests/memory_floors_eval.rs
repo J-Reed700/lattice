@@ -42,7 +42,7 @@
 //!
 //! | Variable | Meaning | Default |
 //! |---|---|---|
-//! | `LATTICE_EMBED_GGUF` | the embedding model's GGUF, with `tokenizer.json` beside it | *required* |
+//! | `LATTICE_EMBED_GGUF` | the embedding model's GGUF | *required* |
 //! | `LATTICE_EVAL_FLOORS_OUT` | the JSONL file to write; it must not exist | *required* |
 //! | `LATTICE_LLAMA_SERVER` | the llama-server binary | the bundled build in `binaries/` |
 //! | `LATTICE_EVAL_FLOORS_SET` | the labelled set | `evals/conversation-memory/recall-floors-v1.json` |
@@ -69,7 +69,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 
 use lattice::features::conversation::chat::history_tools::{
@@ -420,12 +419,6 @@ impl Config {
             "LATTICE_EMBED_GGUF={} is not a file",
             self.gguf.display()
         );
-        let tokenizer = self.gguf.parent().map(|dir| dir.join("tokenizer.json"));
-        assert!(
-            tokenizer.as_ref().is_some_and(|path| path.is_file()),
-            "tokenizer.json must sit beside {}",
-            self.gguf.display()
-        );
         assert!(
             !self.out.exists(),
             "LATTICE_EVAL_FLOORS_OUT={} exists; a result is never overwritten, so name a new file",
@@ -488,17 +481,9 @@ struct Scorer {
 
 impl Scorer {
     async fn open(service: Arc<LlamaEmbeddingService>) -> Self {
-        let pool = SqlitePoolOptions::new()
-            .min_connections(1)
-            .idle_timeout(None)
-            .max_lifetime(None)
-            .connect(":memory:")
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
             .await
-            .expect("an in-memory database");
-        sqlx::migrate!("./migrations")
-            .run(&pool)
-            .await
-            .expect("the shipped migrations");
+            .expect("a migrated in-memory database");
         sqlx::query("PRAGMA foreign_keys = ON")
             .execute(&pool)
             .await
@@ -526,6 +511,7 @@ impl Scorer {
         let chunks = self
             .service
             .split_text(text, "")
+            .await
             .expect("the embedder splits the message");
         assert_eq!(
             chunks.len(),
@@ -1016,7 +1002,7 @@ fn expected_rows(set: &FloorsSet) -> usize {
 }
 
 #[tokio::test]
-#[ignore = "needs LATTICE_EMBED_GGUF (tokenizer.json beside it), a runnable llama-server and LATTICE_EVAL_FLOORS_OUT; see the module comment"]
+#[ignore = "needs LATTICE_EMBED_GGUF, a runnable llama-server and LATTICE_EVAL_FLOORS_OUT; see the module comment"]
 async fn the_signals_behind_the_recall_and_shared_floors() {
     let config = Config::from_env();
     let set = FloorsSet::load(&config.set);

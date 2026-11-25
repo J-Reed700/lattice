@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 
 import { useCorpusIdentity } from '@/features/files/hooks/useCorpusIdentity';
 import { useIndexedFoldersQuery } from '@/features/files/hooks/useIndexedFoldersQuery';
-import { isWebDocument, pathBasename } from '@/features/files/model/documentMetadata';
+import { pathBasename } from '@/features/files/model/documentMetadata';
 import {
   type CustomCollection,
   type DocumentMetadata,
@@ -37,7 +37,7 @@ export function useLibraryReadout({
     let web = 0;
     let local = 0;
     for (const doc of documents) {
-      if (isWebDocument(doc)) {
+      if (doc.web) {
         web += 1;
       } else {
         local += 1;

@@ -1,8 +1,10 @@
 import { useCallback, useId, useMemo, useState } from 'react';
 
-import { ArrowRight, Bot, Code2, FileSearch, MessageSquare, Sparkles, Users, type LucideIcon } from 'lucide-react';
+import { ArrowRight, Bot, Code2, FileSearch, Loader2, MessageSquare, Sparkles, Users, type LucideIcon } from 'lucide-react';
 
 import { PROGRAM_KIND_ID } from '@/features/learning/practice/kinds';
+import { useCodingBuildStore } from '@/features/learning/practice/kinds/program/codingBuildStore';
+import type { CodingBuildChoice } from '@/features/learning/practice/kinds/program/CodingEntry';
 import { StatusLine } from '@/features/learning/practice/shared/StatusLine';
 import type * as Wire from '@/lib/bindings';
 
@@ -29,7 +31,7 @@ import {
 } from './practiceChoices';
 import { PreparingFor } from './PreparingFor';
 import { StartSentence, type ChoiceSlot, type SentencePart } from './StartSentence';
-import { usePracticeDue, usePracticeFit, usePracticeHistory, usePracticeProfile } from './usePracticeData';
+import { usePracticeBuildJob, usePracticeDue, usePracticeFit, usePracticeHistory, usePracticeProfile } from './usePracticeData';
 
 export interface PracticeHomeProps {
   programId: string;
@@ -39,6 +41,7 @@ export interface PracticeHomeProps {
   onOpenTarget: (target: HistoryTarget) => void;
   onStartDue: (item: Wire.DueItemDto) => void;
   onOpenWorkbench: () => void;
+  onResumeBuild?: (choice: CodingBuildChoice) => void;
 }
 
 const ICONS: Record<CardId, LucideIcon> = { explain: MessageSquare, spot: FileSearch, code: Code2, mock: Bot, role: Users };
@@ -120,20 +123,20 @@ function Card({ id, programId, definition, promise, badge, onStart }: CardProps)
   const handleChange = useCallback((next: Record<string, string>) => setValues(next), []);
 
   return (
-    <article data-testid={`card-${id}`} aria-labelledby={`${uid}-title`} className="flex flex-col justify-between gap-4 rounded-xl border border-border-default bg-surface p-5">
+    <article data-testid={`card-${id}`} aria-labelledby={`${uid}-title`} className="flex flex-col justify-between gap-4 rounded-xl border border-border-subtle bg-surface p-5 shadow-sm transition-shadow hover:border-border-default hover:shadow-md">
       <div className="space-y-2">
         <div className="flex items-center justify-between gap-2">
-          <span className="grid h-10 w-10 place-items-center rounded-lg bg-surface-raised text-accent">
-            <Icon className="h-5 w-5" aria-hidden="true" />
+          <span className="grid h-9 w-9 place-items-center rounded-lg bg-accent-muted text-accent">
+            <Icon className="h-4.5 w-4.5" aria-hidden="true" />
           </span>
           {badge && (
-            <span className="inline-flex min-h-7 items-center gap-1.5 rounded-full bg-accent-muted px-2.5 text-xs font-semibold text-accent">
-              <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+            <span className="inline-flex min-h-6 items-center gap-1.5 rounded-md bg-accent-muted px-2 py-0.5 text-xs font-semibold text-accent">
+              <Sparkles className="h-3 w-3" aria-hidden="true" />
               {badge}
             </span>
           )}
         </div>
-        <h3 id={`${uid}-title`} className="font-serif text-lg font-medium text-text-primary">
+        <h3 id={`${uid}-title`} className="font-sans text-base font-semibold tracking-[-0.02em] text-text-primary">
           {title}
         </h3>
         <p id={`${uid}-promise`} className="text-sm text-text-secondary">
@@ -162,11 +165,17 @@ function Card({ id, programId, definition, promise, badge, onStart }: CardProps)
 }
 
 /** The Practice page: what the learner is preparing for, where they stopped, what is due, five cards, and their history. */
-export function PracticeHome({ programId, goal, lessonId, onStart, onOpenTarget, onStartDue, onOpenWorkbench }: PracticeHomeProps) {
+export function PracticeHome({ programId, goal, lessonId, onStart, onOpenTarget, onStartDue, onOpenWorkbench, onResumeBuild }: PracticeHomeProps) {
   const profileState = usePracticeProfile(programId);
   const fitStatus = usePracticeFit(programId);
   const due = usePracticeDue(programId);
   const history = usePracticeHistory(programId);
+  const codingBuild = useCodingBuildStore((store) => store.handles[programId]);
+  const ignoredJobs = useCodingBuildStore((store) => store.ignoredJobIds[programId]);
+  const attachBackendJob = useCodingBuildStore((store) => store.attachBackendJob);
+  const clearCodingBuild = useCodingBuildStore((store) => store.clearHandle);
+  const activeBuildJob = usePracticeBuildJob(programId);
+  const visibleActiveBuildJob = activeBuildJob && !ignoredJobs?.[activeBuildJob.id] ? activeBuildJob : null;
 
   const fit = fitState(fitStatus.fit, PROGRAM_KIND_ID);
   const profile = profileState.profile ?? null;
@@ -176,8 +185,99 @@ export function PracticeHome({ programId, goal, lessonId, onStart, onOpenTarget,
   const context = { lessonId, profile };
   const continueItem: HistoryItem | null = history.continueItem;
 
+  const fallbackChoice: CodingBuildChoice = {
+    lessonId,
+    form: 'build',
+    setting: 'coached',
+    language: CODING_LANGUAGE,
+    difficulty: 'easy',
+  };
+  const showActiveBuild =
+    codingBuild?.phase.kind === 'building' ||
+    codingBuild?.phase.kind === 'starting' ||
+    Boolean(visibleActiveBuildJob && !codingBuild);
+  const showBuiltReady = codingBuild?.phase.kind === 'built' || codingBuild?.phase.kind === 'ready';
+  const showBuildFailed = codingBuild?.phase.kind === 'failed';
+
   return (
     <div data-testid="practice-home" className="space-y-8">
+      {(showActiveBuild || showBuiltReady || showBuildFailed) && (
+        <section
+          aria-label="Coding build status"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border-default bg-surface p-4"
+        >
+          <div className="min-w-0 flex-1">
+            {showActiveBuild ? (
+              <p role="status" className="flex items-center gap-2 text-sm font-medium text-text-primary">
+                <Loader2 className="h-4 w-4 shrink-0 animate-spin text-accent" aria-hidden="true" />
+                Building your coding problem…
+              </p>
+            ) : showBuiltReady ? (
+              <p role="status" className="text-sm font-medium text-text-primary">
+                Your coding problem is ready.
+              </p>
+            ) : codingBuild?.phase.kind === 'failed' ? (
+              <p role="alert" className="text-sm text-danger-fg">
+                {codingBuild.phase.message}
+              </p>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {showActiveBuild && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (visibleActiveBuildJob && !codingBuild) {
+                    attachBackendJob(programId, visibleActiveBuildJob, fallbackChoice);
+                    onResumeBuild?.(fallbackChoice);
+                  } else if (codingBuild) {
+                    onResumeBuild?.(codingBuild.choice);
+                  }
+                }}
+                className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-accent px-3.5 text-xs font-semibold text-accent-fg hover:opacity-90"
+              >
+                Open build
+              </button>
+            )}
+            {showBuiltReady && codingBuild && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onResumeBuild?.(codingBuild.choice)}
+                  className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-accent px-3.5 text-xs font-semibold text-accent-fg hover:opacity-90"
+                >
+                  Open problem
+                </button>
+                <button
+                  type="button"
+                  onClick={() => clearCodingBuild(programId)}
+                  className="inline-flex min-h-10 items-center rounded-lg border border-border-default px-3 text-xs font-medium text-text-secondary hover:bg-surface-raised"
+                >
+                  Dismiss
+                </button>
+              </>
+            )}
+            {showBuildFailed && codingBuild && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onResumeBuild?.(codingBuild.choice)}
+                  className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-accent px-3.5 text-xs font-semibold text-accent-fg hover:opacity-90"
+                >
+                  View build
+                </button>
+                <button
+                  type="button"
+                  onClick={() => clearCodingBuild(programId)}
+                  className="inline-flex min-h-10 items-center rounded-lg border border-border-default px-3 text-xs font-medium text-text-secondary hover:bg-surface-raised"
+                >
+                  Dismiss
+                </button>
+              </>
+            )}
+          </div>
+        </section>
+      )}
       <PreparingFor
         programId={programId}
         goal={goal}
@@ -213,7 +313,7 @@ export function PracticeHome({ programId, goal, lessonId, onStart, onOpenTarget,
       <DueStrip items={due.items} loading={due.loading} error={due.error} onRetry={due.retry} onStart={onStartDue} />
 
       <section aria-labelledby="practice-start-heading" className="space-y-3">
-        <h2 id="practice-start-heading" className="font-serif text-xl font-semibold text-text-primary">
+        <h2 id="practice-start-heading" className="font-sans text-lg font-semibold tracking-[-0.02em] text-text-primary">
           Start something new
         </h2>
         {fitStatus.checking && <StatusLine state={{ kind: 'busy', label: 'Checking whether this course teaches code…' }} />}

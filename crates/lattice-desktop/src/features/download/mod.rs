@@ -38,3 +38,6 @@ pub mod manager;
 pub mod plugin;
 pub mod saga;
 pub mod vision_projector;
+
+#[cfg(test)]
+mod manager_tests;

@@ -225,13 +225,9 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
 
-        std::fs::File::create(&db_path).unwrap();
-
-        let pool = sqlx::SqlitePool::connect_with(crate::tests::sqlite::file_options(&db_path))
+        lattice_core::shared::testing::sqlite::write_migrated(&db_path)
             .await
             .unwrap();
-
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
 
         let db_conn =
             crate::infrastructure::persistence::database::DatabaseConnection::new(db_path.clone())

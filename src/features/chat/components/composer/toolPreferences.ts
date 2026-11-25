@@ -31,6 +31,7 @@ export const setToolNames = (
 export const defaultToolPreferences = (): ToolPreferences => ({
   knowledgeBase: false,
   webSearch: false,
+  strictSources: false,
   deepResearchMode: false,
   followupMode: false,
   turnMode: 'auto',
@@ -77,6 +78,10 @@ export const parseToolPreferences = (serialized: string | null | undefined): Too
       typeof parsed.webSearch === 'boolean'
         ? parsed.webSearch
         : (typeof parsed.web_search === 'boolean' ? parsed.web_search : defaults.webSearch);
+    const strictSources =
+      typeof parsed.strictSources === 'boolean'
+        ? parsed.strictSources
+        : (typeof parsed.strict_sources === 'boolean' ? parsed.strict_sources : Boolean(defaults.strictSources));
     const deepResearchMode =
       typeof parsed.deepResearchMode === 'boolean'
         ? parsed.deepResearchMode
@@ -90,6 +95,7 @@ export const parseToolPreferences = (serialized: string | null | undefined): Too
       return {
         knowledgeBase,
         webSearch,
+        strictSources,
         deepResearchMode,
         followupMode,
         turnMode,
@@ -100,6 +106,7 @@ export const parseToolPreferences = (serialized: string | null | undefined): Too
     return {
       knowledgeBase,
       webSearch,
+      strictSources,
       deepResearchMode,
       followupMode,
       turnMode,

@@ -8,7 +8,7 @@ use crate::lessons::shape::{self as lesson_shape, Lengths};
 use crate::lessons::structured_call::{Asking, CallKind, ReasonFirst};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::model_contract::ask::{
-    self, ask, Alone, Answered, Says, Settled,
+    self, ask, Alone, Answered, Refusal, Says, Settled,
 };
 use lattice_core::application::services::model_contract::shape::{
     self, Authored, Count, Fields, Form, Vocabulary,
@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 /// Said after the lesson's own instructions: the answer's fields, in words.
-const FORM: &str = " Write the answer as one object. ideas lists the lesson's core ideas in teaching order, each with its sections in teaching order: every section has a kind (explanation, worked_example, contrast or check), a title, a body, cites and citations. guidedPractice, independentPractice, reflection and recap are one section each, written in their own fields; the two practice sections also have a rubric of criteria, each with a title, a description and a dimension. questions lists the questions, each with a kind, a prompt, the wrong choices in wrong, then the right choice in right, cites and citations. Every choice, wrong or right, has its option and its reason: a wrong choice's reason says why it fails, the right choice's reason says why it is right. cites names, by their handles, the sentences of the excerpts shown in sources that the section or question rests on: at least one whenever sources are shown, whatever its kind. Each entry of citations has the sentence it cites and, in cites, the handles of the excerpt sentences that state it.";
+const FORM: &str = " Write the answer as one object. ideas lists the lesson's core ideas in teaching order, each with its sections in teaching order: every section has a kind (explanation, worked_example, contrast or check), a title, a body, cites and citations. guidedPractice, independentPractice, reflection and recap are one section each, written in their own fields; the two practice sections also have a rubric of criteria, each with a title, a description and a dimension. questions lists the questions, each with a kind, a prompt, the wrong choices in wrong (each with its option and its reason), then the right choice in right, an explanation, cites and citations. cites names, by their handles, the sentences of the excerpts shown in sources that the section or question rests on: at least one whenever sources are shown, whatever its kind. Each entry of citations has the sentence it cites and, in cites, the handles of the excerpt sentences that state it. The bracketed excerpt handles inside sources' excerpts are for cites and citations only: never write those bracketed handles inside learner-facing text (title, body, prompt, options, explanation, reasons, or rubric).";
 
 const IDEAS: Count = Count("ideas");
 const SECTIONS: Count = Count("sections");
@@ -373,14 +373,14 @@ impl Authored for Practice {
     }
 }
 
-/// A choice of a question and why it fails, or why it is right.
+/// A choice the question's right one is not, and why it fails.
 #[derive(Debug, Clone, PartialEq)]
-struct Choice {
+struct Wrong {
     option: String,
     reason: String,
 }
 
-impl Authored for Choice {
+impl Authored for Wrong {
     fn form() -> Form {
         Form::new().text("option").text("reason")
     }
@@ -397,8 +397,9 @@ impl Authored for Choice {
 struct Question {
     kind: Asked,
     prompt: String,
-    right: Choice,
-    wrong: Vec<Choice>,
+    right: String,
+    wrong: Vec<Wrong>,
+    explanation: String,
     cites: Vec<Picked<Quoted>>,
     cited: Vec<Cited>,
 }
@@ -408,8 +409,9 @@ impl Authored for Question {
         Form::new()
             .word::<Asked>("kind")
             .text("prompt")
-            .counted::<Choice>("wrong", &WRONG)
-            .group::<Choice>("right")
+            .counted::<Wrong>("wrong", &WRONG)
+            .text("right")
+            .text("explanation")
             .cite_some::<Quoted>("cites")
             .list::<Cited>("citations")
     }
@@ -419,7 +421,8 @@ impl Authored for Question {
             kind: fields.word("kind")?,
             prompt: fields.text("prompt")?,
             wrong: fields.list("wrong")?,
-            right: fields.group("right")?,
+            right: fields.text("right")?,
+            explanation: fields.text("explanation")?,
             cites: fields.cite_some("cites")?,
             cited: fields.list("citations")?,
         })
@@ -519,6 +522,74 @@ impl Answered for LessonWriter {
         says.output_tokens = crate::generation::LESSON_OUTPUT_RESERVE;
         Ok(says)
     }
+
+    fn accept(input: &Input, draft: &Draft) -> std::result::Result<(), Refusal> {
+        if input.sources.is_empty() {
+            return Ok(());
+        }
+        if let Some(handle) = draft.leaked_source_handle() {
+            return Err(Refusal(format!(
+                "Remove internal source handle {handle} from the learner-facing text; put excerpt handles only in cites and citations."
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// First `[q<digits>]` source-excerpt handle leaked into learner-facing prose, if any.
+fn find_leaked_quote_handle(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i + 3 < bytes.len() {
+        if bytes.get(i) == Some(&b'[') && bytes.get(i + 1) == Some(&b'q') {
+            let mut j = i + 2;
+            while j < bytes.len() && bytes.get(j).is_some_and(u8::is_ascii_digit) {
+                j += 1;
+            }
+            if j > i + 2 && bytes.get(j) == Some(&b']') {
+                return text.get(i..=j).map(str::to_owned);
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+impl Draft {
+    fn leaked_source_handle(&self) -> Option<String> {
+        let check_part = |part: &Part| {
+            find_leaked_quote_handle(&part.title).or_else(|| find_leaked_quote_handle(&part.body))
+        };
+        let check_practice = |practice: &Practice| {
+            check_part(&practice.part).or_else(|| {
+                practice.rubric.iter().find_map(|c| {
+                    find_leaked_quote_handle(&c.title)
+                        .or_else(|| find_leaked_quote_handle(&c.description))
+                })
+            })
+        };
+        self.ideas
+            .iter()
+            .flat_map(|idea| &idea.sections)
+            .find_map(|section| check_part(&section.part))
+            .or_else(|| check_practice(&self.guided))
+            .or_else(|| check_practice(&self.independent))
+            .or_else(|| check_part(&self.reflection))
+            .or_else(|| check_part(&self.recap))
+            .or_else(|| {
+                self.questions.iter().find_map(|q| {
+                    find_leaked_quote_handle(&q.prompt)
+                        .or_else(|| find_leaked_quote_handle(&q.right))
+                        .or_else(|| find_leaked_quote_handle(&q.explanation))
+                        .or_else(|| {
+                            q.wrong.iter().find_map(|w| {
+                                find_leaked_quote_handle(&w.option)
+                                    .or_else(|| find_leaked_quote_handle(&w.reason))
+                            })
+                        })
+                })
+            })
+    }
 }
 
 /// The sentences of every source's excerpt a citation may quote.
@@ -581,7 +652,7 @@ fn practice(quotes: &Quotes, kind: &str, practice: &Practice) -> Value {
 }
 
 fn question(quotes: &Quotes, question: &Question) -> Value {
-    let authored: Vec<(&str, &str)> = std::iter::once((question.right.option.as_str(), ""))
+    let authored: Vec<(&str, &str)> = std::iter::once((question.right.as_str(), ""))
         .chain(
             question
                 .wrong
@@ -604,7 +675,7 @@ fn question(quotes: &Quotes, question: &Question) -> Value {
     stored.insert("options".into(), Value::Array(options));
     stored.insert("correctIndex".into(), json!(correct));
     stored.insert("rationales".into(), Value::Array(rationales));
-    stored.insert("explanation".into(), json!(question.right.reason));
+    stored.insert("explanation".into(), json!(question.explanation));
     cite_into(quotes, &mut stored, &question.cites, &question.cited);
     Value::Object(stored)
 }
@@ -800,12 +871,10 @@ pub(crate) fn scripted_lesson(saved: &str, prompt: &str) -> String {
             question.insert("prompt".into(), item["prompt"].clone());
             question.insert(
                 "right".into(),
-                json!({
-                    "option": options.get(right as usize).cloned().unwrap_or_default(),
-                    "reason": item["explanation"]
-                }),
+                options.get(right as usize).cloned().unwrap_or_default(),
             );
             question.insert("wrong".into(), Value::Array(wrong));
+            question.insert("explanation".into(), item["explanation"].clone());
             with_cites(question, item)
         })
         .collect();

@@ -76,7 +76,7 @@ impl LlamaServerLauncher {
         let api_key = new_api_key();
         let log = std::fs::File::create(&self.log_path)
             .map_err(|error| format!("cannot write {}: {error}", self.log_path.display()))?;
-        let mut child = BoundCommand::new(binary)
+        let child = match BoundCommand::new(binary)
             .args(server_args(model, port, gpu_layers))
             // The key goes in the environment, not argv: argv is readable by
             // every process on the machine.
@@ -88,17 +88,25 @@ impl LlamaServerLauncher {
             .stderr(Stdio::from(log))
             .spawn()
             .await
-            .map_err(|error| format!("could not start {}: {error}", binary.display()))?;
+        {
+            Ok(child) => child,
+            Err(error) => {
+                let _ = std::fs::remove_file(&self.log_path);
+                return Err(format!("could not start {}: {error}", binary.display()));
+            }
+        };
+        let mut pending = ChildProcess::new(child, self.log_path.clone());
         let endpoint = format!("http://127.0.0.1:{port}");
-        match wait_ready(&mut child, &endpoint, &api_key).await {
-            Ok(()) => Ok(RunningServer::new(
-                endpoint,
-                api_key,
-                Box::new(ChildProcess(child)),
-            )),
+        let ready = match pending.child.as_mut() {
+            Some(child) => wait_ready(child, &endpoint, &api_key).await,
+            None => Err("llama-server process handle missing".to_string()),
+        };
+        match ready {
+            Ok(()) => Ok(RunningServer::new(endpoint, api_key, Box::new(pending))),
             Err(reason) => {
-                let _ = child.start_kill();
-                Err(format!("{reason}{}", log_tail(&self.log_path)))
+                let message = format!("{reason}{}", log_tail(&self.log_path));
+                pending.kill_and_wait().await;
+                Err(message)
             }
         }
     }
@@ -237,17 +245,87 @@ fn new_api_key() -> String {
         })
 }
 
-/// A spawned `llama-server`. `kill_on_drop` covers the paths that never call
-/// `kill`.
-struct ChildProcess(tokio::process::Child);
+/// Bounded synchronous reap for a killed `llama-server` child so terminating
+/// it never leaves a `<defunct>` zombie behind.
+fn reap_sync(child: &mut tokio::process::Child) -> bool {
+    let deadline = Instant::now() + Duration::from_millis(250);
+    let mut pause = Duration::from_millis(1);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return true,
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    return false;
+                }
+                std::thread::sleep(pause);
+                pause = (pause * 2).min(Duration::from_millis(20));
+            }
+            Err(_) => return true,
+        }
+    }
+}
 
+/// A spawned `llama-server` and its stderr log file. Killing or dropping it
+/// kills and reaps the child and deletes the temporary log file.
+struct ChildProcess {
+    child: Option<tokio::process::Child>,
+    log_path: PathBuf,
+}
+
+impl ChildProcess {
+    fn new(child: tokio::process::Child, log_path: PathBuf) -> Self {
+        Self {
+            child: Some(child),
+            log_path,
+        }
+    }
+
+    pub async fn kill_and_wait(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+        }
+        let _ = tokio::fs::remove_file(&self.log_path).await;
+    }
+
+    fn terminate_and_cleanup(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.start_kill();
+            let _ = reap_sync(&mut child);
+            drop(child);
+        }
+        let _ = std::fs::remove_file(&self.log_path);
+    }
+}
+
+#[async_trait]
 impl ServerProcess for ChildProcess {
     fn has_exited(&mut self) -> bool {
-        !matches!(self.0.try_wait(), Ok(None))
+        let Some(child) = self.child.as_mut() else {
+            return true;
+        };
+        match child.try_wait() {
+            Ok(None) => false,
+            Ok(Some(_)) | Err(_) => {
+                self.child = None;
+                let _ = std::fs::remove_file(&self.log_path);
+                true
+            }
+        }
     }
 
     fn kill(&mut self) {
-        let _ = self.0.start_kill();
+        self.terminate_and_cleanup();
+    }
+
+    async fn kill_and_wait(&mut self) {
+        ChildProcess::kill_and_wait(self).await;
+    }
+}
+
+impl Drop for ChildProcess {
+    fn drop(&mut self) {
+        self.terminate_and_cleanup();
     }
 }
 
@@ -290,5 +368,50 @@ mod tests {
         assert_eq!(a.len(), 32);
         assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
         assert_ne!(a, b);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn child_process_kill_reaps_child_and_removes_log_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("ocr-test.log");
+        std::fs::write(&log_path, b"startup log").unwrap();
+        let child = BoundCommand::new("sleep")
+            .arg("60")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .await
+            .unwrap();
+        let mut process = ChildProcess::new(child, log_path.clone());
+        assert!(!process.has_exited());
+        process.kill();
+        assert!(process.has_exited());
+        assert!(!log_path.exists(), "temp log file must be removed on kill");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn child_process_kill_and_wait_reaps_async_and_removes_log_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("ocr-async-test.log");
+        std::fs::write(&log_path, b"startup log").unwrap();
+        let child = BoundCommand::new("sleep")
+            .arg("60")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .await
+            .unwrap();
+        let mut process = ChildProcess::new(child, log_path.clone());
+        assert!(!process.has_exited());
+        process.kill_and_wait().await;
+        assert!(process.has_exited());
+        assert!(
+            !log_path.exists(),
+            "temp log file must be removed on kill_and_wait"
+        );
     }
 }

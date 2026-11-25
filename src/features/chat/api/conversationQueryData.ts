@@ -54,10 +54,26 @@ export const fetchConversationDetail = async (id: string, api: ApiClient = Vault
   return result.data.conversation as Conversation | null;
 };
 
+function extractMetadataError(metadata: string | null | undefined): string | undefined {
+  if (!metadata) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(metadata);
+    if (parsed && typeof parsed === 'object' && 'error' in parsed && typeof parsed.error === 'string') {
+      const trimmed = parsed.error.trim();
+      if (trimmed) return trimmed;
+    }
+  } catch {
+    // Malformed historical metadata must not hide the message itself.
+  }
+  return undefined;
+}
+
 export function toConversationMessage(message: MessageDto): ConversationMessage {
   switch (message.status) {
-    case 'pending': case 'processing': case 'completed': case 'failed':
-      return { ...message, status: message.status };
+    case 'pending': case 'processing': case 'completed': case 'failed': {
+      const error = message.status === 'failed' ? extractMetadataError(message.metadata) : undefined;
+      return { ...message, status: message.status, ...(error ? { error } : {}) };
+    }
     default:
       throw new Error(`Unknown conversation message status: ${message.status}`);
   }

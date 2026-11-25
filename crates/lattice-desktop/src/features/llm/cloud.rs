@@ -54,7 +54,10 @@ impl CloudLlm {
     ) -> std::sync::Arc<dyn LLMPort> {
         let scheduler = schedulers.cloud(self.protocol.name());
         self.scheduler = Arc::clone(&scheduler);
-        schedulers.front(std::sync::Arc::new(self), scheduler, None)
+        std::sync::Arc::new(crate::features::llm::scheduler::ScheduledLlm::new(
+            std::sync::Arc::new(self),
+            scheduler,
+        ))
     }
 
     /// This client as a port, behind a scheduler of its own.

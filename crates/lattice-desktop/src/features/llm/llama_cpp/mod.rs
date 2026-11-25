@@ -57,6 +57,8 @@ pub(crate) struct ServerConfig {
     pub stall_timeout: Duration,
     /// Whether the model's chat template carries a native tool-call format.
     pub supports_tools: bool,
+    /// Whether the model supports native thinking (`<think>` / `enable_thinking`).
+    pub supports_thinking: bool,
     /// Whether the model itself pins thinking; the user's override beats it.
     pub model_thinking: ThinkingPolicy,
     /// Hold the server to [`retry::prefill_allowance`] before it starts
@@ -91,7 +93,7 @@ impl LlamaCppLlm {
             ));
         }
         Ok(Self {
-            client: http_client(reqwest_client_builder(), remote_headers(header)?)?,
+            client: remote_client(header)?,
             base_url,
             config: ServerConfig {
                 model: connection.model.clone(),
@@ -99,6 +101,10 @@ impl LlamaCppLlm {
                 context_window: settings.context_window as usize,
                 stall_timeout: Duration::from_secs(u64::from(settings.timeout_seconds.max(1))),
                 supports_tools: true,
+                supports_thinking:
+                    crate::features::llm::engine::gguf_metadata::model_name_supports_thinking(
+                        &connection.model,
+                    ),
                 // A server the user runs names no file to read a header from.
                 model_thinking: ThinkingPolicy::PerRequest,
                 prefill_guard: false,
@@ -117,6 +123,7 @@ impl LlamaCppLlm {
         model: String,
         generation: GenerationConfig,
         supports_tools: bool,
+        supports_thinking: bool,
         model_thinking: ThinkingPolicy,
         vision: Option<VisionGeometry>,
     ) -> Result<Self> {
@@ -126,6 +133,7 @@ impl LlamaCppLlm {
             context_window: process.context_size() as usize,
             stall_timeout: SIDECAR_STALL_TIMEOUT,
             supports_tools,
+            supports_thinking,
             model_thinking,
             prefill_guard: true,
             vision,
@@ -139,6 +147,22 @@ impl LlamaCppLlm {
     pub fn with_vision(mut self, vision: Option<VisionGeometry>) -> Self {
         self.config.vision = vision;
         self
+    }
+
+    /// Whether this llama.cpp client can think natively on demand
+    /// (`ThinkingMode::On`), taking the model's thinking capability, its
+    /// policy, and the user's thinking override into account.
+    pub fn supports_native_thinking(&self) -> bool {
+        match self
+            .config
+            .generation
+            .thinking_override
+            .or(self.config.model_thinking)
+        {
+            ThinkingPolicy::AlwaysOn => true,
+            ThinkingPolicy::PerRequest => self.config.supports_thinking,
+            ThinkingPolicy::AlwaysOff => false,
+        }
     }
 
     /// A client for the llama-server at `endpoint` that authenticates with a
@@ -163,7 +187,7 @@ impl LlamaCppLlm {
         header: Option<RemoteHeader>,
     ) -> Result<Vec<String>> {
         let base_url = connection.validated_base_url()?;
-        let client = http_client(reqwest_client_builder(), remote_headers(header)?)?;
+        let client = remote_client(header)?;
         let probe_timeout = Duration::from_secs(30);
         let response = client
             .get(format!("{base_url}/models"))
@@ -236,8 +260,9 @@ impl LlamaCppLlm {
     /// server's own window replaces the configured one.
     pub(crate) async fn schedule(mut self, schedulers: &SchedulerRegistry) -> Arc<dyn LLMPort> {
         use crate::features::llm::scheduler::{
-            llama_server_capacity, BackendCapacity, ServerTokenizer,
+            llama_server_capacity, BackendCapacity, ScheduledLlm,
         };
+        use crate::infrastructure::llama_server::ServerTokenizer;
         let (scheduler, is_llama_server) = match &self.process {
             Some(process) => {
                 let scheduler = process
@@ -282,7 +307,11 @@ impl LlamaCppLlm {
         }
         let tokenizer =
             is_llama_server.then(|| ServerTokenizer::new(self.client.clone(), self.server_root()));
-        schedulers.front(Arc::new(self), scheduler, tokenizer)
+        let scheduled = ScheduledLlm::new(Arc::new(self), scheduler);
+        Arc::new(match tokenizer {
+            Some(tokenizer) => scheduled.with_tokenizer(tokenizer),
+            None => scheduled,
+        })
     }
 }
 
@@ -413,6 +442,9 @@ impl ModelBackend for LlamaCppLlm {
     fn thinking(&self, request: &CompletionRequest) -> Thinking {
         Thinking::from(self.thinking_mode(request))
     }
+    fn supports_native_thinking(&self) -> bool {
+        Self::supports_native_thinking(self)
+    }
     /// A crashed bundled server leaves this client cached with a dead port;
     /// saying so lets the role cache drop it and start a fresh server.
     fn is_alive(&self) -> bool {
@@ -469,6 +501,11 @@ impl ModelBackend for LlamaCppLlm {
             }
         }
     }
+}
+
+/// The client for a server the user runs, sending `header` with every request.
+pub fn remote_client(header: Option<RemoteHeader>) -> Result<reqwest::Client> {
+    http_client(reqwest_client_builder(), remote_headers(header)?)
 }
 
 /// The authentication header of a remote server.
@@ -541,9 +578,6 @@ async fn server_status(
     ))
 }
 
-/// More calls than any round needs; past this a model is looping, not working.
-const MAX_TOOL_CALLS_PER_ROUND: usize = 128;
-
 /// Stands in for the name of a call that gave none, so the replayed history
 /// still has a name the chat template can render.
 const UNNAMED_TOOL: &str = "unnamed_tool";
@@ -567,7 +601,6 @@ pub(crate) fn parse_completion(value: Value) -> Result<CompletionResponse> {
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .take(MAX_TOOL_CALLS_PER_ROUND)
         .collect();
     let mut calls = Vec::new();
     let mut ids = std::collections::HashSet::new();
@@ -632,11 +665,7 @@ pub(crate) fn parse_completion(value: Value) -> Result<CompletionResponse> {
     // to agree with the calls the tool results will answer: the same ids, and
     // arguments the chat template can parse again.
     let mut assistant = message.clone();
-    let dropped = message
-        .get("tool_calls")
-        .and_then(Value::as_array)
-        .is_some_and(|all| all.len() > raw_calls.len());
-    if repaired || dropped {
+    if repaired {
         if let Some(object) = assistant.as_object_mut() {
             object.insert(
                 "tool_calls".into(),
@@ -659,6 +688,11 @@ pub(crate) fn parse_completion(value: Value) -> Result<CompletionResponse> {
             );
         }
     }
+    let raw_content = message
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let cleaned_content = streaming::strip_unmatched_think_close(raw_content);
     // Reasoning is shown, not replayed. Carried through a tool loop it soon
     // outweighs everything else in the prompt. Dropping it costs the server a
     // re-read of the newest turn's visible output, which it cached with the
@@ -666,6 +700,9 @@ pub(crate) fn parse_completion(value: Value) -> Result<CompletionResponse> {
     if let Some(object) = assistant.as_object_mut() {
         object.remove("reasoning_content");
         object.remove("reasoning");
+        if let Some(cleaned) = &cleaned_content {
+            object.insert("content".into(), json!(cleaned));
+        }
     }
     let reasoning = ["reasoning_content", "reasoning"]
         .iter()
@@ -674,11 +711,7 @@ pub(crate) fn parse_completion(value: Value) -> Result<CompletionResponse> {
         .filter(|text| !text.is_empty())
         .map(str::to_owned);
     Ok(CompletionResponse {
-        text: message
-            .get("content")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .into(),
+        text: cleaned_content.unwrap_or_else(|| raw_content.to_owned()),
         reasoning,
         tool_calls: calls,
         finish_reason: finish_reason.into(),
@@ -709,4 +742,226 @@ pub(crate) fn parse_completion(value: Value) -> Result<CompletionResponse> {
             .and_then(streaming::ServerTimings::from_value)
             .map(|timings| timings.served()),
     })
+}
+
+#[cfg(test)]
+mod native_thinking_tests {
+    use super::*;
+    use crate::features::llm::scheduler::{BackendCapacity, InferenceScheduler, ScheduledLlm};
+    use lattice_core::application::contracts::settings::ThinkingOverrideDto;
+
+    fn client_for(
+        model: &str,
+        supports_thinking: bool,
+        model_thinking: ThinkingPolicy,
+        thinking_override: ThinkingOverrideDto,
+    ) -> Result<LlamaCppLlm> {
+        let settings = LLMSettingsDto {
+            thinking_override,
+            ..Default::default()
+        };
+        let config = ServerConfig {
+            model: model.into(),
+            generation: GenerationConfig::from_settings(&settings),
+            context_window: 32_768,
+            stall_timeout: Duration::from_secs(30),
+            supports_tools: true,
+            supports_thinking,
+            model_thinking,
+            prefill_guard: true,
+            vision: None,
+        };
+        LlamaCppLlm::connect("http://127.0.0.1:8080", "token", config)
+    }
+
+    fn client_with(
+        model_thinking: ThinkingPolicy,
+        thinking_override: ThinkingOverrideDto,
+    ) -> Result<LlamaCppLlm> {
+        client_for("qwen3.5", true, model_thinking, thinking_override)
+    }
+
+    fn remote_client(model: &str, thinking_override: ThinkingOverrideDto) -> Result<LlamaCppLlm> {
+        let settings = LLMSettingsDto {
+            thinking_override,
+            llama_cpp: LlamaCppSettingsDto {
+                url: "http://127.0.0.1:8080".into(),
+                model: model.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        LlamaCppLlm::new(&settings, None)
+    }
+
+    #[test]
+    fn supports_native_thinking_respects_model_policy_and_user_override() -> Result<()> {
+        let per_request = client_with(ThinkingPolicy::PerRequest, ThinkingOverrideDto::Auto)?;
+        assert!(per_request.supports_native_thinking());
+
+        let always_on = client_with(ThinkingPolicy::AlwaysOn, ThinkingOverrideDto::Auto)?;
+        assert!(always_on.supports_native_thinking());
+
+        let user_off = client_with(ThinkingPolicy::PerRequest, ThinkingOverrideDto::Off)?;
+        assert!(!user_off.supports_native_thinking());
+
+        let pinned_off_over_always_on =
+            client_with(ThinkingPolicy::AlwaysOn, ThinkingOverrideDto::Off)?;
+        assert!(!pinned_off_over_always_on.supports_native_thinking());
+
+        let model_off = client_with(ThinkingPolicy::AlwaysOff, ThinkingOverrideDto::Auto)?;
+        assert!(!model_off.supports_native_thinking());
+
+        let user_on_over_model_off =
+            client_with(ThinkingPolicy::AlwaysOff, ThinkingOverrideDto::On)?;
+        assert!(user_on_over_model_off.supports_native_thinking());
+
+        let non_thinking = client_for(
+            "Meta-Llama-3.1-8B-Instruct",
+            false,
+            ThinkingPolicy::PerRequest,
+            ThinkingOverrideDto::Auto,
+        )?;
+        assert!(!non_thinking.supports_native_thinking());
+
+        let non_thinking_user_on = client_for(
+            "Meta-Llama-3.1-8B-Instruct",
+            false,
+            ThinkingPolicy::PerRequest,
+            ThinkingOverrideDto::On,
+        )?;
+        assert!(non_thinking_user_on.supports_native_thinking());
+        Ok(())
+    }
+
+    #[test]
+    fn supports_native_thinking_distinguishes_thinking_and_non_thinking_models() -> Result<()> {
+        for model in [
+            "Qwen3.6-35B-A3B-UD-Q4_K_XL",
+            "Qwen3.5-9B-Q4_K_M",
+            "Laguna-XS-2.1-APEX-I-Compact",
+            "DeepSeek-R1-Distill-Qwen-7B",
+            "QwQ-32B",
+        ] {
+            let auto = remote_client(model, ThinkingOverrideDto::Auto)?;
+            assert!(
+                auto.supports_native_thinking(),
+                "{model} should think natively"
+            );
+
+            let off = remote_client(model, ThinkingOverrideDto::Off)?;
+            assert!(
+                !off.supports_native_thinking(),
+                "{model} with AlwaysOff override must not think natively"
+            );
+        }
+
+        for model in [
+            "Meta-Llama-3.1-8B-Instruct",
+            "Mistral-7B-Instruct-v0.3",
+            "gemma-4-12b-it",
+        ] {
+            let auto = remote_client(model, ThinkingOverrideDto::Auto)?;
+            assert!(
+                !auto.supports_native_thinking(),
+                "{model} must not claim native thinking"
+            );
+        }
+
+        let qwen36 = client_for(
+            "Qwen3.6-35B-A3B",
+            true,
+            ThinkingPolicy::PerRequest,
+            ThinkingOverrideDto::Auto,
+        )?;
+        assert!(qwen36.supports_native_thinking());
+
+        let laguna = client_for(
+            "Laguna-XS-2.1",
+            true,
+            ThinkingPolicy::AlwaysOn,
+            ThinkingOverrideDto::Auto,
+        )?;
+        assert!(laguna.supports_native_thinking());
+
+        let laguna_off = client_for(
+            "Laguna-XS-2.1",
+            true,
+            ThinkingPolicy::AlwaysOn,
+            ThinkingOverrideDto::Off,
+        )?;
+        assert!(!laguna_off.supports_native_thinking());
+
+        let mistral = client_for(
+            "Mistral-7B-Instruct-v0.3",
+            false,
+            ThinkingPolicy::PerRequest,
+            ThinkingOverrideDto::Auto,
+        )?;
+        assert!(!mistral.supports_native_thinking());
+        Ok(())
+    }
+
+    #[test]
+    fn scheduled_llama_cpp_exposes_native_thinking_for_per_request_models() -> Result<()> {
+        let scheduler = Arc::new(InferenceScheduler::new(
+            "test",
+            BackendCapacity::llama_server(2, 32_768),
+        ));
+
+        let qwen = ScheduledLlm::new(
+            Arc::new(client_with(
+                ThinkingPolicy::PerRequest,
+                ThinkingOverrideDto::Auto,
+            )?),
+            Arc::clone(&scheduler),
+        );
+        assert!(!qwen.thinks_before_answering());
+        assert!(qwen.supports_native_thinking());
+
+        let qwen_off = ScheduledLlm::new(
+            Arc::new(client_with(
+                ThinkingPolicy::PerRequest,
+                ThinkingOverrideDto::Off,
+            )?),
+            Arc::clone(&scheduler),
+        );
+        assert!(!qwen_off.thinks_before_answering());
+        assert!(!qwen_off.supports_native_thinking());
+
+        let laguna = ScheduledLlm::new(
+            Arc::new(client_with(
+                ThinkingPolicy::AlwaysOn,
+                ThinkingOverrideDto::Auto,
+            )?),
+            Arc::clone(&scheduler),
+        );
+        assert!(laguna.thinks_before_answering());
+        assert!(laguna.supports_native_thinking());
+
+        let llama = ScheduledLlm::new(
+            Arc::new(client_for(
+                "Meta-Llama-3.1-8B-Instruct",
+                false,
+                ThinkingPolicy::PerRequest,
+                ThinkingOverrideDto::Auto,
+            )?),
+            Arc::clone(&scheduler),
+        );
+        assert!(!llama.thinks_before_answering());
+        assert!(!llama.supports_native_thinking());
+
+        let mistral = ScheduledLlm::new(
+            Arc::new(client_for(
+                "Mistral-7B-Instruct-v0.3",
+                false,
+                ThinkingPolicy::PerRequest,
+                ThinkingOverrideDto::Auto,
+            )?),
+            scheduler,
+        );
+        assert!(!mistral.thinks_before_answering());
+        assert!(!mistral.supports_native_thinking());
+        Ok(())
+    }
 }

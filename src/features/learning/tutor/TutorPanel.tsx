@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/IconButton';
 import { ChatPanel } from '@/features/chat/components/ChatPanel';
 import { DeleteConversationDialog } from '@/features/chat/components/DeleteConversationDialog';
+import { ScopedConversationProvider } from '@/features/chat/components/tangents/TangentConversation';
 import { learningMemoryKey, learningRecallKey } from '@/features/learning/api/learningQueryKeys';
 import type { LearningLessonDto, LearningProgramDto } from '@/lib/bindings';
 import { cn } from '@/lib/utils';
@@ -19,11 +20,12 @@ import { useTutorChats } from './useTutorChats';
  * everything a chat has here. A turn may rate cards and save notes, so when one
  * ends what Recall and the Notebook show is read again.
  */
-export function TutorPanel({ program, lesson, onCourseChanged }: {
+export function TutorPanel({ program, lesson, onCourseChanged, onActiveChatChange }: {
   program: LearningProgramDto;
   /** The lesson the workspace is on: a new chat can start from it. */
   lesson?: LearningLessonDto;
   onCourseChanged?: () => void;
+  onActiveChatChange?: (chatId: string | null) => void;
 }) {
   const programId = program.summary.id;
   const chats = useTutorChats(programId, program.summary.title);
@@ -32,6 +34,10 @@ export function TutorPanel({ program, lesson, onCourseChanged }: {
   const sending = useConversationsStore((state) =>
     Boolean(chats.activeId && state.inFlightGenerations.has(chats.activeId)));
   const wasSending = useRef(false);
+
+  useEffect(() => {
+    onActiveChatChange?.(chats.activeId);
+  }, [chats.activeId, onActiveChatChange]);
 
   useEffect(() => {
     if (wasSending.current && !sending) {
@@ -44,14 +50,14 @@ export function TutorPanel({ program, lesson, onCourseChanged }: {
 
   return (
     <div className="mt-4 grid h-[calc(100vh-14rem)] min-h-[28rem] grid-cols-[14rem_minmax(0,1fr)] gap-3">
-      <aside aria-label="Tutor chats" className="flex min-h-0 flex-col rounded-xl border border-border bg-background">
-        <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
-          <h3 className="text-sm font-medium text-text-primary">Tutor chats</h3>
+      <aside aria-label="Tutor chats" className="flex min-h-0 flex-col rounded-xl border border-border-subtle bg-surface-sunken/70">
+        <div className="flex items-center justify-between gap-2 border-b border-border-subtle px-3 py-2">
+          <h3 className="text-sm font-semibold text-text-primary">Tutor chats</h3>
           <IconButton label="New tutor chat" disabled={chats.creating} onClick={() => void chats.create()}>
             <MessageSquarePlus />
           </IconButton>
         </div>
-        <ul className="min-h-0 flex-1 overflow-y-auto p-1">
+        <ul className="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-1.5">
           {chats.chats.map((chat) => (
             <li key={chat.id} className="group flex items-center gap-1">
               <button
@@ -59,8 +65,10 @@ export function TutorPanel({ program, lesson, onCourseChanged }: {
                 aria-current={chat.id === chats.activeId ? 'true' : undefined}
                 onClick={() => chats.select(chat.id)}
                 className={cn(
-                  'min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-left text-[13px] hover:bg-surface',
-                  chat.id === chats.activeId ? 'bg-surface text-text-primary' : 'text-text-secondary',
+                  'min-w-0 flex-1 truncate rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors',
+                  chat.id === chats.activeId
+                    ? 'bg-surface font-medium text-text-primary shadow-sm ring-1 ring-border-subtle'
+                    : 'text-text-secondary hover:bg-[hsl(var(--text-primary)/0.045)] hover:text-text-primary',
                 )}
               >
                 {chat.title}
@@ -72,9 +80,11 @@ export function TutorPanel({ program, lesson, onCourseChanged }: {
           ))}
         </ul>
       </aside>
-      <div className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border">
+      <div className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-border-subtle bg-surface shadow-sm">
         {chats.activeId ? (
-          <ChatPanel starters={[`Teach me ${lesson?.title ?? program.summary.title}`, 'Quiz me on what is due', 'What should I work on next?']} />
+          <ScopedConversationProvider conversationId={chats.activeId}>
+            <ChatPanel starters={[`Teach me ${lesson?.title ?? program.summary.title}`, 'Quiz me on what is due', 'What should I work on next?']} />
+          </ScopedConversationProvider>
         ) : (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
             {chats.error

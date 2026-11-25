@@ -120,14 +120,13 @@ fn written_answer(user: &str) -> Value {
         "reflection": part("Reflect", std::slice::from_ref(&kiln)),
         "recap": part("Recap", std::slice::from_ref(&kiln)),
         "questions": [{
-            "kind": "quiz", "prompt": "When does the gate open?",
-            "right": {"option": "Early", "reason": "It opens early."},
+            "kind": "quiz", "prompt": "When does the gate open?", "right": "Early",
             "wrong": [
                 {"option": "Late", "reason": "It opens at first light."},
                 {"option": "Never", "reason": "It does open."},
                 {"option": "Noon", "reason": "Noon is long after."}
             ],
-            "cites": [kiln], "citations": []
+            "explanation": "It opens early.", "cites": [kiln], "citations": []
         }]
     })
 }
@@ -276,18 +275,16 @@ async fn the_answer_becomes_the_draft_later_stages_read() {
 #[test]
 fn the_right_choice_is_not_always_laid_out_first() {
     let shown = |prompt: &str| {
-        let wrong = |option: &str| Choice {
+        let wrong = |option: &str| Wrong {
             option: option.into(),
             reason: format!("{option} fails."),
         };
         let question = Question {
             kind: Asked::Quiz,
             prompt: prompt.into(),
-            right: Choice {
-                option: "Right".into(),
-                reason: "Why.".into(),
-            },
+            right: "Right".into(),
             wrong: vec![wrong("A"), wrong("B"), wrong("C")],
+            explanation: "Why.".into(),
             cites: Vec::new(),
             cited: Vec::new(),
         };
@@ -550,7 +547,15 @@ async fn the_wrong_choices_are_asked_before_the_right_one() {
         .unwrap();
     assert_eq!(
         keys,
-        &["kind", "prompt", "wrong", "right", "cites", "citations"]
+        &[
+            "kind",
+            "prompt",
+            "wrong",
+            "right",
+            "explanation",
+            "cites",
+            "citations"
+        ]
     );
 }
 
@@ -648,82 +653,23 @@ async fn an_answer_that_cites_nothing_is_read_when_no_sources_are_shown() {
 
 #[test]
 fn the_form_asks_for_wrong_choices_first_and_for_a_citation_in_every_part() {
-    assert!(FORM.contains("the wrong choices in wrong, then the right choice in right, cites and citations. Every choice, wrong or right, has its option and its reason"));
+    assert!(FORM.contains("the wrong choices in wrong (each with its option and its reason), then the right choice in right"));
     assert!(FORM.contains("at least one whenever sources are shown, whatever its kind"));
     assert!(!FORM.contains("the right choice in right, the other choices"));
 }
 
-fn question_object(schema: &Value) -> Option<&Value> {
-    match schema {
-        Value::Object(object) => {
-            if object
-                .get("properties")
-                .and_then(|properties| properties.get("wrong"))
-                .is_some()
-            {
-                return Some(schema);
-            }
-            object.values().find_map(question_object)
-        }
-        Value::Array(items) => items.iter().find_map(question_object),
-        _ => None,
-    }
-}
-
-#[tokio::test]
-async fn the_right_choice_is_asked_with_its_option_and_its_reason() {
-    let schema = schema_for(&sources()).await;
-    let question = question_object(&schema).unwrap();
-
-    let right = &question["properties"]["right"];
-    assert_eq!(right["type"], "object", "{right}");
-    assert_eq!(right["required"], json!(["option", "reason"]), "{right}");
-    assert!(
-        question["properties"].get("explanation").is_none(),
-        "{question}"
-    );
-}
-
-#[tokio::test]
-async fn a_right_choice_with_a_reason_is_stored_as_the_questions_explanation() {
-    let input = Input::of(&stored_prompt(), &sources(), StandardShape.lengths()).unwrap();
-    let model = writing(|_, user| {
-        let mut answer = written_answer(user);
-        let question = &mut answer["questions"][0];
-        question["right"] = json!({"option": "Early", "reason": "It opens before the tide."});
-        question.as_object_mut().unwrap().remove("explanation");
-        answer.to_string()
-    });
-
-    let written = write(&model, &input, "Write it.").await;
-
-    assert!(written.is_ok(), "{written:?}");
-    let stored: Value = serde_json::from_str(&written.unwrap()).unwrap();
-    let question = &stored["questions"][0];
-    let right = question["correctIndex"].as_u64().unwrap() as usize;
-    assert_eq!(question["options"][right], "Early");
-    assert_eq!(question["rationales"][right], "");
-    assert_eq!(question["explanation"], "It opens before the tide.");
-}
-
 #[test]
-fn the_writers_requirements_give_the_right_choice_a_reason_and_no_explanation() {
-    let text = requirements(Answering::Writer).to_string();
-    for kept in [
-        "each with its option and its reason",
-        "The right choice's reason says why it is right.",
-        "A reason names each choice by its words",
-    ] {
-        assert!(text.contains(kept), "{kept} missing from {text}");
-    }
-    for gone in [
-        "its explanation rest",
-        "and the explanation say",
-        "An explanation names",
-    ] {
-        assert!(!text.contains(gone), "{gone} in {text}");
-    }
-    let stored = requirements(Answering::Stored { grounded: true }).to_string();
-    assert!(stored.contains("Every rationale and the explanation say what is true"));
-    assert!(stored.contains("An explanation names each choice"));
+fn leaked_quote_handles_in_learner_text_are_detected() {
+    assert_eq!(
+        find_leaked_quote_handle("According to [q1], the lock is reentrant."),
+        Some("[q1]".to_owned())
+    );
+    assert_eq!(
+        find_leaked_quote_handle("See [q42] for details."),
+        Some("[q42]".to_owned())
+    );
+    assert_eq!(
+        find_leaked_quote_handle("Array index [0] or [query] is fine."),
+        None
+    );
 }

@@ -70,7 +70,7 @@ describe('TuningTab', () => {
     render(<TuningTab />);
     expect(screen.getAllByLabelText('Temperature').map((input) => (input as HTMLInputElement).value)).toEqual(['0.7', '0.1']);
     expect(field('Router model')).toHaveValue('qwen-0.5b');
-    expect(field('Excerpt characters')).toHaveValue(600);
+    expect(field('Excerpt characters')).toHaveValue('600');
     expect(screen.getByRole('region', { name: 'Thinking' })).toBeInTheDocument();
   });
 

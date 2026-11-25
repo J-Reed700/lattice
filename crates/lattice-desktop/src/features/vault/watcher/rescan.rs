@@ -9,7 +9,13 @@ use lattice_core::shared::persistence::timestamps::parse_db_timestamp;
 use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 
-use super::{emit_note_imported, import_one, RescanLock, WriteSuppressionRegistry};
+use super::{
+    import_one_outcome, is_set_aside_conflict_file, AppHandleCell, ImportOutcome, RescanLock,
+    WriteSuppressionRegistry,
+};
+use crate::features::vault::events::{emit_note_imported, emit_rescan_blocked};
+
+const RESCAN_SEEN_CHUNK: usize = 250;
 
 /// Catches edits the watcher dropped (sleep/wake, AV interference, etc.).
 /// Idempotent. Frontend invokes on window focus.
@@ -18,8 +24,9 @@ pub async fn rescan_vault(
     vault_root: PathBuf,
     suppression: WriteSuppressionRegistry,
     rescan_lock: &RescanLock,
-    app_handle: tauri::AppHandle,
+    app_handle: AppHandleCell,
     background: Arc<BackgroundTasks>,
+    vault_writer: Option<&super::super::writeback::VaultWriterHandle>,
 ) -> Result<RescanSummary> {
     let notes_dir = vault_root.join("notes");
     // repository-barrier-allow: rescan reconciles the configured vault resource with its repository.
@@ -58,6 +65,7 @@ pub async fn rescan_vault(
     let mut scanned = 0usize;
     let mut imported = 0usize;
     let mut deleted = 0usize;
+    let mut seen_batch: Vec<String> = Vec::with_capacity(RESCAN_SEEN_CHUNK);
 
     // A directory walk that ends early leaves rows in `sql_rows` that were
     // never matched against their files. Sweeping on a partial listing would
@@ -81,16 +89,22 @@ pub async fn rescan_vault(
         };
 
         let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("md") {
+        if path.extension().and_then(|s| s.to_str()) != Some("md")
+            || is_set_aside_conflict_file(&path)
+        {
             continue;
         }
         scanned += 1;
 
         let stem = path.file_stem().and_then(|s| s.to_str());
         if let Some(id) = stem {
-            super::super::repository::mark_rescan_seen(&database, &run_id, id)
-                .await
-                .map_err(|e| e.with_context("focus-rescan: could not mark note as seen"))?;
+            seen_batch.push(id.to_string());
+            if seen_batch.len() >= RESCAN_SEEN_CHUNK {
+                super::super::repository::mark_rescan_seen_batch(&database, &run_id, &seen_batch)
+                    .await
+                    .map_err(|e| e.with_context("focus-rescan: could not mark notes as seen"))?;
+                seen_batch.clear();
+            }
             if super::super::repository::has_pending(&database, id)
                 .await
                 .unwrap_or(true)
@@ -118,15 +132,40 @@ pub async fn rescan_vault(
         };
 
         if needs_import {
-            if let Some(imported_id) = import_one(&path, &database, &app_handle).await {
-                super::super::repository::mark_rescan_seen(&database, &run_id, &imported_id)
-                    .await
-                    .map_err(|e| {
-                        e.with_context("focus-rescan: could not mark imported note as seen")
-                    })?;
+            let seen_id =
+                match import_one_outcome(&path, &database, &app_handle, vault_writer).await {
+                    ImportOutcome::Imported(id) => {
+                        imported += 1;
+                        Some(id)
+                    }
+                    ImportOutcome::UnchangedOrSkipped(id) => Some(id),
+                    ImportOutcome::Ignored => None,
+                };
+            if let Some(imported_id) = seen_id {
+                if Some(imported_id.as_str()) != stem {
+                    seen_batch.push(imported_id);
+                    if seen_batch.len() >= RESCAN_SEEN_CHUNK {
+                        super::super::repository::mark_rescan_seen_batch(
+                            &database,
+                            &run_id,
+                            &seen_batch,
+                        )
+                        .await
+                        .map_err(|e| {
+                            e.with_context("focus-rescan: could not mark imported notes as seen")
+                        })?;
+                        seen_batch.clear();
+                    }
+                }
             }
-            imported += 1;
         }
+    }
+
+    if !seen_batch.is_empty() {
+        super::super::repository::mark_rescan_seen_batch(&database, &run_id, &seen_batch)
+            .await
+            .map_err(|e| e.with_context("focus-rescan: could not mark notes as seen"))?;
+        seen_batch.clear();
     }
 
     // Ghost-note sweep — anything left in `sql_rows` had its file
@@ -232,6 +271,9 @@ pub async fn rescan_vault(
                 Ok(true) => {
                     tracing::info!(id = %row.id, "focus-rescan: deleted ghost note (file gone from vault)");
                     emit_note_imported(&app_handle, &row.id);
+                    if let Some(writer) = vault_writer {
+                        super::super::writeback::spawn_delete_workspace_note(writer);
+                    }
                     deleted += 1;
                 }
                 Ok(false) => {}
@@ -351,23 +393,4 @@ pub(super) fn ghost_sweep_block_reason(
     }
 
     None
-}
-
-/// Tell the frontend a rescan declined to delete, so the user finds out from
-/// the UI rather than from noticing missing notes later.
-fn emit_rescan_blocked(
-    app_handle: &tauri::AppHandle,
-    reason: &str,
-    candidates: usize,
-    total_rows: usize,
-) {
-    use tauri::Emitter;
-    let payload = serde_json::json!({
-        "reason": reason,
-        "candidates": candidates,
-        "totalRows": total_rows,
-    });
-    if let Err(e) = app_handle.emit("vault:rescan-blocked", payload) {
-        tracing::warn!(error = %e, "failed to emit vault:rescan-blocked event");
-    }
 }

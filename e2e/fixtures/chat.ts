@@ -90,8 +90,9 @@ export async function installChatFixture(page: Page) {
     get_corpus_shape: () => ({ total: 1, byType: [{ type: 'Markdown', count: 1 }], grownLast7Days: 1, grownToday: 1, lastIndexedAt: STAMP }),
     list_all_documents: () => [{
       id: 'doc-volcanoes', fileName: 'Volcanoes and magma.md', filePath: VOLCANO_FILE, fileType: 'md',
-      category: 'Document', language: 'en', wordCount: 1800, modifiedAt: STAMP, indexedAt: STAMP,
+      category: 'Document', language: 'en', wordCount: 1800, web: false, typeBucket: 'Markdown', modifiedAt: STAMP, indexedAt: STAMP,
     }],
+    saved_web_article: () => null,
     read_file_content: (args) => {
       if (args.path !== VOLCANO_FILE) throw new Error(`No such file: ${String(args.path)}`);
       return ['# Volcanoes and magma', '', 'Magma differs mostly in how much silica it holds.', '', ...PASSAGES.map(passage => passage.text), ''].join('\n\n');

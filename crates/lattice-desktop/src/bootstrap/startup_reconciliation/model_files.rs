@@ -10,8 +10,8 @@ use tracing::{info, warn};
 /// Count, on app startup, the model directories no model record names, and
 /// keep them.
 ///
-/// That no row names a directory is no evidence it is garbage: the model
-/// manager keeps the reranker here with no row of its own, and a restored
+/// That no row names a directory is no evidence it is garbage: the reranker
+/// lives here with no row of its own, and a restored
 /// backup or a migration can lose rows of models still on disk. Nothing this
 /// app records names a directory here as let go of (a deleted model's own
 /// delete removes its directory), so none is removed; freeing that space is a
@@ -76,12 +76,9 @@ mod tests {
 
     #[tokio::test]
     async fn orphan_cleanup_keeps_every_directory_no_record_names() {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(":memory:")
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
             .await
             .unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         let dir = tempfile::tempdir().unwrap();
         for id in ["pending", "installed", "orphan"] {
             std::fs::create_dir(dir.path().join(id)).unwrap();
@@ -137,12 +134,9 @@ mod tests {
 
     #[tokio::test]
     async fn orphan_cleanup_keeps_every_model_while_the_gate_is_shut() {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect(":memory:")
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
             .await
             .unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         let dir = tempfile::tempdir().unwrap();
         let orphan = dir.path().join("orphan");
         std::fs::create_dir(&orphan).unwrap();

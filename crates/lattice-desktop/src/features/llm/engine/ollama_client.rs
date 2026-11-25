@@ -31,7 +31,7 @@ use crate::features::llm::engine::types::{
 use crate::features::llm::engine::vision::{not_set_up_to_see, user_parts};
 use crate::features::llm::engine::GenerationConfig;
 use crate::features::llm::fitting::{Fitted, OutputLimits, Thinking};
-use crate::features::llm::scheduler::SchedulerRegistry;
+use crate::features::llm::scheduler::{ScheduledLlm, SchedulerRegistry};
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse, ContentPart, RemoteHeader,
     ServedTiming, ThinkingMode,
@@ -52,9 +52,6 @@ pub(crate) fn ollama_max_concurrency() -> usize {
         .filter(|value| *value > 0)
         .unwrap_or(DEFAULT_OLLAMA_MAX_CONCURRENCY)
 }
-
-/// A whole stream larger than this is not an answer.
-const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 
 /// Async HTTP client for one model on one Ollama server.
 pub struct OllamaClient {
@@ -90,7 +87,7 @@ impl OllamaClient {
     /// Behind the scheduler of this server's endpoint on `schedulers`.
     pub(crate) fn schedule(self, schedulers: &SchedulerRegistry) -> Arc<dyn LLMPort> {
         let scheduler = schedulers.ollama(&self.base_url, ollama_max_concurrency());
-        schedulers.front(Arc::new(self), scheduler, None)
+        Arc::new(ScheduledLlm::new(Arc::new(self), scheduler))
     }
 
     /// This client as a port, behind a scheduler of its own.
@@ -365,7 +362,7 @@ impl OllamaClient {
                 .map(|tool| OllamaTool::new(&tool.name, &tool.description, tool.parameters.clone()))
                 .collect()
         });
-        let sampling = request.sampling.unwrap_or_default();
+        let sampling = fitted.effective_sampling().unwrap_or_default();
         // Thinking is a template switch on Ollama as on llama.cpp, decided the
         // same way: the user's pin, or the request with tool rounds held off.
         let thinks = fitted.thinking().is_on();
@@ -408,8 +405,14 @@ impl OllamaClient {
         // `think: false` is sent every time thinking is off: Ollama rejects
         // only a truthy `think` on a model without thinking, and leaving it out
         // let Qwen 3.5 think by its template's default. Turned on, a level
-        // goes through for models that grade it (gpt-oss) and `true` otherwise.
-        let think = match (thinks, request.reasoning_effort.as_deref()) {
+        // goes through only when the request itself asked to think (so cloud
+        // `reasoning_effort` levels like `"low"` do not leak when thinking is
+        // pinned on), and `true` otherwise.
+        let effort = request
+            .reasoning_effort
+            .as_deref()
+            .filter(|_| request.thinking == ThinkingMode::On);
+        let think = match (thinks, effort) {
             (false, _) => serde_json::Value::Bool(false),
             (true, None | Some("none")) => serde_json::Value::Bool(true),
             (true, Some(effort @ ("low" | "medium" | "high"))) => {
@@ -476,19 +479,12 @@ impl OllamaClient {
             let mut bytes = response.bytes_stream();
             let mut answer = Answer::default();
             let mut buffer = Vec::new();
-            let mut received = 0usize;
             while !answer.done {
                 let next = tokio::time::timeout(self.stream_timeout, bytes.next())
                     .await
                     .map_err(|_| self.silent())?;
                 let Some(chunk) = next else { break };
                 let chunk = chunk.map_err(network_error)?;
-                received = received.saturating_add(chunk.len());
-                if received > MAX_RESPONSE_BYTES {
-                    return Err(AppError::InvalidState(
-                        "Ollama response exceeds size limit".into(),
-                    ));
-                }
                 buffer.extend_from_slice(&chunk);
                 // Lines are split at the byte level, so a character divided
                 // between two network chunks is decoded whole.

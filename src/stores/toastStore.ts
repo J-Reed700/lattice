@@ -47,6 +47,7 @@ interface ToastState {
 
 interface ToastActions {
   addToast: (toast: Omit<Toast, 'id' | 'createdAt'>) => string;
+  updateToast: (id: string, patch: Partial<Omit<Toast, 'id' | 'createdAt'>>) => void;
   dismissToast: (id: string) => void;
   dismissAll: () => void;
   updateConfig: (newConfig: Partial<ToastConfig>) => void;
@@ -70,6 +71,35 @@ function generateId(): string {
   return `toast-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
 
+function enforceMaxToasts(toasts: Toast[], maxToasts: number): { kept: Toast[]; removed: Toast[] } {
+  if (toasts.length <= maxToasts) {
+    return { kept: toasts, removed: [] };
+  }
+  // Never evict persistent toasts (duration === 0) such as conflict or write-error warnings.
+  let excess = toasts.length - maxToasts;
+  const removedIds = new Set<string>();
+  for (let i = toasts.length - 1; i >= 0 && excess > 0; i -= 1) {
+    const candidate = toasts[i];
+    if (candidate && candidate.duration !== 0) {
+      removedIds.add(candidate.id);
+      excess -= 1;
+    }
+  }
+  if (removedIds.size === 0) {
+    return { kept: toasts, removed: [] };
+  }
+  const kept: Toast[] = [];
+  const removed: Toast[] = [];
+  for (const item of toasts) {
+    if (removedIds.has(item.id)) {
+      removed.push(item);
+    } else {
+      kept.push(item);
+    }
+  }
+  return { kept, removed };
+}
+
 export const useToastStore = create<ToastStore>((set, get) => ({
   toasts: [],
   config: DEFAULT_CONFIG,
@@ -87,22 +117,16 @@ export const useToastStore = create<ToastStore>((set, get) => ({
     };
 
     set((state) => {
-      let updatedToasts = [newToast, ...state.toasts];
+      const { kept, removed } = enforceMaxToasts([newToast, ...state.toasts], config.maxToasts);
+      removed.forEach((t) => {
+        const entry = dismissTimers.get(t.id);
+        if (entry?.timer) {
+          clearTimeout(entry.timer);
+        }
+        dismissTimers.delete(t.id);
+      });
 
-      // Enforce max toasts limit
-      if (updatedToasts.length > config.maxToasts) {
-        const removed = updatedToasts.slice(config.maxToasts);
-        removed.forEach((t) => {
-          const entry = dismissTimers.get(t.id);
-          if (entry?.timer) {
-            clearTimeout(entry.timer);
-          }
-          dismissTimers.delete(t.id);
-        });
-        updatedToasts = updatedToasts.slice(0, config.maxToasts);
-      }
-
-      return { toasts: updatedToasts };
+      return { toasts: kept };
     });
 
     // Schedule auto-dismiss
@@ -120,6 +144,12 @@ export const useToastStore = create<ToastStore>((set, get) => ({
     }
 
     return id;
+  },
+
+  updateToast: (id: string, patch: Partial<Omit<Toast, 'id' | 'createdAt'>>) => {
+    set((state) => ({
+      toasts: state.toasts.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+    }));
   },
 
   dismissToast: (id: string) => {
@@ -148,6 +178,12 @@ export const useToastStore = create<ToastStore>((set, get) => ({
   },
 
   pauseToast: (id: string) => {
+    if (!get().toasts.some((item) => item.id === id)) {
+      const stale = dismissTimers.get(id);
+      if (stale?.timer) clearTimeout(stale.timer);
+      dismissTimers.delete(id);
+      return;
+    }
     const entry = dismissTimers.get(id);
     if (!entry || entry.paused) return;
     if (entry.timer) {
@@ -160,6 +196,12 @@ export const useToastStore = create<ToastStore>((set, get) => ({
   },
 
   resumeToast: (id: string) => {
+    if (!get().toasts.some((item) => item.id === id)) {
+      const stale = dismissTimers.get(id);
+      if (stale?.timer) clearTimeout(stale.timer);
+      dismissTimers.delete(id);
+      return;
+    }
     const entry = dismissTimers.get(id);
     if (!entry?.paused) return;
     if (entry.remaining <= 0) {

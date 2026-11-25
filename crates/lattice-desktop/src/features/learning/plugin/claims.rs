@@ -412,7 +412,7 @@ pub async fn attach_learning_claim_evidence(
         "Checking a statement against the evidence you added",
     )
     .await?;
-    let web = container.web();
+    let web = container.web_service();
     let snapshots = container.reference_snapshots();
     let library = container.library_passages();
     let claim_id = ClaimId(request.claim_id.clone());
@@ -468,7 +468,7 @@ pub async fn attach_learning_lesson_source(
         "Checking a lesson's statements against the source you added",
     )
     .await?;
-    let web = container.web();
+    let web = container.web_service();
     let snapshots = container.reference_snapshots();
     let library = container.library_passages();
     let progress = move |stage: ClaimAttachProgressDto| {

@@ -2,7 +2,6 @@
 //! answer step, a correction turn, a larger send.
 
 use super::GroundedRequest;
-use crate::application::ports::llm_port::SamplingOverride;
 use crate::application::services::grounded_generation::HistoryItem;
 
 impl GroundedRequest {
@@ -30,7 +29,6 @@ impl GroundedRequest {
                 content: draft.to_owned(),
             },
         ]);
-        answer.call.sampling = Some(SamplingOverride::deterministic());
         answer
     }
 
@@ -65,10 +63,18 @@ impl GroundedRequest {
         request
     }
 
-    /// This request with its output room multiplied by `factor`.
+    /// Tokens left free at the top of the window when filling it, so a follow-up
+    /// step carrying this reply still fits.
+    pub fn leaving_room(&self, tokens: usize) -> Self {
+        let mut request = self.clone();
+        request.output_headroom = tokens;
+        request
+    }
+
+    /// This request with its output room, the planner's default when none was set, multiplied by `factor`.
     pub fn larger(&self, factor: usize) -> Self {
         let mut larger = self.clone();
-        larger.output_tokens = self.output_tokens.saturating_mul(factor);
+        larger.output_scale = self.output_scale.saturating_mul(factor);
         larger
     }
 }

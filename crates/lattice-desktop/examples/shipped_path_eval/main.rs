@@ -29,11 +29,16 @@
 //! `OUT_JSONL.calls.jsonl` (every model request verbatim) and
 //! `OUT_JSONL.run.json` (recipe, hashes, server properties, settings, index
 //! statistics). `scripts/shipped_path_eval.py` scores the rows.
+//!
+//! `--rescore ROWS_JSONL OUT_JSONL` writes saved rows again with each turn's
+//! reply pieces, read from its answer by the app's own parser (rows written
+//! since the chat cites `[sN]`), and copies `ROWS_JSONL.run.json` beside them.
 
 mod app;
 mod proxy;
 mod recipe;
 mod record;
+mod reply;
 
 use lattice::features::conversation::chat::headless::run_headless_turn;
 use lattice::features::conversation::chat::{ChatEventSink, ChatResponse, ChatStreamEventDto};
@@ -87,7 +92,58 @@ fn parse_args() -> Res<Args> {
     })
 }
 
+/// `--rescore ROWS_JSONL OUT_JSONL`: saved rows again, each turn given the
+/// pieces the chat draws its answer from, for rows written before turns kept them.
+fn rescore_files() -> Res<Option<(PathBuf, PathBuf)>> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.as_slice() {
+        [flag, rows, out] if flag == "--rescore" => Ok(Some((rows.into(), out.into()))),
+        [flag, ..] if flag == "--rescore" => {
+            Err("usage: shipped_path_eval --rescore ROWS_JSONL OUT_JSONL".into())
+        }
+        _ => Ok(None),
+    }
+}
+
+fn rescore(rows: &Path, out: &Path) -> Res<()> {
+    if out.exists() {
+        return Err(format!("{} exists; rescoring never overwrites rows", out.display()).into());
+    }
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let mut written = Vec::new();
+    for line in std::fs::read_to_string(rows)?
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+    {
+        let mut row: Value = serde_json::from_str(line)?;
+        runtime.block_on(reply::rescore_row(&mut row))?;
+        if let Some(row) = row.as_object_mut() {
+            row.insert("schema".into(), json!(record::SCHEMA));
+        }
+        written.push(serde_json::to_string(&row)?);
+    }
+    std::fs::write(out, written.join("\n") + "\n")?;
+    let run = with_suffix(rows, ".run.json");
+    if run.exists() {
+        let mut manifest: Value = serde_json::from_str(&std::fs::read_to_string(&run)?)?;
+        if let Some(manifest) = manifest.as_object_mut() {
+            manifest.insert("rescored_from".into(), json!(rows.display().to_string()));
+        }
+        std::fs::write(
+            with_suffix(out, ".run.json"),
+            serde_json::to_string_pretty(&manifest)?,
+        )?;
+    }
+    eprintln!("rescored {} rows into {}", written.len(), out.display());
+    Ok(())
+}
+
 fn main() -> Res<()> {
+    if let Some((rows, out)) = rescore_files()? {
+        return rescore(&rows, &out);
+    }
     let args = parse_args()?;
     if args.out.exists() {
         return Err(format!("{} exists; runs never overwrite", args.out.display()).into());
@@ -113,10 +169,7 @@ fn main() -> Res<()> {
         )
         .with_writer(std::io::stderr)
         .init();
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .thread_stack_size(8 * 1024 * 1024)
-        .build()?;
+    let runtime = lattice::bootstrap::async_runtime::install()?;
     let result = runtime.block_on(run(&args, &real_home, workdir.path()));
     if args.keep_data {
         let kept = workdir.keep();
@@ -126,6 +179,9 @@ fn main() -> Res<()> {
 }
 
 fn repo_root() -> PathBuf {
+    if let Some(root) = std::env::var_os("LATTICE_EVAL_REPO_ROOT") {
+        return PathBuf::from(root);
+    }
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(2)
@@ -156,38 +212,6 @@ fn git(args: &[&str]) -> Option<String> {
         .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
-/// The server must be the one the recipe describes: a different window or
-/// slot count changes the turn budget and the cache behaviour under test.
-async fn probe_server(server: &recipe::Server) -> Res<Value> {
-    let url = server.url.trim_end_matches('/');
-    let mut probe = lattice_core::shared::http::reqwest_client_builder()
-        .build()?
-        .get(format!("{url}/props"));
-    if let Some((name, value)) = proxy::server_auth() {
-        probe = probe.header(name, value);
-    }
-    let props: Value = probe.send().await?.error_for_status()?.json().await?;
-    let n_ctx = props
-        .pointer("/default_generation_settings/n_ctx")
-        .or_else(|| props.get("n_ctx"))
-        .and_then(Value::as_u64);
-    let slots = props.get("total_slots").and_then(Value::as_u64);
-    if n_ctx != Some(server.expected_ctx) || slots != Some(server.expected_slots) {
-        return Err(format!(
-            "server reports n_ctx {n_ctx:?} and {slots:?} slots; the recipe expects {} and {}",
-            server.expected_ctx, server.expected_slots
-        )
-        .into());
-    }
-    Ok(json!({
-        "n_ctx": n_ctx,
-        "total_slots": slots,
-        "model_path": props.get("model_path"),
-        "build_info": props.get("build_info"),
-        "modalities": props.get("modalities"),
-    }))
-}
-
 async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
     let root = repo_root();
     let recipe = recipe::Recipe::load(&args.recipe)?;
@@ -213,6 +237,11 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
         }
     }
 
+    let reported_ctx = recipe.reported_ctx()?;
+    // A cloud provider's key is the desktop's own; only a llama-server's
+    // header is the proxy's to add.
+    let auth = recipe.server.as_ref().and_then(|_| proxy::server_auth());
+
     // What answers, recorded with the run so a result is never read against
     // another model's: local weights by their hash and the server's own
     // report, a cloud model by provider and the id requested (the id each
@@ -234,12 +263,11 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
                 (None, None) => None,
                 _ => return Err("a recipe gives a server's gguf and gguf_sha256 together".into()),
             };
-            (
-                gguf_sha256,
-                probe_server(server).await?,
-                server.url.clone(),
-                None,
-            )
+            let mut probe = server.probe(auth.as_ref()).await?;
+            if let Some(object) = probe.as_object_mut() {
+                object.insert("reported_n_ctx".into(), json!(reported_ctx));
+            }
+            (gguf_sha256, probe, server.url.clone(), None)
         }
         recipe::Answerer::Cloud(cloud) => {
             let (upstream, variable) = cloud.upstream()?;
@@ -249,16 +277,20 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
     };
 
     let recorder = proxy::Recorder::new();
-    // A cloud provider's key is the desktop's own; only a llama-server's
-    // header is the proxy's to add.
-    let auth = recipe.server.as_ref().and_then(|_| proxy::server_auth());
     let proxy_url = proxy::start(
         upstream,
         recipe.thinking_off()?,
+        reported_ctx,
         auth,
         Arc::clone(&recorder),
     )
     .await?;
+    if let (Some(n), Some(server)) = (reported_ctx, &recipe.server) {
+        eprintln!(
+            "the app is shown a window of {n} tokens; the server has {}",
+            server.expected_ctx
+        );
+    }
     if let Some(variable) = base_url_variable {
         // Read when the desktop builds its cloud client, so every request of
         // the run crosses the proxy and is recorded.
@@ -269,9 +301,7 @@ async fn run(args: &Args, real_home: &Path, workdir: &Path) -> Res<()> {
 
     let data_dir = workdir.join("app-data");
     std::fs::create_dir_all(&data_dir)?;
-    let container =
-        lattice::interfaces::di::headless::open(&data_dir, &settings, reranker_gguf.as_deref())
-            .await?;
+    let container = app::open(&data_dir, &settings, reranker_gguf.as_deref()).await?;
     eprintln!("activating {}", embedding_gguf.display());
     let embedding =
         app::activate_embedding(&container, &embedding_gguf, &recipe.embedding_model_id).await?;
@@ -539,6 +569,7 @@ fn outcome_of<'a>(
         ask,
         conversation_id: response.map(|r| r.conversation_id.as_str()),
         answer: response.map(|r| r.message.as_str()),
+        reply: response.map_or_else(|| json!([]), |r| reply::shown(&r.messages)),
         error,
         answered_ms,
         verification_wait_ms,

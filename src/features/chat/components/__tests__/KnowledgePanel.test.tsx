@@ -21,15 +21,29 @@ function setup(items:KnowledgeItemDto[] = []) {
   render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false},mutations:{retry:false}}})}><KnowledgePanel conversationId="one" /></QueryClientProvider>);
   return userEvent.setup();
 }
-beforeEach(()=>vi.clearAllMocks());
-describe('saved knowledge controls',()=>{
-  it('saves the exact authored text with an explicit scope and kind',async()=>{
-    const user=setup();
-    await user.type(screen.getByLabelText('Memory text'),'Never publish before approval.');
-    await user.selectOptions(screen.getByLabelText('Memory scope'),'personal');
-    await user.selectOptions(screen.getByLabelText('Memory type'),'constraint');
-    await user.click(screen.getByRole('button',{name:'Remember'}));
-    await waitFor(()=>expect(manageKnowledge).toHaveBeenCalledWith(expect.objectContaining({action:'remember',conversationId:'one',text:'Never publish before approval.',scope:'personal',kind:'constraint'})));
+beforeEach(() => {
+  vi.clearAllMocks();
+  Element.prototype.scrollIntoView = vi.fn();
+  Element.prototype.hasPointerCapture = () => false;
+  Element.prototype.releasePointerCapture = vi.fn();
+});
+
+describe('saved knowledge controls', () => {
+  it('saves the exact authored text with an explicit scope and kind', async () => {
+    const user = setup();
+    await user.type(screen.getByLabelText('Memory text'), 'Never publish before approval.');
+    await user.click(screen.getByRole('combobox', { name: 'Memory scope' }));
+    await user.click(await screen.findByRole('option', { name: 'All conversations' }));
+    await user.click(screen.getByRole('combobox', { name: 'Memory type' }));
+    await user.click(await screen.findByRole('option', { name: 'Requirement' }));
+    await user.click(screen.getByRole('button', { name: 'Remember' }));
+    await waitFor(() => expect(manageKnowledge).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'remember',
+      conversationId: 'one',
+      text: 'Never publish before approval.',
+      scope: 'personal',
+      kind: 'constraint',
+    })));
   });
   it('shows evidence and actual latest-answer inclusion; corrections target the prior item',async()=>{
     const user=setup([fact]);

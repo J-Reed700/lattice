@@ -69,6 +69,40 @@ export async function fetchDownloadMap(api: ApiClient = VaultAPI): Promise<Map<s
   ]));
 }
 
+function mergeDownloadMap(
+  current: Map<string, DownloadStatus>,
+  fetched: Map<string, DownloadStatus>
+): Map<string, DownloadStatus> {
+  if (current.size === 0) return fetched;
+  const next = new Map(fetched);
+
+  for (const [key, existing] of current) {
+    const matchedEntry = next.has(key)
+      ? ([key, next.get(key)!] as [string, DownloadStatus])
+      : findByBackendId(next, existing.id);
+
+    if (!matchedEntry) {
+      next.set(key, existing);
+      continue;
+    }
+
+    const [matchedKey, fetchedRow] = matchedEntry;
+    const fetchedStatus = fetchedRow.state === 'Failed' ? 'error' : fetchedRow.state.toLowerCase();
+    const shouldKeepExisting =
+      isLateProgress(existing, fetchedStatus) ||
+      (existing.state === 'Downloading' &&
+        fetchedRow.state === 'Downloading' &&
+        existing.bytes_downloaded > fetchedRow.bytes_downloaded);
+
+    if (shouldKeepExisting) {
+      if (matchedKey !== key) next.delete(matchedKey);
+      next.set(key, existing);
+    }
+  }
+
+  return next;
+}
+
 function updateDownloadCache(
   queryClient: QueryClient,
   updater: (current: Map<string, DownloadStatus>) => Map<string, DownloadStatus>
@@ -111,6 +145,7 @@ export function applyDownloadSnapshot(
     if (isLateProgress(existingEntry?.[1], snapshot.status)) return current;
     const storeKey = existingEntry?.[0] ?? snapshot.id;
     next.set(storeKey, toDownloadStatus(snapshot.id, snapshot, {
+      modelId: snapshot.modelId ?? existingEntry?.[1]?.model_id ?? undefined,
       existing: existingEntry?.[1],
     }));
     return next;
@@ -139,6 +174,12 @@ export function applyDownloadSnapshot(
         : 0,
       etaSeconds: snapshot.aggregateEtaSeconds,
       status: file.status,
+      errorMessage:
+        file.status === 'error'
+          ? file.errorMessage !== undefined
+            ? file.errorMessage
+            : (existing?.error_message ?? null)
+          : null,
     };
     next.set(storeKey, toDownloadStatus(file.id, fileSnapshot, {
       modelId: snapshot.id,
@@ -162,20 +203,29 @@ const toDownloadStatus = (
   identity: SnapshotIdentity = {}
 ): DownloadStatus => {
   const now = new Date().toISOString();
-  const modelId = identity.modelId ?? identity.existing?.model_id;
-  const modelName = identity.modelName ?? identity.existing?.model_name ?? modelId ?? snapshot.filename;
+  const modelId = identity.modelId ?? snapshot.modelId ?? identity.existing?.model_id;
+  const modelName = identity.modelName
+    ?? identity.existing?.model_name
+    ?? snapshot.modelName
+    ?? modelId
+    ?? snapshot.filename;
   const isTerminal = ['completed', 'error', 'cancelled'].includes(snapshot.status);
   return {
     id,
     url: identity.existing?.url || snapshot.filename,
-    destination: identity.existing?.destination || snapshot.filename,
+    destination: snapshot.destination || identity.existing?.destination || snapshot.filename,
     state: toDownloadState(snapshot.status),
     bytes_downloaded: snapshot.bytesDownloaded,
     total_bytes: snapshot.totalBytes,
     bytes_per_second: snapshot.bytesPerSecond,
     percentage: snapshot.percentage,
     eta_seconds: snapshot.etaSeconds,
-    error_message: identity.existing?.error_message ?? null,
+    error_message:
+      snapshot.status === 'error'
+        ? snapshot.errorMessage !== undefined
+          ? snapshot.errorMessage
+          : (identity.existing?.error_message ?? null)
+        : null,
     retry_count: identity.existing?.retry_count ?? 0,
     created_at: identity.existing?.created_at ?? now,
     started_at: identity.existing?.started_at ?? null,
@@ -199,8 +249,10 @@ export function useDownloadsListener(): void {
     // session with no progress listener, and events that fire while the list
     // loads must not fall between the two.
     void (async () => {
+      let progressListener: (() => void) | null = null;
+      let failedListener: (() => void) | null = null;
       try {
-        const progressListener = await listenValidated(
+        progressListener = await listenValidated(
           TauriEventNames.Downloads.Event,
           EventSchemas.Downloads.StateSnapshot,
           (event: { payload: EventSchemas.Downloads.StateSnapshot }) => {
@@ -216,7 +268,7 @@ export function useDownloadsListener(): void {
             setListenerError('Invalid download event received from backend');
           }
         );
-        const failedListener = await listenValidated(
+        failedListener = await listenValidated(
           TauriEventNames.Downloads.Failed,
           EventSchemas.Downloads.Failed,
           (event: { payload: EventSchemas.Downloads.Failed }) => {
@@ -249,12 +301,21 @@ export function useDownloadsListener(): void {
           return;
         }
       } catch (error) {
+        progressListener?.();
+        failedListener?.();
         if (!mounted) return;
         console.error('[useDownloadsListener] Setup error:', error);
         setListenerError(error instanceof Error ? error.message : 'Failed to setup download listener');
       }
       try {
-        await queryClient.fetchQuery({ queryKey: DOWNLOADS_QUERY_KEY, queryFn: () => fetchDownloadMap(api) });
+        await queryClient.fetchQuery({
+          queryKey: DOWNLOADS_QUERY_KEY,
+          queryFn: async () => {
+            const fetched = await fetchDownloadMap(api);
+            const current = queryClient.getQueryData<Map<string, DownloadStatus>>(DOWNLOADS_QUERY_KEY);
+            return current ? mergeDownloadMap(current, fetched) : fetched;
+          },
+        });
       } catch (error) {
         if (!mounted) return;
         console.error('[useDownloadsListener] Initial download list failed:', error);

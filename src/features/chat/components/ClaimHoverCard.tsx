@@ -1,27 +1,14 @@
 import { CircleCheck, CircleDashed, CircleHelp, CircleX } from 'lucide-react';
-import { createPortal } from 'react-dom';
 
+import { SentenceHoverCard, type ClaimHover } from '@/features/reading/components/SentenceHoverCard';
 import type { ClaimVerdict, SourceWithMetadata } from '@/types/conversation';
 import { sanitizeFileName } from '@/utils/sanitize';
-
-
-export interface ClaimHover {
-  /** Index into the message's `claimVerdicts`. */
-  index: number;
-  /** Viewport rect of the line of the sentence under the pointer. */
-  rect: DOMRect;
-  /** Right edge of the answer's text column; the card stays left of it. */
-  maxRight: number;
-}
 
 interface ClaimHoverCardProps {
   hover: ClaimHover | null;
   verdict: ClaimVerdict | null;
   citationMap: Map<number, SourceWithMetadata>;
 }
-
-const CARD_WIDTH = 360;
-const GAP = 8;
 
 function headline(verdict: ClaimVerdict) {
   if (verdict.verdict === 'supported') {
@@ -78,23 +65,12 @@ export function ClaimHoverCard({ hover, verdict, citationMap }: ClaimHoverCardPr
   if (!hover || !verdict) return null;
 
   const { icon: Icon, tone, text } = headline(verdict);
-  // Inside the text column, so it never covers the margin note it lights up.
-  const rightLimit = Math.min(hover.maxRight, window.innerWidth - 12);
-  const left = Math.max(12, Math.min(hover.rect.left, rightLimit - CARD_WIDTH));
-  const placeAbove = hover.rect.top > 240;
-  const style = placeAbove
-    ? { left, bottom: window.innerHeight - hover.rect.top + GAP, width: CARD_WIDTH }
-    : { left, top: hover.rect.bottom + GAP, width: CARD_WIDTH };
   const cited = verdict.citationIds
     .map((id) => ({ id, source: citationMap.get(id) }))
     .filter((entry): entry is { id: number; source: SourceWithMetadata } => Boolean(entry.source));
 
-  return createPortal(
-    <div
-      role="tooltip"
-      style={style}
-      className="pointer-events-none fixed z-60 rounded-lg bg-surface-overlay p-3.5 shadow-lg animate-in fade-in-0 duration-fast"
-    >
+  return (
+    <SentenceHoverCard hover={hover}>
       <p className={`flex items-center gap-1.5 text-ui font-medium ${tone}`}>
         <Icon className="h-3.5 w-3.5 shrink-0" strokeWidth={1.8} aria-hidden="true" />
         {text}
@@ -129,7 +105,6 @@ export function ClaimHoverCard({ hover, verdict, citationMap }: ClaimHoverCardPr
           ))}
         </ul>
       ) : null}
-    </div>,
-    document.body,
+    </SentenceHoverCard>
   );
 }

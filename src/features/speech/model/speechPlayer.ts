@@ -94,9 +94,10 @@ export class SpeechPlayer {
     const session: Session = { sourceId, cancelled: false, nodes: [], endsAt: 0, allScheduled: false, caughtUp: true };
     this.session = session;
     this.publish({ sourceId, status: 'loading', error: null });
-    if (output.state === 'suspended') await output.resume();
 
     try {
+      await output.resume();
+      if (session.cancelled) return;
       for await (const piece of pieces) {
         while (!session.cancelled && session.endsAt - output.currentTime > LEAD_SECONDS) {
           await new Promise((resolve) => setTimeout(resolve, 500));
@@ -118,6 +119,9 @@ export class SpeechPlayer {
   private finishIfDone(session: Session) {
     if (!session.allScheduled || !session.caughtUp || this.session !== session) return;
     this.session = null;
+    if (this.output) {
+      void this.output.suspend();
+    }
     this.publish(IDLE);
   }
 
@@ -134,6 +138,12 @@ export class SpeechPlayer {
     node.onended = () => {
       session.caughtUp ||= session.nodes[session.nodes.length - 1] === node;
       session.nodes = session.nodes.filter((n) => n !== node);
+      try {
+        node.disconnect?.();
+      } catch {
+        // Already disconnected.
+      }
+      node.buffer = null;
       this.finishIfDone(session);
     };
     node.start(startAt);
@@ -176,10 +186,18 @@ export class SpeechPlayer {
       } catch {
         // Already stopped.
       }
+      try {
+        node.disconnect?.();
+      } catch {
+        // Already disconnected.
+      }
+      node.buffer = null;
     }
     session.nodes = [];
     this.session = null;
-    if (this.output?.state === 'suspended') void this.output.resume();
+    if (this.output) {
+      void this.output.suspend();
+    }
     this.publish(IDLE);
   }
 }

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -128,6 +128,7 @@ describe('SourcesTab', () => {
     vi.mocked(VaultAPI.getSettings).mockResolvedValue({ ok: true, data: makeAppSettings() });
     vi.mocked(VaultAPI.updateSettings).mockResolvedValue({ ok: true, data: makeAppSettings() });
     vi.mocked(VaultAPI.getSourcesStatus).mockResolvedValue({ ok: true, data: status() });
+    vi.mocked(VaultAPI.checkSourcingAddress).mockResolvedValue({ ok: true, data: true });
   });
 
   it('lists finders by group with their privacy line and why they are off', async () => {
@@ -150,7 +151,7 @@ describe('SourcesTab', () => {
 
     const field = await screen.findByLabelText('Brave Search key');
     await user.type(field, SECRET);
-    const row = field.closest('div') as HTMLElement;
+    const row = field.closest('.settings-row') as HTMLElement;
     await user.click(within(row).getByRole('button', { name: 'Save' }));
 
     await waitFor(() => expect(VaultAPI.saveSourceKey).toHaveBeenCalledWith('brave', SECRET));
@@ -171,7 +172,7 @@ describe('SourcesTab', () => {
     expect(screen.getByText('Marginalia works without it; a key raises its limits.')).toBeInTheDocument();
 
     await user.type(screen.getByLabelText('OpenAlex key'), SECRET);
-    const row = screen.getByLabelText('OpenAlex key').closest('div') as HTMLElement;
+    const row = screen.getByLabelText('OpenAlex key').closest('.settings-row') as HTMLElement;
     await user.click(within(row).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(VaultAPI.saveSourceKey).toHaveBeenCalledWith('openAlex', SECRET));
   });
@@ -182,7 +183,7 @@ describe('SourcesTab', () => {
     vi.mocked(VaultAPI.removeSourceKey).mockResolvedValue({ ok: true, data: status() });
     renderSourcesTab();
 
-    const row = (await screen.findByLabelText('Brave Search key')).closest('div') as HTMLElement;
+    const row = (await screen.findByLabelText('Brave Search key')).closest('.settings-row') as HTMLElement;
     expect(within(row).getByText('Key saved')).toBeInTheDocument();
     await user.click(within(row).getByRole('button', { name: 'Remove' }));
 
@@ -206,20 +207,26 @@ describe('SourcesTab', () => {
     await waitFor(() => expect(VaultAPI.getSourcesStatus).toHaveBeenCalledTimes(2));
   });
 
-  it('checks the SearXNG address before saving it', async () => {
+  it('checks the SearXNG address with the backend before saving it', async () => {
+    vi.mocked(VaultAPI.checkSourcingAddress).mockImplementation(async (_field, value) => ({
+      ok: true,
+      data: value === 'https://search.example.org',
+    }));
     const user = userEvent.setup();
     renderSourcesTab();
 
     const field = await screen.findByLabelText('Server address');
+    const save = within(field.closest('.settings-row') as HTMLElement).getByRole('button', { name: /save|clear/i });
     await user.type(field, 'search.example.org');
-    expect(screen.getByRole('alert')).toHaveTextContent(
+    expect(await screen.findByRole('alert')).toHaveTextContent(
       'Enter an address that starts with http:// or https://'
     );
-    const save = field.parentElement?.querySelector('button') as HTMLButtonElement;
+    expect(VaultAPI.checkSourcingAddress).toHaveBeenCalledWith('searxngUrl', 'search.example.org');
     expect(save).toBeDisabled();
 
     await user.clear(field);
     await user.type(field, 'https://search.example.org');
+    await waitFor(() => expect(save).toBeEnabled());
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     await user.click(save);
 
@@ -229,5 +236,61 @@ describe('SourcesTab', () => {
         updates: { searxngUrl: 'https://search.example.org' },
       })
     );
+  });
+
+  it('takes the backend’s answer on a contact', async () => {
+    vi.mocked(VaultAPI.checkSourcingAddress).mockImplementation(async (_field, value) => ({
+      ok: true,
+      data: value === 'https://mastodon.social/@x',
+    }));
+    const user = userEvent.setup();
+    renderSourcesTab();
+
+    const field = await screen.findByLabelText('Your email or web address');
+    const save = within(field.closest('.settings-row') as HTMLElement).getByRole('button', { name: /save|clear/i });
+    await user.type(field, 'a/b@x.org');
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Enter an email address, or a web address that starts with http:// or https://'
+    );
+    expect(VaultAPI.checkSourcingAddress).toHaveBeenCalledWith('contact', 'a/b@x.org');
+    expect(save).toBeDisabled();
+
+    await user.clear(field);
+    await user.type(field, 'https://mastodon.social/@x');
+    await waitFor(() => expect(save).toBeEnabled());
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    await user.click(save);
+
+    await waitFor(() =>
+      expect(VaultAPI.updateSettings).toHaveBeenCalledWith({
+        category: 'sourcing',
+        updates: { contact: 'https://mastodon.social/@x' },
+      })
+    );
+  });
+
+  it('keeps Save off until the backend has answered', async () => {
+    let answer: (accepted: boolean) => void = () => {};
+    vi.mocked(VaultAPI.checkSourcingAddress).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          answer = (accepted) => resolve({ ok: true, data: accepted });
+        })
+    );
+    const user = userEvent.setup();
+    renderSourcesTab();
+
+    const field = await screen.findByLabelText('Server address');
+    const save = within(field.closest('.settings-row') as HTMLElement).getByRole('button', { name: /save|clear/i });
+    await user.click(field);
+    await user.paste('https://search.example.org');
+    await waitFor(() =>
+      expect(VaultAPI.checkSourcingAddress).toHaveBeenCalledWith('searxngUrl', 'https://search.example.org')
+    );
+    expect(save).toBeDisabled();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+    await act(async () => answer(true));
+    await waitFor(() => expect(save).toBeEnabled());
   });
 });

@@ -173,12 +173,9 @@ mod tests {
     use sqlx::SqlitePool;
 
     async fn bulk_repository() -> (SqliteDocumentScope, SqlitePool, Vec<String>) {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
             .await
             .unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         let db = Database::new(pool.clone());
         let mut ids: Vec<_> = (0..1001).map(|index| format!("doc-{index}")).collect();
         ids.push("quoted\"; --\n雪".into());
@@ -327,12 +324,9 @@ mod tests {
     /// conversation the user deleted: its attachments stay.
     #[tokio::test]
     async fn a_conversation_row_gone_with_no_record_of_its_delete_orphans_nothing() {
-        let pool = sqlx::sqlite::SqlitePoolOptions::new()
-            .max_connections(1)
-            .connect("sqlite::memory:")
+        let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
             .await
             .unwrap();
-        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         sqlx::query(
             "INSERT INTO documents (id, file_path, file_name, size_bytes, modified_at, checksum, \
              owner_conversation_id) \

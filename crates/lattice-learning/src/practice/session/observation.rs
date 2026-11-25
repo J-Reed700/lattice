@@ -197,12 +197,15 @@ impl Observation {
             push_line(out, &format!("Last {noun}: none yet."));
             return Ok(());
         };
+        let status = match check.status {
+            CheckStatus::Passed if !check.scope.asks_for_verdict() => CaseStatus::Ran.label(),
+            status => status.label(),
+        };
         push_line(
             out,
             &format!(
-                "Last {noun}: {}, {}.",
-                kind.wording.scope_label(check.scope),
-                check.status.label()
+                "Last {noun}: {}, {status}.",
+                kind.wording.scope_label(check.scope)
             ),
         );
         for view in &check.cases {

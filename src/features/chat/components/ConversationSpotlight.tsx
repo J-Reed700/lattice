@@ -110,12 +110,12 @@ export function ConversationSpotlight({ isOpen, onClose }: ConversationSpotlight
         unstyled
         hideClose
         overlayClassName="fixed inset-0 z-50 bg-[hsl(var(--overlay))] data-[state=open]:animate-in data-[state=open]:duration-slow data-[state=open]:ease-out data-[state=closed]:animate-out data-[state=closed]:duration-base data-[state=closed]:ease-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0"
-        className="fixed left-1/2 top-[120px] z-50 w-[calc(100%-32px)] max-w-[640px] -translate-x-1/2 overflow-hidden rounded-lg border border-subtle bg-surface-raised shadow-md outline-hidden data-[state=open]:animate-in data-[state=open]:duration-slow data-[state=open]:ease-out data-[state=closed]:animate-out data-[state=closed]:duration-base data-[state=closed]:ease-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
+        className="fixed left-1/2 top-[120px] z-50 w-[calc(100%-32px)] max-w-[640px] -translate-x-1/2 overflow-hidden rounded-lg border border-border-subtle bg-surface-raised shadow-md outline-hidden data-[state=open]:animate-in data-[state=open]:duration-slow data-[state=open]:ease-out data-[state=closed]:animate-out data-[state=closed]:duration-base data-[state=closed]:ease-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
         aria-label="Conversation Spotlight"
       >
         <DialogTitle asChild><h2 className="sr-only">Search conversations and references</h2></DialogTitle>
 
-        <div className="flex items-center gap-3 border-b border-subtle px-4 py-3">
+        <div className="flex items-center gap-3 border-b border-border-subtle px-4 py-3">
           <Search className="h-4 w-4 text-[hsl(var(--text-muted))]" aria-hidden="true" />
           <input
             autoFocus

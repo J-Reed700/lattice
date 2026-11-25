@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MessageActions } from '@/features/chat/components/MessageActions';
 import { render } from '@/tests/renderWithQueryClient';
 
+vi.mock('@/features/model/hooks/useActiveModels', () => ({ useActiveModels: () => ({ activeModels: null }) }));
 vi.mock('@/features/model/hooks/useDownloadedModels', () => ({ useDownloadedModels: () => ({ downloadedModels: [] }) }));
 vi.mock('@/features/model/hooks/useLoadedModels', () => ({ useLoadedModels: () => [], degradedReasonFor: () => null }));
 
@@ -52,25 +53,27 @@ describe('MessageActions folding', () => {
     vi.useRealTimers();
   });
 
-  it('keeps every verb inline when the row has room, or no width yet', () => {
+  it('keeps primary verbs inline when the row has room, with secondary verbs in More', () => {
     rowWidth = 2000;
     const { unmount } = render(<MessageActions {...props()} role="assistant" isLastTurn />);
-    expect(screen.queryByRole('button', { name: 'More actions for this message' })).not.toBeInTheDocument();
-    expect(screen.getByText('Branch here')).toBeInTheDocument();
+    expect(screen.getByText('Copy')).toBeInTheDocument();
+    expect(screen.getByText('Reference')).toBeInTheDocument();
+    expect(screen.getByText('Regenerate')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'More actions for this message' })).toBeInTheDocument();
     unmount();
     rowWidth = 0;
     render(<MessageActions {...props()} role="assistant" isLastTurn />);
-    expect(screen.queryByRole('button', { name: 'More actions for this message' })).not.toBeInTheDocument();
+    expect(screen.getByText('Regenerate')).toBeInTheDocument();
   });
 
-  it('folds verbs into More in order when the row is narrow', () => {
+  it('folds extra primary verbs into More when the row is narrow', () => {
     rowWidth = 350;
     const handlers = props();
     render(<MessageActions {...handlers} role="assistant" isLastTurn />);
-    // copy + reference stay; branch, try-with, regenerate and delete fold.
+    // copy + reference + More fit (300px <= 350px); regenerate folds into More.
     expect(screen.getByText('Copy')).toBeInTheDocument();
     expect(screen.getByText('Reference')).toBeInTheDocument();
-    expect(screen.queryByText('Branch here')).not.toBeInTheDocument();
+    expect(screen.queryByText('Regenerate')).not.toBeInTheDocument();
     openMore();
     const items = within(menu()).getAllByRole('menuitem').map((item) => item.textContent);
     expect(items).toEqual(['Regenerate', 'Try with another model…', 'Branch here', 'Delete message']);
@@ -86,7 +89,7 @@ describe('MessageActions folding', () => {
     expect(handlers.onDelete).toHaveBeenCalled();
   });
 
-  it('opens the model picker from the folded try-with', () => {
+  it('opens the model picker from Try with another model in More', () => {
     rowWidth = 350;
     render(<MessageActions {...props()} role="assistant" isLastTurn />);
     openMore();
@@ -125,7 +128,7 @@ describe('MessageActions folding', () => {
     fireEvent.keyDown(menu(), { key: 'ArrowDown' });
   });
 
-  it('folds Edit and the reference toggle on a narrow question row', () => {
+  it('folds Edit on a narrow question row', () => {
     rowWidth = 150;
     const handlers = props();
     render(<MessageActions {...handlers} role="user" isLastTurn />);
@@ -144,23 +147,23 @@ describe('MessageActions folding', () => {
     expect(handlers.onBookmarkToggle).toHaveBeenCalled();
   });
 
-  it('unfolds when the row grows', () => {
+  it('unfolds primary verbs when the row grows', () => {
     rowWidth = 350;
     render(<MessageActions {...props()} role="assistant" isLastTurn />);
-    expect(screen.queryByText('Branch here')).not.toBeInTheDocument();
+    expect(screen.queryByText('Regenerate')).not.toBeInTheDocument();
     rowWidth = 2000;
     act(() => resize?.());
-    expect(screen.getByText('Branch here')).toBeInTheDocument();
+    expect(screen.getByText('Regenerate')).toBeInTheDocument();
   });
 
-  it('measures a verb that folded before it was drawn', () => {
-    rowWidth = 350;
+  it('measures a primary verb that folded before it was drawn', () => {
+    rowWidth = 150;
     const { rerender } = render(<MessageActions {...props()} role="assistant" isLastTurn={false} />);
-    // A new last turn adds verbs nobody has measured yet.
+    // With foldCount=1 already active, adding Regenerate puts it inside the folded slice before measurement.
     rerender(<MessageActions {...props()} role="assistant" isLastTurn />);
-    // Unfolded for one pass so the new verbs can be measured…
+    // Unfolded for one pass so it can be measured…
     expect(screen.getByText('Regenerate')).toBeInTheDocument();
-    // …then the observer's next pass folds them by their real widths.
+    // …then the observer's next pass folds it by its real width.
     act(() => resize?.());
     openMore();
     expect(within(menu()).getByRole('menuitem', { name: 'Regenerate' })).toBeInTheDocument();
@@ -183,13 +186,15 @@ describe('MessageActions inline verbs', () => {
     expect(screen.getByText('Copy')).toBeInTheDocument();
   });
 
-  it('runs each inline verb', () => {
+  it('runs each primary and More verb', () => {
     const handlers = props();
     const { unmount } = render(<MessageActions {...handlers} role="assistant" isLastTurn />);
     fireEvent.click(screen.getByRole('button', { name: 'Add to references' }));
     fireEvent.click(screen.getByRole('button', { name: 'Regenerate this answer' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Branch the conversation here' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Delete message' }));
+    openMore();
+    fireEvent.click(within(menu()).getByRole('menuitem', { name: 'Branch here' }));
+    openMore();
+    fireEvent.click(within(menu()).getByRole('menuitem', { name: 'Delete message' }));
     expect(handlers.onBookmarkToggle).toHaveBeenCalled();
     expect(handlers.onRegenerate).toHaveBeenCalled();
     expect(handlers.onBranch).toHaveBeenCalled();
@@ -200,10 +205,11 @@ describe('MessageActions inline verbs', () => {
     expect(handlers.onEdit).toHaveBeenCalled();
   });
 
-  it('picks another model for the answer', () => {
+  it('picks another model for the answer from More', () => {
     const handlers = props();
     render(<MessageActions {...handlers} role="assistant" isLastTurn />);
-    fireEvent.click(screen.getByRole('button', { name: 'Try this question with another model' }));
+    openMore();
+    fireEvent.click(within(menu()).getByRole('menuitem', { name: 'Try with another model…' }));
     expect(screen.getByRole('menu', { name: 'Answer again with' })).toBeInTheDocument();
   });
 });

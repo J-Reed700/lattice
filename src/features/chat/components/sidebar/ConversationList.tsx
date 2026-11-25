@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
-import { motion, useReducedMotion } from 'framer-motion';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   Archive,
   Check,
@@ -20,6 +20,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { flushSync } from 'react-dom';
 
 import { IconButton } from '@/components/ui/IconButton';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -56,7 +57,10 @@ interface ConversationListProps {
   /** The two ways out of a conversation. Mounted once, by the sidebar. */
   exportActions: ConversationExportActions;
 }
-const MENU_ITEM_CLASS = 'flex w-full items-center gap-2.5 rounded-sm px-2.5 py-2 text-left text-sm text-text-primary transition-colors duration-fast hover:bg-surface focus-visible:bg-surface focus-visible:outline-hidden disabled:cursor-not-allowed disabled:opacity-50';
+const MENU_ITEM_CLASS = 'flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-text-primary transition-colors duration-fast hover:bg-surface-sunken focus-visible:bg-surface-sunken focus-visible:outline-hidden disabled:cursor-not-allowed disabled:opacity-50';
+
+const scrollElementOf = (element: HTMLElement | null) =>
+  (element?.closest('.overflow-y-auto') as HTMLElement | null) ?? null;
 
 function lastMessageText(messages: ConversationMessage[] | undefined): string | undefined {
   const last = messages?.[messages.length - 1];
@@ -64,19 +68,16 @@ function lastMessageText(messages: ConversationMessage[] | undefined): string | 
 }
 
 export function ConversationList({ isJournalScope, isSelectionMode, selectedConversationIds, toggleConversationSelection, synthesis, exportActions }: ConversationListProps) {
-  const prefersReducedMotion = useReducedMotion();
-  const {
-    spaces,
-    conversations: allConversations,
-    activeConversationId,
-    isLoading,
-    selectConversation,
-    renameConversation,
-    deleteConversation,
-    setConversationSaved,
-    setConversationPinned,
-    setConversationArchived,
-  } = useConversationsStore();
+  const spaces = useConversationsStore((state) => state.spaces);
+  const allConversations = useConversationsStore((state) => state.conversations);
+  const activeConversationId = useConversationsStore((state) => state.activeConversationId);
+  const isLoading = useConversationsStore((state) => state.isLoading);
+  const selectConversation = useConversationsStore((state) => state.selectConversation);
+  const renameConversation = useConversationsStore((state) => state.renameConversation);
+  const deleteConversation = useConversationsStore((state) => state.deleteConversation);
+  const setConversationSaved = useConversationsStore((state) => state.setConversationSaved);
+  const setConversationPinned = useConversationsStore((state) => state.setConversationPinned);
+  const setConversationArchived = useConversationsStore((state) => state.setConversationArchived);
   // Bound chats live beside what they are bound to.
   const conversations = useMemo(
     () => allConversations.filter((conversation) => !isBoundChat(conversation)),
@@ -236,47 +237,100 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
     }
   };
 
-  return (<>
-    {isLoading && conversations.length === 0 ? (
-      <div className="flex h-32 items-center justify-center text-text-muted">
-        <Loader2 className="h-5 w-5 animate-spin" />
-      </div>
-    ) : conversations.length === 0 ? (
-      <p className="px-4 py-6 text-sm text-text-secondary">
-        {isJournalScope ? 'No entries yet.' : 'No conversations yet.'}
-      </p>
-    ) : (
-      <nav className="pb-2" role="navigation" aria-label="Conversations">
-        {journalConversationGroups.map((group) => (
-          <section key={group.key}>
-            {group.label && (
-              <p className="px-4 pb-1 pt-4 text-xs font-medium text-text-muted">
-                {group.label}
-              </p>
-            )}
-            <div>
-              {group.items.map((conversation) => {
-                const isActive = conversation.id === activeConversationId;
-                const isDeleting = deletingId === conversation.id;
-                const accent = conversation.spaceId
-                  ? spaceAccentById.get(conversation.spaceId) ?? null
-                  : null;
-                const conversationSpaceKind = conversation.spaceId
-                  ? (spaceKindById.get(conversation.spaceId) ?? 'standard')
-                  : 'standard';
-                const spaceLabel = conversation.spaceId
-                  ? `${spaceNameById.get(conversation.spaceId) ?? conversation.spaceId}${conversationSpaceKind === 'journal' ? ' · Journal' : ''
-                  }`
-                  : '';
-                const forkParent = forkLineage.get(conversation.id) ?? null;
-                const relativeTime = formatShortRelativeTime(conversation.updatedAt);
-                const metaLine = [spaceLabel, relativeTime].filter(Boolean).join(' · ');
-                const preview =
-                  conversation.lastMessagePreview
-                  ?? lastMessageText(conversation.messages)
-                  ?? '';
+  const navRef = useRef<HTMLElement>(null);
+  const VIRTUALIZATION_THRESHOLD = 50;
+  const shouldVirtualize = conversations.length > VIRTUALIZATION_THRESHOLD;
 
-                return (
+  type VirtualSidebarRow =
+    | { kind: 'header'; key: string; label: string }
+    | { kind: 'item'; key: string; conversation: (typeof conversations)[number] };
+
+  const flattenedRows = useMemo<VirtualSidebarRow[]>(() => {
+    if (!shouldVirtualize) return [];
+    const rows: VirtualSidebarRow[] = [];
+    for (const group of journalConversationGroups) {
+      if (group.label) {
+        rows.push({ kind: 'header', key: `header:${group.key}`, label: group.label });
+      }
+      for (const conversation of group.items) {
+        rows.push({ kind: 'item', key: conversation.id, conversation });
+      }
+    }
+    return rows;
+  }, [journalConversationGroups, shouldVirtualize]);
+
+  const estimateRowSize = (index: number) =>
+    flattenedRows[index]?.kind === 'header' ? 36 : 72;
+
+  const [listOffset, setListOffset] = useState(0);
+  useLayoutEffect(() => {
+    const nav = navRef.current;
+    const scroller = scrollElementOf(nav);
+    if (!shouldVirtualize || !nav || !scroller) return;
+    const offset = () =>
+      nav.getBoundingClientRect().top - scroller.getBoundingClientRect().top - scroller.clientTop + scroller.scrollTop;
+    setListOffset(offset());
+    if (typeof ResizeObserver === 'undefined') return;
+    const remeasure = () => flushSync(() => setListOffset(offset()));
+    const sizes = new ResizeObserver(remeasure);
+    const observeContentAbove = () => {
+      sizes.disconnect();
+      for (const child of scroller.children) {
+        if (child === nav) break;
+        sizes.observe(child, { box: 'border-box' });
+        if (child.contains(nav)) break;
+      }
+    };
+    const children = new MutationObserver(() => {
+      observeContentAbove();
+      remeasure();
+    });
+    observeContentAbove();
+    children.observe(scroller, { childList: true });
+    return () => {
+      children.disconnect();
+      sizes.disconnect();
+    };
+  }, [shouldVirtualize]);
+
+  const rowVirtualizer = useVirtualizer({
+    count: flattenedRows.length,
+    getScrollElement: () => scrollElementOf(navRef.current),
+    scrollMargin: listOffset,
+    getItemKey: (index) => flattenedRows[index]?.key ?? index,
+    estimateSize: estimateRowSize,
+    measureElement: (element) => {
+      const measured = element.getBoundingClientRect().height;
+      if (measured > 0) return measured;
+      const index = Number(element.getAttribute('data-index') ?? '0');
+      return estimateRowSize(Number.isNaN(index) ? 0 : index);
+    },
+    initialRect: { width: 280, height: 800 },
+    overscan: 10,
+  });
+
+  const renderConversationRow = (conversation: (typeof conversations)[number]) => {
+    const isActive = conversation.id === activeConversationId;
+    const isDeleting = deletingId === conversation.id;
+    const accent = conversation.spaceId
+      ? spaceAccentById.get(conversation.spaceId) ?? null
+      : null;
+    const conversationSpaceKind = conversation.spaceId
+      ? (spaceKindById.get(conversation.spaceId) ?? 'standard')
+      : 'standard';
+    const spaceLabel = conversation.spaceId
+      ? `${spaceNameById.get(conversation.spaceId) ?? conversation.spaceId}${conversationSpaceKind === 'journal' ? ' · Journal' : ''
+      }`
+      : '';
+    const forkParent = forkLineage.get(conversation.id) ?? null;
+    const relativeTime = formatShortRelativeTime(conversation.updatedAt);
+    const metaLine = [spaceLabel, relativeTime].filter(Boolean).join(' · ');
+    const preview =
+      conversation.lastMessagePreview
+      ?? lastMessageText(conversation.messages)
+      ?? '';
+
+    return (
                   <div
                     key={conversation.id}
                     onClick={handleAsyncEvent(async () => {
@@ -307,25 +361,12 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
                     })}
                     aria-label={`Select conversation: ${conversation.title}`}
                     aria-current={isActive ? 'page' : undefined}
-                    className={`group relative mx-2 w-[calc(100%-16px)] cursor-pointer rounded-lg px-2.5 py-2 text-left ${isActive ? 'bg-[hsl(var(--text-primary)/0.07)]' : 'row-hover'
-                      }`}
+                    className={`group relative mx-2 my-0.5 w-[calc(100%-16px)] cursor-pointer rounded-lg px-2.5 py-2 text-left transition-[background-color,box-shadow,color] duration-fast ${
+                      isActive
+                        ? 'bg-surface font-medium text-text-primary shadow-sm ring-1 ring-border-subtle dark:bg-surface-overlay'
+                        : 'row-hover'
+                    }`}
                   >
-                    {isActive && (
-                      prefersReducedMotion ? (
-                        <span
-                          className="absolute inset-y-2 left-0 w-[2.5px] rounded-full bg-accent"
-                          aria-hidden="true"
-                        />
-                      ) : (
-                        <motion.span
-                          layoutId="sidebar-active-bar"
-                          className="absolute inset-y-2 left-0 w-[2.5px] rounded-full bg-accent"
-                          aria-hidden="true"
-                          transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-                        />
-                      )
-                    )}
-
                     <div className="flex items-center gap-2">
                       {isSelectionMode && (
                         <input
@@ -453,7 +494,7 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
 
                     {!isSelectionMode && renamingConversationId !== conversation.id && (
                       <div
-                        className={`absolute right-2 top-1.5 rounded-sm bg-surface-raised transition-opacity duration-fast ${openActionsId === conversation.id ? 'opacity-100' : 'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100'}`}
+                        className={`absolute right-2 top-1.5 rounded-md bg-surface shadow-sm ring-1 ring-border-subtle transition-opacity duration-fast ${openActionsId === conversation.id ? 'opacity-100' : 'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100'}`}
                         onClick={(e) => e.stopPropagation()}
                       >
                         <Popover open={openActionsId === conversation.id} onOpenChange={(open) => setOpenActionsId(open ? conversation.id : null)}>
@@ -567,8 +608,66 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
                       </div>
                     )}
                   </div>
-                );
-              })}
+    );
+  };
+
+  return (<>
+    {isLoading && conversations.length === 0 ? (
+      <div className="flex h-32 items-center justify-center text-text-muted">
+        <Loader2 className="h-5 w-5 animate-spin" />
+      </div>
+    ) : conversations.length === 0 ? (
+      <p className="px-4 py-6 text-sm text-text-secondary">
+        {isJournalScope ? 'No entries yet.' : 'No conversations yet.'}
+      </p>
+    ) : shouldVirtualize ? (
+      <nav ref={navRef} className="pb-2" role="navigation" aria-label="Conversations">
+        <div
+          style={{
+            height: `${rowVirtualizer.getTotalSize()}px`,
+            position: 'relative',
+            width: '100%',
+          }}
+        >
+          {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+            const row = flattenedRows[virtualRow.index];
+            if (!row) return null;
+            return (
+              <div
+                key={virtualRow.key}
+                data-index={virtualRow.index}
+                ref={rowVirtualizer.measureElement}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  transform: `translateY(${virtualRow.start - rowVirtualizer.options.scrollMargin}px)`,
+                }}
+              >
+                {row.kind === 'header' ? (
+                  <p className="px-4 pb-1 pt-4 text-xs font-medium text-text-muted">
+                    {row.label}
+                  </p>
+                ) : (
+                  renderConversationRow(row.conversation)
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </nav>
+    ) : (
+      <nav ref={navRef} className="pb-2" role="navigation" aria-label="Conversations">
+        {journalConversationGroups.map((group) => (
+          <section key={group.key}>
+            {group.label && (
+              <p className="px-4 pb-1 pt-4 text-xs font-medium text-text-muted">
+                {group.label}
+              </p>
+            )}
+            <div>
+              {group.items.map((conversation) => renderConversationRow(conversation))}
             </div>
           </section>
         ))}

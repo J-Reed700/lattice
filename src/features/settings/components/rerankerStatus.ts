@@ -1,4 +1,6 @@
+import type { DownloadPhase } from '@/features/model/utils/downloadPhase';
 import type { RerankerStatusDto } from '@/lib/bindings';
+import type { AggregatedDownload, DownloadStatus } from '@/types/downloads';
 
 
 export function formatDownloadSize(bytes: number): string {
@@ -14,15 +16,22 @@ export function formatDownloadSize(bytes: number): string {
  */
 export function describeReranker(
   status: RerankerStatusDto | undefined,
-  downloadError?: Error | null
+  phase: DownloadPhase,
+  download?: DownloadStatus | AggregatedDownload | null
 ): string | undefined {
-  if (downloadError) {
-    return `Could not download the reranker: ${downloadError.message}`;
-  }
   if (!status) {
     return undefined;
   }
-  return status.installed
-    ? 'A cross-encoder rescores the shortlist before the answer is written.'
-    : 'Not downloaded yet, so results are not being reranked. A one-time download turns it on.';
+  if (phase === 'ready') {
+    return 'A cross-encoder rescores the shortlist before the answer is written.';
+  }
+  if (phase === 'live' || phase === 'finishing') {
+    return 'Reranking turns on when the download finishes.';
+  }
+  if (download?.state === 'Failed') {
+    return download.error_message
+      ? `Couldn't download the reranker: ${download.error_message}`
+      : "Couldn't download the reranker.";
+  }
+  return 'Not downloaded yet, so results are not being reranked. A one-time download turns it on.';
 }

@@ -15,10 +15,11 @@ pub async fn get_learning_course_plan(
         .map_err(ApiError::from)
 }
 
-/// Queues a course's topic plan: the body of `plan_learning_course`.
-pub(crate) async fn plan_course(
-    container: &Container,
+#[tauri::command]
+#[specta::specta]
+pub async fn plan_learning_course(
     request: PlanLearningCourseRequestDto,
+    container: State<'_, Container>,
 ) -> Result<CoursePlanViewDto, ApiError> {
     if let Some(id) = course_plan::queue(container.database(), &request.program_id)
         .await
@@ -29,15 +30,6 @@ pub(crate) async fn plan_course(
     course_plan::view(container.database(), &request.program_id)
         .await
         .map_err(ApiError::from)
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn plan_learning_course(
-    request: PlanLearningCourseRequestDto,
-    container: State<'_, Container>,
-) -> Result<CoursePlanViewDto, ApiError> {
-    plan_course(&container, request).await
 }
 
 #[tauri::command]

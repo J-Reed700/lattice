@@ -7,11 +7,13 @@
 //! override for a field that does not exist is an error rather than a silent
 //! no-op, so a renamed setting cannot quietly drop out of a recipe.
 
+use crate::proxy::{ask_server, window_of};
 use crate::Res;
 use lattice::features::conversation::chat::ToolPreferences;
 use lattice_core::application::contracts::settings::SettingsDto;
+use lattice_core::application::ports::llm_port::RemoteHeader;
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Deserialize)]
@@ -21,7 +23,7 @@ pub struct Recipe {
     pub corpus: String,
     /// A desktop-path question set (`items`) or a dataset (`queries`).
     pub questions: String,
-    /// The embedding model's GGUF, with its `tokenizer.json` beside it.
+    /// The embedding model's GGUF.
     pub embedding_gguf: String,
     pub embedding_model_id: String,
     /// The reranker's GGUF, served the way the app serves it. Without one the
@@ -71,10 +73,38 @@ pub struct Server {
     pub launch: Option<String>,
     pub expected_ctx: u64,
     pub expected_slots: u64,
+    /// The window the proxy reports to the desktop in `/props`, as a server
+    /// started with that window would. The server's own when absent.
+    #[serde(default)]
+    pub reported_ctx: Option<u64>,
     /// `"off"`: add `chat_template_kwargs.enable_thinking: false` to every
     /// request that does not choose for itself. `"as-sent"`: forward
     /// requests untouched.
     pub thinking: String,
+}
+
+impl Server {
+    /// The server must be the one the recipe describes: a different window or
+    /// slot count changes the turn budget and the cache behaviour under test.
+    pub async fn probe(&self, auth: Option<&RemoteHeader>) -> Res<Value> {
+        let props = ask_server(&self.url, reqwest::Method::GET, "/props", auth, None).await?;
+        let n_ctx = window_of(&props);
+        let slots = props.get("total_slots").and_then(Value::as_u64);
+        if n_ctx != Some(self.expected_ctx) || slots != Some(self.expected_slots) {
+            return Err(format!(
+                "server reports n_ctx {n_ctx:?} and {slots:?} slots; the recipe expects {} and {}",
+                self.expected_ctx, self.expected_slots
+            )
+            .into());
+        }
+        Ok(json!({
+            "n_ctx": n_ctx,
+            "total_slots": slots,
+            "model_path": props.get("model_path"),
+            "build_info": props.get("build_info"),
+            "modalities": props.get("modalities"),
+        }))
+    }
 }
 
 /// A model on a cloud provider's public API. The key is the one the desktop
@@ -173,6 +203,20 @@ impl Recipe {
         })
     }
 
+    pub fn reported_ctx(&self) -> Res<Option<u64>> {
+        let Answerer::Server(server) = self.answerer()? else {
+            return Ok(None);
+        };
+        match server.reported_ctx {
+            Some(window) if window == 0 || window > server.expected_ctx => Err(format!(
+                "server.reported_ctx {window} must be between 1 and expected_ctx {}",
+                server.expected_ctx
+            )
+            .into()),
+            window => Ok(window),
+        }
+    }
+
     pub fn thinking_off(&self) -> Res<bool> {
         let Answerer::Server(server) = self.answerer()? else {
             // A cloud request carries its own thinking setting, as sent.
@@ -187,12 +231,14 @@ impl Recipe {
         }
     }
 
-    /// The desktop composer's defaults (`useComposer.ts`): no switch forced
-    /// on, so the intent step decides whether the vault is searched.
+    /// The desktop composer's defaults (`useComposer.ts`) with strict source
+    /// grounding enabled so shipped-path RAG evals continue measuring strict
+    /// document faithfulness and abstention unless a recipe opts into hybrid.
     pub fn tool_preferences(&self) -> Res<ToolPreferences> {
         let value = self.tool_preferences.clone().unwrap_or_else(|| {
             serde_json::json!({
                 "knowledgeBase": false,
+                "strictSources": true,
                 "webSearch": false,
                 "deepResearchMode": false,
                 "followupMode": false,

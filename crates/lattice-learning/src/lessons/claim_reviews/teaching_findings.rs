@@ -21,14 +21,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::repository::blocks;
-use super::repository::teaching_findings::{
-    self as table, FindingWrite, HeldRow, Settle, StoredFinding,
-};
+use super::repository::teaching_findings::{self as table, FindingWrite, Settle, StoredFinding};
 use super::teaching_summary::{derive, passage_shown, sentence_of, Stored};
 use crate::persistence::now;
 use crate::review_findings::{
-    part_sha256, site_sha256, unit, FindingId, FindingKey, FindingKind, FindingSite, Held, Lineage,
-    ReviewFinding, SetAside, UnitId,
+    site_sha256, unit, FindingId, FindingKey, FindingKind, FindingSite, Held, ReviewFinding,
+    SetAside,
 };
 
 /// What raised a teaching finding.
@@ -164,60 +162,6 @@ fn site_of(site: &str, index: Option<i64>) -> Option<FindingSite> {
     }
 }
 
-/// Whether some part of the candidate's list that `site` is in has the text with `digest`.
-fn list_holds(candidate: &Value, site: FindingSite, digest: &str) -> bool {
-    let Some((list, _)) = site.array() else {
-        return false;
-    };
-    candidate
-        .get(list)
-        .and_then(Value::as_array)
-        .is_some_and(|parts| parts.iter().any(|part| part_sha256(part) == digest))
-}
-
-/// The unit a stored finding names: a row stored by its own id may name one,
-/// a row stored by place does not.
-fn row_unit(row: &HeldRow) -> Option<UnitId> {
-    (row.identity == "finding")
-        .then(|| FindingId::stored(row.finding_key.clone()).unit())
-        .flatten()
-}
-
-/// Whether a stored finding still holds for `candidate`: one naming its unit
-/// while some part of its list has the text it was found in, any other while
-/// the part at its place does.
-fn stands(row: &HeldRow, candidate: &Value) -> bool {
-    let Some(site) = site_of(&row.site, row.unit_index) else {
-        return false;
-    };
-    match row_unit(row) {
-        Some(_) => list_holds(candidate, site, &row.unit_sha256),
-        None => site_sha256(candidate, site) == row.unit_sha256,
-    }
-}
-
-/// The units of the stored findings that hold for `candidate`, each by its
-/// part's text.
-fn lineage_of(rows: &[HeldRow], candidate: &Value) -> Lineage {
-    let mut lineage = Lineage::default();
-    for row in rows.iter().filter(|row| stands(row, candidate)) {
-        if let Some(unit) = row_unit(row) {
-            lineage.seed(&row.unit_sha256, unit);
-        }
-    }
-    lineage
-}
-
-/// `finding` named by its unit in `candidate`, as the review named it or, when
-/// it has none, by `lineage`: the units of the stored findings that hold.
-fn named(lineage: &mut Lineage, candidate: &Value, finding: &ReviewFinding) -> ReviewFinding {
-    let mut one = vec![finding.clone()];
-    if finding.unit.is_none() {
-        lineage.place(candidate, &mut one);
-    }
-    one.pop().unwrap_or_else(|| finding.clone())
-}
-
 #[derive(Clone)]
 pub struct TeachingFindingsRepository {
     database: Database,
@@ -232,10 +176,7 @@ impl TeachingFindingsRepository {
     /// in: the machine does not repair these again.
     pub(crate) async fn held(&self, lesson_id: &str, candidate: &Value) -> Result<Held> {
         let rows = table::held_rows(&self.database, lesson_id).await?;
-        let mut held = Held {
-            lineage: lineage_of(&rows, candidate),
-            ..Held::default()
-        };
+        let mut held = Held::default();
         for row in &rows {
             let id = FindingId::stored(row.finding_key.clone());
             let number = (row.identity == "finding")
@@ -247,7 +188,7 @@ impl TeachingFindingsRepository {
             let Some(site) = site_of(&row.site, row.unit_index) else {
                 continue;
             };
-            if !stands(row, candidate) {
+            if site_sha256(candidate, site) != row.unit_sha256 {
                 continue;
             }
             if row.identity == "finding" {
@@ -284,13 +225,11 @@ impl TeachingFindingsRepository {
     }
 
     /// Record findings for `candidate`. A finding kept as written stays kept
-    /// while the text it was stored with stands; otherwise it waits again with
-    /// the latest note. A finding raised without its unit is named by the
-    /// units of the stored findings that stand, so it keeps its row. With
-    /// `replace`, the findings not raised again were fixed and go. A row
-    /// stored by place whose part's text is unchanged covers the findings of
-    /// its kind there; once the text changes it gives way to the findings'
-    /// own rows.
+    /// while its part's text is unchanged; otherwise it waits again with the
+    /// latest note. With `replace`, the findings not raised again were
+    /// fixed and go. A row stored by place whose part's text is unchanged
+    /// covers the findings of its kind there; once the text changes it gives
+    /// way to the findings' own rows.
     pub(crate) async fn record(
         &self,
         lesson_id: &str,
@@ -301,19 +240,14 @@ impl TeachingFindingsRepository {
     ) -> Result<()> {
         let mut tx = self.database.begin_write().await?;
         let at = now();
-        let rows = table::rows_on(&mut tx, lesson_id).await?;
-        let mut lineage = lineage_of(&rows, candidate);
+        let places = table::place_rows(&mut tx, lesson_id).await?;
         let mut stay: Vec<String> = Vec::new();
         let mut lapsed: Vec<String> = Vec::new();
         for SetAside { finding, repairs } in findings {
-            let finding = &named(&mut lineage, candidate, finding);
             let shown = unit(candidate, finding);
             let (site, index) = site_columns(finding.place().site);
-            let at_place = rows.iter().find(|row| {
-                row.identity == "place"
-                    && row.kind == finding.kind.as_str()
-                    && row.site == site
-                    && row.unit_index == index
+            let at_place = places.iter().find(|row| {
+                row.kind == finding.kind.as_str() && row.site == site && row.unit_index == index
             });
             if let Some(row) = at_place {
                 if row.unit_sha256 == shown.sha256 {
@@ -324,13 +258,8 @@ impl TeachingFindingsRepository {
             }
             let id = finding.id();
             stay.push(id.as_str().to_owned());
-            let standing = rows
-                .iter()
-                .find(|row| row.finding_key == id.as_str())
-                .is_some_and(|row| stands(row, candidate));
             let write = FindingWrite {
                 key: id.as_str(),
-                standing,
                 kind: finding.kind.as_str(),
                 site,
                 unit_index: index,

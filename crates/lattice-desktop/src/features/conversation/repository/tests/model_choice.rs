@@ -179,7 +179,10 @@ async fn columns(pool: &SqlitePool, table: &str) -> Vec<String> {
 
 #[tokio::test]
 async fn the_model_choice_migration_keeps_every_chat_and_drops_the_dead_model_columns() {
-    let pool = create_test_pool().await;
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect(":memory:")
+        .await
+        .unwrap();
     let _earlier = migrated_before_model_choice(&pool).await;
     for statement in [
         "INSERT INTO conversation_spaces (id, name, default_model_name) VALUES ('space-a', 'Research', 'qwen3:8b')",

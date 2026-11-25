@@ -20,7 +20,10 @@ const errorMessage = (error: unknown) => (error instanceof Error ? error.message
  * the selected space; saving writes them all at once.
  */
 export function useSpaceEditor() {
-  const { spaces, selectedSpaceId, setSelectedSpace, loadConversations } = useConversationsStore();
+  const spaces = useConversationsStore((state) => state.spaces);
+  const selectedSpaceId = useConversationsStore((state) => state.selectedSpaceId);
+  const setSelectedSpace = useConversationsStore((state) => state.setSelectedSpace);
+  const loadConversations = useConversationsStore((state) => state.loadConversations);
   const selectedSpace = spaces.find(space => space.id === selectedSpaceId) ?? null;
   const mutations = useSpaceMutations();
   const [isSpaceEditorOpen, setIsSpaceEditorOpen] = useState(false);
@@ -30,6 +33,7 @@ export function useSpaceEditor() {
   const [spaceAccentDraft, setSpaceAccentDraft] = useState('');
   const [spacePromptDraft, setSpacePromptDraft] = useState('');
   const [spaceKbDefault, setSpaceKbDefault] = useState(false);
+  const [spaceStrictSourcesDefault, setSpaceStrictSourcesDefault] = useState(false);
   const [spaceWebDefault, setSpaceWebDefault] = useState(false);
   const [spaceDeepResearchDefault, setSpaceDeepResearchDefault] = useState(false);
   useEffect(() => {
@@ -40,6 +44,7 @@ export function useSpaceEditor() {
       setSpaceAccentDraft('');
       setSpacePromptDraft('');
       setSpaceKbDefault(false);
+      setSpaceStrictSourcesDefault(false);
       setSpaceWebDefault(false);
       setSpaceDeepResearchDefault(false);
       return;
@@ -52,6 +57,7 @@ export function useSpaceEditor() {
     setSpaceAccentDraft(selectedSpace.accentColor ?? '');
     setSpacePromptDraft(selectedSpace.spacePrompt ?? '');
     setSpaceKbDefault(defaults.knowledgeBase);
+    setSpaceStrictSourcesDefault(defaults.strictSources);
     setSpaceWebDefault(defaults.webSearch);
     setSpaceDeepResearchDefault(defaults.deepResearchMode);
   }, [selectedSpace]);
@@ -71,6 +77,7 @@ export function useSpaceEditor() {
         spacePrompt: null,
         toolPreferencesJson: buildSpaceToolPreferencesJson({
           knowledgeBase: false,
+          strictSources: false,
           webSearch: false,
           deepResearchMode: false,
         }),
@@ -98,6 +105,7 @@ export function useSpaceEditor() {
         spacePrompt: spacePromptDraft.trim() ? spacePromptDraft.trim() : null,
         toolPreferencesJson: buildSpaceToolPreferencesJson({
           knowledgeBase: spaceKbDefault,
+          strictSources: spaceStrictSourcesDefault,
           webSearch: spaceWebDefault,
           deepResearchMode: spaceDeepResearchDefault,
         }),
@@ -167,6 +175,8 @@ export function useSpaceEditor() {
     setSpacePromptDraft,
     spaceKbDefault,
     setSpaceKbDefault,
+    spaceStrictSourcesDefault,
+    setSpaceStrictSourcesDefault,
     spaceWebDefault,
     setSpaceWebDefault,
     spaceDeepResearchDefault,

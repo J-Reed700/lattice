@@ -52,10 +52,21 @@ fn task(sent: &Asked) -> Value {
 fn scripted(answer: impl Fn(&Value, usize) -> Vec<Value> + Send + Sync + 'static) -> ScriptedModel {
     let asked = AtomicUsize::new(0);
     ScriptedModel::new().on_request::<TeachingRepair>(move |sent, _| {
+        if sent.request.schema().is_none() {
+            return reply("Draft reasoning.".into());
+        }
         let earlier = asked.fetch_add(1, Ordering::SeqCst);
         let task = task_of(&sent.prompt()).unwrap_or(Value::Null);
         reply(json!({"entries": answer(&task, earlier)}).to_string())
     })
+}
+
+fn structured_sent(model: &ScriptedModel) -> Vec<Asked> {
+    model
+        .sent()
+        .into_iter()
+        .filter(|sent| sent.request.schema().is_some())
+        .collect()
 }
 
 fn edits(replace: Vec<Value>) -> Value {
@@ -234,7 +245,7 @@ async fn an_entry_outside_its_findings_part_is_asked_for_again_alone_and_then_ap
     assert_eq!(made.outcomes, [Outcome::Applied, Outcome::Applied]);
     assert_eq!(body_of(&made, 0), format!("{STOVE} The lid is shut."));
     assert_eq!(body_of(&made, 1), format!("{ROPE} The knot is loose."));
-    let sent = model.sent();
+    let sent = structured_sent(&model);
     assert_eq!(sent.len(), 2);
     assert_eq!(finding_labels(&task(&sent[1])).len(), 1);
     let again = sent[1].prompt();
@@ -616,8 +627,7 @@ fn findings_sharing_an_id_are_one_sent_that_reaches_every_part_of_theirs() {
 }
 
 #[test]
-fn a_planned_item_reaches_the_section_it_is_sited_at_and_a_finding_about_the_whole_material_reaches_anywhere(
-) {
+fn a_planned_item_and_a_finding_about_the_whole_material_reach_anywhere() {
     let planned = ReviewFinding::plan(
         crate::review_findings::PlanCheck::Planned,
         "action-1",
@@ -625,10 +635,7 @@ fn a_planned_item_reaches_the_section_it_is_sited_at_and_a_finding_about_the_who
         "Alpha holds the line.",
     );
     let whole = ReviewFinding::reviewer(0, None, "n");
-    assert_eq!(
-        Reach::of(&[&planned]),
-        Reach::Parts(vec!["/blocks/1".into()])
-    );
+    assert_eq!(Reach::of(&[&planned]), Reach::Anywhere);
     assert_eq!(Reach::of(&[&whole]), Reach::Anywhere);
     let own = at(FindingSite::Section(0), 1);
     assert_eq!(Reach::of(&[&own, &whole]), Reach::Anywhere);
@@ -708,7 +715,7 @@ async fn a_key_of_a_question_outside_the_findings_part_is_refused_by_the_reach()
     let made = mended(&model, &findings, Keeps::Anything, &quiz_material()).await?;
     assert_ne!(made.outcomes, [Outcome::Applied]);
     assert_eq!(made.candidate["questions"][1]["correctIndex"], json!(0));
-    let again = model.sent()[1].prompt();
+    let again = structured_sent(&model)[1].prompt();
     assert!(
         again.contains("outside this finding's part (/questions/0)"),
         "{again}"
@@ -766,61 +773,4 @@ fn a_flat_key_change_becomes_a_keys_item_for_the_first_sentence_of_the_right_opt
         key_item(&task, &json!({"path": "/questions/0/prompt"})),
         None
     );
-}
-
-fn contrast_material() -> Value {
-    let contrast = json!({"kind":"contrast","title":"Second","body":format!("{ROPE} {KNOT}"),"rubric":[],"sourceIndex":null,"quote":""});
-    json!({"blocks": [block("First", &format!("{STOVE} {LID}")), contrast], "questions": []})
-}
-
-fn planned_contrast_at_section_1() -> ReviewFinding {
-    ReviewFinding::plan(
-        crate::review_findings::PlanCheck::Planned,
-        "contrast",
-        FindingSite::Section(1),
-        "The lesson does not yet teach the contrast.",
-    )
-}
-
-#[tokio::test]
-async fn teaching_of_a_planned_contrast_written_into_an_explanation_is_refused() -> Result<()> {
-    let model = scripted(|task, _| {
-        let lid = label(task, "/blocks/0/body", LID);
-        vec![entry(
-            &finding_labels(task)[0],
-            "Add the contrast.",
-            edits(vec![replacing(&lid, "The lid is shut, unlike the rope.")]),
-        )]
-    });
-    let findings = [planned_contrast_at_section_1()];
-    let made = mended(&model, &findings, Keeps::Anything, &contrast_material()).await?;
-    assert_ne!(made.outcomes, [Outcome::Applied]);
-    assert_eq!(made.candidate, contrast_material());
-    let again = model.sent()[1].prompt();
-    assert!(
-        again.contains("outside this finding's part (/blocks/1)"),
-        "{again}"
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn teaching_of_a_planned_contrast_written_into_the_contrast_section_is_applied() -> Result<()>
-{
-    let model = scripted(|task, _| {
-        let knot = label(task, "/blocks/1/body", KNOT);
-        vec![entry(
-            &finding_labels(task)[0],
-            "Add the contrast.",
-            edits(vec![replacing(&knot, "The knot is tied, unlike the lid.")]),
-        )]
-    });
-    let findings = [planned_contrast_at_section_1()];
-    let made = mended(&model, &findings, Keeps::Anything, &contrast_material()).await?;
-    assert_eq!(made.outcomes, [Outcome::Applied]);
-    assert_eq!(
-        made.candidate["blocks"][1]["body"],
-        format!("{ROPE} The knot is tied, unlike the lid.")
-    );
-    Ok(())
 }

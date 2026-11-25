@@ -39,7 +39,7 @@
 //! | `LATTICE_EVAL_ENDPOINT` | provider base URL; llama.cpp usually ends in `/v1` | `http://127.0.0.1:11434` |
 //! | `LATTICE_EVAL_AUTH_HEADER_NAME` | optional header name for authenticated endpoints | unset |
 //! | `LATTICE_EVAL_AUTH_HEADER_VALUE` | optional header value; never written to traces | unset |
-//! | `LATTICE_EVAL_CONTEXT_TOKENS` | continuation-model window to budget against | `8192` |
+//! | `LATTICE_EVAL_CONTEXT_TOKENS` | the window both models present, in place of the server's own | `8192` |
 //! | `LATTICE_EVAL_REQUEST_TIMEOUT_SECS` | timeout for one provider attempt | `300` |
 //! | `LATTICE_EVAL_COMPACTION_DEADLINE_SECS` | total deadline for one compaction job | none: the run ends by cancellation, as in production |
 //! | `LATTICE_EVAL_PROVIDER_ATTEMPTS` | logical attempts for a transient provider failure or empty completion | `3` |
@@ -58,8 +58,11 @@
 //!
 //! # Traces
 //!
-//! Each run appends a JSONL trace — prompts, answers and per-item decisions —
-//! to `<log dir>/lattice-conversation-memory-evals-<pid>.jsonl`. That file
+//! Each run appends a JSONL trace to
+//! `<log dir>/lattice-conversation-memory-evals-<pid>.jsonl`: every model
+//! call's request (input items, offered tool names, output limit), its
+//! answer, and what the backend reported for it (tokens, finish reason,
+//! timing), plus per-item decisions. That file
 //! contains conversation text and **must never be committed**; the default
 //! location is the system temp dir precisely so it cannot be added by accident.
 //!
@@ -289,9 +292,11 @@ struct Fixture {
 
 impl Fixture {
     fn load(family: &str) -> Self {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join(FIXTURE_DIR)
-            .join(format!("{family}.json"));
+        let crate_dir = std::env::var_os("LATTICE_EVAL_REPO_ROOT").map_or_else(
+            || PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+            |root| PathBuf::from(root).join("crates/lattice-desktop"),
+        );
+        let path = crate_dir.join(FIXTURE_DIR).join(format!("{family}.json"));
         let raw = std::fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("fixture {} is missing: {error}", path.display()));
         serde_json::from_str(&raw)
@@ -374,7 +379,7 @@ for the full command.";
 /// Bump whenever scoring, corpus traversal, retry semantics, or trace meaning
 /// changes. A checkpoint from a different harness must never be mixed into a
 /// release result merely because it used the same model.
-const EVAL_HARNESS_VERSION: &str = "conversation-memory-eval/2026-10-21.1";
+const EVAL_HARNESS_VERSION: &str = "conversation-memory-eval/2026-11-17.1";
 
 impl EvalConfig {
     fn from_env() -> Self {
@@ -597,6 +602,8 @@ enum Fault {
 /// two behaviours an ablation needs to change.
 struct EvalLlm {
     inner: Arc<dyn LLMPort>,
+    /// The window the run is measured at, presented as the model's own.
+    window: usize,
     always_supported: bool,
     fault: Mutex<Fault>,
     stall_for: Duration,
@@ -609,6 +616,8 @@ struct EvalLlm {
 struct CallRecord {
     kind: &'static str,
     response: String,
+    request: serde_json::Value,
+    usage: serde_json::Value,
     tool_calls: Vec<String>,
     error: Option<String>,
     /// Operations the response proposed, for an extraction call. Counted here
@@ -624,6 +633,7 @@ struct CallRecord {
 impl EvalLlm {
     fn new(
         inner: Arc<dyn LLMPort>,
+        window: usize,
         always_supported: bool,
         stall_for: Duration,
         provider_attempts: usize,
@@ -631,6 +641,7 @@ impl EvalLlm {
     ) -> Self {
         Self {
             inner,
+            window,
             always_supported,
             fault: Mutex::new(Fault::None),
             stall_for,
@@ -648,9 +659,28 @@ impl EvalLlm {
         std::mem::take(&mut *self.calls.lock())
     }
 
+    fn request_record(request: &CompletionRequest) -> serde_json::Value {
+        serde_json::json!({
+            "input": request.input(),
+            "tools": request.tools().iter().map(|tool| tool.name.as_str()).collect::<Vec<_>>(),
+            "max_output_tokens": request.max_output_tokens(),
+        })
+    }
+
+    fn usage_record(response: &CompletionResponse) -> serde_json::Value {
+        serde_json::json!({
+            "input_tokens": response.input_tokens,
+            "output_tokens": response.output_tokens,
+            "finish_reason": response.finish_reason,
+            "timing": response.timing,
+        })
+    }
+
     fn record(
         &self,
         kind: &'static str,
+        request: serde_json::Value,
+        usage: serde_json::Value,
         text: &str,
         tool_calls: Vec<String>,
         elapsed: Duration,
@@ -666,6 +696,8 @@ impl EvalLlm {
         self.calls.lock().push(CallRecord {
             kind,
             response: text.to_owned(),
+            request,
+            usage,
             tool_calls,
             failed: error.is_some(),
             error,
@@ -803,12 +835,15 @@ impl LLMPort for EvalLlm {
             })
             .unwrap_or_default();
         let kind = Self::classify(&system);
+        let request_record = Self::request_record(request);
         let started = Instant::now();
         if let Some(intercepted) = self.intercept(kind, &user).await {
             return match intercepted {
                 Ok(text) => {
                     self.record(
                         kind,
+                        request_record,
+                        serde_json::Value::Null,
                         &text,
                         Vec::new(),
                         started.elapsed(),
@@ -824,6 +859,8 @@ impl LLMPort for EvalLlm {
                 Err(error) => {
                     self.record(
                         kind,
+                        request_record,
+                        serde_json::Value::Null,
                         "",
                         Vec::new(),
                         started.elapsed(),
@@ -859,6 +896,8 @@ impl LLMPort for EvalLlm {
                 };
                 self.record(
                     kind,
+                    request_record,
+                    serde_json::Value::Null,
                     "",
                     Vec::new(),
                     started.elapsed(),
@@ -884,6 +923,10 @@ impl LLMPort for EvalLlm {
             );
             self.record(
                 kind,
+                request_record,
+                outcome
+                    .as_ref()
+                    .map_or(serde_json::Value::Null, Self::usage_record),
                 outcome
                     .as_ref()
                     .map_or("", |response| response.text.as_str()),
@@ -903,7 +946,7 @@ impl LLMPort for EvalLlm {
     }
 
     fn max_context_tokens(&self) -> usize {
-        self.inner.max_context_tokens()
+        self.window
     }
 
     fn count_tokens(&self, text: &str) -> usize {
@@ -1047,7 +1090,14 @@ async fn eval_adapter_retries_an_empty_completion_and_records_the_recovery() {
         calls: AtomicUsize::new(0),
         empty_responses: 1,
     });
-    let adapter = EvalLlm::new(inner.clone(), false, Duration::ZERO, 3, Duration::ZERO);
+    let adapter = EvalLlm::new(
+        inner.clone(),
+        8192,
+        false,
+        Duration::ZERO,
+        3,
+        Duration::ZERO,
+    );
 
     let response = adapter
         .complete(&legacy::completion(legacy::Completion::default()))
@@ -1069,7 +1119,14 @@ async fn eval_adapter_reports_when_empty_completion_retries_are_exhausted() {
         calls: AtomicUsize::new(0),
         empty_responses: usize::MAX,
     });
-    let adapter = EvalLlm::new(inner.clone(), false, Duration::ZERO, 3, Duration::ZERO);
+    let adapter = EvalLlm::new(
+        inner.clone(),
+        8192,
+        false,
+        Duration::ZERO,
+        3,
+        Duration::ZERO,
+    );
 
     let error = adapter
         .complete(&legacy::completion(legacy::Completion::default()))
@@ -1092,6 +1149,7 @@ async fn continuation_can_use_two_tools_before_returning_its_final_answer() {
     });
     let adapter = Arc::new(EvalLlm::new(
         inner.clone(),
+        8192,
         false,
         Duration::ZERO,
         3,
@@ -1119,6 +1177,45 @@ async fn continuation_can_use_two_tools_before_returning_its_final_answer() {
     assert_eq!(calls[0].tool_calls, ["list_notes"]);
     assert_eq!(calls[1].tool_calls, ["read_note"]);
     assert!(calls[2].tool_calls.is_empty());
+}
+
+#[tokio::test]
+async fn a_server_with_a_larger_window_is_planned_for_at_the_eval_window() {
+    let server = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/props"))
+        .respond_with(
+            wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "total_slots": 1,
+                "default_generation_settings": {"n_ctx": 196_608}
+            })),
+        )
+        .mount(&server)
+        .await;
+    let config = EvalConfig {
+        provider: EvalProvider::LlamaCpp,
+        utility_model: "served.gguf".into(),
+        continuation_model: "served.gguf".into(),
+        endpoint: format!("{}/v1", server.uri()),
+        auth_header_name: String::new(),
+        auth_header_value: String::new(),
+        context_tokens: 16_384,
+        request_timeout: Duration::from_secs(5),
+        compaction_deadline: None,
+        provider_attempts: 1,
+        retry_base_delay: Duration::ZERO,
+        runs: 1,
+        concurrency: 1,
+        max_cycles: None,
+        log_dir: std::env::temp_dir(),
+        resume_trace: None,
+        resume_metrics: Arc::new(HashMap::new()),
+    };
+
+    let models = build_models(&config, Arm::BoundedMemory).await;
+
+    assert_eq!(models.continuation.max_context_tokens(), 16_384);
+    assert_eq!(models.utility.max_context_tokens(), 16_384);
 }
 
 #[test]
@@ -1757,11 +1854,10 @@ impl Harness {
     async fn open() -> Self {
         let dir = tempfile::tempdir().expect("temp dir");
         let db_path = dir.path().join("evals.db");
-        let pool = Self::connect(&db_path).await;
-        sqlx::migrate!("./migrations")
-            .run(&pool)
+        lattice_core::shared::testing::sqlite::write_migrated(&db_path)
             .await
-            .expect("migrations");
+            .expect("migrated database");
+        let pool = Self::connect(&db_path).await;
         sqlx::query("PRAGMA foreign_keys = ON")
             .execute(&pool)
             .await
@@ -1900,7 +1996,7 @@ fn recoverable_failure_events(job_failed: bool, calls: &[CallRecord]) -> usize {
 }
 
 fn contains_marker(answer: &str, markers: &[String]) -> bool {
-    let lowered = answer.to_lowercase();
+    let lowered = answer.to_lowercase().replace('\u{2019}', "'");
     markers
         .iter()
         .any(|marker| lowered.contains(&marker.to_lowercase()))
@@ -1990,6 +2086,8 @@ fn call_record(kind: &'static str, failed: bool) -> CallRecord {
     CallRecord {
         kind,
         response: String::new(),
+        request: serde_json::Value::Null,
+        usage: serde_json::Value::Null,
         tool_calls: Vec::new(),
         error: failed.then(|| "provider error".to_string()),
         operations: 0,
@@ -2079,6 +2177,27 @@ fn a_refusal_phrased_as_your_ok_did_not_establish_it_counts_as_an_honest_abstent
     ));
 }
 
+/// The 27B's answer of 2026-11-06, right by reading: it writes a curly apostrophe.
+#[test]
+fn a_refusal_with_a_curly_apostrophe_counts_as_an_honest_abstention() {
+    let fixture = Fixture::load("assistant_stated_constraint");
+    let refusal = "No. In this conversation you only set the rule that \u{201c}every export must \
+                   include the licence column.\u{201d} The 500-row cap came from me; your reply \
+                   was just \u{201c}ok,\u{201d} which is an acknowledgement, not a stated limit of \
+                   your own. So I can\u{2019}t establish that you ever set a row limit.";
+    assert!(contains_marker(refusal, &fixture.expect.abstain_markers));
+}
+
+/// The 27B's answer in the release baseline of 2026-11-06, right by reading.
+#[test]
+fn a_refusal_phrased_as_not_set_yet_counts_as_an_honest_abstention() {
+    let fixture = Fixture::load("missing_fact");
+    let refusal =
+        "Not set yet \u{2014} it was one of the two items I asked you for earlier (along \
+                   with a named rollout owner), and neither has been provided since.";
+    assert!(contains_marker(refusal, &fixture.expect.abstain_markers));
+}
+
 #[test]
 fn an_invented_rollout_owner_does_not_count_as_an_honest_abstention() {
     let fixture = Fixture::load("missing_fact");
@@ -2145,6 +2264,7 @@ async fn build_models(config: &EvalConfig, arm: Arm) -> Models {
     let utility_inner = build_port(config, &config.utility_model).await;
     let continuation = Arc::new(EvalLlm::new(
         build_port(config, &config.continuation_model).await,
+        config.context_tokens,
         false,
         Duration::from_secs(4),
         config.provider_attempts,
@@ -2153,6 +2273,7 @@ async fn build_models(config: &EvalConfig, arm: Arm) -> Models {
     Models {
         utility: Arc::new(EvalLlm::new(
             utility_inner,
+            config.context_tokens,
             arm == Arm::NoSemanticReviewer,
             Duration::from_secs(4),
             config.provider_attempts,
@@ -2380,6 +2501,8 @@ async fn run_once(
                         "attempts": call.attempts,
                         "retry_reasons": &call.retry_reasons,
                         "response": call.response,
+                        "request": call.request,
+                        "usage": call.usage,
                     }),
                 );
                 metrics.provider_retries += call.attempts.saturating_sub(1);
@@ -2688,6 +2811,8 @@ async fn run_once(
                     "attempts": call.attempts,
                     "retry_reasons": &call.retry_reasons,
                     "response": call.response,
+                    "request": call.request,
+                    "usage": call.usage,
                     "tool_calls": call.tool_calls,
                 }),
             );

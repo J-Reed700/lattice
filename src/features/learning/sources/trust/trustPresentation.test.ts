@@ -71,7 +71,7 @@ describe('trust presentation', () => {
     });
     const claim = (levels: Array<'primary' | 'established' | null>): LearningClaimEvidenceDto => ({
       sectionIndex: 0, contentQuote: 'q', claim: 'c', verdict: 'supported', reason: 'r', supportingQuote: null,
-      passages: levels.map(passage), resolution: 'verified', note: null, sufficiency: null,
+      passages: levels.map(passage), resolution: 'verified', note: null, sufficiency: null, cites: [],
     });
     expect(verifiedByLevel([claim(['primary', 'established']), claim(['primary']), claim(['established']), claim([null])])).toEqual([
       '2 statements verified against primary sources', '1 against established sources', '1 against sources not weighed for standing',

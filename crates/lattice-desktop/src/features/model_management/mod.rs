@@ -28,7 +28,6 @@ pub mod domain;
 pub mod header_source;
 pub mod huggingface_adapter;
 pub mod machine_probe;
-pub mod model_manager;
 pub mod plugin;
 pub mod recommend;
 mod repository;

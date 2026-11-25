@@ -68,6 +68,8 @@ interface TurnRecordProps {
   isWriting: boolean;
   /** For "4 of 5 claims backed". */
   verification: MessageVerificationSummary | null;
+  /** Originating conversation ID (tangent-aware) for web snapshots opened from ResearchDeck. */
+  conversationId?: string | null;
 }
 
 export function TurnRecord({
@@ -79,6 +81,7 @@ export function TurnRecord({
   isPending,
   isWriting,
   verification,
+  conversationId = null,
 }: TurnRecordProps) {
   const steps = (isPending ? liveSteps : record?.steps) ?? record?.steps ?? [];
   // Pages are read side by side, so several steps run at once; the newest is
@@ -141,7 +144,7 @@ export function TurnRecord({
           {/* Cards float; a sunken box around them would pin them back down. */}
           <div className="turn-record-body" data-deck={hasWebResearch(steps)}>
             <TurnNote trace={trace} />
-            <ResearchDeck steps={steps} live={isPending} />
+            <ResearchDeck steps={steps} live={isPending} conversationId={conversationId} />
             {record?.router?.rationale && (
               <p className="turn-record-rationale">
                 Routed as {routerActionLabel(record.router.action)} —{' '}
@@ -323,6 +326,7 @@ const ORIGIN_LABELS: Record<NonNullable<TurnModel['origin']>, string> = {
   chat_override: 'chosen for this chat',
   request_override: 'one-off',
   learning_role: 'Learning model',
+  verifier_role: 'Verifier model',
 };
 
 /** "4 of 5 claims backed", or nothing when nothing was checked. */

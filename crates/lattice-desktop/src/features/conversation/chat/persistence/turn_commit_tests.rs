@@ -12,8 +12,9 @@ async fn service_with_pending_question() -> (
     String,
     String,
 ) {
-    let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    let pool = lattice_core::shared::testing::sqlite::migrated_in_memory()
+        .await
+        .unwrap();
     let service: Arc<dyn ConversationServiceTrait> = Arc::new(ConversationService::new(Arc::new(
         ConversationRepository::new(Database::new(pool.clone())),
     )));
@@ -383,4 +384,115 @@ async fn a_question_claims_its_staged_pictures() {
     assert_eq!(metadata["images"][0]["id"], picture.id.as_str());
     assert_eq!(metadata["images"][0]["originalName"], "shot-1.png");
     assert_eq!(metadata["picturesSeen"], false);
+}
+
+#[tokio::test]
+async fn mark_user_message_failed_with_reason_preserves_request_id_and_records_error() {
+    let (service, pool, id, _user_id) = service_with_pending_question().await;
+    let user = service
+        .add_message_with_metadata(
+            &id,
+            MessageRole::User,
+            "second".into(),
+            1,
+            "pending".into(),
+            Some(r#"{"requestId":"req-err-1"}"#.into()),
+        )
+        .await
+        .unwrap();
+
+    mark_user_message_failed_with_reason(&service, &user.id, Some("Model quota exceeded")).await;
+
+    assert_eq!(status_of(&pool, &user.id).await, "failed");
+    let raw: String = sqlx::query_scalar("SELECT metadata FROM conversation_messages WHERE id=?")
+        .bind(&user.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let metadata: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(metadata["requestId"], "req-err-1");
+    assert_eq!(metadata["error"], "Model quota exceeded");
+}
+
+#[tokio::test]
+async fn cancelled_turn_marks_user_failed_with_cancelled_metadata() {
+    let (service, pool, id, _user_id) = service_with_pending_question().await;
+    let zero_user = service
+        .add_message_with_metadata(
+            &id,
+            MessageRole::User,
+            "q2".into(),
+            1,
+            "pending".into(),
+            Some(r#"{"requestId":"req-cancel-0"}"#.into()),
+        )
+        .await
+        .unwrap();
+    mark_user_message_cancelled(&service, &zero_user.id).await;
+    assert_eq!(status_of(&pool, &zero_user.id).await, "failed");
+
+    let user_meta_raw: String =
+        sqlx::query_scalar("SELECT metadata FROM conversation_messages WHERE id=?")
+            .bind(&zero_user.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let user_meta: serde_json::Value = serde_json::from_str(&user_meta_raw).unwrap();
+    assert_eq!(user_meta["requestId"], "req-cancel-0");
+    assert_eq!(user_meta["cancelled"], true);
+    assert!(user_meta.get("error").is_none());
+}
+
+#[tokio::test]
+async fn cancelled_partial_turn_with_empty_reply_marks_user_cancelled_instead_of_pending() {
+    use crate::features::conversation::chat::focus::FocusScope;
+    use crate::features::conversation::chat::test_runtime::FakeRuntime;
+    use crate::features::conversation::chat::turn_record::TurnRecorder;
+
+    let (service, pool, id, user_id) = service_with_pending_question().await;
+    let runtime = FakeRuntime::default();
+    let llm: Arc<dyn lattice_core::application::ports::LLMPort> =
+        Arc::new(crate::features::llm::engine::factory::MockLLMPort::new());
+    let focus = FocusScope::default();
+    let recorder = TurnRecorder::silent(&id, "req-empty-partial");
+    let names = std::sync::Arc::new(
+        lattice_core::application::services::model_contract::kept::TurnNames::unstored(),
+    );
+
+    finalize_cancelled_partial_turn(
+        &runtime,
+        ChatTurn {
+            conv_service: &service,
+            conversation_id: &id,
+            request_id: "req-empty-partial",
+            message: "question?",
+            standalone_question: None,
+            llm: &llm,
+            highlight_terms: &[],
+            focus: &focus,
+            recorder: &recorder,
+            names: &names,
+        },
+        &user_id,
+        ReplyText {
+            text: "   ".into(),
+            ..Default::default()
+        },
+        Vec::new(),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(status_of(&pool, &user_id).await, "failed");
+    let user_meta_raw: String =
+        sqlx::query_scalar("SELECT metadata FROM conversation_messages WHERE id=?")
+            .bind(&user_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let user_meta: serde_json::Value = serde_json::from_str(&user_meta_raw).unwrap();
+    assert_eq!(user_meta["cancelled"], true);
 }

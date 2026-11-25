@@ -10,8 +10,9 @@ dependencies and starts the app in development mode (`setup.cmd` or
 `setup.ps1 -Dev` on Windows). The README's
 [Getting started](README.md#getting-started) section lists what it installs.
 
-To do it by hand, install Node.js 20.19+ or 22.12+ (CI uses 24), Rust 1.95 or
-newer, and the platform prerequisites listed by Tauri. Then run:
+To do it by hand, install Node.js 20.19+ or 22.12+ (CI uses 24), rustup
+(`rust-toolchain.toml` pins the Rust version, and rustup installs it on the
+first build), and the platform prerequisites listed by Tauri. Then run:
 
 ```bash
 npm ci

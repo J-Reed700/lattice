@@ -3,14 +3,25 @@ import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, renderHook, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 
+import { resetSourceRecheckStore } from '@/features/learning/sources/sourceRecheckStore';
 import { SOURCE_PAGE_SIZE_KEY, SourcesPanel } from '@/features/learning/sources/SourcesPanel';
 import { learningSourcesKey, useAddLearningWebSource } from '@/features/learning/sources/useLearningSources';
 import { learningProgramKey, LEARNING_PROGRAMS_KEY } from '@/features/learning/workspace/useLearningStudio';
+import { ReaderPane } from '@/features/reading/components/ReaderPane';
+import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
+import { useReaderStore } from '@/features/reading/stores/readerStore';
 import type { LearningSourceVersionDto, LearningSourceWorkspaceDto } from '@/lib/bindings';
 import type { DocumentMetadata } from '@/types/fileBrowser';
+
+// The docked reader's body asks the conversations store which chat it sits beside; none here.
+vi.mock('@/shared/conversations/conversationsStore', () => ({
+  useConversationsStore: (selector: (_state: unknown) => unknown) =>
+    selector({ activeConversationId: null, conversations: [], spaces: [], selectedSpaceId: null, messageVerification: new Map(), loadConversationLinkedDocuments: vi.fn() }),
+}));
 
 const mocks = vi.hoisted(() => ({
   workspace: vi.fn(), version: vi.fn(), search: vi.fn(), addWeb: vi.fn(), addDocument: vi.fn(), addText: vi.fn(),
@@ -53,7 +64,7 @@ const version: LearningSourceVersionDto = {
   fullText: 'A saved passage about careful observation.\n\nA full second paragraph from the captured text.',
   usage: [{ lessonId: 'lesson-1', lessonTitle: 'Observe closely', referenceKind: 'lesson_block', referenceTitle: 'Evidence' }],
 };
-const doc: DocumentMetadata = { id: 'doc-1', fileName: 'Field guide.pdf', filePath: '/Field guide.pdf', fileType: 'pdf', category: 'document', language: 'en', modifiedAt: '', indexedAt: '', wordCount: 420 };
+const doc: DocumentMetadata = { id: 'doc-1', fileName: 'Field guide.pdf', filePath: '/Field guide.pdf', fileType: 'pdf', category: 'document', language: 'en', modifiedAt: '', indexedAt: '', wordCount: 420, web: false, typeBucket: 'PDF' };
 const ok = <T,>(data: T) => ({ ok: true as const, data });
 const fail = (error: string, code?: string) => ({ ok: false as const, error, ...(code ? { details: { code } } : {}) });
 
@@ -61,12 +72,15 @@ function renderSources(initial = workspace, openedVersion = version, onOpenRevie
   mocks.workspace.mockResolvedValue(ok(initial));
   mocks.version.mockResolvedValue(ok(openedVersion));
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } } });
-  return render(<QueryClientProvider client={client}><SourcesPanel programId="program-1" onOpenReview={onOpenReview} /></QueryClientProvider>);
+  return render(<QueryClientProvider client={client}><MemoryRouter><SourcesPanel programId="program-1" onOpenReview={onOpenReview} /><ReaderPane rowWidth={1728} availableWidth={1468} resetKey="sources" /></MemoryRouter></QueryClientProvider>);
 }
 
 describe('Learning Studio Sources workspace', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    resetSourceRecheckStore();
+    useCitationDisplayStore.setState({ visible: true });
+    useReaderStore.setState({ session: null, resolvedLocations: new Map() });
     mocks.documents.mockReturnValue([doc]);
     mocks.search.mockResolvedValue(ok([]));
   });
@@ -107,17 +121,35 @@ describe('Learning Studio Sources workspace', () => {
     const saved = {
       ...version,
       version: { ...version.version, wordCount: 24, extractionVersion: 'web_reference_v1' },
-      fullText: '# Build cache\n\nCargo stores output in the target directory. By default,\nthis is inside the workspace.\n\n | Directory | Description\n\n | target/debug/ | Development output',
+      fullText: '# Build cache\n\nCargo stores output in the target directory. By default,\nthis is inside the workspace.\n\n | Directory | Description\n\n | target/debug/ | Development output\n\nThe cross target lives at target/<triple>/debug/.',
     };
     const { container } = renderSources(workspace, saved);
 
-    expect(await screen.findByRole('heading', { name: 'Build cache', level: 1 })).toBeVisible();
-    expect(screen.getByText('Cargo stores output in the target directory. By default, this is inside the workspace.')).toBeVisible();
-    expect(container.querySelector('table')).toBeInTheDocument();
+    // The library shows the opening of the formatted text, not the raw capture.
+    const preview = await screen.findByRole('region', { name: 'Saved source' });
+    const opening = within(preview).getAllByText(/Cargo stores output in the target directory\. By default, this is inside the workspace\./).find((element) => element.tagName === 'P');
+    expect(opening).toBeVisible();
+    expect(within(preview).getByText(/24 words/)).toBeVisible();
+    expect(container.querySelector('pre')).not.toBeVisible();
 
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Exact capture' }));
-    expect(screen.getByText(/immutable text used for evidence/)).toBeVisible();
+    // The docked reader shows the same formatted text.
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Open in reader' }));
+    const reader = await screen.findByRole('complementary', { name: 'Source reader' });
+    expect(await within(reader).findByText('Cargo stores output in the target directory. By default, this is inside the workspace.')).toBeVisible();
+    expect(useReaderStore.getState().session).toMatchObject({ ownerKey: 'sources:program-1', citing: false });
+    // Markup-like text reads as written (the reader draws Markdown, not HTML), and the repaired table is a table.
+    expect(await within(reader).findByText('The cross target lives at target/<triple>/debug/.')).toBeVisible();
+    expect(reader.textContent).not.toMatch(/&lt;|&gt;/);
+    const table = within(reader).getByRole('table');
+    expect(within(table).getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual(['Directory', 'Description']);
+    expect(within(table).getAllByRole('cell').map((cell) => cell.textContent)).toEqual(['target/debug/', 'Development output']);
+
+    // The exact capture is still there, unformatted, for checking what evidence used.
+    await user.click(within(preview).getByText('Exact capture'));
+    expect(within(preview).getByText(/immutable text used for evidence/)).toBeVisible();
     expect(container.querySelector('pre')).toHaveTextContent('By default, this is inside the workspace.');
+    expect(container.querySelector('pre')?.textContent).toContain('By default,\nthis is inside the workspace.');
   });
 
   it('pages through a long library, remembers how many to show, and turns to a search match', async () => {
@@ -365,5 +397,43 @@ describe('Learning Studio Sources workspace', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not read source library');
     await userEvent.setup().click(screen.getByRole('button', { name: 'Retry' }));
     expect(await screen.findByText('No materials have been saved to this program yet.')).toBeVisible();
+  });
+
+  it('preserves live waiting-statement recheck progress and Open the review banner across unmount and remount', async () => {
+    const user = userEvent.setup();
+    let emitProgress: ((update: { stage: 'checking'; done: number; total: number; statement: string }) => void) | undefined;
+    let finishAdd!: (value: unknown) => void;
+    mocks.workspace.mockResolvedValue(ok(workspace));
+    mocks.version.mockResolvedValue(ok(version));
+    mocks.addWeb.mockImplementation((_req: unknown, check?: { onProgress?: (u: { stage: 'checking'; done: number; total: number; statement: string }) => void }) => {
+      emitProgress = check?.onProgress;
+      return new Promise((resolve) => { finishAdd = resolve; });
+    });
+
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } } });
+    const onOpenReview = vi.fn();
+    const view1 = render(<QueryClientProvider client={client}><MemoryRouter><SourcesPanel programId="program-1" onOpenReview={onOpenReview} /><ReaderPane rowWidth={1728} availableWidth={1468} resetKey="sources" /></MemoryRouter></QueryClientProvider>);
+    await user.click(await screen.findByRole('button', { name: 'Add material' }));
+    await user.type(screen.getByLabelText('Web address'), 'https://example.org/notes');
+    await user.click(screen.getByRole('button', { name: 'Save source' }));
+    emitProgress?.({ stage: 'checking', done: 1, total: 4, statement: 'Cells divide by mitosis.' });
+    view1.unmount();
+
+    const view2 = render(<QueryClientProvider client={client}><MemoryRouter><SourcesPanel programId="program-1" onOpenReview={onOpenReview} /><ReaderPane rowWidth={1728} availableWidth={1468} resetKey="sources" /></MemoryRouter></QueryClientProvider>);
+    expect(await screen.findByText('Checking statement 2 of 4: Cells divide by mitosis.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Add material' })).toBeDisabled();
+
+    finishAdd(ok({
+      ...workspace,
+      recheck: { tried: 4, verified: 4, notVerified: 0, noPassage: 0, stopped: null, heldLessons: 1 },
+    }));
+
+    const reviewBtn = await screen.findByRole('button', { name: 'Open the review' });
+    expect(reviewBtn).toBeVisible();
+    view2.unmount();
+
+    render(<QueryClientProvider client={client}><MemoryRouter><SourcesPanel programId="program-1" onOpenReview={onOpenReview} /><ReaderPane rowWidth={1728} availableWidth={1468} resetKey="sources" /></MemoryRouter></QueryClientProvider>);
+    await user.click(await screen.findByRole('button', { name: 'Open the review' }));
+    expect(onOpenReview).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,6 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { makePreviewPdf } from './fixtures/previewPdf';
+import { mockActiveModels } from './fixtures/activeModels';
 import { installCustomCollectionsFixture } from './fixtures/customCollections';
 import { installTauriMock, mockCommands, type CommandResult, type Fixture } from './fixtures/tauri';
 import type { JobDto, LearningLessonDto, StartJournalSynthesisRequestDto, LearningProgramDto, MessageDto, ModelCategoryDto, SynthesizeJournalEntriesResponseDto } from '../src/lib/bindings';
@@ -184,7 +185,7 @@ for (const [width, entry] of [[1440, 'menu'], [620, 'selection'], [1440, 'reply'
     await tangentComposer.fill('Cancel this tangent request');
     await tangentComposer.press('Enter');
     await panel.getByRole('button', { name: 'Stop generating response' }).click();
-    await expect(tangentComposer).toHaveValue('');
+    await expect(tangentComposer).toHaveValue('Cancel this tangent request');
     await expect(composer).toHaveValue('Keep my main draft');
     await tangentComposer.fill('What does that mean?');
     await tangentComposer.press('Enter');
@@ -220,6 +221,7 @@ for (const [width, entry] of [[1440, 'menu'], [620, 'selection'], [1440, 'reply'
 
 test.beforeEach(async ({ page }) => {
   await installTauriMock(page);
+  await mockActiveModels(page);
   await installCustomCollectionsFixture(page);
   // Renderer checks must not wait for external font servers when DNS is offline.
   await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ contentType: 'text/css', body: '' }));
@@ -268,8 +270,8 @@ for (const width of [1440, 620]) {
           const { request } = args as { request: StartJournalSynthesisRequestDto };
           const id = `synthesis-${synthesisCalls}`;
           results.set(id, { synthesis: synthesisCalls === 1 ? 'Canopy shade helps the forest retain moisture.' : 'The second synthesis adds a comparison of tree species.', entryCount: 1, chunkCount: 2, scope: 'conversation', conversationIds: [conversation.id], citations: [], sources: [] });
-          let job: JobDto = { id, kind: 'journal.synthesis', subjectId: 'destination', status: 'pending', progressCurrent: 0, progressTotal: 100, progressMessage: 'Waiting to synthesize', activity: null, resultRef: null, errorCode: null, error: null, retryOfJobId: null, retryCount: 0, retryNotBefore: null, createdAt: Date.now(), startedAt: Date.now(), finishedAt: null };
-          const publish = (patch: Partial<JobDto>) => { job = { ...job, ...patch }; ipc.emit('jobs://status', job); };
+          let job: JobDto = { id, kind: 'journal.synthesis', subjectId: 'destination', status: 'pending', progressCurrent: 0, progressTotal: 100, progressMessage: 'Waiting to synthesize', activity: null, resultRef: null, errorCode: null, error: null, retryOfJobId: null, retryCount: 0, retryNotBefore: null, createdAt: Date.now(), startedAt: Date.now(), finishedAt: null, revision: 0 };
+          const publish = (patch: Partial<JobDto>) => { job = { ...job, ...patch, revision: job.revision + 1 }; ipc.emit('jobs://status', job); };
           const report = (stage: string, chunkIndex: number | null) => publish({ status: 'running', activity: { stage, entryCount: 1, chunkCount: 2, chunkIndex } });
           setTimeout(() => report('gathering', null), 0);
           window.addEventListener('test:synthesis-reading', () => report('reading', 1), { once: true });
@@ -400,7 +402,7 @@ test('opens imported PDF bytes in the library and renders pages after reopening'
       get_settings: () => settings,
       list_all_documents: () => [{
         id: 'imported-pdf', fileName: 'preview.pdf', filePath, fileType: 'pdf',
-        category: 'Document', language: 'en', wordCount: 100,
+        category: 'Document', language: 'en', wordCount: 100, web: false, typeBucket: 'PDF',
         modifiedAt: '2026-09-15T00:00:00Z', indexedAt: '2026-09-15T00:00:00Z',
       }],
       read_file_bytes: (args) => {
@@ -454,7 +456,7 @@ test.describe('Library collections', () => {
       const documents = ['Field guide.pdf', 'Interview notes.pdf', 'Planning.pdf'].map((fileName, index) => ({
         id: `collection-doc-${index}`, fileName,
         filePath: `/home/test/.lattice/files/${String(index).repeat(64)}/${fileName}`,
-        fileType: 'pdf', category: 'Document', language: 'en', wordCount: 1200 + index * 200,
+        fileType: 'pdf', category: 'Document', language: 'en', wordCount: 1200 + index * 200, web: false, typeBucket: 'PDF',
         modifiedAt: '2026-09-15T00:00:00Z', indexedAt: '2026-09-15T00:00:00Z',
       }));
       return {
@@ -648,9 +650,10 @@ test('HTML and code previews follow light and dark themes', async ({ page }, tes
       get_settings: () => settings,
       list_all_documents: () => ['article.html', 'example.ts'].map((fileName, index) => ({
         id: `preview-${index}`, fileName, filePath: `${fileRoot}/${fileName}`, fileType: index ? 'ts' : 'html',
-        category: 'Document', language: 'en', wordCount: 100,
+        category: 'Document', language: 'en', wordCount: 100, web: false, typeBucket: index ? 'Code' : 'HTML',
         modifiedAt: '2026-09-15T00:00:00Z', indexedAt: '2026-09-15T00:00:00Z',
       })),
+      saved_web_article: () => null,
       read_file_content: (args) => (args as { path: string }).path.endsWith('.ts')
         ? 'const answer = 42;'
         : '<style>body { color: black; background: white; }</style><h1>Theme preview</h1><p style="color: black; background: white">Readable article</p><pre>const answer = 42;</pre>',
@@ -1081,7 +1084,6 @@ test('Downloaded switches chat between llama.cpp and local while keeping the uti
       },
       get_active_chat_model: () => null,
       get_active_embedding_model: () => null,
-      get_active_models: () => ({ chat_model: null, embedding_model: null }),
       list_journals: () => [],
       list_downloads: () => [],
       activity_snapshot: () => ({ items: [], running: 0 }),
@@ -1150,6 +1152,7 @@ test('Downloaded assigns the Learning model in Settings without touching the cha
       },
       list_downloaded_models: () => [model],
       list_loaded_models: () => [],
+      warmup_status: () => [],
       last_learning_window_shortfall: () => null,
       set_active_chat_model: (args) => {
         record('set_active_chat_model', args);
@@ -1157,7 +1160,6 @@ test('Downloaded assigns the Learning model in Settings without touching the cha
       },
       get_active_chat_model: () => null,
       get_active_embedding_model: () => null,
-      get_active_models: () => ({ chat_model: null, embedding_model: null }),
       list_journals: () => [],
       list_downloads: () => [],
       activity_snapshot: () => ({ items: [], running: 0 }),
@@ -1212,7 +1214,6 @@ test('Downloaded only lists configured connections and remembers a saved localho
       }],
       get_active_chat_model: () => null,
       get_active_embedding_model: () => null,
-      get_active_models: () => ({ chat_model: null, embedding_model: null }),
       list_journals: () => [],
       list_downloads: () => [],
       activity_snapshot: () => ({ items: [], running: 0 }),
@@ -1268,7 +1269,6 @@ test('keeps Ollama and llama.cpp connections separate across provider changes', 
       list_downloaded_models: () => [],
       get_active_chat_model: () => null,
       get_active_embedding_model: () => null,
-      get_active_models: () => ({ chat_model: null, embedding_model: null }),
     };
   }, makeAppSettings());
   await page.goto('/settings');
@@ -1468,7 +1468,7 @@ test('restores a 45-PDF import and updates progress as files finish', async ({ p
     window.__LATTICE_IPC__.emit('jobs://status', {
       id: 'job', kind: 'batch.file_import', subjectId: null, status: 'running', progressCurrent: 3, progressTotal: 45,
       progressMessage: 'Imported 3 of 45 files', activity: { completed: 3, failed: 0 }, resultRef: null, errorCode: null,
-      error: null, retryOfJobId: null, retryCount: 0, retryNotBefore: null, createdAt: 1, startedAt: 1, finishedAt: null,
+      error: null, retryOfJobId: null, retryCount: 0, retryNotBefore: null, createdAt: 1, startedAt: 1, finishedAt: null, revision: 1,
     });
   });
   await expect(page.getByText('3 of 45 files processed · 7%')).toBeVisible();
@@ -1502,7 +1502,8 @@ test('creates a subject-agnostic flashcard deck in Studio, reviews, quizzes, ope
       list_downloads: () => [],
       activity_snapshot: () => ({ items: [], running: 0 }),
       get_batch_history: () => ({ jobs: [] }),
-      list_all_documents: () => [{ id: 'biology', fileName: source.fileName, filePath: source.filePath, fileType: 'md', category: 'Document', wordCount: 20 }],
+      list_all_documents: () => [{ id: 'biology', fileName: source.fileName, filePath: source.filePath, fileType: 'md', category: 'Document', wordCount: 20, web: false, typeBucket: 'Markdown' }],
+      saved_web_article: () => null,
       read_file_content: (args) => {
         if ((args as { path: string }).path !== source.filePath) throw new Error('Unexpected source');
         return '# Photosynthesis notes\n\nChlorophyll absorbs the light used in photosynthesis.\n\nPhotosynthesis converts light energy into chemical energy.';
@@ -1686,7 +1687,7 @@ test('chat exposes provider errors and persisted PDF import failures', async ({ 
           ipc.emit('jobs://status', {
             id: job.jobId, kind: 'batch.file_import', subjectId: null, status: job.status, progressCurrent: 1, progressTotal: 1,
             progressMessage: job.status, activity: null, resultRef: null, errorCode: null, error: null, retryOfJobId: null,
-            retryCount: 0, retryNotBefore: null, createdAt: 1, startedAt: 1, finishedAt: 2,
+            retryCount: 0, retryNotBefore: null, createdAt: 1, startedAt: 1, finishedAt: 2, revision: 1,
           });
         }, 600);
         return { newJobId: job.jobId, retriedCount: 1 };
@@ -1817,7 +1818,7 @@ test('cancels a 43-document deletion after the pending document completes', asyn
     let documents = Array.from({ length: 43 }, (_, index) => ({
       id: `delete-${index}`, fileName: `Delete ${index}.pdf`,
       filePath: `/home/test/.lattice/files/${String(index).padStart(64, '0')}/Delete ${index}.pdf`,
-      fileType: 'pdf', category: 'Document', language: 'en', wordCount: 100,
+      fileType: 'pdf', category: 'Document', language: 'en', wordCount: 100, web: false, typeBucket: 'PDF',
       modifiedAt: '2026-09-15T00:00:00Z', indexedAt: '2026-09-15T00:00:00Z',
     }));
     let calls = 0;

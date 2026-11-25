@@ -25,6 +25,12 @@ export const ACTIVITY_REFRESH_EVENTS = [
   'indexing://progress',
 ] as const;
 
+const PROGRESS_THROTTLE_MS = 500;
+const THROTTLED_PROGRESS_EVENTS: ReadonlySet<string> = new Set([
+  'download:progress',
+  'indexing://progress',
+]);
+
 export const activityKeys = {
   snapshot: ['activity', 'snapshot'] as const,
 };
@@ -68,10 +74,32 @@ export function useActivitySnapshot() {
   }, [client]);
 
   useEffect(() => {
-    const read = () => void refresh();
-    const stopJobs = onJobStatus(read);
-    const listening = ACTIVITY_REFRESH_EVENTS.map((name) => listen(name, read).catch(() => () => undefined));
+    let throttledTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearThrottleTimer = () => {
+      if (throttledTimer !== null) {
+        clearTimeout(throttledTimer);
+        throttledTimer = null;
+      }
+    };
+    const readImmediate = () => {
+      clearThrottleTimer();
+      void refresh();
+    };
+    const readThrottled = () => {
+      if (throttledTimer !== null) return;
+      throttledTimer = setTimeout(() => {
+        throttledTimer = null;
+        void refresh();
+      }, PROGRESS_THROTTLE_MS);
+    };
+    const stopJobs = onJobStatus(readImmediate);
+    const listening = ACTIVITY_REFRESH_EVENTS.map((name) =>
+      listen(name, THROTTLED_PROGRESS_EVENTS.has(name) ? readThrottled : readImmediate).catch(
+        () => () => undefined,
+      ),
+    );
     return () => {
+      clearThrottleTimer();
       stopJobs();
       for (const attached of listening) void attached.then((unlisten) => unlisten());
     };
