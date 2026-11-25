@@ -3,6 +3,7 @@
 use super::scripted::{ask_of, nothing, task_of, Ask};
 use super::*;
 use crate::content_verification::tests::fixture_completion;
+use crate::review_findings::PlanCheck;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };

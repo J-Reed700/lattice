@@ -3,6 +3,7 @@
 use super::*;
 use crate::content_verification::tests::fixture_completion;
 use crate::lesson_drafts;
+use crate::review_findings::PlanCheck;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::shared::persistence::Database;
 use std::sync::Mutex;

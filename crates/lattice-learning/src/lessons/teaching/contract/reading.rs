@@ -89,7 +89,7 @@ pub(super) struct Reading<'a> {
 }
 
 /// Words the check says point at what the learner never sees.
-struct Unseen<'a> {
+pub(super) struct Unseen<'a> {
     hit: Hit<'a>,
     what: &'a str,
 }
