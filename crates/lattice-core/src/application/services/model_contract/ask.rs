@@ -20,7 +20,7 @@ use super::shown::{Kind, Picked, Scope, Showing};
 use super::{tagged, Contract, ContractCall};
 use crate::application::ports::llm_port::{Finish, LLMPort};
 use crate::application::services::grounded_generation::{
-    CallOptions, EvidencePassage, EvidenceSelection, GroundedGenerationError, GroundedOutput,
+    self, CallOptions, EvidencePassage, EvidenceSelection, GroundedGenerationError, GroundedOutput,
     HistoryItem,
 };
 use crate::shared::error::{AppError, ErrorClass, Result};
