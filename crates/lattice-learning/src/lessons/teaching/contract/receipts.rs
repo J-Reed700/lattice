@@ -3,7 +3,8 @@
 //! the sentences of the lesson its words lie in; while every one of them is
 //! still in the lesson unchanged, the item is not asked about again, so a later
 //! pass cannot unsay it and spend a repair.
-use super::{Hit, Item, Part};
+use super::reading::Hit;
+use super::{Item, Part};
 use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::text::same_text;
 use serde::{Deserialize, Serialize};

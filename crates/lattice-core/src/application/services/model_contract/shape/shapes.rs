@@ -14,6 +14,9 @@ use super::{
     Written, STATEMENTS,
 };
 
+mod satisfiable;
+use satisfiable::{field_satisfiable, form_satisfiable, shown_written};
+
 // ---- schema ----
 
 pub(super) fn value_schema<V: Authored>(showing: &Showing<'_>, pointers: Held) -> Option<Schema> {
@@ -138,48 +141,6 @@ fn keyed_entries<K: Kind, V: Authored>(key: &str, showing: &Showing<'_>, pointer
 
 fn handles_schema(prefix: &str, showing: &Showing<'_>, pointers: Held) -> Value {
     array(point_schema(prefix, Among::Shown, &[], showing, pointers))
-}
-
-fn shown_written(prefix: &str, among: Among, showing: &Showing<'_>) -> Vec<String> {
-    match among {
-        Among::Shown => showing.written(prefix),
-        Among::Own => showing.written_under(prefix),
-    }
-}
-
-/// Whether `field` can be satisfied under `showing`: a required pointer with no
-/// `"none"` fallback cannot be satisfied when nothing of its kind is shown.
-fn field_satisfiable(field: &Field, showing: &Showing<'_>) -> bool {
-    match field {
-        Field::Point {
-            prefix,
-            among,
-            none: false,
-        }
-        | Field::Cite {
-            prefix,
-            among,
-            some: true,
-        } => !shown_written(prefix, *among, showing).is_empty(),
-        Field::Word(list) => !list.is_empty(),
-        Field::Group(form) => form_satisfiable(form, showing),
-        Field::List {
-            form,
-            count: Some(count),
-        } => showing
-            .asked(count)
-            .is_none_or(|(least, _)| least == 0 || form_satisfiable(form, showing)),
-        Field::OneOf(forms) => forms
-            .iter()
-            .any(|(_, form)| form_satisfiable(form, showing)),
-        _ => true,
-    }
-}
-
-fn form_satisfiable(form: &Form, showing: &Showing<'_>) -> bool {
-    form.fields
-        .iter()
-        .all(|(_, field)| field_satisfiable(field, showing))
 }
 
 fn branch_object(tag: &str, form: &Form, showing: &Showing<'_>, pointers: Held) -> Value {

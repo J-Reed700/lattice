@@ -30,6 +30,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
 
+mod repetition;
 mod request;
 #[cfg(test)]
 mod request_tests;

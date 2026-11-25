@@ -4,11 +4,9 @@
 //! statements it found contradicting is put to the model once more as a single
 //! question about that one thing.
 use super::asks::{Mark, Verdict};
+use super::reading::{follows, hit_at, hits_of, Clash, Hit, Reading, Use};
 use super::sentence::{self, Lesson, Spot, Whose};
-use super::{
-    follows, hit_at, hits_of, shown_parts, Clash, Hit, Item, Part, Reading, Use, ANSWER_TOKENS,
-    POLICY,
-};
+use super::{shown_parts, Item, Part, ANSWER_TOKENS, POLICY};
 use crate::lessons::structured_call::{self, Asking, CallKind, ReasonFirst};
 use lattice_core::application::services::model_contract::ask::{
     self as layer, Alone, Answered, Refusal, Says, Settled as Answer,

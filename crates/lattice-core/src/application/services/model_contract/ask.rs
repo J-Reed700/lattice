@@ -11,7 +11,6 @@
 //! answer's content is an `Err`.
 
 use std::collections::VecDeque;
-use std::sync::{Mutex, PoisonError};
 
 use async_trait::async_trait;
 
@@ -21,15 +20,17 @@ use super::shown::{Kind, Picked, Scope, Showing};
 use super::{tagged, Contract, ContractCall};
 use crate::application::ports::llm_port::{Finish, LLMPort};
 use crate::application::services::grounded_generation::{
-    self, CallOptions, EvidencePassage, EvidenceSelection, GroundedGenerationError, GroundedOutput,
+    CallOptions, EvidencePassage, EvidenceSelection, GroundedGenerationError, GroundedOutput,
     HistoryItem,
 };
 use crate::shared::error::{AppError, ErrorClass, Result};
 
 pub use super::shape::{Settled, Why};
+pub use transport::{Metered, Plain};
 
 #[cfg(test)]
 mod tests;
+mod transport;
 
 /// A contract whose answer has a shape. A contract gains this when it moves
 /// off the closure form of `answer()`.
@@ -199,68 +200,6 @@ pub fn send_error(error: GroundedGenerationError) -> AppError {
     match error {
         GroundedGenerationError::Budget(error) => AppError::WindowTooSmall(error.to_string()),
         GroundedGenerationError::Model(error) => error,
-    }
-}
-
-/// A request sent as it is.
-pub struct Plain;
-
-#[async_trait]
-impl Transport for Plain {
-    async fn send(&self, llm: &dyn LLMPort, request: GroundedRequest) -> Result<Sent> {
-        let output = grounded_generation::generate(llm, request.clone())
-            .await
-            .map_err(send_error)?;
-        Ok(Sent::of(request, output))
-    }
-
-    async fn follow(&self, llm: &dyn LLMPort, step: Followup) -> Result<Sent> {
-        self.send(llm, step.0).await
-    }
-}
-
-/// A transport that adds up the usage of every reply it passes through.
-pub struct Metered<'a, T: Transport> {
-    inner: &'a T,
-    used: Mutex<Usage>,
-}
-
-impl<'a, T: Transport> Metered<'a, T> {
-    pub fn new(inner: &'a T) -> Self {
-        Self {
-            inner,
-            used: Mutex::new(Usage::default()),
-        }
-    }
-
-    /// What the replies passed through so far used.
-    pub fn used(&self) -> Usage {
-        *self.used.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    fn counted(&self, sent: Sent) -> Sent {
-        let mut used = self.used.lock().unwrap_or_else(PoisonError::into_inner);
-        used.sends = used.sends.saturating_add(sent.usage.sends);
-        used.input = used.input.saturating_add(sent.usage.input);
-        used.output = used.output.saturating_add(sent.usage.output);
-        sent
-    }
-}
-
-#[async_trait]
-impl<T: Transport> Transport for Metered<'_, T> {
-    async fn send(&self, llm: &dyn LLMPort, request: GroundedRequest) -> Result<Sent> {
-        let sent = self.inner.send(llm, request).await?;
-        Ok(self.counted(sent))
-    }
-
-    async fn follow(&self, llm: &dyn LLMPort, step: Followup) -> Result<Sent> {
-        let sent = self.inner.follow(llm, step).await?;
-        Ok(self.counted(sent))
-    }
-
-    async fn unanswered(&self, llm: &dyn LLMPort, request: &GroundedRequest) -> Result<()> {
-        self.inner.unanswered(llm, request).await
     }
 }
 
@@ -835,6 +774,27 @@ fn settle<C: Answered, P>(
     }
 }
 
+/// A send that failed: an unusable or oversized request is recorded as
+/// unanswered; one the backend refuses for its size leaves a pending ask
+/// unanswered for want of room, and every other error stands.
+async fn failed_send<C: Answered, P>(
+    llm: &dyn LLMPort,
+    transport: &impl Transport,
+    asked: &GroundedRequest,
+    handle: &str,
+    error: AppError,
+) -> Result<Settled<(P, Statement<C>)>> {
+    let class = ErrorClass::of(&error);
+    if matches!(class, ErrorClass::Unusable | ErrorClass::DoesNotFit) {
+        transport.unanswered(llm, asked).await?;
+    }
+    if C::ALONE == Alone::Pending && class == ErrorClass::DoesNotFit {
+        trace::<C>(handle, reason(&Why::NoRoom));
+        return Ok(Settled::Unanswered(Why::NoRoom));
+    }
+    Err(error)
+}
+
 /// One subject or one item alone: send, one larger send after a cut-off,
 /// one correction (unless `corrected`), then settle by [`Answered::ALONE`].
 /// A request the backend refuses for its size is unanswered for want of room.
@@ -850,19 +810,7 @@ async fn alone<C: Answered, P>(
     let asked = request.clone();
     let mut sent = match transport.send(llm, request).await {
         Ok(sent) => sent,
-        Err(error) => {
-            if matches!(
-                ErrorClass::of(&error),
-                ErrorClass::Unusable | ErrorClass::DoesNotFit
-            ) {
-                transport.unanswered(llm, &asked).await?;
-            }
-            if C::ALONE == Alone::Pending && ErrorClass::of(&error) == ErrorClass::DoesNotFit {
-                trace::<C>(handle, reason(&Why::NoRoom));
-                return Ok(Settled::Unanswered(Why::NoRoom));
-            }
-            return Err(error);
-        }
+        Err(error) => return failed_send::<C, P>(llm, transport, &asked, handle, error).await,
     };
     let mut settled = settle::<C, P>(&sent, handle, &read, &accept);
     if matches!(settled, Settled::Unanswered(Why::CutOff)) {
@@ -870,19 +818,7 @@ async fn alone<C: Answered, P>(
             sent = match transport.follow(llm, larger).await {
                 Ok(sent) => sent,
                 Err(error) => {
-                    if matches!(
-                        ErrorClass::of(&error),
-                        ErrorClass::Unusable | ErrorClass::DoesNotFit
-                    ) {
-                        transport.unanswered(llm, &asked).await?;
-                    }
-                    if C::ALONE == Alone::Pending
-                        && ErrorClass::of(&error) == ErrorClass::DoesNotFit
-                    {
-                        trace::<C>(handle, reason(&Why::NoRoom));
-                        return Ok(Settled::Unanswered(Why::NoRoom));
-                    }
-                    return Err(error);
+                    return failed_send::<C, P>(llm, transport, &asked, handle, error).await
                 }
             };
             settled = settle::<C, P>(&sent, handle, &read, &accept);
@@ -898,19 +834,7 @@ async fn alone<C: Answered, P>(
                 let reply = match transport.follow(llm, again).await {
                     Ok(reply) => reply,
                     Err(error) => {
-                        if matches!(
-                            ErrorClass::of(&error),
-                            ErrorClass::Unusable | ErrorClass::DoesNotFit
-                        ) {
-                            transport.unanswered(llm, &asked).await?;
-                        }
-                        if C::ALONE == Alone::Pending
-                            && ErrorClass::of(&error) == ErrorClass::DoesNotFit
-                        {
-                            trace::<C>(handle, reason(&Why::NoRoom));
-                            return Ok(Settled::Unanswered(Why::NoRoom));
-                        }
-                        return Err(error);
+                        return failed_send::<C, P>(llm, transport, &asked, handle, error).await
                     }
                 };
                 settled = settle::<C, P>(&reply, handle, &read, &accept);

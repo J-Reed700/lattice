@@ -2402,12 +2402,12 @@ fn pure_whitespace_runaway_triggers_repetition_detector_while_normal_indentation
             .collect::<Vec<_>>()
             .join(",\n")
     );
-    assert!(!streaming::has_repetition_loop(&normal_json));
+    assert!(!repetition::has_repetition_loop(&normal_json));
 
     let runaway = format!(
         "{}{}",
         "Distinct preamble text explaining FHIR Patient identity. ".repeat(60),
         " \n\t ".repeat(600)
     );
-    assert!(streaming::has_repetition_loop(&runaway));
+    assert!(repetition::has_repetition_loop(&runaway));
 }
