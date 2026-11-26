@@ -230,7 +230,7 @@ export function useCitationInteractions({
       setLit(null);
       const number = Number(chip.dataset.cite);
       if (citationHover?.number === number) return;
-      setCitationHover({ number, rect: chip.getBoundingClientRect() });
+      setCitationHover({ number, occurrence: null, rect: chip.getBoundingClientRect() });
       return;
     }
     if (citationHover) setCitationHover(null);

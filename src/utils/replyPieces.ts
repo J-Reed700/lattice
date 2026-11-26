@@ -19,6 +19,10 @@ const FILE_START = '\uE00C';
 const FILE_END = '\uE00D';
 const DIGIT_BASE = 0xe001;
 
+/** A quotation travels between its own pair of private-use characters, the two after the reference marks. */
+export const QUOTE_START = '\uE00E';
+export const QUOTE_END = '\uE00F';
+
 export const MARK = /\uE000([\uE001-\uE00A]+)\uE00B/g;
 export const FILE_MARK = /\uE00C([\uE001-\uE00A]+)\uE00D/g;
 const ANY_MARK = /[\uE000-\uE00D]/g;
@@ -88,7 +92,7 @@ export function extendReply(reply: readonly ReplyPiece[], parts: readonly ReplyP
 
 /** What a part adds to the message's own text: the words, or the handle as written. */
 export function writtenOf(part: ReplyPiece): string {
-  return part.type === 'text' ? part.text : part.reference.written;
+  return part.type === 'reference' ? part.reference.written : part.text;
 }
 
 /**
@@ -103,7 +107,7 @@ export function markReply(
   const files: FileTarget[] = [];
   let raw = '';
   for (const piece of reply) {
-    if (piece.type === 'text') {
+    if (piece.type !== 'reference') {
       raw += piece.text;
     } else if (piece.reference.kind === 'source') {
       raw += markFor(numbers.length);
