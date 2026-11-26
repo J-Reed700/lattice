@@ -74,27 +74,33 @@ function languageOf(node: ProseMirrorNode): string | null {
  */
 function plainCodeBlock(node: ProseMirrorNode, prefix: string) {
   const language = languageOf(node);
+  const sourceLines = typeof node.attrs.sourceLines === 'string' && node.attrs.sourceLines ? node.attrs.sourceLines : null;
   const dom = document.createElement('pre');
+  if (sourceLines) dom.setAttribute('data-source-lines', sourceLines);
   const contentDOM = dom.appendChild(document.createElement('code'));
   if (language) contentDOM.className = `${prefix}${language}`;
   return {
     dom,
     contentDOM,
-    update: (next: ProseMirrorNode) => next.type === node.type && languageOf(next) === language,
+    update: (next: ProseMirrorNode) =>
+      next.type === node.type
+      && languageOf(next) === language
+      && (typeof next.attrs.sourceLines === 'string' && next.attrs.sourceLines ? next.attrs.sourceLines : null) === sourceLines,
   };
 }
 
 function CodeBlockView({ node, editor, extension, decorations }: NodeViewProps) {
   const language = languageOf(node);
+  const sourceLines = typeof node.attrs.sourceLines === 'string' && node.attrs.sourceLines ? node.attrs.sourceLines : undefined;
   const prefix = (extension.options as { languageClassPrefix?: string }).languageClassPrefix ?? 'language-';
   const code = <NodeViewContent<'code'> as="code" className={language ? `${prefix}${language}` : undefined} />;
   const streaming = decorations.some((decoration) => (decoration.spec as { streamingBlock?: boolean }).streamingBlock);
 
   if (language !== 'mermaid' || editor.isEditable || streaming) {
-    return <NodeViewWrapper as="pre">{code}</NodeViewWrapper>;
+    return <NodeViewWrapper as="pre" data-source-lines={sourceLines}>{code}</NodeViewWrapper>;
   }
   return (
-    <NodeViewWrapper as="figure" className="diagram-figure">
+    <NodeViewWrapper as="figure" className="diagram-figure" data-source-lines={sourceLines}>
       <MermaidFigure source={node.textContent}>{code}</MermaidFigure>
     </NodeViewWrapper>
   );
