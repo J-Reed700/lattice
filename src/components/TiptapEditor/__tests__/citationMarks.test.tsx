@@ -4,11 +4,12 @@ import { Editor } from '@tiptap/core';
 import { Markdown } from 'tiptap-markdown';
 import { describe, expect, it, vi } from 'vitest';
 
-import { reply } from '@/tests/replyFixtures';
+import { reply, said } from '@/tests/replyFixtures';
 import { drawReply, findReplyMarks, markFor, writeMarksAsNumbers, type ReplyPiece } from '@/utils/replyPieces';
 
 import { createExtensions } from '../extensions';
 import { CitationMarks, citationMarksKey } from '../extensions/citationMarks';
+import { selectionText } from '../selectionText';
 import { TiptapViewer, type TiptapViewerProps } from '../TiptapViewer';
 
 import type { DecorationSet } from '@tiptap/pm/view';
@@ -194,6 +195,41 @@ describe('CitationMarks', () => {
     const slice = editor.state.doc.slice(0, editor.state.doc.content.size);
 
     expect(plugin?.props.clipboardTextSerializer?.call(plugin, slice, editor.view)).toBe('Kale bolts [3] in heat.');
+    editor.destroy();
+  });
+
+  it('draws a quotation between two quote widgets and hides the private-use marks', async () => {
+    const parts: ReplyPiece[] = [said('The guide says '), { type: 'quoted', text: 'Tea is hot.' }, said(' today.')];
+    const view = render(<Answer parts={parts} citationNumbers={[]} />);
+    await waitFor(() => expect(view.container.querySelectorAll('.cite-quote')).toHaveLength(2));
+    const [open, close] = Array.from(view.container.querySelectorAll('.cite-quote'));
+
+    expect(open).toHaveTextContent('\u201c');
+    expect(close).toHaveTextContent('\u201d');
+    expect(open!.compareDocumentPosition(close!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(view.container.querySelectorAll('.citation-hidden')).toHaveLength(2);
+    expect(view.container.querySelector('[data-cite]')).toBeNull();
+  });
+
+  it('keeps the private-use characters out of a selection over a quotation', async () => {
+    const parts: ReplyPiece[] = [said('The guide says '), { type: 'quoted', text: 'Tea is hot.' }, said(' today.')];
+    const view = render(<Answer parts={parts} citationNumbers={[]} />);
+    await waitFor(() => expect(view.container.querySelectorAll('.cite-quote')).toHaveLength(2));
+    const range = document.createRange();
+    range.selectNodeContents(view.container);
+    const selection = { getRangeAt: () => range, toString: () => range.toString() } as unknown as Selection;
+
+    expect(range.toString()).toMatch(/[\uE00E\uE00F]/);
+    expect(selectionText(selection)).not.toMatch(/[\uE000-\uE00F]/);
+    expect(selectionText(selection)).toContain('Tea is hot.');
+  });
+
+  it('copies a quotation in curly quotes', () => {
+    const editor = answerEditor([said('He wrote '), { type: 'quoted', text: 'Tea is hot.' }, said('.')]);
+    const plugin = editor.state.plugins.find((candidate) => candidate.spec.key === citationMarksKey);
+    const slice = editor.state.doc.slice(0, editor.state.doc.content.size);
+
+    expect(plugin?.props.clipboardTextSerializer?.call(plugin, slice, editor.view)).toBe('He wrote \u201cTea is hot.\u201d.');
     editor.destroy();
   });
 });

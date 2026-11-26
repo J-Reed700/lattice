@@ -7,6 +7,8 @@ import { sanitizeFileName } from '@/utils/sanitize';
 
 export interface CitationHover {
   number: number;
+  /** The chip's place among its source's chips (`data-cite-at`), when it has one. */
+  occurrence: number | null;
   /** Viewport rect of the chip under the pointer. */
   rect: DOMRect;
 }

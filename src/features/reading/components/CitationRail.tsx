@@ -21,6 +21,8 @@ export interface CitationRailProps {
   source: SourceWithMetadata;
   locator: PassageLocator;
   resolvedLabel?: string;
+  /** Which of the answer's chips for this source was clicked. */
+  occurrence?: number | null;
   index?: number;
   total?: number;
   onPrevious?: () => void;

@@ -41,5 +41,7 @@ export function useCitationTravel(
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [canTravel, citationIndex, goToCitation]);
 
-  return { canTravel, goToCitation };
+  const stepCitation = useCallback((_direction: 1 | -1) => undefined, []);
+
+  return { canTravel, goToCitation, stepCitation, position: -1, total: 0 };
 }
