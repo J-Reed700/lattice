@@ -8,6 +8,7 @@
 use super::walk::Reach;
 use super::*;
 use lattice_core::application::services::claim_verification::{quote_in, PartKind};
+use lattice_core::domain::citation::Anchor;
 
 /// Which check decided a claim. The comparison with its own citation comes
 /// first in a request.
@@ -54,6 +55,11 @@ pub(crate) struct CheckedPart {
     /// states.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) source_id: Option<String>,
+    /// The sentences of the saved sources the part rests on, as version byte
+    /// spans; none for a part no passage states, and for a finding from
+    /// before v23.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) anchors: Vec<Anchor>,
 }
 
 /// How a claim was read, on its finding: the check that decided it, where its
