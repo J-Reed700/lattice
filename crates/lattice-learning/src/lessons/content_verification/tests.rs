@@ -1149,6 +1149,18 @@ mod edit_section_tests;
 #[path = "edit_question_tests.rs"]
 mod edit_question_tests;
 
+#[path = "section_kind_tests.rs"]
+mod section_kind_tests;
+
+#[path = "question_kind_tests.rs"]
+mod question_kind_tests;
+
+#[path = "claims_reactor_tests.rs"]
+mod claims_reactor_tests;
+
+#[path = "claim_undo_tests.rs"]
+mod claim_undo_tests;
+
 #[path = "claim_position_tests.rs"]
 mod claim_position_tests;
 

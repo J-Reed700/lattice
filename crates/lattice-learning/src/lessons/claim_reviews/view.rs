@@ -532,6 +532,7 @@ fn item(
                 field: location.field.clone(),
                 quote,
                 span,
+                address: None,
             }
         },
         statement: entry.statement().to_owned(),

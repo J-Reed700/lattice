@@ -59,6 +59,11 @@ impl Database {
         }
     }
 
+    /// Returns the urgent write handle for user edits (P0 stub takes the standard turn; P1 adds the urgent lane).
+    pub fn urgent(&self) -> UrgentWrites<'_> {
+        UrgentWrites { database: self }
+    }
+
     /// Begins a unit of work that only reads. Readers take no turn and never
     /// wait for writers.
     pub async fn begin_read(&self) -> Result<ReadTx, PersistenceError> {
@@ -121,6 +126,24 @@ impl Database {
     /// Connections the pool(s) hold open, for shutdown diagnostics.
     pub fn open_connections(&self) -> u32 {
         self.reader_pool.size() + self.writer_pool.as_ref().map_or(0, SqlitePool::size)
+    }
+}
+
+/// Write unit opener for latency-sensitive user interactions.
+pub struct UrgentWrites<'a> {
+    database: &'a Database,
+}
+
+impl UrgentWrites<'_> {
+    #[track_caller]
+    pub fn begin_write(
+        &self,
+    ) -> impl Future<Output = Result<WriteTx, PersistenceError>> + Send + '_ {
+        let at = Location::caller();
+        async move {
+            let turn = self.database.turns.take(at).await?;
+            WriteTx::start(self.database.writer(), turn).await
+        }
     }
 }
 

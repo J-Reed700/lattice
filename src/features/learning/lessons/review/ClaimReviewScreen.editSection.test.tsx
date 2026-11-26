@@ -29,17 +29,17 @@ const program = {
 const statement = claimItem({
   claimId: 'claim-1', statement: SENTENCE, state: { state: 'unverified', at: 2, reason: 'unsupported' }, verdictKind: null, reason: null,
   availableActions: ['confirm', 'edit', 'remove', 'attach_evidence'],
-  location: { unitIndex: 0, unitKind: 'block', unitTitle: 'Boiling', field: 'body', quote: SENTENCE, span: null },
+  location: { unitIndex: 0, unitKind: 'block', unitTitle: 'Boiling', field: 'body', quote: SENTENCE, span: null, address: null },
   presentation: { statement: SENTENCE, sentence: SENTENCE, contextBefore: 'Boiling is a phase change.', contextAfter: 'Pressure matters.', place: 'Section 1 · Boiling' },
 });
 const neighbour = claimItem({
   ...statement, claimId: 'claim-3', statement: 'Pressure matters.',
-  location: { unitIndex: 0, unitKind: 'block', unitTitle: 'Boiling', field: 'body', quote: 'Pressure matters.', span: null },
+  location: { unitIndex: 0, unitKind: 'block', unitTitle: 'Boiling', field: 'body', quote: 'Pressure matters.', span: null, address: null },
   presentation: { statement: 'Pressure matters.', sentence: 'Pressure matters.', contextBefore: SENTENCE, contextAfter: '', place: 'Section 1 · Boiling' },
 });
 const inAnswerKey = claimItem({
   ...statement, claimId: 'claim-2',
-  location: { unitIndex: 0, unitKind: 'question', unitTitle: 'Question 1', field: 'explanation', quote: SENTENCE, span: null },
+  location: { unitIndex: 0, unitKind: 'question', unitTitle: 'Question 1', field: 'explanation', quote: SENTENCE, span: null, address: null },
 });
 
 function show(data: LessonClaimReviewDto) {

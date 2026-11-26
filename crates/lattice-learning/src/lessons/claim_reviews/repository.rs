@@ -19,9 +19,9 @@ use sqlx::{Row, SqliteConnection};
 
 use crate::persistence::{decode, encode, now};
 
-pub(super) mod blocks;
+pub(crate) mod blocks;
 pub(super) mod checker_examples;
-pub(super) mod questions;
+pub(crate) mod questions;
 pub(super) mod reviews;
 pub(super) mod teaching_findings;
 

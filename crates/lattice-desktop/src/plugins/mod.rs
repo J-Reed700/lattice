@@ -38,6 +38,7 @@ pub fn init_plugins() -> Vec<TauriPlugin<tauri::Wry>> {
         crate::features::download::plugin::init(),
         crate::features::batch::plugin::init(),
         crate::features::jobs::plugin::init(),
+        crate::features::edits::plugin::init(),
         crate::features::activity::plugin::init(),
         crate::features::backup::plugin::init(),
         crate::features::updates::plugin::init(),

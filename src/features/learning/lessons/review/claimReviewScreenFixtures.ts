@@ -38,7 +38,7 @@ export function waitingOnSource(index: number, sourceId = 'source-guide', title 
   const statement = `Monarch fact number ${index} is stated in the guide.`;
   return claimItem({
     claimId: `claim-${index}`,
-    location: { unitIndex: index % 3, unitKind: 'block', unitTitle: `Migration ${index % 3 + 1}`, field: 'body', quote: `**Monarch** fact number ${index} [5] is stated in the guide.`, span: null },
+    location: { unitIndex: index % 3, unitKind: 'block', unitTitle: `Migration ${index % 3 + 1}`, field: 'body', quote: `**Monarch** fact number ${index} [5] is stated in the guide.`, span: null, address: null },
     statement,
     state: { state: 'queued' },
     verdictKind: { kind: 'insufficient_standing', bar: 'established', have: [] },

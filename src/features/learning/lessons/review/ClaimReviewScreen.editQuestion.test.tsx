@@ -37,7 +37,7 @@ const unverified = { state: 'unverified', at: 2, reason: 'unsupported' } as cons
 const onUnit = (claimId: string, unitIndex: number, unitKind: 'block' | 'question' | 'answer_key', field: string) => claimItem({
   claimId, statement: SENTENCE, state: unverified, verdictKind: null, reason: null,
   availableActions: ['confirm', 'edit', 'remove', 'attach_evidence'],
-  location: { unitIndex, unitKind, unitTitle: '', field, quote: SENTENCE, span: null },
+  location: { unitIndex, unitKind, unitTitle: '', field, quote: SENTENCE, span: null, address: null },
   presentation: { statement: SENTENCE, sentence: SENTENCE, contextBefore: '', contextAfter: '', place: 'Question' },
 });
 

@@ -133,6 +133,7 @@ pub struct TeachingFindingDto {
     pub state: TeachingFindingStateDto,
     /// Whether the user changed this section after the note was written.
     pub part_changed: bool,
+    pub address: Option<lattice_core::shared::edits::ContentAddress>,
 }
 
 fn kind_dto(kind: FindingKind) -> TeachingFindingKindDto {
@@ -346,6 +347,7 @@ impl TeachingFindingsRepository {
                         _ => TeachingFindingStateDto::Waiting,
                     },
                     part_changed: row.part_changed,
+                    address: None,
                 })
             })
             .collect()

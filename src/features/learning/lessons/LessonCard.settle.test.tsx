@@ -55,7 +55,7 @@ const evidence = (teachingClaims: LearningClaimEvidenceDto[]): LearningLessonEvi
 /** The evidence reads as settled once the claim action has run, as the backend's evidence follows each claim's state. */
 function serve(reason: Reason, overrides: Record<string, unknown> = {}, reviewed = true) {
   let settled = false;
-  api.review.mockResolvedValue(ok(review(reviewed ? [claimItem({ claimId: 'claim-1', location: { unitIndex: 0, unitKind: 'block', unitTitle: 'Boiling', field: 'body', quote: SENTENCE, span: null }, state: { state: 'unverified', at: 2, reason }, verdictKind: null, availableActions: ['confirm', 'edit', 'attach_evidence'] })] : [], { state: 'ready', revision: REVISION })));
+  api.review.mockResolvedValue(ok(review(reviewed ? [claimItem({ claimId: 'claim-1', location: { unitIndex: 0, unitKind: 'block', unitTitle: 'Boiling', field: 'body', quote: SENTENCE, span: null, address: null }, state: { state: 'unverified', at: 2, reason }, verdictKind: null, availableActions: ['confirm', 'edit', 'attach_evidence'] })] : [], { state: 'ready', revision: REVISION })));
   api.evidence.mockImplementation(async () => ok(evidence(settled ? [confirmed()] : [unverified(reason, overrides)])));
   api.resolve.mockImplementation(async () => { settled = true; return ok({ revision: REVISION + 1 }); });
 }

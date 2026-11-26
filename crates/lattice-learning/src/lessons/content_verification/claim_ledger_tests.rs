@@ -2477,6 +2477,10 @@ pub(super) struct Shown {
 }
 
 impl Course {
+    pub(super) fn edits(&self) -> std::sync::Arc<lattice_core::shared::edits::ContentEdits> {
+        crate::edits::content_edits(&self.db).expect("content edits registry")
+    }
+
     /// Records a local checker's failed check on the claim that states
     /// `statement`, as a flag the user's verdict then labels.
     pub(super) async fn flag_locally(&self, statement: &str) -> Result<()> {

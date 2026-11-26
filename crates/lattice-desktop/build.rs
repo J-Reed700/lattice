@@ -388,6 +388,17 @@ fn main() {
                 tauri_build::InlinedPlugin::new().commands(&["list_jobs"]),
             )
             .plugin(
+                "edits",
+                tauri_build::InlinedPlugin::new().commands(&[
+                    "open_content_edit",
+                    "preview_content_edit",
+                    "apply_content_edit",
+                    "revert_content_edit",
+                    "get_content_edit_history",
+                    "list_content_edits",
+                ]),
+            )
+            .plugin(
                 "activity",
                 tauri_build::InlinedPlugin::new().commands(&["activity_snapshot"]),
             )

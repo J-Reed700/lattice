@@ -19,6 +19,7 @@ mod code_example_migration_tests;
 pub mod dto;
 #[cfg(test)]
 mod dto_tests;
+pub(crate) mod edit_reactor;
 #[cfg(test)]
 mod migration_tests;
 mod published_edit;

@@ -258,6 +258,7 @@ mod tests {
             part_changed: false,
             repairs: 0,
             state,
+            address: None,
         }
     }
 

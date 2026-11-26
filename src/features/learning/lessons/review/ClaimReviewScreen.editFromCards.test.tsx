@@ -41,14 +41,14 @@ const note = (overrides: Partial<TeachingFindingDto> = {}) => teachingFinding({
 const cut = (claimId: string, sentence: string, unitIndex: number, putBackUnit: number | null, putBackBeside: string | null): ClaimReviewItemDto => claimItem({
   claimId, state: { state: 'removed', at: 5, by: 'machine' }, availableActions: ['put_back'], verdictKind: null, reason: null,
   place: putBackUnit === null ? 'choose' : 'known', putBackUnit, putBackBeside,
-  location: { unitIndex, unitKind: 'block', unitTitle: '', field: 'body', quote: sentence, span: null },
+  location: { unitIndex, unitKind: 'block', unitTitle: '', field: 'body', quote: sentence, span: null, address: null },
   presentation: { statement: sentence, sentence, contextBefore: '', contextAfter: '', place: '' },
 });
 
 const statement = claimItem({
   claimId: 'claim-1', statement: FREEZING, state: { state: 'unverified', at: 2, reason: 'unsupported' }, verdictKind: null, reason: null,
   availableActions: ['confirm', 'edit', 'remove', 'attach_evidence'],
-  location: { unitIndex: 1, unitKind: 'block', unitTitle: 'Freezing', field: 'body', quote: FREEZING, span: null },
+  location: { unitIndex: 1, unitKind: 'block', unitTitle: 'Freezing', field: 'body', quote: FREEZING, span: null, address: null },
   presentation: { statement: FREEZING, sentence: FREEZING, contextBefore: 'Ice forms below freezing.', contextAfter: 'Salt lowers it.', place: 'Section 2 · Freezing' },
 });
 
