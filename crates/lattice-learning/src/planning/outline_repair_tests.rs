@@ -975,7 +975,7 @@ async fn a_kept_lesson_after_an_inserted_one_keeps_its_citation_and_the_new_less
         1
     );
     // Each citation is shown on its own lesson.
-    let evidence = crate::outline_evidence_view::project(&program, &saved);
+    let evidence = crate::outline_evidence_view::project(&program, &saved, &program.sources);
     let kept = evidence
         .citations
         .iter()

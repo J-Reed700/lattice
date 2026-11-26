@@ -10,6 +10,7 @@ use crate::{
     generation,
     outline_draft::{LearningOutlineReviewStatus, OutlineDraft},
     repository::LearningRepository,
+    source_library::LearningSourceLibraryRepository,
 };
 use lattice_core::shared::error::Result;
 use lattice_core::shared::persistence::Database;
@@ -125,6 +126,7 @@ fn matching_module<'a>(
 pub(crate) fn project(
     program: &LearningProgramDto,
     draft: &OutlineDraft,
+    sources: &[LearningSourceDto],
 ) -> LearningOutlineEvidenceDto {
     let mut citations = Vec::new();
     let mut unavailable_count = 0;
@@ -151,7 +153,7 @@ pub(crate) fn project(
                         path: format!("/modules/{visible_module_index}/summary"),
                     },
                     draft,
-                    &program.sources,
+                    sources,
                 )
             });
             if let Some(citation) = citation {
@@ -198,7 +200,7 @@ pub(crate) fn project(
                             ),
                         },
                         draft,
-                        &program.sources,
+                        sources,
                     )
                 },
             );
@@ -260,7 +262,7 @@ pub(crate) fn project(
                         ),
                     },
                     draft,
-                    &program.sources,
+                    sources,
                 )
             });
             if let Some(citation) = citation {
@@ -288,7 +290,10 @@ pub async fn get(
     let Some(draft) = repository.outline_draft(program_id).await? else {
         return Ok(None);
     };
-    Ok(Some(project(&program, &draft)))
+    let sources = LearningSourceLibraryRepository::new(database.clone())
+        .verification_sources(program_id)
+        .await?;
+    Ok(Some(project(&program, &draft, &sources)))
 }
 
 #[cfg(test)]
@@ -375,7 +380,7 @@ mod tests {
             "lessons":[{"title":"Read closely","objective":"A visible objective.","estimatedMinutes":30,"sourceIndex":0,"quote":quote}]
         }]});
         let (program, draft) = program(candidate, vec![source]);
-        let evidence = project(&program, &draft);
+        let evidence = project(&program, &draft, &program.sources);
         assert_eq!(evidence.citations.len(), 3);
         assert_eq!(evidence.unavailable_count, 0);
         assert_eq!(evidence.citations[2].lesson_id.as_deref(), Some("lesson"));
@@ -403,7 +408,7 @@ mod tests {
         let (mut program, draft) = program(candidate, vec![source]);
         program.modules[0].outcomes = vec!["Second outcome.".into(), "First outcome.".into()];
 
-        let evidence = project(&program, &draft);
+        let evidence = project(&program, &draft, &program.sources);
         let first = evidence
             .citations
             .iter()
@@ -439,7 +444,7 @@ mod tests {
         }]});
         let (mut program, draft) = program(candidate, vec![source]);
         program.modules[0].summary = "Rewritten summary.".into();
-        let evidence = project(&program, &draft);
+        let evidence = project(&program, &draft, &program.sources);
         assert!(evidence.citations.is_empty());
         assert_eq!(evidence.unavailable_count, 1);
     }
@@ -461,7 +466,7 @@ mod tests {
             "outcomes":[], "lessons":[]
         }]});
         let (program, draft) = program(candidate, vec![source]);
-        let evidence = project(&program, &draft);
+        let evidence = project(&program, &draft, &program.sources);
         assert!(evidence.citations.is_empty());
         assert_eq!(evidence.unavailable_count, 1);
     }
@@ -497,7 +502,7 @@ mod tests {
         program.modules[0].title = "Renamed module".into();
         program.modules[0].lessons[0].title = "Renamed lesson".into();
         program.modules.insert(0, duplicate);
-        let evidence = project(&program, &draft);
+        let evidence = project(&program, &draft, &program.sources);
         assert_eq!(evidence.citations.len(), 3);
         assert!(evidence
             .citations
@@ -506,7 +511,7 @@ mod tests {
         assert_eq!(evidence.citations[2].lesson_id.as_deref(), Some("lesson"));
         assert_eq!(evidence.citations[2].path, "/modules/1/lessons/0/objective");
         program.modules[1].lessons[0].objective = "An edited objective without evidence.".into();
-        let changed = project(&program, &draft);
+        let changed = project(&program, &draft, &program.sources);
         assert_eq!(changed.citations.len(), 2);
         assert_eq!(changed.unavailable_count, 1);
     }
@@ -515,7 +520,7 @@ mod tests {
     fn missing_bound_identity_never_falls_back_to_a_matching_title() {
         let (mut program, draft) = bound_fixture();
         program.modules[0].id = "replacement".into();
-        let evidence = project(&program, &draft);
+        let evidence = project(&program, &draft, &program.sources);
         assert!(evidence.citations.is_empty());
         assert_eq!(evidence.unavailable_count, 3);
     }
