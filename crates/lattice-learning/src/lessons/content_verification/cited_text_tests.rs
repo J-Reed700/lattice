@@ -409,13 +409,15 @@ fn two_statements_on_one_sentence_share_one_point_with_ascending_references() {
 
 #[test]
 fn compared_only_passages_are_numbered_after_every_cited_one_and_get_no_chip() {
+    let mut first = finding(
+        0,
+        "One.",
+        Some(Class::Sourced),
+        vec![passage("a", 0, "p1"), passage("a", 10, "p2")],
+    );
+    first.two_pass.parts = vec![anchored("a", PartKind::Stated, &[(0, 2)])];
     let findings = vec![
-        finding(
-            0,
-            "One.",
-            Some(Class::Reasoning),
-            vec![passage("a", 0, "p1"), passage("a", 10, "p2")],
-        ),
+        first,
         finding(
             1,
             "Two.",
@@ -427,7 +429,13 @@ fn compared_only_passages_are_numbered_after_every_cited_one_and_get_no_chip() {
 
     assert_eq!(ids(&numbered), vec![("a", 0), ("b", 0), ("a", 10)]);
     assert_eq!(numbered.cites, vec![vec![1], vec![2]]);
-    assert_eq!(numbered.sections[0], vec![text("One."), cite(1)]);
+    assert_eq!(
+        numbered.sections[0],
+        vec![
+            text("One."),
+            cite_as(1, RelationDto::States, vec![words("p1", 0, 2)]),
+        ]
+    );
     assert_eq!(numbered.sections[1], vec![text("Two."), cite(2)]);
 }
 

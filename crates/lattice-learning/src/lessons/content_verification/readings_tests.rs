@@ -4,7 +4,8 @@
 use super::super::readings::driver::{read_until_remedy, ReadSteps};
 use super::super::readings::{Observer, Read, ReadContext, Reader, ReaderSet, Readers, Statement};
 use super::bridge_tests::{
-    citing, half_stated, parts_reply, sources, Reading as ScriptedBridge, STATED, STATEMENT,
+    citing, half_stated, parts_reply, resolved_parts, sources, Reading as ScriptedBridge, STATED,
+    STATEMENT,
 };
 use super::class_checks_tests::Classes;
 use super::evidence_paging_tests::{
@@ -669,15 +670,13 @@ async fn the_guard_asks_the_rule_layers_test_with_the_sections_givens() -> Resul
     );
     let model = ScriptedBridge::new(vec![reply.clone(), reply.clone(), reply]);
 
+    let batch =
+        "Quillet reads rows in batches, and a batch of 8 rows is small enough to hold in memory.";
     let reads = read_all(
         Reading::Parts,
         &model,
         &world,
-        &[
-            (0, claim(STATEMENT)),
-            (1, claim(STATEMENT)),
-            (2, claim(STATEMENT)),
-        ],
+        &[(0, claim(batch)), (1, claim(batch)), (2, claim(batch))],
     )
     .await?;
 
@@ -888,9 +887,10 @@ impl Windowed {
 
 #[async_trait::async_trait]
 impl LLMPort for Windowed {
-    async fn complete(&self, _: &CompletionRequest) -> Result<CompletionResponse> {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let (_, user) = fixture_messages(request);
         let reply = self.replies.lock().unwrap().pop_front().unwrap_or_default();
-        Ok(CompletionResponse::from_text(reply))
+        Ok(CompletionResponse::from_text(resolved_parts(&reply, user)))
     }
     fn model_name(&self) -> &str {
         "windowed-fixture"
@@ -1805,6 +1805,7 @@ struct HeldUntil {
 #[async_trait::async_trait]
 impl LLMPort for HeldUntil {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let (_, user) = fixture_messages(request);
         let prompt: String = request
             .input()
             .iter()
@@ -1819,7 +1820,10 @@ impl LLMPort for HeldUntil {
         if prompt.contains(self.held) {
             self.gate.notified().await;
         }
-        Ok(CompletionResponse::from_text(half_stated()))
+        Ok(CompletionResponse::from_text(resolved_parts(
+            &half_stated(),
+            user,
+        )))
     }
     fn model_name(&self) -> &str {
         "held-fixture"
