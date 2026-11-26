@@ -2,6 +2,7 @@ mod claim_sentence;
 mod salience;
 pub mod same_text;
 pub mod segmentation;
+pub mod selector;
 mod sentences;
 mod value_terms;
 

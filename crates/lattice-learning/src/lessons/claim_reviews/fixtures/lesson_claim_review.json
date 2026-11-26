@@ -27,7 +27,8 @@
         "span": [
           42,
           65
-        ]
+        ],
+        "address": null
       },
       "statement": "Water boils at 100 °C at sea level.",
       "state": {
@@ -284,7 +285,8 @@
         "unitTitle": "Question 1",
         "field": "options/1",
         "quote": "print(sorted([3, 1, 2]))",
-        "span": null
+        "span": null,
+        "address": null
       },
       "statement": "The snippet prints [1, 2, 3].",
       "state": {
@@ -408,7 +410,8 @@
       "resolvedAt": null,
       "repairs": 2,
       "state": "waiting",
-      "partChanged": false
+      "partChanged": false,
+      "address": null
     },
     {
       "findingKey": "structure:lesson",
@@ -426,7 +429,8 @@
       "resolvedAt": null,
       "repairs": 0,
       "state": "kept",
-      "partChanged": false
+      "partChanged": false,
+      "address": null
     }
   ]
 }

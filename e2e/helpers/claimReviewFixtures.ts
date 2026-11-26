@@ -32,7 +32,7 @@ export function claimFixture(options: ClaimOptions) {
   const passage = source ? { sourceVersionId: `${source.sourceId}-v1`, title: source.title, url: source.url, text, startByte: 0, endByte: text.length, retrievalKind: 'hybrid', trust: null } : null;
   return {
     claimId: id,
-    location: { unitIndex, unitKind: 'block', unitTitle: `Section ${unitIndex + 1} title`, field: 'body', quote: statement, span: null },
+    location: { unitIndex, unitKind: 'block', unitTitle: `Section ${unitIndex + 1} title`, field: 'body', quote: statement, span: null, address: null },
     statement,
     state: { state: 'queued' },
     verdictKind: verdict === 'insufficient_standing' ? { kind: verdict, bar: 'established', have: [] } : { kind: verdict },

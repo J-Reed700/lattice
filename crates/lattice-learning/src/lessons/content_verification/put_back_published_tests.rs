@@ -669,7 +669,7 @@ async fn putting_many_sentences_back_is_one_all_or_nothing_step_and_one_undo_tak
     )
     .await?;
 
-    assert_eq!(revision, before.1 + 1);
+    assert_eq!(revision, before.1 + 2);
     let after = bodies(&course).await?;
     assert!(
         after[1].contains(CUT) && after[1].contains(OTHER_CUT),
@@ -687,7 +687,7 @@ async fn putting_many_sentences_back_is_one_all_or_nothing_step_and_one_undo_tak
     )
     .await?;
 
-    assert_eq!(undone, revision + 1);
+    assert_eq!(undone, revision + 2);
     assert_eq!(bodies(&course).await?, before.0);
     for id in [&first, &second] {
         assert!(claim(&course, id).await?.taken_out());

@@ -22,6 +22,10 @@ impl Container {
         &self.jobs
     }
 
+    pub fn content_edits(&self) -> &Arc<lattice_core::shared::edits::ContentEdits> {
+        &self.content_edits
+    }
+
     /// Shut until startup finds that this database owns the files under the
     /// lattice home. Every sweep that deletes a file because no row names it
     /// reads this one gate.

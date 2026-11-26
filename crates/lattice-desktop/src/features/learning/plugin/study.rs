@@ -80,16 +80,6 @@ pub async fn review_study_card(
 }
 #[tauri::command]
 #[specta::specta]
-pub async fn update_study_card(
-    request: UpdateStudyCardRequestDto,
-    container: State<'_, Container>,
-) -> Result<(), ApiError> {
-    service::update_card(&StudyRepository::new(container.database().clone()), request)
-        .await
-        .map_err(ApiError::from)
-}
-#[tauri::command]
-#[specta::specta]
 pub async fn delete_study_deck(
     id: String,
     container: State<'_, Container>,

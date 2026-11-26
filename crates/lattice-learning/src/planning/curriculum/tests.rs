@@ -148,7 +148,7 @@ fn a_curriculum_is_checked_for_blank_text_never_for_how_long_it_is() {
 }
 
 #[test]
-fn a_lesson_is_edited_at_any_length() -> Result<()> {
+fn a_lesson_is_added_at_any_length() -> Result<()> {
     let base = revision();
     let title = "Explain and apply the invariant "
         .repeat(8)
@@ -158,21 +158,23 @@ fn a_lesson_is_edited_at_any_length() -> Result<()> {
         .repeat(30)
         .trim()
         .to_owned();
+    let mut added = lesson(13, LearningCurriculumLessonState::Outline);
+    added.title = title.clone();
+    added.objective = objective.clone();
     let request = LearningCurriculumRevisionRequest {
         revision_id: id(20),
         expected_revision_number: 3,
-        reason: "Say more about the last lesson".into(),
+        reason: "Add a detailed lesson".into(),
         created_at: 20,
-        operations: vec![LearningCurriculumOperation::EditLesson {
-            lesson_id: id(12),
-            title: title.clone(),
-            objective: objective.clone(),
-            estimated_minutes: 25,
+        operations: vec![LearningCurriculumOperation::AddLesson {
+            module_id: id(4),
+            after_lesson_id: Some(id(12)),
+            lesson: added,
         }],
     };
     let result = apply_curriculum_revision(&base, Some(&id(11)), request)?;
-    assert_eq!(result.revision.modules[0].lessons[2].title, title);
-    assert_eq!(result.revision.modules[0].lessons[2].objective, objective);
+    assert_eq!(result.revision.modules[0].lessons[3].title, title);
+    assert_eq!(result.revision.modules[0].lessons[3].objective, objective);
     Ok(())
 }
 

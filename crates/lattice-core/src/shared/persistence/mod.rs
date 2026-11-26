@@ -15,7 +15,7 @@ mod write_turns;
 pub use database::Database;
 pub use error::{PersistenceError, PersistenceErrorKind};
 pub use page::Page;
-pub use transactions::{ReadTx, WriteTx};
+pub use transactions::{ReadTx, Reading, WriteTx};
 #[cfg(test)]
 mod database_tests;
 #[cfg(test)]

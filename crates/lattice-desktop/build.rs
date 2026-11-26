@@ -388,6 +388,17 @@ fn main() {
                 tauri_build::InlinedPlugin::new().commands(&["list_jobs"]),
             )
             .plugin(
+                "edits",
+                tauri_build::InlinedPlugin::new().commands(&[
+                    "open_content_edit",
+                    "preview_content_edit",
+                    "apply_content_edit",
+                    "revert_content_edit",
+                    "get_content_edit_history",
+                    "list_content_edits",
+                ]),
+            )
+            .plugin(
                 "activity",
                 tauri_build::InlinedPlugin::new().commands(&["activity_snapshot"]),
             )
@@ -573,9 +584,6 @@ fn main() {
                     "attach_learning_claim_evidence",
                     "attach_learning_lesson_source",
                     "settle_learning_teaching_findings",
-                    "edit_learning_lesson_section",
-                    "get_learning_lesson_question",
-                    "edit_learning_lesson_question",
                     "resume_learning_lesson_review",
                     "capture_learning_source_snapshot",
                     "get_learning_checker_accuracy",
@@ -635,7 +643,6 @@ fn main() {
                     "generate_study_deck",
                     "generate_conversation_study_deck",
                     "review_study_card",
-                    "update_study_card",
                     "delete_study_deck",
                     "set_study_deck_target",
                     "create_interview_study_deck",

@@ -6,6 +6,7 @@
 
 pub mod citation_markers;
 pub mod constants;
+pub mod edits;
 pub mod encoding;
 pub mod error;
 pub mod fs;

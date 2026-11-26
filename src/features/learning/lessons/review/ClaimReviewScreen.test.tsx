@@ -74,7 +74,7 @@ describe('Claim review screen', () => {
     const sentence = 'Tesseract is an OCR engine written in 2019 that reads pixels into text.';
     const gone = (claimId: string, statement: string, overrides: Partial<ClaimReviewItemDto> = {}) => ({
       ...unsupportedItem(1), claimId, state: { state: 'removed' as const, at: 5, by: 'machine' as const }, availableActions: [],
-      verdictKind: null, reason: null, location: { unitIndex: 2, unitKind: 'block' as const, unitTitle: '', field: 'body', quote: sentence, span: null },
+      verdictKind: null, reason: null, location: { unitIndex: 2, unitKind: 'block' as const, unitTitle: '', field: 'body', quote: sentence, span: null, address: null },
       presentation: { statement, sentence, contextBefore: '', contextAfter: '', place: '' }, ...overrides,
     });
     show(review([

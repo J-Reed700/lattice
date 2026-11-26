@@ -9,7 +9,6 @@ import type {
   LearningMemoryDto,
   ReviewStudyCardRequestDto,
   SaveLearningCardDraftRequestDto,
-  UpdateStudyCardRequestDto,
 } from '@/lib/bindings';
 
 export { learningMemoryKey } from '@/features/learning/api/learningQueryKeys';
@@ -62,17 +61,6 @@ export function useAcceptLearningCardDraft() {
 export function useDiscardLearningCardDraft() {
   const api = useApi();
   return useMemoryMutation<LearningCardDraftActionRequestDto>(api.discardLearningCardDraft);
-}
-
-export function useUpdateLearningStudyCard() {
-  const api = useApi();
-  const client = useQueryClient();
-  return useMutation({
-    mutationFn: async (request: UpdateStudyCardRequestDto) => unwrap(await api.updateStudyCard(request)),
-    onSuccess: async (_data, _request, _context, _mutationContext) => {
-      await client.invalidateQueries({ queryKey: ['learning-memory'] });
-    },
-  });
 }
 
 export function useReviewLearningStudyCard() {

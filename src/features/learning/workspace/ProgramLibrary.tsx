@@ -16,6 +16,7 @@ import { FlashcardsSection } from '@/features/learning/recall/flashcards/Flashca
 import { CourseTangentsSection } from '@/features/learning/tangents/CourseTangentsSection';
 import type { LearningOutlineProgressDto, LearningProgramSummaryDto } from '@/lib/bindings';
 import type { StudyDestination } from '@/lib/studyActivity';
+import { EditModeToggle } from '@/shared/edits/EditModeToggle';
 
 export interface OutlineGenerationLibraryState {
   isPending: boolean;
@@ -226,6 +227,7 @@ export function ProgramLibrary({ programs, loading, error, onRetry, onOpen, onBu
     <header className="studio-library-header">
       <div><div className="studio-eyebrow"><BookOpenCheck size={14} /> Learning Studio</div><h1>Your programs</h1><p>A place for focused study, practice, and ideas that stay with you.</p></div>
       <div className="studio-library-actions">
+        <EditModeToggle />
         <Button variant="outline" type="button" onClick={onImport} className="studio-button"><Upload size={14} /> Import a course…</Button>
         <Button variant="outline" type="button" onClick={onExport} className="studio-button"><Archive size={14} /> Export all courses…</Button>
         <Button variant="outline" type="button" onClick={onBuild} className="studio-button studio-button-primary"><Plus size={15} /> {generatingOutline ? 'View outline progress' : 'Build a program'}</Button>

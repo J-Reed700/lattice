@@ -855,47 +855,6 @@ async settleLearningTeachingFindings(request: SettleLearningTeachingFindingsRequ
 }
 },
 /**
- * Rewrites a section of a published lesson, its title and its text. The
- * statements on text the user changed end, the others keep their state, and
- * each sentence the user wrote becomes a statement they confirmed. With
- * `dry_run` it only answers what saving would do.
- */
-async editLearningLessonSection(request: EditLearningLessonSectionRequestDto) : Promise<Result<LessonSectionEditDto, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|edit_learning_lesson_section", { request }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * A published lesson's question, as the editor opens it: its kind, prompt,
- * choices, right choice and explanation.
- */
-async getLearningLessonQuestion(programId: string, lessonId: string, questionIndex: number) : Promise<Result<LessonQuestionDto, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_lesson_question", { programId, lessonId, questionIndex }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Rewrites a question of a published lesson: its prompt, choices, right
- * answer and explanation. The statements on text the user changed end, the
- * others keep their state, and each sentence the user wrote becomes a
- * statement they confirmed. With `dry_run` it only answers what saving would
- * do.
- */
-async editLearningLessonQuestion(request: EditLearningLessonQuestionRequestDto) : Promise<Result<LessonQuestionEditDto, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|edit_learning_lesson_question", { request }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
  * Resume verification (§6.2): a lesson waiting for review continues its
  * job once something changed; a stopped one retries it.
  */
@@ -1445,14 +1404,6 @@ async generateConversationStudyDeck(request: GenerateConversationStudyDeckReques
 async reviewStudyCard(request: ReviewStudyCardRequestDto) : Promise<Result<StudyCardDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|review_study_card", { request }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async updateStudyCard(request: UpdateStudyCardRequestDto) : Promise<Result<null, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|update_study_card", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -3642,6 +3593,54 @@ async listJobs(kinds: string[]) : Promise<Result<JobDto[], ApiError>> {
     else return { status: "error", error: e  as any };
 }
 },
+async openContentEdit(content: ContentRef) : Promise<Result<EditableContent, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:edits|open_content_edit", { content }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async previewContentEdit(request: ContentEditRequest) : Promise<Result<ContentEditPreview, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:edits|preview_content_edit", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async applyContentEdit(request: ContentEditRequest) : Promise<Result<ContentEditOutcome, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:edits|apply_content_edit", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async revertContentEdit(request: RevertContentEditRequest) : Promise<Result<ContentEditOutcome, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:edits|revert_content_edit", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getContentEditHistory(content: ContentRef) : Promise<Result<ContentEditHistory, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:edits|get_content_edit_history", { content }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listContentEdits(query: ContentEditQuery) : Promise<Result<ContentEditSummary[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:edits|list_content_edits", { query }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 /**
  * Everything running, paused or waiting now. A part whose read fails is
  * left out and logged, so one broken read never empties the list. Each
@@ -5631,7 +5630,7 @@ export type ClaimLocationDto = { unitIndex: number; unitKind: UnitKindDto; unitT
 /**
  * Byte span of `quote` in the field; null when it occurs more than once.
  */
-span: [number, number] | null }
+span: [number, number] | null; address: ContentAddress | null }
 /**
  * The claim as the review shows it: plain text, in its sentence and
  * paragraph.
@@ -6077,6 +6076,46 @@ export type ConfirmArchiveSetupRequestDto = { confirmations: WordConfirmationDto
  * Optional second unlock path. At least 8 characters when present.
  */
 passphrase?: string | null }
+/**
+ * Derived-data consequence surfaced on preview and save outcomes.
+ */
+export type Consequence = { code: string; message: string; related: RelatedContent[] }
+/**
+ * Points to an entity, an optional field inside its document, and an optional text fragment.
+ */
+export type ContentAddress = { content: ContentRef; path: string | null; fragment: TextSelector | null }
+/**
+ * Full revision-ordered history for one content entity.
+ */
+export type ContentEditHistory = { content: ContentRef; revision: string; edits: ContentEditRecord[] }
+/**
+ * Result returned after `apply_content_edit` or `revert_content_edit`.
+ */
+export type ContentEditOutcome = { editId: string; changed: boolean; content: ContentRef; scope: EditScope; revision: string; affected: string[]; consequences: Consequence[]; reverted: string[] }
+/**
+ * Dry-run output from `preview_content_edit`.
+ */
+export type ContentEditPreview = { current: boolean; changed: boolean; problems: FieldProblem[]; notices: FieldNotice[]; consequences: Consequence[] }
+/**
+ * Filter parameters for `list_content_edits`.
+ */
+export type ContentEditQuery = { scope: EditScope | null; contents: ContentRef[]; since: number | null }
+/**
+ * One edit log row returned in `ContentEditHistory`.
+ */
+export type ContentEditRecord = { id: string; seq: number; origin: EditOrigin; target: ContentAddress | null; changes: FieldChange[]; createdAt: number; revertsEditId: string | null; revertedBy: string | null; standing: boolean; revertible: boolean; later: number }
+/**
+ * Request payload for `preview_content_edit` and `apply_content_edit`.
+ */
+export type ContentEditRequest = { editId: string; content: ContentRef; expectedRevision: string; ops: EditOp[]; source: EditSource; target: ContentAddress | null }
+/**
+ * Compact summary row returned by `list_content_edits`.
+ */
+export type ContentEditSummary = { id: string; content: ContentRef; seq: number; origin: EditOrigin; paths: string[]; createdAt: number; revertsEditId: string | null }
+/**
+ * Identifies one editable entity by its registered kind and feature-owned key.
+ */
+export type ContentRef = { kind: string; key: string }
 export type ContestLearningQuizGradeRequestDto = { operationId: string; programId: string; formId: string; itemId: string;
 /**
  * The learner's argument; may be empty.
@@ -6760,31 +6799,29 @@ label: string; count: number; dueAt: number; lessonId: string | null; material: 
 export type DueKind = "coding_patterns" | "drill_lesson" | "drill_patterns"
 export type EditCoursePlanEntryRequestDto = { programId: string; outlineRevision: number; expectedEntryRevision: number; topics: PlannedLesson }
 /**
- * A published lesson's question as the user rewrote it, with the question
- * they opened.
+ * A single patch operation against a loaded document.
  */
-export type EditLearningLessonQuestionRequestDto = { programId: string; lessonId: string;
+export type EditOp = { op: "replace"; path: string; value: JsonValue } | { op: "add"; path: string; value: JsonValue } | { op: "remove"; path: string }
 /**
- * Zero-based, among the lesson's questions.
+ * Recorded origin of an edit row, including pipeline reverts.
  */
-questionIndex: number; before: LessonQuestionDto; after: LessonQuestionDto;
+export type EditOrigin = { type: "learner" } | { type: "proposal"; proposalId: string; model: string } | { type: "action"; name: string } | { type: "revert"; editId: string }
 /**
- * Answer what saving would do and write nothing.
+ * Names the container an edit belongs to, used to filter history and invalidate frontend queries.
  */
-dryRun: boolean }
+export type EditScope = { feature: string; container: string }
 /**
- * A published lesson's section as the user rewrote it, with the title and
- * text they opened it with.
+ * Where a caller-initiated edit request comes from.
  */
-export type EditLearningLessonSectionRequestDto = { programId: string; lessonId: string;
+export type EditSource = { type: "learner" } | { type: "proposal"; proposalId: string; model: string } | { type: "action"; name: string }
 /**
- * Zero-based.
+ * Whether an entity may currently be edited or must wait.
  */
-sectionIndex: number; beforeTitle: string; beforeBody: string; title: string; body: string;
+export type Editability = { state: "editable" } | { state: "not_now"; reason: string }
 /**
- * Answer what saving would do and write nothing.
+ * Loaded entity returned by `open_content_edit`.
  */
-dryRun: boolean }
+export type EditableContent = { content: ContentRef; label: string; scope: EditScope; editable: Editability; form: FieldSpec[]; document: JsonValue; revision: string; notes: string[]; editedPaths: string[] }
 /**
  * Frontend mirror of `EmbeddingCompatibility`.
  */
@@ -7202,6 +7239,22 @@ export type FailedLearningPackExportDto = { programId: string; title: string; er
  * Favorite document with metadata
  */
 export type FavoriteDocument = { id: string; document_id: string; document_name: string; document_path: string; file_type: string | null; added_at: string }
+/**
+ * One changed field entry shown in an entity's edit history.
+ */
+export type FieldChange = { path: string; before: JsonValue | null; after: JsonValue | null }
+/**
+ * Non-blocking Markdown structure notice on a field.
+ */
+export type FieldNotice = { path: string; code: string; message: string; line: number | null }
+/**
+ * Validation problem on a field or the whole document.
+ */
+export type FieldProblem = { path: string | null; message: string }
+/**
+ * Describes one field in an entity's schema-driven editor form.
+ */
+export type FieldSpec = { type: "text"; path: string; label: string; format: TextFormat; required: boolean } | { type: "flag"; path: string; label: string; exclusive: boolean } | { type: "choice"; path: string; label: string; options: string[] } | { type: "number"; path: string; label: string; min: number; unit: string } | { type: "list"; path: string; label: string; itemLabel: string; minItems: number; maxItems: number | null; item: FieldSpec[] }
 /**
  * One entry of a file dialog's type list: a name and the extensions it shows.
  */
@@ -8476,7 +8529,7 @@ export type LearningCurriculumChangeKind = "added" | "edited" | "moved" | "skipp
 export type LearningCurriculumLesson = { id: string; title: string; objective: string; estimatedMinutes: number; state: LearningCurriculumLessonState; assessmentStarted: boolean; replacementLessonId: string | null }
 export type LearningCurriculumLessonState = "outline" | "ready" | "completed" | "skipped" | "replaced" | "challenged"
 export type LearningCurriculumModule = { id: string; title: string; purpose: string; prerequisiteModuleIds: string[]; outcomeIds: string[]; lessons: LearningCurriculumLesson[] }
-export type LearningCurriculumOperation = { kind: "add_lesson"; module_id: string; after_lesson_id: string | null; lesson: LearningCurriculumLesson } | { kind: "edit_lesson"; lesson_id: string; title: string; objective: string; estimated_minutes: number } | { kind: "move_lesson"; lesson_id: string; target_module_id: string; after_lesson_id: string | null } | { kind: "skip_lesson"; lesson_id: string } | { kind: "replace_lesson"; lesson_id: string; replacement: LearningCurriculumLesson } | { kind: "challenge_prerequisite"; lesson_id: string }
+export type LearningCurriculumOperation = { kind: "add_lesson"; module_id: string; after_lesson_id: string | null; lesson: LearningCurriculumLesson } | { kind: "move_lesson"; lesson_id: string; target_module_id: string; after_lesson_id: string | null } | { kind: "skip_lesson"; lesson_id: string } | { kind: "replace_lesson"; lesson_id: string; replacement: LearningCurriculumLesson } | { kind: "challenge_prerequisite"; lesson_id: string }
 export type LearningCurriculumRevision = { id: string; programId: string; revisionNumber: number; parentRevisionId: string | null; reason: string; modules: LearningCurriculumModule[]; createdAt: number }
 export type LearningCurriculumRevisionActionRequestDto = { operationId: string; programId: string; revisionId: string; expectedRevision: number }
 export type LearningDiagnosticAttemptDto = { id: string; programId: string; status: LearningDiagnosticStatus; revision?: number; prompts: LearningDiagnosticPromptDto[]; responses: LearningDiagnosticResponseDto[]; sourceCoverageGaps: LearningDiagnosticCoverageGapDto[]; interpretation: string; findings?: LearningDiagnosticFindingDto[]; createdAt: number; submittedAt: number | null }
@@ -9457,82 +9510,7 @@ sections: ReviewSectionDto[];
  * publishes with these waiting for the user.
  */
 teachingFindings: TeachingFindingDto[] }
-/**
- * A published lesson's question as the editor shows it and sends it back.
- */
-export type LessonQuestionDto = { kind: LearningItemFormat; prompt: string;
-/**
- * Empty for a kind without choices.
- */
-choices: string[];
-/**
- * The index of the right choice; null for a kind without one.
- */
-right: number | null; explanation: string;
-/**
- * One reason per choice, the right choice's empty; empty when the
- * question has none.
- */
-rationales: string[] }
-/**
- * What a rewrite of a question does, or did, to the lesson's statements.
- */
-export type LessonQuestionEditDto = { changed: boolean;
-/**
- * Statements on text the user left as it was.
- */
-statementsKept: number;
-/**
- * Statements on text the user changed.
- */
-statementsChanged: number;
-/**
- * Statements on text the user deleted.
- */
-statementsRemoved: number;
-/**
- * Sentences the user wrote.
- */
-sentencesWritten: number;
-/**
- * Changed or removed statements that were checked against the sources.
- */
-checkedStatementsAffected: number;
-/**
- * The review's revision after a save; null for a dry run, no change, or
- * a lesson without a review.
- */
-revision: number | null }
 export type LessonReviewStateDto = "verifying" | "needs_review" | "stopped" | "ready"
-/**
- * What a rewrite of a section does, or did, to the lesson's statements.
- */
-export type LessonSectionEditDto = { changed: boolean;
-/**
- * Statements on text the user left as it was.
- */
-statementsKept: number;
-/**
- * Statements on text the user changed.
- */
-statementsChanged: number;
-/**
- * Statements on text the user deleted.
- */
-statementsRemoved: number;
-/**
- * Sentences the user wrote.
- */
-sentencesWritten: number;
-/**
- * Changed or removed statements that were checked against the sources.
- */
-checkedStatementsAffected: number;
-/**
- * The review's revision after a save; null for a dry run, no change, or
- * a lesson without a review.
- */
-revision: number | null }
 /**
  * A line range a reference names inside what it points at.
  */
@@ -10348,6 +10326,10 @@ total_functions: number;
 call_counts: { [key in string]: number } }
 export type ReimportLearningSourceRequestDto = { operationId: string; programId: string; sourceId: string; versionId: string; expectedRevision: number; replacementText: string | null }
 /**
+ * Another piece of content related to a reactor consequence.
+ */
+export type RelatedContent = { content: ContentRef; label: string }
+/**
  * How a sentence uses a source, as the frontend names it.
  */
 export type RelationDto = "quotes" | "restates" | "summarizes" | "infers" | "agrees" | "backs" | "cites" | "contradicts"
@@ -10800,6 +10782,10 @@ export type RevealedSourceDto = { title: string; text: string;
  * The version of the source the passage is the exact text of.
  */
 versionId: string }
+/**
+ * Request payload for `revert_content_edit`.
+ */
+export type RevertContentEditRequest = { revertId: string; editId: string; expectedRevision: string; andLater: boolean }
 export type ReviewLearningRecallCardRequestDto = { reviewId: string; programId: string; cardId: string; expectedReviewCount: number; rating: StudyRating; selectedOption: number | null }
 /**
  * A section of the lesson: its index and title.
@@ -11841,7 +11827,7 @@ repairs: number; state: TeachingFindingStateDto;
 /**
  * Whether the user changed this section after the note was written.
  */
-partChanged: boolean }
+partChanged: boolean; address: ContentAddress | null }
 /**
  * What raised a teaching finding.
  */
@@ -11931,6 +11917,14 @@ export type TestCustomToolResponse = { finalUrl: string; status: number; content
 export type TestLlamaCppConnectionRequest = { url: string; model?: string; authHeaderName?: string; authHeaderValue?: string }
 export type TestOllamaConnectionRequest = { ollamaUrl: string; authHeaderName?: string; authHeaderValue?: string }
 export type TestOllamaConnectionResponse = { endpoint: string; models: string[] }
+/**
+ * Display and normalization mode for a text field.
+ */
+export type TextFormat = "line" | "plain" | "markdown"
+/**
+ * A W3C-shaped quote selector refined by UTF-8 byte offsets into a field's value.
+ */
+export type TextSelector = { exact: string; prefix: string | null; suffix: string | null; startByte: number; endByte: number }
 /**
  * Whether the model thinks, overriding the rule for its model.
  */
@@ -12262,7 +12256,6 @@ export type UpdateLearningQuizSettingsRequestDto = { operationId: string; progra
 export type UpdateLearningSourcePolicyRequestDto = { operationId: string; programId: string; sourceId: string; freshnessPolicy: LearningSourcePolicy; expectedRevision: number }
 export type UpdatePassageReferenceRequestDto = { id: string; title: string | null; note: string | null }
 export type UpdateSettingsRequest = { category: string | null; updates: { [key in string]: JsonValue } }
-export type UpdateStudyCardRequestDto = { cardId: string; question: string; answer: string; explanation: string }
 export type UpsertConversationSpaceMemberRequestDto = { spaceId: string; memberId: string; displayName: string | null; email: string | null; avatarUrl: string | null; role: string }
 /**
  * URL preview information for web capture.
@@ -12688,6 +12681,7 @@ export type CommandArgs = {
 	add_learning_web_source: { request: AddLearningWebSourceRequestDto; checkWaiting: boolean; onProgress: TAURI_CHANNEL<ClaimAttachProgressDto> };
 	add_watch_folder: { path: string };
 	adopt_learning_source_version: { request: AdoptLearningSourceVersionRequestDto };
+	apply_content_edit: { request: ContentEditRequest };
 	apply_learning_pack_import: { request: ApplyLearningPackImportRequestDto };
 	apply_tags: { request: ApplyTagsRequestDto };
 	archive_conversation_space: { request: ArchiveConversationSpaceRequestDto };
@@ -12781,8 +12775,6 @@ export type CommandArgs = {
 	download_model: { modelId: string };
 	download_reranker: void;
 	edit_learning_course_plan_entry: { request: EditCoursePlanEntryRequestDto };
-	edit_learning_lesson_question: { request: EditLearningLessonQuestionRequestDto };
-	edit_learning_lesson_section: { request: EditLearningLessonSectionRequestDto };
 	ensure_learning_lesson_note: { request: EnsureLearningLessonNoteRequestDto };
 	execute_function: { call: FunctionCall };
 	explorer_folder_delete_index: { root: string };
@@ -12837,6 +12829,7 @@ export type CommandArgs = {
 	get_cache_metrics: void;
 	get_cache_stats: void;
 	get_compatible_models: { category: string };
+	get_content_edit_history: { content: ContentRef };
 	get_conversation: { request: GetConversationRequestDto };
 	get_conversation_memory: { request: GetConversationMemoryRequestDto };
 	get_conversation_messages: { request: GetConversationMessagesRequestDto };
@@ -12865,7 +12858,6 @@ export type CommandArgs = {
 	get_learning_lesson_audit: { programId: string; lessonId: string };
 	get_learning_lesson_claim_review: { programId: string; lessonId: string };
 	get_learning_lesson_evidence: { programId: string; lessonId: string };
-	get_learning_lesson_question: { programId: string; lessonId: string; questionIndex: number };
 	get_learning_memory: { id: string };
 	get_learning_outline_evidence: { programId: string };
 	get_learning_plan: { id: string };
@@ -12924,6 +12916,7 @@ export type CommandArgs = {
 	list_available_functions: void;
 	list_cloud_models: { provider: CloudProvider };
 	list_clusters: void;
+	list_content_edits: { query: ContentEditQuery };
 	list_conversation_linked_documents: { conversationId: string };
 	list_conversation_space_members: { spaceId: string };
 	list_conversation_spaces: void;
@@ -12963,6 +12956,7 @@ export type CommandArgs = {
 	move_custom_collection: { collectionId: string; parentId?: string | null };
 	move_practice_stage: { request: MovePracticeStageRequestDto };
 	observe_practice_draft: { request: ObservePracticeDraftRequestDto };
+	open_content_edit: { content: ContentRef };
 	open_file: { path: string };
 	open_file_by_id: { fileId: string };
 	open_learning_practice_source: { request: OpenLearningPracticeSourceRequestDto };
@@ -12993,6 +12987,7 @@ export type CommandArgs = {
 	prepare_learning_module: { request: PrepareLearningModuleRequestDto };
 	prepare_learning_quiz_bank: { request: PrepareLearningQuizBankRequestDto };
 	prepare_learning_runtime_preset: { request: PrepareLearningRuntimePresetRequestDto };
+	preview_content_edit: { request: ContentEditRequest };
 	preview_learning_curriculum_revision: { request: PreviewLearningCurriculumRevisionRequestDto };
 	preview_learning_pack_import: { request: PreviewLearningPackImportRequestDto };
 	promote_conversation_tangent: { request: GetConversationRequestDto };
@@ -13052,6 +13047,7 @@ export type CommandArgs = {
 	retry_learning_generation_job: { request: LearningGenerationJobActionRequestDto };
 	reveal_learning_practice_solution: { request: RevealLearningPracticeSolutionRequestDto };
 	reveal_practice_solution: { request: RevealPracticeSolutionRequestDto };
+	revert_content_edit: { request: RevertContentEditRequest };
 	review_learning_recall_card: { request: ReviewLearningRecallCardRequestDto };
 	review_study_card: { request: ReviewStudyCardRequestDto };
 	run_coding_input: { request: RunCodingInputRequestDto };
@@ -13133,7 +13129,6 @@ export type CommandArgs = {
 	update_learning_source_policy: { request: UpdateLearningSourcePolicyRequestDto };
 	update_passage_reference: { request: UpdatePassageReferenceRequestDto };
 	update_settings: { settings: UpdateSettingsRequest };
-	update_study_card: { request: UpdateStudyCardRequestDto };
 	update_workspace_note: { note: WorkspaceNoteDto };
 	upsert_conversation_space_member: { request: UpsertConversationSpaceMemberRequestDto };
 	validate_folder_path: { path: string };
@@ -13162,6 +13157,7 @@ export type CommandResults = {
 	add_learning_web_source: LearningSourceWorkspaceDto;
 	add_watch_folder: null;
 	adopt_learning_source_version: LearningSourceWorkspaceDto;
+	apply_content_edit: ContentEditOutcome;
 	apply_learning_pack_import: LearningPortabilityWorkspaceDto;
 	apply_tags: TagDto[];
 	archive_conversation_space: RenameConversationResponseDto;
@@ -13255,8 +13251,6 @@ export type CommandResults = {
 	download_model: DownloadModelResponse;
 	download_reranker: RerankerStatusDto;
 	edit_learning_course_plan_entry: CoursePlanViewDto;
-	edit_learning_lesson_question: LessonQuestionEditDto;
-	edit_learning_lesson_section: LessonSectionEditDto;
 	ensure_learning_lesson_note: LearningMemoryDto;
 	execute_function: FunctionResult;
 	explorer_folder_delete_index: null;
@@ -13311,6 +13305,7 @@ export type CommandResults = {
 	get_cache_metrics: CacheMetrics;
 	get_cache_stats: SearchCacheStats;
 	get_compatible_models: ModelRecommendationDto[];
+	get_content_edit_history: ContentEditHistory;
 	get_conversation: GetConversationResponseDto;
 	get_conversation_memory: ConversationMemoryDetailsDto;
 	get_conversation_messages: GetConversationMessagesResponseDto;
@@ -13339,7 +13334,6 @@ export type CommandResults = {
 	get_learning_lesson_audit: LearningLessonAuditDto | null;
 	get_learning_lesson_claim_review: LessonClaimReviewDto | null;
 	get_learning_lesson_evidence: LearningLessonEvidenceDto | null;
-	get_learning_lesson_question: LessonQuestionDto;
 	get_learning_memory: LearningMemoryDto;
 	get_learning_outline_evidence: LearningOutlineEvidenceDto | null;
 	get_learning_plan: LearningPlanDto;
@@ -13398,6 +13392,7 @@ export type CommandResults = {
 	list_available_functions: ToolDefinition[];
 	list_cloud_models: CloudModelCatalogDto;
 	list_clusters: ClusterDto[];
+	list_content_edits: ContentEditSummary[];
 	list_conversation_linked_documents: ConversationLinkedDocumentDto[];
 	list_conversation_space_members: ConversationSpaceMemberDto[];
 	list_conversation_spaces: ConversationSpaceDto[];
@@ -13437,6 +13432,7 @@ export type CommandResults = {
 	move_custom_collection: null;
 	move_practice_stage: PracticeSessionDto;
 	observe_practice_draft: PracticeSessionDto;
+	open_content_edit: EditableContent;
 	open_file: OpenFileResponseDto;
 	open_file_by_id: OpenFileResponseDto;
 	open_learning_practice_source: LearningPracticeWorkspaceDto;
@@ -13467,6 +13463,7 @@ export type CommandResults = {
 	prepare_learning_module: LearningProgramDto;
 	prepare_learning_quiz_bank: LearningGenerationJob;
 	prepare_learning_runtime_preset: LearningPracticalWorkspaceDto;
+	preview_content_edit: ContentEditPreview;
 	preview_learning_curriculum_revision: LearningPlanDto;
 	preview_learning_pack_import: LearningPortabilityWorkspaceDto;
 	promote_conversation_tangent: ConversationDto;
@@ -13526,6 +13523,7 @@ export type CommandResults = {
 	retry_learning_generation_job: LearningGenerationJob;
 	reveal_learning_practice_solution: LearningPracticeWorkspaceDto;
 	reveal_practice_solution: PracticeSessionDto;
+	revert_content_edit: ContentEditOutcome;
 	review_learning_recall_card: LearningRecallWorkspaceDto;
 	review_study_card: StudyCardDto;
 	run_coding_input: PracticeSessionDto;
@@ -13607,7 +13605,6 @@ export type CommandResults = {
 	update_learning_source_policy: LearningSourceWorkspaceDto;
 	update_passage_reference: PassageReferenceDto;
 	update_settings: SettingsDto;
-	update_study_card: null;
 	update_workspace_note: WorkspaceNoteDto;
 	upsert_conversation_space_member: ConversationSpaceMemberDto;
 	validate_folder_path: boolean;

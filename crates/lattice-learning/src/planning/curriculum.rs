@@ -71,12 +71,6 @@ pub enum LearningCurriculumOperation {
         after_lesson_id: Option<String>,
         lesson: LearningCurriculumLesson,
     },
-    EditLesson {
-        lesson_id: String,
-        title: String,
-        objective: String,
-        estimated_minutes: u32,
-    },
     MoveLesson {
         lesson_id: String,
         target_module_id: String,

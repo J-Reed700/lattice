@@ -11,6 +11,7 @@ pub mod assessment;
 pub mod canvas;
 pub mod drills;
 pub mod dto;
+pub mod edits;
 pub mod lessons;
 mod model_call;
 pub mod model_requirements;

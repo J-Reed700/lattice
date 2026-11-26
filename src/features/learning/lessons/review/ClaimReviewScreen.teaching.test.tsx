@@ -35,7 +35,7 @@ function show(data: LessonClaimReviewDto | LessonClaimReviewDto[]) {
 
 const takenOut = (claimId: string): ClaimReviewItemDto => ({
   ...unsupportedItem(1), claimId, state: { state: 'removed', at: 5, by: 'machine' }, availableActions: [], verdictKind: null, reason: null,
-  location: { unitIndex: 2, unitKind: 'block', unitTitle: '', field: 'body', quote: `Sentence of ${claimId}.`, span: null },
+  location: { unitIndex: 2, unitKind: 'block', unitTitle: '', field: 'body', quote: `Sentence of ${claimId}.`, span: null, address: null },
   presentation: { statement: `Statement of ${claimId}.`, sentence: `Sentence of ${claimId}.`, contextBefore: '', contextAfter: '', place: '' },
 });
 

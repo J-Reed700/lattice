@@ -61,7 +61,7 @@ describe('claim review presentation', () => {
   it('groups claims by unit in lesson order with the unit in words', () => {
     const sections = groupBySection([unsupportedItem(1, 4), unsupportedItem(2, 0), unsupportedItem(3, 4)]);
     expect(sections.map((section) => [section.label, section.claims.length])).toEqual([['Section 1 · Section title 1', 1], ['Section 5 · Section title 5', 2]]);
-    expect(unitLabel({ unitIndex: 6, unitKind: 'answer_key', unitTitle: 'Boiling', field: 'explanation', quote: '', span: null })).toBe('Question · Boiling · answer key');
+    expect(unitLabel({ unitIndex: 6, unitKind: 'answer_key', unitTitle: 'Boiling', field: 'explanation', quote: '', span: null, address: null })).toBe('Question · Boiling · answer key');
   });
 
   it('groups by source, largest first, with the claims no source states last', () => {
@@ -155,7 +155,7 @@ describe('what the machine took out of the lesson', () => {
   /** A statement the machine removed, on `sentence`. */
   const taken = (claimId: string, statement: string, overrides: Partial<ClaimReviewItemDto> = {}, sentence = SENTENCE): ClaimReviewItemDto => claimItem({
     claimId, state: { state: 'removed', at: 5, by: 'machine' }, availableActions: [], verdictKind: null, reason: null,
-    location: { unitIndex: 2, unitKind: 'block', unitTitle: '', field: 'body', quote: sentence, span: null },
+    location: { unitIndex: 2, unitKind: 'block', unitTitle: '', field: 'body', quote: sentence, span: null, address: null },
     presentation: { statement, sentence, contextBefore: '', contextAfter: '', place: '' },
     ...overrides,
   });

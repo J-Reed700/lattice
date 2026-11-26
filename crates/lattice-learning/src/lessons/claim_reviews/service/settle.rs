@@ -5,60 +5,75 @@ use crate::lessons::claim_reviews::checker_examples::CheckerExamples;
 use crate::lessons::claim_reviews::repository::shown_passages_in;
 use crate::lessons::claim_reviews::trust_changed::redecide_kinds;
 use crate::references::trust::outcomes::{self, VerdictScope};
-use lattice_core::domain::learning::claim_review::LessonReview;
+use lattice_core::domain::learning::claim_review::{Ledger, LessonReview};
 use lattice_core::domain::provenance::ClaimKind;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::persistence::WriteTx;
 
-impl ClaimReviewService {
-    /// What a written claim gives the checker examples and trust
-    /// calibration, on the unit of work that wrote it. Returns the kinds
-    /// whose bar the outcomes moved: [`Self::redecide`] re-decides them
-    /// after the commit.
-    pub(super) async fn settle_in(
-        &self,
-        tx: &mut WriteTx,
-        review: &LessonReview,
-        lesson_id: &str,
-        item: &Planned<'_>,
-    ) -> Result<Vec<ClaimKind>> {
-        let Planned { entry, resolution } = item;
-        if let Some(source) = resolution.unlabel {
-            CheckerExamples::forget_in(tx, &entry.claim_id().0, source).await?;
-        }
-        if let Some(label) = resolution.label {
-            let shown = shown_passages_in(tx, lesson_id).await?;
-            let passages = shown.get(entry.claim_id()).cloned().unwrap_or_default();
-            CheckerExamples::record_human_verdict_in(
-                tx,
-                &review.program_id,
-                lesson_id,
-                entry,
-                &passages,
-                label,
-            )
-            .await?;
-        }
-        let scope = VerdictScope {
-            program_id: &review.program_id,
-            lesson_id,
-        };
-        let mut moved = Vec::new();
-        if let Some(verdict) = resolution.trust {
-            add_kinds(
-                &mut moved,
-                outcomes::record_in(tx, scope, entry, verdict).await?,
-            );
-        }
-        if let Some(verdict) = resolution.forget {
-            add_kinds(
-                &mut moved,
-                outcomes::forget_in(tx, &entry.claim_id().0, verdict).await?,
-            );
-        }
-        Ok(moved)
+/// What a written claim gives the checker examples and trust calibration, on
+/// the unit of work that wrote it. Returns the kinds whose bar the outcomes moved.
+pub(in crate::lessons::claim_reviews) async fn settle_in(
+    tx: &mut WriteTx,
+    review: &LessonReview,
+    lesson_id: &str,
+    item: &Planned<'_>,
+) -> Result<Vec<ClaimKind>> {
+    let Planned { entry, resolution } = item;
+    if let Some(source) = resolution.unlabel {
+        CheckerExamples::forget_in(tx, &entry.claim_id().0, source).await?;
     }
+    if let Some(label) = resolution.label {
+        let shown = shown_passages_in(tx, lesson_id).await?;
+        let passages = shown.get(entry.claim_id()).cloned().unwrap_or_default();
+        CheckerExamples::record_human_verdict_in(
+            tx,
+            &review.program_id,
+            lesson_id,
+            entry,
+            &passages,
+            label,
+        )
+        .await?;
+    }
+    let scope = VerdictScope {
+        program_id: &review.program_id,
+        lesson_id,
+    };
+    let mut moved = Vec::new();
+    if let Some(verdict) = resolution.trust {
+        add_kinds(
+            &mut moved,
+            outcomes::record_in(tx, scope, entry, verdict).await?,
+        );
+    }
+    if let Some(verdict) = resolution.forget {
+        add_kinds(
+            &mut moved,
+            outcomes::forget_in(tx, &entry.claim_id().0, verdict).await?,
+        );
+    }
+    Ok(moved)
+}
 
+/// Settles each ending on the edit's own unit of work.
+pub(in crate::lessons::claim_reviews) async fn settle_planned_in(
+    tx: &mut WriteTx,
+    ledger: &Ledger,
+    lesson_id: &str,
+    planned: &[Planned<'_>],
+) -> Result<Vec<ClaimKind>> {
+    let Some(review) = &ledger.review else {
+        return Ok(Vec::new());
+    };
+    let mut moved = Vec::new();
+    for item in planned {
+        let kinds = settle_in(tx, review, lesson_id, item).await?;
+        add_kinds(&mut moved, kinds);
+    }
+    Ok(moved)
+}
+
+impl ClaimReviewService {
     /// Re-decides the claims of every kind whose bar a settlement moved;
     /// whether that re-decided one of this lesson's claims.
     pub(super) async fn redecide(&self, lesson_id: &str, moved: Vec<ClaimKind>) -> Result<bool> {

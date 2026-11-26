@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { BookOpen, Check, ExternalLink, FileText, LoaderCircle, PencilLine, RotateCcw, Save, Shuffle, Sparkles, Trash2, Undo2 } from 'lucide-react';
+import { BookOpen, Check, ExternalLink, FileText, LoaderCircle, PencilLine, RotateCcw, Save, Shuffle, Sparkles, Trash2 } from 'lucide-react';
 import { useInRouterContext } from 'react-router';
 
 import { TiptapEditor } from '@/components/TiptapEditor';
@@ -12,12 +12,14 @@ import { createNoteSaveQueue } from '@/features/journal/api/noteSaveQueue';
 import { WORKSPACE_NOTES_QUERY_KEY } from '@/features/journal/api/queries';
 import { HandwrittenSynthesisTools } from '@/features/learning/memory/HandwrittenSynthesisTools';
 import { recallGenerationKey, useRecallGenerationStore } from '@/features/learning/memory/recallGenerationStore';
-import { learningMemoryKey, useAcceptLearningCardDraft, useDiscardLearningCardDraft, useEnsureLearningLessonNote, useSaveLearningCardDraft, useUpdateLearningStudyCard, useReviewLearningStudyCard } from '@/features/learning/memory/useLearningMemory';
+import { learningMemoryKey, useAcceptLearningCardDraft, useDiscardLearningCardDraft, useEnsureLearningLessonNote, useSaveLearningCardDraft, useReviewLearningStudyCard } from '@/features/learning/memory/useLearningMemory';
 import { CardText, cardPreview } from '@/features/learning/recall/CardText';
 import { fromNow, MAX_ATTEMPTS, RELEARN_GAP } from '@/features/learning/recall/flashcards/retrieval';
 import { useAppNavigate } from '@/hooks/useAppNavigate';
 import type { LearningCardDraftDto, LearningCardOriginDto, LearningMemoryDto, LearningProgramDto, StudyCardDto, WorkspaceNoteDto } from '@/lib/bindings';
 import { flushPendingSaves, registerPendingSave } from '@/lib/pendingSaves';
+import { Editable } from '@/shared/edits/Editable';
+import { openEditor } from '@/shared/edits/editorStore';
 
 function safeHref(value?: string | null) {
   if (!value) return undefined;
@@ -228,23 +230,26 @@ function DraftEditor({ draftId, lessonId, program, initial, origin = 'manual', p
   </form>;
 }
 
-function AcceptedCardEditor({ card, origin, program, pending, error, onSave }: {
-  card: StudyCardDto; origin: LearningCardOriginDto; program: LearningProgramDto; pending: boolean; error?: string;
-  onSave: (card: StudyCardDto, question: string, answer: string, explanation: string, onSuccess: () => void) => void;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [question, setQuestion] = useState(card.question);
-  const [answer, setAnswer] = useState(card.answer);
-  const [explanation, setExplanation] = useState(card.explanation);
-  if (!editing) return <article className="rounded-xl border border-border bg-background p-4"><div className="flex items-start justify-between gap-3"><div><div className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700">Accepted · {origin.origin} source</div><div role="heading" aria-level={4} className="mt-1 font-medium leading-6 text-text-primary"><CardText text={card.question} /></div><p className="mt-2 text-xs text-text-muted">Answer and supporting excerpts are available after revealing this card during review.</p></div><button type="button" onClick={() => setEditing(true)} aria-label={`Edit accepted card: ${cardPreview(card.question)}`} className="rounded-full border border-border p-2 text-text-muted hover:text-accent"><PencilLine size={14} /></button></div></article>;
-  return <form onSubmit={(event) => { event.preventDefault(); onSave(card, question, answer, explanation, () => setEditing(false)); }} className="rounded-xl border border-accent/30 bg-background p-4">
-    <div className="mb-3 flex items-center justify-between"><span className="text-xs font-semibold text-text-primary">Edit accepted card</span><button type="button" onClick={() => { setEditing(false); setQuestion(card.question); setAnswer(card.answer); setExplanation(card.explanation); }} aria-label="Cancel card edit" className="rounded-full p-1.5 text-text-muted hover:bg-surface"><Undo2 size={14} /></button></div>
-    <label className="mb-1 block text-xs" htmlFor={`accepted-question-${card.id}`}>Question</label><textarea id={`accepted-question-${card.id}`} value={question} onChange={(e) => setQuestion(e.target.value)} required className={`${settingsFieldClass} w-full`} />
-    <label className="mb-1 mt-3 block text-xs" htmlFor={`accepted-answer-${card.id}`}>Answer</label><textarea id={`accepted-answer-${card.id}`} value={answer} onChange={(e) => setAnswer(e.target.value)} required className={`${settingsFieldClass} w-full`} />
-    <label className="mb-1 mt-3 block text-xs" htmlFor={`accepted-explanation-${card.id}`}>Explanation</label><textarea id={`accepted-explanation-${card.id}`} value={explanation} onChange={(e) => setExplanation(e.target.value)} required className={`${settingsFieldClass} w-full`} />
-    {error && <p role="alert" className="mt-3 text-xs text-rose-700">{error}</p>}<SourceProvenance sourceIds={origin.sourceIds} program={program} />
-    <button type="submit" disabled={pending || !question.trim() || !answer.trim() || !explanation.trim()} className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-accent px-4 py-2 text-xs font-semibold text-accent-fg disabled:opacity-50">{pending ? 'Saving…' : 'Save card'}</button>
-  </form>;
+function AcceptedCardEditor({ card, origin }: { card: StudyCardDto; origin: LearningCardOriginDto }) {
+  return <Editable content={{ kind: 'study.card', key: card.id }} label={`card: ${card.question.split('\n')[0]}`}>
+    <article className="rounded-xl border border-border bg-background p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700">Accepted · {origin.origin} source</div>
+          <div role="heading" aria-level={4} className="mt-1 font-medium leading-6 text-text-primary"><CardText text={card.question} /></div>
+          <p className="mt-2 text-xs text-text-muted">Answer and supporting excerpts are available after revealing this card during review.</p>
+        </div>
+        <button
+          type="button"
+          onClick={(event) => openEditor({ content: { kind: 'study.card', key: card.id }, path: null, fragment: null }, { returnFocusTo: event.currentTarget })}
+          aria-label={`Edit accepted card: ${cardPreview(card.question)}`}
+          className="rounded-full border border-border p-2 text-text-muted hover:text-accent"
+        >
+          <PencilLine size={14} />
+        </button>
+      </div>
+    </article>
+  </Editable>;
 }
 
 /** Opens the program's deck in Studio's full study session, which needs the app's router. */
@@ -270,12 +275,10 @@ export function RecallPanel({ program, lessonId, memory, memoryLoading, memoryEr
   const saveDraft = useSaveLearningCardDraft();
   const acceptDraft = useAcceptLearningCardDraft();
   const discardDraft = useDiscardLearningCardDraft();
-  const updateCard = useUpdateLearningStudyCard();
   const review = useReviewLearningStudyCard();
   const [count, setCount] = useState(3);
   const [manualOpen, setManualOpen] = useState(false);
   const [draftSaveTarget, setDraftSaveTarget] = useState<string | null>(null);
-  const [cardUpdateTarget, setCardUpdateTarget] = useState<string | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [attempt, setAttempt] = useState('');
   const [reviewedIds, setReviewedIds] = useState<string[]>([]);
@@ -368,16 +371,6 @@ export function RecallPanel({ program, lessonId, memory, memoryLoading, memoryEr
     if (!lessonId) return;
     setDraftSaveTarget(draftId ?? 'manual');
     saveDraft.mutate({ draftId, programId: program.summary.id, lessonId, ...value }, { onSuccess: () => { setDraftSaveTarget(null); if (draftId === null) setManualOpen(false); } });
-  };
-  const editAccepted = (card: StudyCardDto, question: string, answer: string, explanation: string, onSuccess: () => void) => {
-    setCardUpdateTarget(card.id);
-    updateCard.reset();
-    updateCard.mutate({ cardId: card.id, question, answer, explanation }, {
-      onSuccess: () => {
-        setCardUpdateTarget(null);
-        onSuccess();
-      },
-    });
   };
   const acceptCard = (draftId: string) => {
     discardDraft.reset();
@@ -484,7 +477,7 @@ export function RecallPanel({ program, lessonId, memory, memoryLoading, memoryEr
           )}
         </div>
         {relearnItem && !revealed && <p className="mt-3 text-xs text-text-muted">Back again: you missed this earlier in this review. Answer it from memory once more.</p>}<CardText className="mt-3 font-serif text-xl leading-7 text-text-primary" text={currentCard.question} />{!revealed ? <div className="mt-5"><label className="block text-xs text-text-muted">Your answer <span>· commit to one before you look</span><textarea value={attempt} onChange={(event) => setAttempt(event.target.value)} rows={3} placeholder="Type what you remember…" className="mt-2 w-full resize-y rounded-lg border border-border bg-surface px-3 py-2.5 text-sm leading-6 text-text-primary outline-hidden focus:border-accent" /></label><button type="button" disabled={review.isPending} onClick={() => setRevealed(true)} className="mt-3 rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-accent-fg">{attempt.trim() ? 'Check my answer' : "I don't know yet: show me"}</button></div> : <div className="mt-5 border-t border-border pt-5">{attempt.trim() && <div className="mb-4 rounded-lg bg-surface p-3"><div className="text-xs font-semibold uppercase tracking-[.12em] text-text-muted">Your answer</div><p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-text-secondary">{attempt.trim()}</p></div>}<div className="text-xs font-semibold uppercase tracking-[.12em] text-accent">Answer</div><CardText className="mt-2 text-base font-medium leading-6 text-text-primary" text={currentCard.answer} />{currentCard.explanation && <CardText className="mt-2 text-sm leading-6 text-text-secondary" text={currentCard.explanation} />}<SourceProvenance sourceIds={memory?.acceptedCards?.find((origin) => origin.cardId === currentCard.id)?.sourceIds ?? []} program={program} /><div className="mt-5"><div className="mb-2 text-xs text-text-muted">How did recall feel?</div><div className="flex flex-wrap gap-2">{(['again', 'hard', 'good', 'easy'] as const).map((rating) => <button key={rating} type="button" disabled={review.isPending} onClick={() => rateCard(rating)} className="rounded-full border border-border px-4 py-2 text-xs font-medium capitalize text-text-secondary hover:border-accent/50 hover:text-accent disabled:opacity-50">{review.isPending ? 'Saving…' : rating}</button>)}</div></div></div>}</article> : <div className="mt-5 rounded-xl border border-dashed border-border p-7 text-center"><h4 className="font-serif text-xl text-text-primary">{memory?.studyDeck?.cards.length ? 'You are caught up' : 'No accepted cards yet'}</h4><p className="mt-2 text-sm leading-6 text-text-secondary">{memory?.studyDeck?.cards.length ? 'There are no due cards in this program right now.' : 'Accepted cards will appear here when their scheduled review is due.'}</p></div>}
-      {memory?.acceptedCards?.length ? <div className="mt-7 border-t border-border pt-6"><h4 className="font-serif text-lg text-text-primary">Accepted cards for this lesson</h4><div className="mt-3 space-y-3">{origins.map((origin) => { const card = memory.studyDeck?.cards.find((item) => item.id === origin.cardId); return card ? <AcceptedCardEditor key={card.id} card={card} origin={origin} program={program} pending={updateCard.isPending} error={cardUpdateTarget === card.id ? updateCard.error?.message : undefined} onSave={editAccepted} /> : null; })}</div>{origins.length === 0 && <p className="mt-2 text-xs text-text-muted">No accepted cards yet for this lesson.</p>}</div> : null}
+      {memory?.acceptedCards?.length ? <div className="mt-7 border-t border-border pt-6"><h4 className="font-serif text-lg text-text-primary">Accepted cards for this lesson</h4><div className="mt-3 space-y-3">{origins.map((origin) => { const card = memory.studyDeck?.cards.find((item) => item.id === origin.cardId); return card ? <AcceptedCardEditor key={card.id} card={card} origin={origin} /> : null; })}</div>{origins.length === 0 && <p className="mt-2 text-xs text-text-muted">No accepted cards yet for this lesson.</p>}</div> : null}
     </section>
   </div>;
 }

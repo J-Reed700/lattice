@@ -1,6 +1,6 @@
 import { useEffect, useId, useState, type ReactNode } from 'react';
 
-import { ArrowRight, Check, CheckCircle2, ChevronDown, ClipboardCheck, Clock3, Pencil } from 'lucide-react';
+import { ArrowRight, Check, CheckCircle2, ChevronDown, ClipboardCheck, Clock3 } from 'lucide-react';
 
 import { PlainError } from '@/components/PlainError';
 import { Button } from '@/components/ui/button';
@@ -13,7 +13,6 @@ import { LessonFromMemory } from '@/features/learning/lessons/active/LessonFromM
 import { LessonWarmUp } from '@/features/learning/lessons/active/LessonWarmUp';
 import { useLessonDraft } from '@/features/learning/lessons/active/useLessonDraft';
 import { CitedSection } from '@/features/learning/lessons/CitedSection';
-import { LessonSectionEditor } from '@/features/learning/lessons/edit/LessonSectionEditor';
 import { LessonEvidencePanel, unverifiedCount } from '@/features/learning/lessons/LessonEvidencePanel';
 import { preparingLine } from '@/features/learning/lessons/lessonPreparationActivity';
 import { preparationQueue, queuedLesson, queuedLine } from '@/features/learning/lessons/preparationQueue';
@@ -34,6 +33,7 @@ import { useCitationDisplayStore } from '@/features/reading/stores/citationDispl
 import { ListenButton } from '@/features/speech/components/ListenButton';
 import type { LearningBlockKind, LearningLessonDto, LearningOutlineCitationDto, LearningOutlineEvidenceDto, LearningProgramDto } from '@/lib/bindings';
 import { jobErrorToError } from '@/lib/errorHandling';
+import { Editable } from '@/shared/edits/Editable';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 const LISTEN_CLASS =
@@ -69,9 +69,6 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, onOpenOutlineCit
   topics?: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(isCurrent && lesson.preparation === 'ready');
-  const [editing, setEditing] = useState<number | null>(null);
-  const [editNote, setEditNote] = useState('');
-  const editedBlock = editing === null ? undefined : lesson.blocks[editing];
   // The recap opens once the learner has explained the lesson from memory
   // (learning science lessons §3.4), when a reflection asks them to first.
   const [comparedFlag, setComparedFlag] = useLessonDraft(`${lesson.id}.compared`);
@@ -179,8 +176,10 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, onOpenOutlineCit
           {lessonSources.length > 0 && <section className="studio-margin-block studio-margin-sources"><h4 className="studio-margin-heading">Source material</h4>{lessonSources.map((source) => <div key={source.id}><button type="button" onClick={onSources}>{source.title} ↗</button><small>Saved reference · {new Date(source.acquiredAt).toLocaleDateString()}</small></div>)}</section>}
         </div></aside>) : null}>
         <div className="studio-lesson-reading">
-          <h3 className="studio-lesson-heading">{lesson.title}</h3>
-          <div className="studio-lesson-objective"><StudyTangentSelection moduleId={moduleId} lessonId={lesson.id} sectionIndex={null} sectionTitle="Lesson Objective"><span>{lesson.objective || (lesson.preparation === 'outline' ? 'A lesson in the program outline. Prepare it when you are ready.' : 'A focused lesson with explanation and worked example.')}</span></StudyTangentSelection></div>
+          <Editable content={{ kind: 'learning.lesson', key: lesson.id }} label={`lesson: ${lesson.title}`}>
+            <h3 className="studio-lesson-heading">{lesson.title}</h3>
+            <div className="studio-lesson-objective"><StudyTangentSelection moduleId={moduleId} lessonId={lesson.id} sectionIndex={null} sectionTitle="Lesson Objective"><span>{lesson.objective || (lesson.preparation === 'outline' ? 'A lesson in the program outline. Prepare it when you are ready.' : 'A focused lesson with explanation and worked example.')}</span></StudyTangentSelection></div>
+          </Editable>
           <p className="studio-lesson-meta"><span><Clock3 size={13} />About {lesson.estimatedMinutes} min</span><span>{lesson.blocks.length} {lesson.blocks.length === 1 ? 'section' : 'sections'}</span><span>{lesson.completed ? 'Self-reported complete' : 'Not marked complete'}</span></p>
           {showCitations && <OutlineCitation citation={objectiveCitation} onOpen={onOpenOutlineCitation} className="mb-4 mt-0" />}
           {lesson.preparation === 'outline' && topics}
@@ -210,25 +209,19 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, onOpenOutlineCit
               <AuditLessonNow programId={program.summary.id} lessonId={lesson.id} />
               {showCitations && <LessonEvidencePanel key={lesson.id} programId={program.summary.id} lessonId={lesson.id} programRevision={program.summary.revision} report={evidenceReport} />}
               {!lesson.completed && program.summary.status === 'active' && <LessonWarmUp programId={program.summary.id} />}
-              <p role="status" aria-label="Section editing" className="sr-only">{editNote}</p>
-              {editedBlock && editing !== null && <LessonSectionEditor programId={program.summary.id} lessonId={lesson.id} sectionIndex={editing} title={editedBlock.title} body={editedBlock.body}
-                open onClose={() => setEditing(null)} onSaved={() => setEditNote('Section saved.')} />}
               <div className="studio-lesson-sections">
                 {lesson.blocks.map((block, index) => {
                   const tangent = (viewer: ReactNode) => <StudyTangentSelection moduleId={moduleId} lessonId={lesson.id} sectionIndex={index} sectionTitle={block.title}>{viewer}</StudyTangentSelection>;
-                  const prose = (content: string) => tangent(<MarkdownViewer content={content} />);
+                  const prose = (content: string) => tangent(<MarkdownViewer content={content} sourceLines />);
                   const check = block.check ?? null;
                   const heldRecap = block.kind === 'recap' && recallFirst && !compared;
+                  const sectionContent = { kind: 'learning.section', key: `${lesson.id}/${index}` };
+                  const header = <><h4>{block.title}</h4>{!heldRecap && <div className="-mx-1.5 mt-1"><ListenButton sourceId={`lesson:${lesson.id}:${index}`} markdown={`# ${block.title}\n\n${check ? check.question : block.body}`} subject={`the section “${block.title}”`} className={LISTEN_CLASS} /></div>}</>;
                   return <section id={`lesson-${lesson.id}-section-${index}`} key={`${lesson.id}-${index}`} className="studio-lesson-section">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="studio-section-label">{blockLabels[block.kind]}</div>
-                    {!heldRecap && <button type="button" aria-label={`Edit section ${index + 1}: ${block.title}`} onClick={() => { setEditNote(''); setEditing(index); }} className={LISTEN_CLASS}><Pencil size={13} aria-hidden="true" />Edit</button>}
-                  </div>
-                  <h4>{block.title}</h4>
-                  {!heldRecap && <div className="-mx-1.5 mt-1"><ListenButton sourceId={`lesson:${lesson.id}:${index}`} markdown={`# ${block.title}\n\n${check ? check.question : block.body}`} subject={`the section “${block.title}”`} className={LISTEN_CLASS} /></div>}
-                  {check ? <LessonCheck programId={program.summary.id} lessonId={lesson.id} lessonTitle={lesson.title} section={index} body={block.body} parts={check} sourceIds={block.sourceIds} active={program.summary.status === 'active'} questionView={prose(check.question)} />
-                    : heldRecap ? <p className="mt-3 text-sm leading-6 text-text-secondary">These open once you have explained the lesson from memory above, so you can see what you recalled and what you missed. <button type="button" onClick={compare} className="underline underline-offset-2 hover:text-text-primary">Show them now</button></p>
-                    : <div className="studio-lesson-prose"><CitedSection lessonId={lesson.id} sectionIndex={index} body={block.body} report={evidenceReport.data} sources={citationSources} showCitations={showCitations} wrap={tangent} /></div>}
+                  <div className="studio-section-label">{blockLabels[block.kind]}</div>
+                  {check ? <>{header}<LessonCheck programId={program.summary.id} lessonId={lesson.id} lessonTitle={lesson.title} section={index} sectionTitle={block.title} body={block.body} parts={check} sourceIds={block.sourceIds} active={program.summary.status === 'active'} questionView={<Editable content={sectionContent} path="/body" source={check.question} sourceStart={0} label={`question of section ${index + 1}: ${block.title}`}>{prose(check.question)}</Editable>} /></>
+                    : heldRecap ? <>{header}<p className="mt-3 text-sm leading-6 text-text-secondary">These open once you have explained the lesson from memory above, so you can see what you recalled and what you missed. <button type="button" onClick={compare} className="underline underline-offset-2 hover:text-text-primary">Show them now</button></p></>
+                    : <Editable content={sectionContent} path="/body" source={block.body} label={`section ${index + 1}: ${block.title}`}>{header}<div className="studio-lesson-prose"><CitedSection lessonId={lesson.id} sectionIndex={index} body={block.body} report={evidenceReport.data} sources={citationSources} showCitations={showCitations} wrap={tangent} /></div></Editable>}
                   {block.kind === 'reflection' && recallFirst && <LessonFromMemory lessonId={lesson.id} compared={compared} onCompare={compare} />}
                   <UnverifiedStatements programId={program.summary.id} lessonId={lesson.id} statements={unverifiedStatements(evidenceReport.data, index)} onReview={onReview} />
                   {showCitations && evidenceReport.isSuccess && !evidenceReport.data && <SourceLine ids={block.sourceIds} sources={program.sources} />}

@@ -25,6 +25,11 @@ pub struct ReadTx {
     changed_before: i64,
 }
 
+/// Borrowed read handle from an open `WriteTx` or `ReadTx`.
+pub struct Reading<'a> {
+    connection: &'a mut SqliteConnection,
+}
+
 impl WriteTx {
     pub(super) async fn start(
         pool: &SqlitePool,
@@ -47,6 +52,12 @@ impl WriteTx {
         drop(turn);
         Ok(rolled_back?)
     }
+
+    pub fn reading(&mut self) -> Reading<'_> {
+        Reading {
+            connection: &mut self.tx,
+        }
+    }
 }
 
 impl ReadTx {
@@ -67,6 +78,12 @@ impl ReadTx {
 
     pub async fn rollback(self) -> Result<(), PersistenceError> {
         Ok(self.tx.rollback().await?)
+    }
+
+    pub fn reading(&mut self) -> Reading<'_> {
+        Reading {
+            connection: &mut self.tx,
+        }
     }
 }
 
@@ -119,5 +136,19 @@ impl Deref for ReadTx {
 impl DerefMut for ReadTx {
     fn deref_mut(&mut self) -> &mut SqliteConnection {
         &mut self.tx
+    }
+}
+
+impl Deref for Reading<'_> {
+    type Target = SqliteConnection;
+
+    fn deref(&self) -> &SqliteConnection {
+        self.connection
+    }
+}
+
+impl DerefMut for Reading<'_> {
+    fn deref_mut(&mut self) -> &mut SqliteConnection {
+        self.connection
     }
 }

@@ -55,6 +55,7 @@ import { useEffectiveTheme } from '@/hooks/useApplyTheme';
 import type { LearningGenerationJob, LearningLessonDto, LearningModuleDto, LearningOutlineCitationDto, LearningProgramDto } from '@/lib/bindings';
 import { flushPendingSaves } from '@/lib/pendingSaves';
 import type { StudyDestination, StudyTab } from '@/lib/studyActivity';
+import { EditModeToggle } from '@/shared/edits/EditModeToggle';
 
 
 const LazyCanvasPanel = lazy(() => import('@/features/learning/canvas/CanvasPanel'));
@@ -418,13 +419,16 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
             {showCitations && currentModule && <OutlineCitation citation={findOutlineCitation(visibleOutlineEvidence, 'module_summary', currentModule.id, currentModule.summary)} onOpen={openOutlineCitation} />}
           </div>
           {activeProgram && onPrepareModule && currentModule && unqueuedInModule.length > 0 && <Button type="button" variant="outline" disabled={preparePending || Boolean(waitsForIndex)} onClick={() => onPrepareModule(currentModule)} className="studio-button shrink-0 disabled:opacity-50">Prepare all lessons</Button>}
-          <details className="group relative shrink-0 text-sm">
-            <summary className="min-h-10 cursor-pointer list-none rounded-full border border-border px-3 py-2 text-text-secondary hover:border-accent/40 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent">Module details <span className="text-accent">⌄</span></summary>
-            <div className="absolute right-0 z-20 mt-2 w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-border bg-surface p-4 shadow-xl">
-              <h3 className="font-medium text-text-primary">Outcomes</h3>
-              <ul className="mt-2 space-y-3 text-sm leading-5 text-text-secondary">{currentModule?.outcomes.map((outcome, index) => <li key={outcome}><div className="flex gap-2"><span aria-hidden="true">•</span><span>{outcome}</span></div>{showCitations && <OutlineCitation citation={findOutlineCitation(visibleOutlineEvidence, 'outcome', currentModule.id, outcome, index)} onOpen={openOutlineCitation} className="ml-4" />}</li>)}</ul>
-            </div>
-          </details>
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <EditModeToggle />
+            <details className="group relative shrink-0 text-sm">
+              <summary className="min-h-10 cursor-pointer list-none rounded-full border border-border px-3 py-2 text-text-secondary hover:border-accent/40 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent">Module details <span className="text-accent">⌄</span></summary>
+              <div className="absolute right-0 z-20 mt-2 w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-border bg-surface p-4 shadow-xl">
+                <h3 className="font-medium text-text-primary">Outcomes</h3>
+                <ul className="mt-2 space-y-3 text-sm leading-5 text-text-secondary">{currentModule?.outcomes.map((outcome, index) => <li key={outcome}><div className="flex gap-2"><span aria-hidden="true">•</span><span>{outcome}</span></div>{showCitations && <OutlineCitation citation={findOutlineCitation(visibleOutlineEvidence, 'outcome', currentModule.id, outcome, index)} onOpen={openOutlineCitation} className="ml-4" />}</li>)}</ul>
+              </div>
+            </details>
+          </div>
         </div>
         <nav aria-label="Module workspace" className="studio-workspace-tabs"><NavigationTabs label="Program workspace" value={practiceTab ? 'workbench' : tab} disabled={savingBeforeMove} options={primary.filter((item) => activeProgram || item.id === 'lessons' || item.id === 'sources').map((item) => ({ ...item, badge: item.id === 'recall' && memoryQuery.data?.dueCount ? memoryQuery.data.dueCount : undefined }))} onValueChange={selectTab} onReselect={(id) => { if (id === 'workbench') practiceView.openHome(); }} idPrefix="workspace-tab" panelId="workspace-panel" actions={<div className="relative ml-auto"><button ref={moreButtonRef} type="button" aria-haspopup="menu" aria-expanded={moreOpen} aria-current={['plan', 'canvas', 'portability'].includes(tab) ? 'page' : undefined} aria-controls="workspace-more-menu" onClick={() => setMoreOpen((value) => !value)} className="min-h-11 rounded-lg px-3 text-sm font-medium text-text-secondary hover:bg-background focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent">More <span aria-hidden="true">⌄</span></button>{moreOpen && <div id="workspace-more-menu" ref={moreMenuRef} role="menu" aria-label="More workspace tools" onKeyDown={(event) => { if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return; event.preventDefault(); const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')); const index = items.indexOf(document.activeElement as HTMLButtonElement); const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length; items[next]?.focus(); }} className="absolute right-0 top-full z-30 mt-1 w-52 rounded-xl border border-border bg-surface p-1.5 shadow-xl">{(activeProgram ? [{ id: 'plan' as const, label: 'Plan' }, { id: 'canvas' as const, label: 'Canvas' }, { id: 'portability' as const, label: 'Import & export' }] : [{ id: 'portability' as const, label: 'Import & export' }]).map((item) => <button key={item.id} type="button" role="menuitem" aria-current={tab === item.id ? 'page' : undefined} onClick={() => selectMoreTab(item.id)} className="flex min-h-11 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary hover:bg-background focus-visible:bg-background focus-visible:outline-hidden">{item.label}</button>)}</div>}</div>} /></nav>
 

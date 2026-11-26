@@ -187,20 +187,45 @@ async fn editing_keeps_choices_distinct_and_edits_free_answers_in_place() -> Res
     });
     repo.save(&saved).await?;
     let (choice_id, free_id) = (saved.cards[0].id.clone(), saved.cards[1].id.clone());
-    let edit = |card_id: &str, answer: &str| UpdateStudyCardRequestDto {
-        card_id: card_id.into(),
-        question: "  Which herb gives pesto its colour?  ".into(),
-        answer: answer.into(),
-        explanation: "  Basil leaves are bright green.  ".into(),
+    let edits = crate::edits::content_edits(&database)?;
+    let apply_edit = |card_id: String, answer_path: &'static str, answer: String| {
+        let edits = edits.clone();
+        async move {
+            use lattice_core::shared::edits::{ContentEditRequest, EditOp, EditSource};
+            let content = crate::edits::keys::card_ref(&card_id);
+            let opened = edits.open(&content).await?;
+            edits
+                .apply(&ContentEditRequest {
+                    edit_id: id(),
+                    content,
+                    expected_revision: opened.revision,
+                    ops: vec![
+                        EditOp::Replace {
+                            path: "/question".into(),
+                            value: serde_json::json!("Which herb gives pesto its colour?"),
+                        },
+                        EditOp::Replace {
+                            path: answer_path.into(),
+                            value: serde_json::json!(answer),
+                        },
+                        EditOp::Replace {
+                            path: "/explanation".into(),
+                            value: serde_json::json!("Basil leaves are bright green."),
+                        },
+                    ],
+                    source: EditSource::Learner,
+                    target: None,
+                })
+                .await
+        }
     };
 
-    assert_invalid(repo.update_card(&edit(&choice_id, "  mint ")).await);
+    assert_invalid(apply_edit(choice_id.clone(), "/choices/0/text", "  mint ".into()).await);
     // Re-entering the current correct answer in a new case is not a clash.
-    repo.update_card(&edit(&choice_id, "BASIL")).await?;
-    repo.update_card(&edit(&choice_id, "  Sweet basil  "))
-        .await?;
-    repo.update_card(&edit(&free_id, "  Fresh basil  ")).await?;
-    let missing = repo.update_card(&edit(&id(), "Basil")).await;
+    apply_edit(choice_id.clone(), "/choices/0/text", "BASIL".into()).await?;
+    apply_edit(choice_id.clone(), "/choices/0/text", "Sweet basil".into()).await?;
+    apply_edit(free_id.clone(), "/answer", "Fresh basil".into()).await?;
+    let missing = edits.open(&crate::edits::keys::card_ref(&id())).await;
     assert!(matches!(missing, Err(AppError::NotFound(_))), "{missing:?}");
 
     let stored = repo.get(&saved.id).await?;

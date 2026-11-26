@@ -5,7 +5,7 @@
 //! checker-accuracy examples (§15) and trust calibration (source provenance
 //! §13). Design: docs/design/2026-10-16-lesson-claim-review.md.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
@@ -14,6 +14,7 @@ use lattice_core::domain::learning::claim_review::{
     UserAction,
 };
 use lattice_core::domain::provenance::ClaimKind;
+use lattice_core::shared::edits::{ContentEdits, Uncommitted};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Database;
 use serde_json::Value;
@@ -21,18 +22,17 @@ use serde_json::Value;
 use super::actions::{in_section_body, refusal, ONLY_SECTION};
 use super::checker_examples::LabelSource;
 use super::dto::ClaimActionRequestDto;
-use super::published_edit::{self, placed, PublishedEdit};
-use super::published_remove;
-use super::published_restore;
+use super::published_edit::{self, placed};
+use super::published_undo;
 use super::put_back;
 use super::repository::{
-    append_in, blocks, bump_revision, check_revision, reviews, revision_conflict,
+    append_in, blocks, bump_revision, check_revision, reviews, revision_conflict, revision_in,
     ClaimReviewRepository,
 };
-use super::teaching_claims::{name_claims, removable_span};
+use super::teaching_claims::name_claims;
 use super::teaching_findings::{TeachingFindingDto, TeachingFindingsRepository};
+use crate::edits::keys;
 
-mod question_edit;
 mod section_edit;
 mod settle;
 use crate::content_verification::located_quote;
@@ -42,8 +42,8 @@ use crate::persistence::now;
 use crate::plan_dto::LearningGenerationJobActionRequestDto;
 use lattice_core::shared::text::plain_text;
 use lattice_core::shared::text::same_text::whole_sentences;
-pub use question_edit::{QuestionEdit, QuestionEditOutcome, QuestionText};
-pub use section_edit::{SectionEdit, SectionEditOutcome};
+pub(super) use section_edit::{endings, record_edit, EditRecord, Ending};
+pub(super) use settle::settle_planned_in;
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// §6.2: Resume reruns nothing that has not changed.
@@ -89,9 +89,9 @@ pub struct NoteSentencesRemoved {
 }
 
 /// A claim and the action checked for it, ready to write.
-struct Planned<'a> {
-    entry: &'a ClaimLedgerEntry,
-    resolution: Resolution,
+pub(super) struct Planned<'a> {
+    pub(super) entry: &'a ClaimLedgerEntry,
+    pub(super) resolution: Resolution,
 }
 
 impl ClaimReviewService {
@@ -188,6 +188,7 @@ impl ClaimReviewService {
             lesson_id,
             ledger.revision,
             vec![Planned { entry, resolution }],
+            false,
         )
         .await
     }
@@ -308,7 +309,7 @@ impl ClaimReviewService {
                 &plain(first),
             ));
         }
-        self.carry_out(&review, lesson_id, ledger.revision, planned)
+        self.carry_out(&review, lesson_id, ledger.revision, planned, true)
             .await
     }
 
@@ -336,8 +337,27 @@ impl ClaimReviewService {
         let mut findings = TeachingFindingsRepository::new(self.database.clone())
             .list(lesson_id)
             .await?;
-        let bodies = blocks::section_bodies(&self.database, lesson_id).await?;
-        name_claims(&ledger, &bodies, &mut findings);
+        let edits = crate::edits::content_edits(&self.database)?;
+        let (bodies, newest) = {
+            let mut read = self.database.begin_read().await?;
+            let bodies = blocks::section_bodies_in(&mut read, lesson_id).await?;
+            let refs: Vec<_> = bodies
+                .keys()
+                .map(|&unit| keys::section_ref(lesson_id, unit))
+                .collect();
+            let map: HashMap<usize, _> = edits
+                .newest(&mut read.reading(), &refs, keys::CLAIMS_REACTOR)
+                .await?
+                .into_iter()
+                .filter_map(|item| {
+                    let unit = keys::section_key(&item.content.key)?.1;
+                    Some((unit, item))
+                })
+                .collect();
+            read.commit().await?;
+            (bodies, map)
+        };
+        name_claims(&ledger, &bodies, &newest, &mut findings);
         let mut chosen: Vec<&TeachingFindingDto> = Vec::new();
         for key in finding_keys {
             let finding = findings
@@ -366,7 +386,12 @@ impl ClaimReviewService {
             ));
         }
 
-        let (ended, moved, mut revision) = self.remove_sentences(&review, &ledger, &chosen).await?;
+        let (ended, moved, mut revision, uncommitted) = self
+            .remove_sentences(&edits, &review, &ledger, &chosen)
+            .await?;
+        for pending in uncommitted {
+            let _ = edits.committed(pending).await;
+        }
         if self.redecide(lesson_id, moved).await? {
             revision = self.store.load(lesson_id).await?.revision;
         }
@@ -379,74 +404,32 @@ impl ClaimReviewService {
     /// Takes the chosen notes' sentences out of the published text, ends the
     /// claims they stood on and settles what the removals give the checker
     /// examples and calibration, in one unit of work under the ledger's
-    /// revision. Returns the claims it ended, the kinds whose bar moved and
-    /// the revision it left.
+    /// revision. Returns the claims it ended, the kinds whose bar moved,
+    /// the revision it left, and pending edit follow-ups.
     async fn remove_sentences(
         &self,
+        edits: &ContentEdits,
         review: &LessonReview,
         ledger: &Ledger,
         chosen: &[&TeachingFindingDto],
-    ) -> Result<(Vec<ClaimId>, Vec<ClaimKind>, Revision)> {
+    ) -> Result<(Vec<ClaimId>, Vec<ClaimKind>, Revision, Vec<Uncommitted>)> {
         let lesson_id = ledger.lesson_id.as_str();
-        let user = provenance(review);
         let mut tx = self.database.begin_write().await?;
         check_revision(&mut tx, lesson_id, ledger.revision).await?;
-        let mut ended: Vec<ClaimId> = Vec::new();
-        let mut through_claims: Vec<ClaimId> = Vec::new();
-        let mut taken: HashSet<(u32, String)> = HashSet::new();
-        for &finding in chosen {
-            let (Some(unit), Some(sentence)) = (finding.unit_index, finding.sentence.as_deref())
-            else {
-                continue;
-            };
-            let sentence = sentence.trim();
-            if !taken.insert((unit, sentence.to_owned())) {
-                continue;
-            }
-            let unit = usize::try_from(unit).unwrap_or(usize::MAX);
-            let body = published_edit::section_body(&mut tx, lesson_id, unit).await?;
-            if removable_span(finding, &body).is_none() {
-                return Err(AppError::InvalidInput(published_edit::CHANGED.into()));
-            }
-            let target = finding
-                .claim_ids
-                .iter()
-                .map(|id| ClaimId(id.clone()))
-                .find(|id| !ended.contains(id));
-            let (target, others) = match target {
-                Some(id) => {
-                    let others =
-                        published_remove::remove_in(&mut tx, lesson_id, &id, &user).await?;
-                    through_claims.push(id.clone());
-                    (id, others)
-                }
-                None if finding.claim_ids.is_empty() => {
-                    published_remove::remove_sentence_in(&mut tx, lesson_id, unit, sentence, &user)
-                        .await?
-                }
-                None => continue,
-            };
-            let mut others: Vec<ClaimId> = others.into_iter().collect();
-            others.sort_by_key(|id| id.0.clone());
-            for id in std::iter::once(target).chain(others) {
-                if !ended.contains(&id) {
-                    ended.push(id);
-                }
-            }
-        }
-        let written = bump_revision(&mut tx, lesson_id).await?;
+        let (ended, through_claims, written, uncommitted) =
+            published_undo::remove_note_sentences_in(&mut tx, edits, ledger, chosen).await?;
         let mut moved = Vec::new();
         for id in &through_claims {
             if let Some(entry) = ledger.claims.iter().find(|entry| entry.claim_id() == id) {
                 let resolution =
                     user_resolution(UserAction::Remove, None, Some(LabelSource::UserRemove));
                 let item = Planned { entry, resolution };
-                let kinds = self.settle_in(&mut tx, review, lesson_id, &item).await?;
+                let kinds = settle::settle_in(&mut tx, review, lesson_id, &item).await?;
                 add_kinds(&mut moved, kinds);
             }
         }
         tx.commit().await?;
-        Ok((ended, moved, written))
+        Ok((ended, moved, written, uncommitted))
     }
 
     /// One claim's action checked against the claim and, in a published
@@ -490,8 +473,15 @@ impl ClaimReviewService {
         lesson_id: &str,
         revision: Revision,
         planned: Vec<Planned<'_>>,
+        batch_undo: bool,
     ) -> Result<i64> {
-        let (written, moved) = self.commit(review, lesson_id, revision, &planned).await?;
+        let edits = crate::edits::content_edits(&self.database)?;
+        let (written, moved, uncommitted) = self
+            .commit(&edits, review, lesson_id, revision, &planned, batch_undo)
+            .await?;
+        for pending in uncommitted {
+            let _ = edits.committed(pending).await;
+        }
         // A bar the verdicts moved may have re-decided this lesson's claims.
         if self.redecide(lesson_id, moved).await? {
             return Ok(self.store.load(lesson_id).await?.revision.0);
@@ -502,56 +492,53 @@ impl ClaimReviewService {
     /// The planned claims' events, and in a published lesson the edits and
     /// removals of its text, written with their settlement in one
     /// transaction that checks the review's revision and advances it once.
-    /// Returns the revision after and the kinds whose bar the verdicts moved.
+    /// Returns the revision after, the kinds whose bar the verdicts moved, and
+    /// any pending edit follow-ups.
     async fn commit(
         &self,
+        edits: &ContentEdits,
         review: &LessonReview,
         lesson_id: &str,
         revision: Revision,
         planned: &[Planned<'_>],
-    ) -> Result<(Revision, Vec<ClaimKind>)> {
+        batch_undo: bool,
+    ) -> Result<(Revision, Vec<ClaimKind>, Vec<Uncommitted>)> {
         let published = review.state == LessonReviewState::Ready;
         let user = provenance(review);
         let mut tx = self.database.begin_write().await?;
         check_revision(&mut tx, lesson_id, revision).await?;
         let mut ended: HashSet<ClaimId> = HashSet::new();
+        let mut uncommitted: Vec<Uncommitted> = Vec::new();
+        let mut wrote_via_edits = false;
+        let mut batch_text_undos: Vec<(&ClaimLedgerEntry, u32)> = Vec::new();
         for item in planned {
+            if let ClaimEvent::Undone { .. } = &item.resolution.event {
+                if published && batch_undo {
+                    if let Some(ordinal) = published_undo::text_undo_ordinal(item.entry) {
+                        batch_text_undos.push((item.entry, ordinal));
+                        continue;
+                    }
+                }
+            }
             let id = item.entry.claim_id();
             if ended.contains(id) {
                 continue;
             }
             match &item.resolution.event {
-                ClaimEvent::UserAction {
-                    action: UserAction::Edit { before, after },
-                    ..
-                } if published => {
-                    ended.extend(
-                        published_edit::apply_in(
-                            &mut tx,
-                            PublishedEdit {
-                                lesson_id,
-                                claim_id: id,
-                                before,
-                                after,
-                                user: user.clone(),
-                            },
-                        )
-                        .await?,
-                    );
-                }
-                ClaimEvent::UserAction {
-                    action: UserAction::Remove,
-                    ..
-                } if published => {
-                    ended.extend(published_remove::remove_in(&mut tx, lesson_id, id, &user).await?);
-                }
                 event @ ClaimEvent::UserAction {
-                    action: UserAction::PutBack { .. } | UserAction::RestoreOriginal { .. },
+                    action:
+                        UserAction::Edit { .. }
+                        | UserAction::Remove
+                        | UserAction::PutBack { .. }
+                        | UserAction::RestoreOriginal { .. },
                     ..
                 } if published => {
-                    ended.extend(
-                        published_restore::apply_in(&mut tx, lesson_id, id, event, &user).await?,
-                    );
+                    let pending = published_undo::apply_claim_action_in(
+                        &mut tx, edits, lesson_id, item.entry, event, &mut ended,
+                    )
+                    .await?;
+                    uncommitted.push(pending);
+                    wrote_via_edits = true;
                 }
                 event @ ClaimEvent::UserAction {
                     action: UserAction::PutBack { .. },
@@ -562,21 +549,48 @@ impl ClaimReviewService {
                     );
                 }
                 ClaimEvent::Undone { .. } if published => {
-                    ended.extend(published_restore::undo_in(&mut tx, lesson_id, id, &user).await?);
+                    if let Some(ordinal) = published_undo::text_undo_ordinal(item.entry) {
+                        let pending = published_undo::revert_single_in(
+                            &mut tx, edits, lesson_id, item.entry, ordinal, &mut ended,
+                        )
+                        .await?;
+                        uncommitted.push(pending);
+                        wrote_via_edits = true;
+                    } else {
+                        append_in(
+                            &mut tx,
+                            lesson_id,
+                            id,
+                            user.clone(),
+                            item.resolution.event.clone(),
+                        )
+                        .await?;
+                    }
                 }
                 event => {
                     append_in(&mut tx, lesson_id, id, user.clone(), event.clone()).await?;
                 }
             }
         }
-        let written = bump_revision(&mut tx, lesson_id).await?;
+        if !batch_text_undos.is_empty() {
+            uncommitted.extend(
+                published_undo::revert_batch_in(&mut tx, edits, lesson_id, &batch_text_undos)
+                    .await?,
+            );
+            wrote_via_edits = true;
+        }
+        let written = if wrote_via_edits {
+            revision_in(&mut tx, lesson_id).await?.unwrap_or(revision)
+        } else {
+            bump_revision(&mut tx, lesson_id).await?
+        };
         let mut moved = Vec::new();
         for item in planned {
-            let kinds = self.settle_in(&mut tx, review, lesson_id, item).await?;
+            let kinds = settle::settle_in(&mut tx, review, lesson_id, item).await?;
             add_kinds(&mut moved, kinds);
         }
         tx.commit().await?;
-        Ok((written, moved))
+        Ok((written, moved, uncommitted))
     }
 
     /// Whether claim activity or a different checker gives verification new
@@ -830,7 +844,7 @@ impl ClaimReviewService {
 
 /// The event of a user's `action`, the accuracy label it gives and the
 /// verdict calibration records.
-fn user_resolution(
+pub(super) fn user_resolution(
     action: UserAction,
     note: Option<String>,
     label: Option<LabelSource>,

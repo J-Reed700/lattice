@@ -19,9 +19,9 @@ use sqlx::{Row, SqliteConnection};
 
 use crate::persistence::{decode, encode, now};
 
-pub(super) mod blocks;
+pub(crate) mod blocks;
 pub(super) mod checker_examples;
-pub(super) mod questions;
+pub(crate) mod questions;
 pub(super) mod reviews;
 pub(super) mod teaching_findings;
 
@@ -258,6 +258,18 @@ pub(super) async fn check_revision(
     Ok(())
 }
 
+pub(crate) async fn revision_in(
+    connection: &mut SqliteConnection,
+    lesson_id: &str,
+) -> Result<Option<Revision>> {
+    let revision: Option<i64> =
+        sqlx::query_scalar("SELECT revision FROM learning_lesson_reviews WHERE lesson_id=?")
+            .bind(lesson_id)
+            .fetch_optional(&mut *connection)
+            .await?;
+    Ok(revision.map(Revision))
+}
+
 pub(super) async fn bump_revision(tx: &mut WriteTx, lesson_id: &str) -> Result<Revision> {
     sqlx::query_scalar::<_, i64>(
         "UPDATE learning_lesson_reviews SET revision=revision+1 WHERE lesson_id=? RETURNING revision",
@@ -272,14 +284,15 @@ pub(super) async fn bump_revision(tx: &mut WriteTx, lesson_id: &str) -> Result<R
 }
 
 /// Writes one event of one claim on `connection`, without the revision
-/// check or its advance: the caller's transaction owns both.
+/// check or its advance: the caller's transaction owns both. Returns the
+/// ordinal given to the event.
 pub(super) async fn append_in(
     tx: &mut WriteTx,
     lesson_id: &str,
     claim_id: &ClaimId,
     provenance: EventProvenance,
     event: ClaimEvent,
-) -> Result<()> {
+) -> Result<u32> {
     let owner: Option<String> =
         sqlx::query_scalar("SELECT lesson_id FROM learning_lesson_claims WHERE claim_id=?")
             .bind(&claim_id.0)
@@ -332,7 +345,7 @@ pub(super) async fn append_in(
         .bind(provenance.at)
         .execute(&mut **tx)
         .await?;
-    Ok(())
+    Ok(ordinal)
 }
 
 pub(crate) async fn load_in(connection: &mut SqliteConnection, lesson_id: &str) -> Result<Ledger> {

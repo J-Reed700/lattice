@@ -1,8 +1,4 @@
-//! The user's removal of a statement in a published lesson: its sentence goes
-//! out of the section's text with the whitespace around it, every claim that
-//! stood on that sentence ends removed by the user, and the stored report
-//! follows. [`remove_in`] runs inside the caller's transaction, which owns the
-//! revision check and its advance, so a refusal writes nothing.
+//! Planning and recording removal of a sentence in a published lesson.
 
 use std::collections::HashSet;
 
@@ -12,13 +8,27 @@ use lattice_core::domain::learning::claim_review::{
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::WriteTx;
+#[cfg(test)]
 use lattice_core::shared::text::segmentation::sentences;
 
 use super::actions::{in_section_body, ONLY_SECTION};
-use super::published_edit::{placed, section_body, update_report, user_sentence_in, CHANGED};
-use super::repository::{append_in, blocks, load_in};
+use super::published_edit::{placed, update_report, user_sentence_in, Recorded, CHANGED};
+use super::repository::append_in;
 use crate::content_verification::TakenOut;
+#[cfg(test)]
 use lattice_core::shared::text::same_text::common_prefix;
+
+/// Planned removal of a sentence (with optional creation of an ad-hoc sentence claim).
+pub(super) struct RemovePlan {
+    pub unit: usize,
+    pub old_body: String,
+    pub range: (usize, usize),
+    pub new_body: String,
+    pub removed_text: String,
+    pub target: Option<ClaimId>,
+    pub removed: Vec<ClaimId>,
+    pub sentence_claim: Option<String>,
+}
 
 /// `body` with the sentence at `range` taken out, and the whitespace around
 /// it: no double space, no empty list item, no extra blank line is left.
@@ -59,15 +69,10 @@ pub(super) fn without_sentence(body: &str, range: (usize, usize)) -> String {
     format!("{kept_before}{separator}{kept_after}")
 }
 
-/// What a removal took out: the text, and the whole sentences that end
-/// (`follows`) and start (`precedes`) where it was taken from.
+#[cfg(test)]
 pub(super) type Removal = (String, Option<String>, Option<String>);
 
-/// What `without_sentence` took out of `old` to leave `new`, and where: the
-/// text itself, and the sentence-aligned text of `new` before and after the
-/// junction (`None` when it was taken from the start or the end), widened by a
-/// sentence each way until the two together occur once. `None` when the two do
-/// not differ by one deletion.
+#[cfg(test)]
 pub(super) fn removal_text(old: &str, new: &str) -> Option<Removal> {
     let at = common_prefix(old, new);
     let kept = new.len().checked_sub(at)?;
@@ -101,8 +106,6 @@ pub(super) fn removal_text(old: &str, new: &str) -> Option<Removal> {
     }
 }
 
-/// Whether a line's text before the sentence is only the marker of a list
-/// item, quotation or heading, or nothing.
 fn only_marker(prefix: &str) -> bool {
     prefix
         .trim_matches(|c: char| {
@@ -113,9 +116,6 @@ fn only_marker(prefix: &str) -> bool {
         .is_empty()
 }
 
-/// The text on either side of a line that goes whole: `head` before it and
-/// `rest` after its line break. A blank line is kept between paragraphs, not
-/// doubled, and none is left at either end.
 fn without_line(head: &str, rest: &str) -> String {
     if rest.is_empty() {
         return head.trim_end_matches(['\r', '\n']).to_owned();
@@ -136,22 +136,34 @@ fn without_line(head: &str, rest: &str) -> String {
     format!("{head}{rest}")
 }
 
-/// Writes the removal on `connection`: the claim's sentence out of its
-/// section, every claim on it ended removed by `user`, the report updated.
-/// The claims it ended are the ones it returns.
-pub(super) async fn remove_in(
-    connection: &mut WriteTx,
-    lesson_id: &str,
+fn overlapping_live(
+    claims: &[ClaimLedgerEntry],
+    target: Option<&ClaimId>,
+    unit: usize,
+    range: (usize, usize),
+    body: &str,
+) -> Vec<ClaimId> {
+    claims
+        .iter()
+        .filter(|entry| {
+            target.is_some_and(|id| entry.claim_id() == id)
+                || (in_section_body(entry)
+                    && entry.location().unit_index == unit
+                    && !entry.state().is_gone()
+                    && placed(entry, body)
+                        .is_some_and(|(start, end)| start < range.1 && range.0 < end))
+        })
+        .map(|entry| entry.claim_id().clone())
+        .collect()
+}
+
+/// Plans removal of the sentence holding `claim_id` in `body`.
+pub(super) fn plan(
+    claims: &[ClaimLedgerEntry],
     claim_id: &ClaimId,
-    user: &EventProvenance,
-) -> Result<HashSet<ClaimId>> {
-    let ledger = load_in(connection, lesson_id).await?;
-    let review = ledger
-        .review
-        .as_ref()
-        .ok_or_else(|| AppError::NotFound("This lesson has no statement review.".into()))?;
-    let target = ledger
-        .claims
+    body: &str,
+) -> Result<RemovePlan> {
+    let target = claims
         .iter()
         .find(|entry| entry.claim_id() == claim_id)
         .ok_or_else(|| AppError::NotFound("No statement with that id in this lesson.".into()))?;
@@ -159,88 +171,105 @@ pub(super) async fn remove_in(
         return Err(AppError::InvalidInput(ONLY_SECTION.into()));
     }
     let unit = target.location().unit_index;
-    let body = section_body(connection, lesson_id, unit).await?;
-    let range = placed(target, &body).ok_or_else(|| AppError::InvalidInput(CHANGED.into()))?;
-    let removed: Vec<&ClaimLedgerEntry> = ledger
-        .claims
-        .iter()
-        .filter(|entry| {
-            entry.claim_id() == claim_id
-                || (in_section_body(entry)
-                    && entry.location().unit_index == unit
-                    && !entry.state().is_gone()
-                    && placed(entry, &body)
-                        .is_some_and(|(start, end)| start < range.1 && range.0 < end))
-        })
-        .collect();
-    let new_body = without_sentence(&body, range);
-    let taken = removal_text(&body, &new_body);
-    for entry in &removed {
-        if let Some((text, follows, precedes)) = &taken {
-            let event = ClaimEvent::TextRemoved {
-                text: text.clone(),
-                follows: follows.clone(),
-                precedes: precedes.clone(),
-            };
-            append_in(
-                connection,
-                lesson_id,
-                entry.claim_id(),
-                user.as_machine(),
-                event,
-            )
-            .await?;
+    let range = placed(target, body).ok_or_else(|| AppError::InvalidInput(CHANGED.into()))?;
+    let removed = overlapping_live(claims, Some(claim_id), unit, range, body);
+    let new_body = without_sentence(body, range);
+    let removed_text = body.get(range.0..range.1).unwrap_or_default().to_owned();
+    Ok(RemovePlan {
+        unit,
+        old_body: body.to_owned(),
+        range,
+        new_body,
+        removed_text,
+        target: Some(claim_id.clone()),
+        removed,
+        sentence_claim: None,
+    })
+}
+
+/// Plans removal of `sentence` (from a teaching note) when no claim stands on it.
+pub(super) fn plan_sentence(
+    claims: &[ClaimLedgerEntry],
+    unit: usize,
+    sentence: &str,
+    body: &str,
+) -> Result<RemovePlan> {
+    let range = span_of(body, sentence).ok_or_else(|| AppError::InvalidInput(CHANGED.into()))?;
+    let removed = overlapping_live(claims, None, unit, range, body);
+    let new_body = without_sentence(body, range);
+    Ok(RemovePlan {
+        unit,
+        old_body: body.to_owned(),
+        range,
+        new_body,
+        removed_text: sentence.to_owned(),
+        target: None,
+        removed,
+        sentence_claim: Some(sentence.to_owned()),
+    })
+}
+
+/// Writes the removal events and updates the verification report inside `tx`.
+pub(super) async fn record_in(
+    tx: &mut WriteTx,
+    program_id: &str,
+    lesson_id: &str,
+    removal: &RemovePlan,
+    user: &EventProvenance,
+) -> Result<Recorded> {
+    let mut created = Vec::new();
+    let mut targets = Vec::new();
+    let primary = if let Some(sentence) = &removal.sentence_claim {
+        let id = ClaimId::generate();
+        let location = ClaimLocation {
+            unit_index: removal.unit,
+            unit_kind: UnitKind::Block,
+            field: "body".into(),
+            quote: sentence.clone(),
+            span: Some(removal.range),
+        };
+        user_sentence_in(tx, lesson_id, &id, location, user).await?;
+        created.push(id.clone());
+        targets.push(id.clone());
+        id
+    } else {
+        removal
+            .target
+            .clone()
+            .ok_or_else(|| AppError::InternalError("Missing removal target claim".into()))?
+    };
+    for id in &removal.removed {
+        if !targets.contains(id) {
+            targets.push(id.clone());
         }
-        let event = ClaimEvent::UserAction {
+    }
+    let machine = user.as_machine();
+    let mut acted = Vec::with_capacity(targets.len());
+    for id in &targets {
+        let text_removed = ClaimEvent::TextRemoved {
+            text: removal.removed_text.clone(),
+            follows: None,
+            precedes: None,
+        };
+        append_in(tx, lesson_id, id, machine.clone(), text_removed).await?;
+        let removed_event = ClaimEvent::UserAction {
             action: UserAction::Remove,
             note: None,
         };
-        append_in(connection, lesson_id, entry.claim_id(), user.clone(), event).await?;
+        let ordinal = append_in(tx, lesson_id, id, user.clone(), removed_event).await?;
+        acted.push((id.clone(), ordinal));
     }
-    blocks::write_section_body(connection, lesson_id, unit, &new_body).await?;
-    let ids: HashSet<String> = removed
-        .iter()
-        .map(|entry| entry.claim_id().0.clone())
-        .collect();
-    update_report(connection, &review.program_id, lesson_id, |report| {
+    let ids: HashSet<String> = targets.iter().map(|id| id.0.clone()).collect();
+    update_report(tx, program_id, lesson_id, |report| {
         report.taken_out(&TakenOut {
-            unit,
-            old_body: &body,
-            range,
-            new_body: &new_body,
+            unit: removal.unit,
+            old_body: &removal.old_body,
+            range: removal.range,
+            new_body: &removal.new_body,
             removed: &ids,
-            claim: claim_id,
+            claim: &primary,
         })
     })
     .await?;
-    Ok(removed
-        .iter()
-        .map(|entry| entry.claim_id().clone())
-        .collect())
-}
-
-/// Takes `sentence`, which no claim stands on exactly, out of the section on
-/// `connection`: a claim for it is made as an edit makes its successor, then
-/// removed through [`remove_in`], which ends every claim that overlaps it.
-/// Returns the claim made and the claims the removal ended.
-pub(super) async fn remove_sentence_in(
-    connection: &mut WriteTx,
-    lesson_id: &str,
-    unit: usize,
-    sentence: &str,
-    user: &EventProvenance,
-) -> Result<(ClaimId, HashSet<ClaimId>)> {
-    let body = section_body(connection, lesson_id, unit).await?;
-    let span = span_of(&body, sentence).ok_or_else(|| AppError::InvalidInput(CHANGED.into()))?;
-    let claim_id = ClaimId::generate();
-    let location = ClaimLocation {
-        unit_index: unit,
-        unit_kind: UnitKind::Block,
-        field: "body".into(),
-        quote: sentence.into(),
-        span: Some(span),
-    };
-    user_sentence_in(connection, lesson_id, &claim_id, location, user).await?;
-    let ended = remove_in(connection, lesson_id, &claim_id, user).await?;
-    Ok((claim_id, ended))
+    Ok(Recorded { acted, created })
 }

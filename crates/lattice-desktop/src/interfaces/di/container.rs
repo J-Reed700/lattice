@@ -127,6 +127,9 @@ pub struct Container {
     /// plugin setup; shutdown closes and drains it before the database closes.
     pub(crate) jobs: Arc<lattice_core::shared::runtime::jobs::JobRuntime>,
 
+    /// Shared content-edit pipeline for `edits` commands.
+    pub(crate) content_edits: Arc<lattice_core::shared::edits::ContentEdits>,
+
     /// Frozen copies of cited web pages; its captures run on `jobs`.
     pub(crate) web_page_snapshots: Arc<crate::features::web::snapshots::WebPageSnapshotService>,
     /// Where the snapshot service sends its events; attached to the main
@@ -470,6 +473,7 @@ impl Container {
             });
 
         let jobs = lattice_core::shared::runtime::jobs::JobRuntime::new(core.database().clone());
+        let content_edits = lattice_learning::edits::content_edits(core.database())?;
         let web_snapshot_events = Arc::new(crate::features::web::snapshots::AppEvents::default());
         let web_page_snapshots = crate::features::web::di::build_page_snapshots(
             core.database().clone(),
@@ -520,6 +524,7 @@ impl Container {
             vault_rescan_lock,
             settings_side_effects,
             jobs,
+            content_edits,
             web_page_snapshots,
             web_snapshot_events,
             chat_images,

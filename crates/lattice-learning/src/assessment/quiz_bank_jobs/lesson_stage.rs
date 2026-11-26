@@ -93,6 +93,9 @@ pub(crate) struct LessonBank {
     #[serde(default)]
     pub dropped: Vec<String>,
     pub author_model: Option<String>,
+    /// Revisions of the lesson and its sections when this bank was authored.
+    #[serde(default)]
+    pub marks: Vec<lattice_core::shared::edits::ReadMark>,
 }
 
 /// Write the rest of a published lesson's quiz bank from its blocks
@@ -191,5 +194,6 @@ pub(crate) async fn lesson_bank_stage(
         items: written,
         dropped,
         author_model: Some(llm.model_name().to_string()),
+        marks: Vec::new(),
     })
 }

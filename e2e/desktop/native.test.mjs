@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { closeSync, openSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import net from 'node:net';
@@ -258,6 +259,60 @@ test('packaged desktop: onboarding, registered learning reads, file access, jour
       }
       results.checks.push('learning-studio-native-commands');
     });
+    await step('content-edit commands reject missing content cleanly and list empty edits', async () => {
+      const content = { kind: 'learning.section', key: '00000000-0000-4000-8000-000000000404/0' };
+      for (const [command, args] of [
+        ['plugin:edits|open_content_edit', { content }],
+        ['plugin:edits|get_content_edit_history', { content }],
+        [
+          'plugin:edits|preview_content_edit',
+          {
+            request: {
+              editId: randomUUID(),
+              content,
+              expectedRevision: '',
+              ops: [],
+              source: { type: 'learner' },
+              target: null,
+            },
+          },
+        ],
+        [
+          'plugin:edits|apply_content_edit',
+          {
+            request: {
+              editId: randomUUID(),
+              content,
+              expectedRevision: '',
+              ops: [],
+              source: { type: 'learner' },
+              target: null,
+            },
+          },
+        ],
+        [
+          'plugin:edits|revert_content_edit',
+          {
+            request: {
+              revertId: randomUUID(),
+              editId: randomUUID(),
+              expectedRevision: '',
+              andLater: false,
+            },
+          },
+        ],
+      ]) {
+        await assert.rejects(() => invoke(command, args), /not found|does not exist/i,
+          `${command} must reject missing content or edits cleanly`);
+      }
+      assert.deepEqual(
+        await invoke('plugin:edits|list_content_edits', {
+          query: { scope: null, contents: [], since: null },
+        }),
+        [],
+      );
+      results.checks.push('content-edit-native-commands');
+    });
     await step('language catalog is registered and Python resolves inside the installed app', async () => {
       const catalog = await invoke('plugin:learning|get_learning_runtime_catalog');
       assert.deepEqual(catalog.map(runtime => runtime.id), ['csharp', 'rust', 'node', 'python']);
@@ -407,7 +462,7 @@ test('packaged desktop: onboarding, registered learning reads, file access, jour
       await closeNormally();
     });
     assert.deepEqual([...results.checks].sort(), [
-      'onboarding', 'learning-studio-native-commands', 'learning-runtime-bundle',
+      'onboarding', 'learning-studio-native-commands', 'content-edit-native-commands', 'learning-runtime-bundle',
       'native-file-access', 'explorer-native-boundary', 'minimum-window-journal', 'native-close',
       'collection-persistence', 'resource-churn', 'restart-persistence',
     ].sort());

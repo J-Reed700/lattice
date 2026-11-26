@@ -61,9 +61,7 @@ mod learner_view;
 pub(crate) use learner_view::ClaimStates;
 mod portability;
 mod put_text;
-pub(crate) use put_text::{
-    cuts_for, insert_sentence, put_at_junction, put_place, put_sentence, remove_sentence, Placing,
-};
+pub(crate) use put_text::{cuts_for, insert_sentence, put_place, put_sentence, Placing};
 mod quote_claims;
 mod readings;
 mod resolution;

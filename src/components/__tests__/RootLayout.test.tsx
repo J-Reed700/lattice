@@ -6,6 +6,7 @@ import { useRestoreLockoutStore } from '@/features/backup/restoreLockoutStore';
 import { useJournalShortcuts } from '@/features/journal/hooks/useJournalCommands';
 import { useJournalPageActions } from '@/features/journal/hooks/useJournalPageActions';
 import { usePaletteCommandsStore } from '@/features/palette/stores/paletteCommandsStore';
+import { useEditMode } from '@/shared/edits/editMode';
 import { NEW_ITEM_EVENT } from '@/shared/newItemEvent';
 import type { WorkspaceNote } from '@/types/api/dailyNotes';
 
@@ -64,6 +65,7 @@ beforeEach(() => {
   mocks.savedSynthesis = false;
   mocks.readClipboardText.mockReset().mockResolvedValue(null);
   usePaletteCommandsStore.setState({ commands: new Map() });
+  useEditMode.setState({ on: false });
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -255,5 +257,18 @@ describe('RootLayout', () => {
       fireEvent.keyDown(screen.getByLabelText('Editor'), { key: 'n', ctrlKey: true, bubbles: true });
     });
     expect(createPage).toHaveBeenCalledTimes(2);
+  });
+
+  it('toggles edit mode on Mod+Shift+E and registers Edit mode in the command palette', () => {
+    renderAt('/home');
+    expect(useEditMode.getState().on).toBe(false);
+
+    press('E', { shiftKey: true });
+    expect(useEditMode.getState().on).toBe(true);
+
+    const command = usePaletteCommandsStore.getState().commands.get('learning.editMode');
+    expect(command?.label).toBe('Edit mode');
+    act(() => command?.run());
+    expect(useEditMode.getState().on).toBe(false);
   });
 });

@@ -211,6 +211,7 @@ pub struct ClaimLocationDto {
     pub quote: String,
     /// Byte span of `quote` in the field; null when it occurs more than once.
     pub span: Option<(usize, usize)>,
+    pub address: Option<lattice_core::shared::edits::ContentAddress>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type)]

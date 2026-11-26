@@ -29,10 +29,6 @@ export const studyApi = {
   ): Promise<ApiResult<Wire.StudyCardDto>> =>
     studyCall('review_study_card', { request }),
 
-  updateStudyCard: (
-    request: Wire.UpdateStudyCardRequestDto,
-  ): Promise<ApiResult<null>> => studyCall('update_study_card', { request }),
-
   deleteStudyDeck: (id: string): Promise<ApiResult<null>> =>
     studyCall('delete_study_deck', { id }),
 

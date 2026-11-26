@@ -19,7 +19,7 @@ const sections = [{ index: 0, title: 'Basics' }, { index: 2, title: 'Loops' }];
 
 const cut = (claimId: string, sentence: string, place: 'known' | 'choose' = 'known'): ClaimReviewItemDto => claimItem({
   claimId, state: { state: 'removed', at: 5, by: 'machine' }, availableActions: ['put_back', 'attach_evidence'], verdictKind: null, reason: null, place,
-  location: { unitIndex: 2, unitKind: 'block', unitTitle: '', field: 'body', quote: sentence, span: null },
+  location: { unitIndex: 2, unitKind: 'block', unitTitle: '', field: 'body', quote: sentence, span: null, address: null },
   presentation: { statement: sentence, sentence, contextBefore: '', contextAfter: '', place: '' },
 });
 const rewrite = (): ClaimReviewItemDto => claimItem({

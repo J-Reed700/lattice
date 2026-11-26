@@ -17,11 +17,13 @@ use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
     Anchor, AttachOutcome, Check, CheckResult, Checker, ClaimActionKind, ClaimCounts, ClaimEvent,
     ClaimId, ClaimLedgerEntry, ClaimLocation, ClaimState, EvidenceSeen, Ledger, LessonReview,
-    LessonReviewState, TrustAssessment,
+    LessonReviewState, TrustAssessment, UnitKind,
 };
+use lattice_core::shared::edits::{ContentAddress, NewestEdit};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::http::host_of;
 use lattice_core::shared::text::plain_text;
+use lattice_core::shared::text::selector::TextSelector;
 use serde_json::Value;
 
 use self::support::SupportContext;
@@ -32,14 +34,18 @@ use super::dto::{
     LessonClaimReviewDto, PutBackPlaceDto, RepairAttemptDto, ResearchAttemptDto, ReviewSectionDto,
     RewrittenDto, SourceAddedByDto, SourceRefDto, StopReasonDto,
 };
+use super::published_restore::action_unit;
 use super::put_back::{self, Lesson};
-use super::repository::{blocks, ShownPassage};
+use super::repository::{blocks, questions, ShownPassage};
 use super::service::ClaimReviewService;
 use super::source_deleted;
 use super::teaching_claims::name_claims;
 use super::teaching_findings::TeachingFindingsRepository;
+use crate::assessment_engine::LearningItemFormat;
 use crate::content_verification::{field_text, located};
 use crate::dto::LearningSourceKind;
+use crate::edits::keys;
+use crate::edits::question::{document_path, ledger_unit};
 use crate::lesson_evidence::LearningEvidencePassageDto;
 use crate::reference_collection::PassageKind;
 use crate::references::trust::dto_map;
@@ -153,6 +159,10 @@ impl ClaimReviewService {
             .and_then(|job| job.activity)
             .map_or(0, |activity| activity.verification_pass);
         let published = review.state == LessonReviewState::Ready;
+        let sections = block_count(&units);
+        let edit_data = self
+            .review_edit_data(lesson_id, sections, published)
+            .await?;
         let claims = ledger
             .claims
             .iter()
@@ -168,7 +178,7 @@ impl ClaimReviewService {
                     entry,
                     &ledger.claims,
                     &context,
-                    (&units, titles.as_slice()),
+                    (lesson_id, &units, titles.as_slice(), &edit_data),
                     published,
                 )
             })
@@ -178,7 +188,7 @@ impl ClaimReviewService {
             .await?;
         if published {
             let bodies = blocks::section_bodies(&self.database, lesson_id).await?;
-            name_claims(&ledger, &bodies, &mut teaching_findings);
+            name_claims(&ledger, &bodies, &edit_data.newest, &mut teaching_findings);
         }
         Ok(Some(LessonClaimReviewDto {
             lesson_id: ledger.lesson_id.clone(),
@@ -201,6 +211,54 @@ impl ClaimReviewService {
                 .collect(),
             teaching_findings,
         }))
+    }
+
+    async fn review_edit_data(
+        &self,
+        lesson_id: &str,
+        section_count: usize,
+        published: bool,
+    ) -> Result<ReviewEditData> {
+        let edits = crate::edits::content_edits(&self.database)?;
+        let mut read = self.database.begin_read().await?;
+        let newest = if published && section_count > 0 {
+            let refs: Vec<_> = (0..section_count)
+                .map(|unit| keys::section_ref(lesson_id, unit))
+                .collect();
+            edits
+                .newest(&mut read.reading(), &refs, keys::CLAIMS_REACTOR)
+                .await?
+                .into_iter()
+                .filter_map(|entry| {
+                    let unit = keys::section_key(&entry.content.key)?.1;
+                    Some((unit, entry))
+                })
+                .collect()
+        } else {
+            HashMap::new()
+        };
+        let rows = questions::lesson_questions(&mut read, lesson_id).await?;
+        let mut question_meta = Vec::with_capacity(rows.len());
+        for q in rows {
+            let Some(lu) = ledger_unit(&mut read.reading(), &q.id).await? else {
+                continue;
+            };
+            let doc = if published {
+                edits
+                    .open_in(&mut read.reading(), &keys::question_ref(&q.id))
+                    .await
+                    .ok()
+                    .map(|opened| opened.document)
+            } else {
+                None
+            };
+            question_meta.push((q.id, lu.format, doc));
+        }
+        read.commit().await?;
+        Ok(ReviewEditData {
+            newest,
+            questions: question_meta,
+        })
     }
 
     /// The text of every passage a card shows, and of every passage a
@@ -417,12 +475,69 @@ fn checker_verdict(
     })
 }
 
+struct ReviewEditData {
+    newest: HashMap<usize, NewestEdit>,
+    questions: Vec<(String, LearningItemFormat, Option<Value>)>,
+}
+
+fn location_address(
+    lesson_id: &str,
+    units: &Value,
+    questions: &[(String, LearningItemFormat, Option<Value>)],
+    location: &ClaimLocation,
+    span: Option<(usize, usize)>,
+) -> Option<ContentAddress> {
+    match location.unit_kind {
+        UnitKind::Block => {
+            let path = match location.field.as_str() {
+                "title" => Some("/title".to_owned()),
+                "body" => Some("/body".to_owned()),
+                _ => None,
+            };
+            let fragment = path.as_ref().and_then(|_| {
+                span.and_then(|(start, end)| {
+                    field_text(units, location.unit_index, &location.field)
+                        .and_then(|text| TextSelector::of(&text, start, end))
+                })
+            });
+            Some(ContentAddress {
+                content: keys::section_ref(lesson_id, location.unit_index),
+                path,
+                fragment,
+            })
+        }
+        UnitKind::Question | UnitKind::AnswerKey => {
+            let q_index = location.unit_index.checked_sub(block_count(units))?;
+            let (id, format, q_doc) = questions.get(q_index)?;
+            let raw_path = document_path(*format, &location.field);
+            let path = (!raw_path.is_empty()).then_some(raw_path);
+            let fragment = path.as_ref().and_then(|ptr| {
+                span.and_then(|(start, end)| {
+                    let text =
+                        field_text(units, location.unit_index, &location.field).or_else(|| {
+                            q_doc
+                                .as_ref()
+                                .and_then(|doc| doc.pointer(ptr).and_then(Value::as_str))
+                                .map(str::to_owned)
+                        })?;
+                    TextSelector::of(&text, start, end)
+                })
+            });
+            Some(ContentAddress {
+                content: keys::question_ref(id),
+                path,
+                fragment,
+            })
+        }
+    }
+}
+
 /// One claim card.
 fn item(
     entry: &ClaimLedgerEntry,
     claims: &[ClaimLedgerEntry],
     context: &SupportContext<'_>,
-    (units, titles): (&Value, &[String]),
+    (lesson_id, units, titles, edit_data): (&str, &Value, &[String], &ReviewEditData),
     published: bool,
 ) -> ClaimReviewItemDto {
     let SupportContext {
@@ -497,7 +612,7 @@ fn item(
     };
     let presentation = presentation::presentation(entry, units, &unit_title);
     let (support, also_supported) = support::supports(entry, context);
-    let available = offered(entry, published);
+    let available = offered(entry, published, edit_data.newest.get(&action_unit(entry)));
     let put_place = available
         .contains(&ClaimActionKind::PutBack)
         .then(|| put_back::place(&Lesson { units, published }, claims, entry));
@@ -532,6 +647,7 @@ fn item(
                 field: location.field.clone(),
                 quote,
                 span,
+                address: location_address(lesson_id, units, &edit_data.questions, location, span),
             }
         },
         statement: entry.statement().to_owned(),

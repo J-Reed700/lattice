@@ -10,6 +10,7 @@ import type {
   LearningOutlineEvidenceDto,
   LearningProgramDto,
 } from '@/lib/bindings';
+import { Editable } from '@/shared/edits/Editable';
 
 export function CourseSyllabus({
   program,
@@ -99,21 +100,23 @@ export function CourseSyllabus({
                   </span>
                   <div className="min-w-0 flex-1">
                     <span className="text-xs font-medium text-accent">Module {index + 1}{index === program.modules.length - 1 && ' · Final module'}</span>
-                    <h3 className="mt-1 font-serif text-xl leading-snug text-text-primary">
-                      <button
-                        type="button"
-                        aria-current={moduleId === module.id ? 'true' : undefined}
-                        onClick={() => {
-                          onSelectModule(module);
-                          afterChoosing();
-                        }}
-                        className="studio-syllabus-module group inline-flex items-center gap-2 text-left hover:text-accent focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent"
-                      >
-                        {module.title}
-                        <ArrowRight size={14} aria-hidden="true" className="shrink-0 text-accent opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100" />
-                      </button>
-                    </h3>
-                    <p className="mt-2 text-xs leading-5 text-text-secondary">{module.summary}</p>
+                    <Editable content={{ kind: 'learning.module', key: module.id }} label={`module: ${module.title}`}>
+                      <h3 className="mt-1 font-serif text-xl leading-snug text-text-primary">
+                        <button
+                          type="button"
+                          aria-current={moduleId === module.id ? 'true' : undefined}
+                          onClick={() => {
+                            onSelectModule(module);
+                            afterChoosing();
+                          }}
+                          className="studio-syllabus-module group inline-flex items-center gap-2 text-left hover:text-accent focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent"
+                        >
+                          {module.title}
+                          <ArrowRight size={14} aria-hidden="true" className="shrink-0 text-accent opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100" />
+                        </button>
+                      </h3>
+                      <p className="mt-2 text-xs leading-5 text-text-secondary">{module.summary}</p>
+                    </Editable>
                     <OutlineCitation citation={summaryCitation} onOpen={onOpenCitation} />
                   </div>
                 </div>
@@ -143,20 +146,22 @@ export function CourseSyllabus({
                 <ol className="mt-4 divide-y divide-border border-t border-border">
                   {module.lessons.map((lesson, lessonIndex) => (
                     <li key={lesson.id} className="py-1">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          onSelect(module, lesson.id);
-                          afterChoosing();
-                        }}
-                        className="group flex min-h-12 w-full items-center gap-2 py-2 text-left text-sm hover:text-accent"
-                      >
-                        <span className="w-8 shrink-0 text-xs tabular-nums text-text-muted">{lesson.completed ? <Check size={14} className="text-accent" /> : `${index + 1}.${lessonIndex + 1}`}</span>
-                        <span className="min-w-0 flex-1 text-text-primary">{lesson.title}</span>
-                        <span className="inline-flex shrink-0 items-center gap-1 text-xs text-text-muted"><Clock3 size={12} />{lesson.estimatedMinutes}m</span>
-                        <ArrowRight size={13} className="shrink-0 text-accent opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100" />
-                      </button>
-                      <p className="ml-10 text-[11px] leading-5 text-text-muted">{lesson.objective}</p>
+                      <Editable content={{ kind: 'learning.lesson', key: lesson.id }} label={`lesson: ${lesson.title}`}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onSelect(module, lesson.id);
+                            afterChoosing();
+                          }}
+                          className="group flex min-h-12 w-full items-center gap-2 py-2 text-left text-sm hover:text-accent"
+                        >
+                          <span className="w-8 shrink-0 text-xs tabular-nums text-text-muted">{lesson.completed ? <Check size={14} className="text-accent" /> : `${index + 1}.${lessonIndex + 1}`}</span>
+                          <span className="min-w-0 flex-1 text-text-primary">{lesson.title}</span>
+                          <span className="inline-flex shrink-0 items-center gap-1 text-xs text-text-muted"><Clock3 size={12} />{lesson.estimatedMinutes}m</span>
+                          <ArrowRight size={13} className="shrink-0 text-accent opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100" />
+                        </button>
+                        <p className="ml-10 text-[11px] leading-5 text-text-muted">{lesson.objective}</p>
+                      </Editable>
                       <OutlineCitation citation={findOutlineCitation(evidence, 'lesson_objective', module.id, lesson.objective, lessonIndex, lesson.id)} onOpen={onOpenCitation} className="ml-10" />
                       {renderTopics && <div className="ml-10">{renderTopics(lesson.id)}</div>}
                     </li>
