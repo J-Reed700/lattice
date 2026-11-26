@@ -41,3 +41,6 @@ pub fn content_edits(database: &Database) -> Result<Arc<ContentEdits>> {
         env!("CARGO_PKG_VERSION").to_owned(),
     )))
 }
+
+#[cfg(test)]
+mod one_writer_tests;

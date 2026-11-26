@@ -248,7 +248,7 @@ describe('Learning Studio Plan editor', () => {
     expect(screen.queryByText(/Edit lesson/)).not.toBeInTheDocument();
   });
 
-  it('moves a lesson through the revision editor before previewing without edit_lesson', async () => {
+  it('moves a lesson through the revision editor before previewing', async () => {
     const secondModule = { ...module, id: 'module-2', title: 'Transfer practice', lessons: [] };
     mocks.getPlan.mockResolvedValue(ok(plan({ acceptedRevision: { ...acceptedRevision, modules: [module, secondModule] } })));
     mocks.preview.mockResolvedValue(ok(plan({

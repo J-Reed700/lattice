@@ -1,33 +1,42 @@
 import type { Page } from "@playwright/test";
 
 import type {
-  JsonValue,
-  LearningDiagnosticAttemptDto,
-  LearningRuntimePresetDto,
-  LearningMemoryDto,
+  AttachLearningClaimEvidenceRequestDto,
+  ClaimActionRequestDto,
+  ClaimEventPayloadDto,
+  ContentEditHistory,
+  ContentEditOutcome,
+  ContentEditPreview,
+  ContentEditRequest,
+  ContentRef,
+  EditableContent,
   ExportAllLearningPacksResultDto,
-  LearningPackChangeDto,
-  LearningPackConflictDto,
-  LearningPackExportNoticeDto,
-  LearningPackExportDto,
-  LearningPackImportResultDto,
-  LearningPackPreviewStatus,
-  LearningOutlineProgressDto,
+  FieldSpec,
+  JsonValue,
+  LearningCurriculumChangeKind,
+  LearningCurriculumOperation,
+  LearningDiagnosticAttemptDto,
   LearningGenerationJob,
   LearningGenerationJobActionRequestDto,
   LearningLessonDto,
-  LearningProgramDto,
+  LearningMemoryDto,
+  LearningOutlineProgressDto,
+  LearningPackChangeDto,
+  LearningPackConflictDto,
+  LearningPackExportDto,
+  LearningPackExportNoticeDto,
+  LearningPackImportResultDto,
+  LearningPackPreviewStatus,
   LearningPracticalWorkspaceDto,
+  LearningProgramDto,
+  LearningRuntimePresetDto,
   LearningTangentDto,
-  ClaimActionRequestDto,
-  ClaimEventPayloadDto,
-  LessonClaimReviewDto,
-  AttachLearningClaimEvidenceRequestDto,
   LearningTrustOverrideInputDto,
   LearningTrustOverrideScopeDto,
-  WaitingClaimsRecheckDto,
+  LessonClaimReviewDto,
   StudyCardDto,
   StudyDeckSummaryDto,
+  WaitingClaimsRecheckDto,
   WorkspaceNoteDto,
 } from "../../src/lib/bindings";
 import { makeAppSettings } from "../../src/tests/fixtures/appSettings";
@@ -2340,28 +2349,251 @@ export async function installLearningStudioBackend(page: Page) {
         // IPC returns a snapshot, not shared references into the backend's state.
         return structuredClone(state.planWorkspace);
       },
+      open_content_edit: (args) => {
+        const { content } = args as { content: ContentRef };
+        if (content.kind === "learning.lesson") {
+          const target = program.modules.flatMap((module) => module.lessons).find((item) => item.id === content.key);
+          if (!target) throw new Error("Lesson not found.");
+          const form: FieldSpec[] = [
+            { type: "text", path: "/title", label: "Title", format: "line", required: true },
+            { type: "text", path: "/objective", label: "Objective", format: "plain", required: true },
+            { type: "number", path: "/estimatedMinutes", label: "Time", min: 1, unit: "minutes" },
+          ];
+          return {
+            content,
+            label: `Lesson: ${target.title}`,
+            scope: { feature: "learning", container: program.summary.id },
+            editable: { state: "editable" },
+            form,
+            document: {
+              title: target.title,
+              objective: target.objective,
+              estimatedMinutes: target.estimatedMinutes,
+            },
+            revision: `lesson-rev-${program.summary.revision}`,
+            notes: [],
+            editedPaths: [],
+          } satisfies EditableContent;
+        }
+        if (content.kind === "study.card") {
+          const cards = state.recallV2Workspace.cards as Array<{
+            id: string;
+            contentRevision: number;
+            content: { prompt: string; answer: string; explanation: string };
+          }>;
+          const card = cards.find((item) => item.id === content.key);
+          if (!card) throw new Error("Recall card not found.");
+          const form: FieldSpec[] = [
+            { type: "text", path: "/question", label: "Question", format: "markdown", required: true },
+            { type: "text", path: "/answer", label: "Answer", format: "markdown", required: true },
+            { type: "text", path: "/explanation", label: "Explanation", format: "markdown", required: false },
+          ];
+          return {
+            content,
+            label: `Card: ${card.content.prompt.split("\n")[0] ?? ""}`,
+            scope: { feature: "learning", container: program.summary.id },
+            editable: { state: "editable" },
+            form,
+            document: {
+              question: card.content.prompt,
+              answer: card.content.answer,
+              explanation: card.content.explanation,
+            },
+            revision: `card-rev-${card.contentRevision}`,
+            notes: [],
+            editedPaths: [],
+          } satisfies EditableContent;
+        }
+        throw new Error(`Unsupported content kind: ${content.kind}`);
+      },
+      preview_content_edit: (args) => {
+        const { request } = args as { request: ContentEditRequest };
+        return {
+          current: true,
+          changed: request.ops.length > 0,
+          problems: [],
+          notices: [],
+          consequences: [],
+        } satisfies ContentEditPreview;
+      },
+      apply_content_edit: (args) => {
+        const { request } = args as { request: ContentEditRequest };
+        if (request.content.kind === "learning.lesson") {
+          const target = program.modules.flatMap((module) => module.lessons).find((item) => item.id === request.content.key);
+          if (!target) throw new Error("Lesson not found.");
+          if (request.expectedRevision !== `lesson-rev-${program.summary.revision}`) {
+            throw { code: "CONFLICT", message: "Lesson changed; reload and retry." };
+          }
+          for (const op of request.ops) {
+            if (op.op === "replace" && op.path === "/title" && typeof op.value === "string") target.title = op.value;
+            else if (op.op === "replace" && op.path === "/objective" && typeof op.value === "string") target.objective = op.value;
+            else if (op.op === "replace" && op.path === "/estimatedMinutes" && typeof op.value === "number") target.estimatedMinutes = op.value;
+          }
+          const planState = state.planWorkspace as unknown as {
+            programRevision: number;
+            acceptedRevision: {
+              revisionNumber: number;
+              modules: Array<{ lessons: Array<{ id: string; title: string; objective: string; estimatedMinutes: number }> }>;
+            } | null;
+          };
+          if (planState.acceptedRevision) {
+            planState.acceptedRevision.revisionNumber += 1;
+            const acceptedLesson = planState.acceptedRevision.modules.flatMap((module) => module.lessons).find((item) => item.id === target.id);
+            if (acceptedLesson) {
+              Object.assign(acceptedLesson, { title: target.title, objective: target.objective, estimatedMinutes: target.estimatedMinutes });
+            }
+          }
+          program.summary.revision += 1;
+          planState.programRevision = program.summary.revision;
+          return {
+            editId: request.editId,
+            changed: request.ops.length > 0,
+            content: request.content,
+            scope: { feature: "learning", container: program.summary.id },
+            revision: `lesson-rev-${program.summary.revision}`,
+            affected: ["learning.program", "learning.plan"],
+            consequences: [],
+            reverted: [],
+          } satisfies ContentEditOutcome;
+        }
+        if (request.content.kind === "study.card") {
+          const cards = state.recallV2Workspace.cards as Array<{
+            id: string;
+            format: string;
+            contentRevision: number;
+            sourceVersionIds: string[];
+            updatedAt: number;
+            content: { prompt: string; answer: string; explanation: string };
+            versions: Array<{
+              revision: number;
+              format: string;
+              content: { prompt: string; answer: string; explanation: string };
+              sourceVersionIds: string[];
+              changeReason: string;
+              createdAt: number;
+            }>;
+          }>;
+          const card = cards.find((item) => item.id === request.content.key);
+          if (!card) throw new Error("Recall card not found.");
+          if (request.expectedRevision !== `card-rev-${card.contentRevision}`) {
+            throw { code: "CONFLICT", message: "Card changed; reload and retry." };
+          }
+          for (const op of request.ops) {
+            if (op.op === "replace" && op.path === "/question" && typeof op.value === "string") card.content.prompt = op.value;
+            else if (op.op === "replace" && op.path === "/answer" && typeof op.value === "string") card.content.answer = op.value;
+            else if (op.op === "replace" && op.path === "/explanation" && typeof op.value === "string") card.content.explanation = op.value;
+          }
+          card.contentRevision += 1;
+          const now = Date.now();
+          card.updatedAt = now;
+          card.versions.push({
+            revision: card.contentRevision,
+            format: card.format,
+            content: JSON.parse(JSON.stringify(card.content)) as typeof card.content,
+            sourceVersionIds: [...card.sourceVersionIds],
+            changeReason: "Learner correction",
+            createdAt: now,
+          });
+          return {
+            editId: request.editId,
+            changed: request.ops.length > 0,
+            content: request.content,
+            scope: { feature: "learning", container: program.summary.id },
+            revision: `card-rev-${card.contentRevision}`,
+            affected: ["learning.recall"],
+            consequences: [],
+            reverted: [],
+          } satisfies ContentEditOutcome;
+        }
+        throw new Error(`Unsupported content kind: ${request.content.kind}`);
+      },
+      get_content_edit_history: (args) => {
+        const { content } = args as { content: ContentRef };
+        return { content, revision: "rev-1", edits: [] } satisfies ContentEditHistory;
+      },
+      list_content_edits: () => [],
       cancel_learning_generation_job: (args) => changeGenerationJob('cancel_learning_generation_job', args),
       retry_learning_generation_job: (args) => changeGenerationJob('retry_learning_generation_job', args),
       preview_learning_curriculum_revision: (args) => {
-        const request = getRequest<Record<string, unknown>>(args);
+        const request = getRequest<{
+          programId: string;
+          expectedRevision: number;
+          operations: LearningCurriculumOperation[];
+        }>(args);
         if (request.programId !== program.summary.id || request.expectedRevision !== program.summary.revision)
           throw { code: "CONFLICT", message: "Program changed; reload and retry." };
         state.planWorkspace.programRevision = program.summary.revision;
-        const planState = state.planWorkspace as unknown as Record<string, unknown>;
-        const revision = planState.acceptedRevision as Record<string, unknown>;
-        const next = JSON.parse(JSON.stringify(revision)) as Record<string, unknown>;
+        const planState = state.planWorkspace as unknown as {
+          acceptedRevision: {
+            id: string;
+            revisionNumber: number;
+            status: string;
+            modules: Array<{ id: string; lessons: Array<{ id: string; title: string; state: string }> }>;
+          };
+          draftRevision: unknown;
+          previewChanges: Array<{ lessonId: string; kind: LearningCurriculumChangeKind; description: string }>;
+          requiredLessonCountBefore: number;
+          requiredLessonCountAfter: number;
+        };
+        const revision = planState.acceptedRevision;
+        const next = JSON.parse(JSON.stringify(revision)) as typeof revision;
         next.id = "curriculum-revision-e2e-2";
         next.revisionNumber = Number(revision.revisionNumber) + 1;
         next.status = "draft";
-        const modules = next.modules as Array<Record<string, unknown>>;
-        const operation = (request.operations as Array<Record<string, unknown>>)[0];
-        const lessonId = String(operation.lesson_id);
-        const lessonRow = (modules[0].lessons as Array<Record<string, unknown>>).find((item) => item.id === lessonId);
-        if (!lessonRow) throw new Error("Lesson not found in curriculum.");
-        Object.assign(lessonRow, { title: operation.title, objective: operation.objective, estimatedMinutes: operation.estimated_minutes });
+        const operation = request.operations[0];
+        if (!operation) throw new Error("Curriculum operation is required.");
+        if (operation.kind === "challenge_prerequisite") {
+          const target = next.modules.flatMap((module) => module.lessons).find((item) => item.id === operation.lesson_id);
+          if (!target) throw new Error("Lesson not found in curriculum.");
+          target.state = "challenged";
+          planState.previewChanges = [{
+            lessonId: target.id,
+            kind: "challenged",
+            description: `Challenge the prerequisite for ${target.title}.`,
+          }];
+        } else if (operation.kind === "skip_lesson") {
+          const target = next.modules.flatMap((module) => module.lessons).find((item) => item.id === operation.lesson_id);
+          if (!target) throw new Error("Lesson not found in curriculum.");
+          target.state = "skipped";
+          planState.previewChanges = [{
+            lessonId: target.id,
+            kind: "skipped",
+            description: `Skip ${target.title}.`,
+          }];
+        } else if (operation.kind === "replace_lesson") {
+          const target = next.modules.flatMap((module) => module.lessons).find((item) => item.id === operation.lesson_id);
+          if (!target) throw new Error("Lesson not found in curriculum.");
+          target.state = "replaced";
+          next.modules[0]?.lessons.push(operation.replacement);
+          planState.previewChanges = [{
+            lessonId: operation.lesson_id,
+            kind: "replaced",
+            description: `Replace ${target.title} with ${operation.replacement.title}.`,
+          }];
+        } else if (operation.kind === "move_lesson") {
+          planState.previewChanges = [{
+            lessonId: operation.lesson_id,
+            kind: "moved",
+            description: "Move lesson.",
+          }];
+        } else {
+          next.modules[0]?.lessons.push(operation.lesson);
+          planState.previewChanges = [{
+            lessonId: operation.lesson.id,
+            kind: "added",
+            description: `Add ${operation.lesson.title}.`,
+          }];
+        }
         planState.draftRevision = next;
-        planState.previewChanges = [{ lessonId, kind: "edit_lesson", description: `Update ${String(operation.title)}.` }];
         planState.requiredLessonCountAfter = planState.requiredLessonCountBefore;
+        return state.planWorkspace;
+      },
+      discard_learning_curriculum_revision: (args) => {
+        const request = getRequest<{ programId: string; expectedRevision: number }>(args);
+        if (request.programId !== program.summary.id || request.expectedRevision !== program.summary.revision)
+          throw { code: "CONFLICT", message: "Program changed; reload and retry." };
+        state.planWorkspace.draftRevision = null;
+        state.planWorkspace.previewChanges = [];
         return state.planWorkspace;
       },
       accept_learning_curriculum_revision: (args) => {

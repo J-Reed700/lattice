@@ -855,47 +855,6 @@ async settleLearningTeachingFindings(request: SettleLearningTeachingFindingsRequ
 }
 },
 /**
- * Rewrites a section of a published lesson, its title and its text. The
- * statements on text the user changed end, the others keep their state, and
- * each sentence the user wrote becomes a statement they confirmed. With
- * `dry_run` it only answers what saving would do.
- */
-async editLearningLessonSection(request: EditLearningLessonSectionRequestDto) : Promise<Result<LessonSectionEditDto, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|edit_learning_lesson_section", { request }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * A published lesson's question, as the editor opens it: its kind, prompt,
- * choices, right choice and explanation.
- */
-async getLearningLessonQuestion(programId: string, lessonId: string, questionIndex: number) : Promise<Result<LessonQuestionDto, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_lesson_question", { programId, lessonId, questionIndex }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
- * Rewrites a question of a published lesson: its prompt, choices, right
- * answer and explanation. The statements on text the user changed end, the
- * others keep their state, and each sentence the user wrote becomes a
- * statement they confirmed. With `dry_run` it only answers what saving would
- * do.
- */
-async editLearningLessonQuestion(request: EditLearningLessonQuestionRequestDto) : Promise<Result<LessonQuestionEditDto, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|edit_learning_lesson_question", { request }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-/**
  * Resume verification (§6.2): a lesson waiting for review continues its
  * job once something changed; a stopped one retries it.
  */
@@ -1445,14 +1404,6 @@ async generateConversationStudyDeck(request: GenerateConversationStudyDeckReques
 async reviewStudyCard(request: ReviewStudyCardRequestDto) : Promise<Result<StudyCardDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|review_study_card", { request }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async updateStudyCard(request: UpdateStudyCardRequestDto) : Promise<Result<null, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|update_study_card", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -6809,32 +6760,6 @@ export type DueItemDto = { kind: DueKind;
 label: string; count: number; dueAt: number; lessonId: string | null; material: string | null }
 export type DueKind = "coding_patterns" | "drill_lesson" | "drill_patterns"
 export type EditCoursePlanEntryRequestDto = { programId: string; outlineRevision: number; expectedEntryRevision: number; topics: PlannedLesson }
-/**
- * A published lesson's question as the user rewrote it, with the question
- * they opened.
- */
-export type EditLearningLessonQuestionRequestDto = { programId: string; lessonId: string;
-/**
- * Zero-based, among the lesson's questions.
- */
-questionIndex: number; before: LessonQuestionDto; after: LessonQuestionDto;
-/**
- * Answer what saving would do and write nothing.
- */
-dryRun: boolean }
-/**
- * A published lesson's section as the user rewrote it, with the title and
- * text they opened it with.
- */
-export type EditLearningLessonSectionRequestDto = { programId: string; lessonId: string;
-/**
- * Zero-based.
- */
-sectionIndex: number; beforeTitle: string; beforeBody: string; title: string; body: string;
-/**
- * Answer what saving would do and write nothing.
- */
-dryRun: boolean }
 export type EditOp = { op: "replace"; path: string; value: JsonValue } | { op: "add"; path: string; value: JsonValue } | { op: "remove"; path: string }
 export type EditOrigin = { type: "learner" } | { type: "proposal"; proposalId: string; model: string } | { type: "action"; name: string } | { type: "revert"; editId: string }
 export type EditScope = { feature: string; container: string }
@@ -8520,7 +8445,7 @@ export type LearningCurriculumChangeKind = "added" | "edited" | "moved" | "skipp
 export type LearningCurriculumLesson = { id: string; title: string; objective: string; estimatedMinutes: number; state: LearningCurriculumLessonState; assessmentStarted: boolean; replacementLessonId: string | null }
 export type LearningCurriculumLessonState = "outline" | "ready" | "completed" | "skipped" | "replaced" | "challenged"
 export type LearningCurriculumModule = { id: string; title: string; purpose: string; prerequisiteModuleIds: string[]; outcomeIds: string[]; lessons: LearningCurriculumLesson[] }
-export type LearningCurriculumOperation = { kind: "add_lesson"; module_id: string; after_lesson_id: string | null; lesson: LearningCurriculumLesson } | { kind: "edit_lesson"; lesson_id: string; title: string; objective: string; estimated_minutes: number } | { kind: "move_lesson"; lesson_id: string; target_module_id: string; after_lesson_id: string | null } | { kind: "skip_lesson"; lesson_id: string } | { kind: "replace_lesson"; lesson_id: string; replacement: LearningCurriculumLesson } | { kind: "challenge_prerequisite"; lesson_id: string }
+export type LearningCurriculumOperation = { kind: "add_lesson"; module_id: string; after_lesson_id: string | null; lesson: LearningCurriculumLesson } | { kind: "move_lesson"; lesson_id: string; target_module_id: string; after_lesson_id: string | null } | { kind: "skip_lesson"; lesson_id: string } | { kind: "replace_lesson"; lesson_id: string; replacement: LearningCurriculumLesson } | { kind: "challenge_prerequisite"; lesson_id: string }
 export type LearningCurriculumRevision = { id: string; programId: string; revisionNumber: number; parentRevisionId: string | null; reason: string; modules: LearningCurriculumModule[]; createdAt: number }
 export type LearningCurriculumRevisionActionRequestDto = { operationId: string; programId: string; revisionId: string; expectedRevision: number }
 export type LearningDiagnosticAttemptDto = { id: string; programId: string; status: LearningDiagnosticStatus; revision?: number; prompts: LearningDiagnosticPromptDto[]; responses: LearningDiagnosticResponseDto[]; sourceCoverageGaps: LearningDiagnosticCoverageGapDto[]; interpretation: string; findings?: LearningDiagnosticFindingDto[]; createdAt: number; submittedAt: number | null }
@@ -9501,82 +9426,7 @@ sections: ReviewSectionDto[];
  * publishes with these waiting for the user.
  */
 teachingFindings: TeachingFindingDto[] }
-/**
- * A published lesson's question as the editor shows it and sends it back.
- */
-export type LessonQuestionDto = { kind: LearningItemFormat; prompt: string;
-/**
- * Empty for a kind without choices.
- */
-choices: string[];
-/**
- * The index of the right choice; null for a kind without one.
- */
-right: number | null; explanation: string;
-/**
- * One reason per choice, the right choice's empty; empty when the
- * question has none.
- */
-rationales: string[] }
-/**
- * What a rewrite of a question does, or did, to the lesson's statements.
- */
-export type LessonQuestionEditDto = { changed: boolean;
-/**
- * Statements on text the user left as it was.
- */
-statementsKept: number;
-/**
- * Statements on text the user changed.
- */
-statementsChanged: number;
-/**
- * Statements on text the user deleted.
- */
-statementsRemoved: number;
-/**
- * Sentences the user wrote.
- */
-sentencesWritten: number;
-/**
- * Changed or removed statements that were checked against the sources.
- */
-checkedStatementsAffected: number;
-/**
- * The review's revision after a save; null for a dry run, no change, or
- * a lesson without a review.
- */
-revision: number | null }
 export type LessonReviewStateDto = "verifying" | "needs_review" | "stopped" | "ready"
-/**
- * What a rewrite of a section does, or did, to the lesson's statements.
- */
-export type LessonSectionEditDto = { changed: boolean;
-/**
- * Statements on text the user left as it was.
- */
-statementsKept: number;
-/**
- * Statements on text the user changed.
- */
-statementsChanged: number;
-/**
- * Statements on text the user deleted.
- */
-statementsRemoved: number;
-/**
- * Sentences the user wrote.
- */
-sentencesWritten: number;
-/**
- * Changed or removed statements that were checked against the sources.
- */
-checkedStatementsAffected: number;
-/**
- * The review's revision after a save; null for a dry run, no change, or
- * a lesson without a review.
- */
-revision: number | null }
 /**
  * A line range a reference names inside what it points at.
  */
@@ -12294,7 +12144,6 @@ export type UpdateLearningQuizSettingsRequestDto = { operationId: string; progra
 export type UpdateLearningSourcePolicyRequestDto = { operationId: string; programId: string; sourceId: string; freshnessPolicy: LearningSourcePolicy; expectedRevision: number }
 export type UpdatePassageReferenceRequestDto = { id: string; title: string | null; note: string | null }
 export type UpdateSettingsRequest = { category: string | null; updates: { [key in string]: JsonValue } }
-export type UpdateStudyCardRequestDto = { cardId: string; question: string; answer: string; explanation: string }
 export type UpsertConversationSpaceMemberRequestDto = { spaceId: string; memberId: string; displayName: string | null; email: string | null; avatarUrl: string | null; role: string }
 /**
  * URL preview information for web capture.
@@ -12805,8 +12654,6 @@ export type CommandArgs = {
 	download_model: { modelId: string };
 	download_reranker: void;
 	edit_learning_course_plan_entry: { request: EditCoursePlanEntryRequestDto };
-	edit_learning_lesson_question: { request: EditLearningLessonQuestionRequestDto };
-	edit_learning_lesson_section: { request: EditLearningLessonSectionRequestDto };
 	ensure_learning_lesson_note: { request: EnsureLearningLessonNoteRequestDto };
 	execute_function: { call: FunctionCall };
 	explorer_folder_delete_index: { root: string };
@@ -12890,7 +12737,6 @@ export type CommandArgs = {
 	get_learning_lesson_audit: { programId: string; lessonId: string };
 	get_learning_lesson_claim_review: { programId: string; lessonId: string };
 	get_learning_lesson_evidence: { programId: string; lessonId: string };
-	get_learning_lesson_question: { programId: string; lessonId: string; questionIndex: number };
 	get_learning_memory: { id: string };
 	get_learning_outline_evidence: { programId: string };
 	get_learning_plan: { id: string };
@@ -13162,7 +13008,6 @@ export type CommandArgs = {
 	update_learning_source_policy: { request: UpdateLearningSourcePolicyRequestDto };
 	update_passage_reference: { request: UpdatePassageReferenceRequestDto };
 	update_settings: { settings: UpdateSettingsRequest };
-	update_study_card: { request: UpdateStudyCardRequestDto };
 	update_workspace_note: { note: WorkspaceNoteDto };
 	upsert_conversation_space_member: { request: UpsertConversationSpaceMemberRequestDto };
 	validate_folder_path: { path: string };
@@ -13285,8 +13130,6 @@ export type CommandResults = {
 	download_model: DownloadModelResponse;
 	download_reranker: RerankerStatusDto;
 	edit_learning_course_plan_entry: CoursePlanViewDto;
-	edit_learning_lesson_question: LessonQuestionEditDto;
-	edit_learning_lesson_section: LessonSectionEditDto;
 	ensure_learning_lesson_note: LearningMemoryDto;
 	execute_function: FunctionResult;
 	explorer_folder_delete_index: null;
@@ -13370,7 +13213,6 @@ export type CommandResults = {
 	get_learning_lesson_audit: LearningLessonAuditDto | null;
 	get_learning_lesson_claim_review: LessonClaimReviewDto | null;
 	get_learning_lesson_evidence: LearningLessonEvidenceDto | null;
-	get_learning_lesson_question: LessonQuestionDto;
 	get_learning_memory: LearningMemoryDto;
 	get_learning_outline_evidence: LearningOutlineEvidenceDto | null;
 	get_learning_plan: LearningPlanDto;
@@ -13642,7 +13484,6 @@ export type CommandResults = {
 	update_learning_source_policy: LearningSourceWorkspaceDto;
 	update_passage_reference: PassageReferenceDto;
 	update_settings: SettingsDto;
-	update_study_card: null;
 	update_workspace_note: WorkspaceNoteDto;
 	upsert_conversation_space_member: ConversationSpaceMemberDto;
 	validate_folder_path: boolean;

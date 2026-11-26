@@ -4,7 +4,22 @@ import { makePreviewPdf } from './fixtures/previewPdf';
 import { mockActiveModels } from './fixtures/activeModels';
 import { installCustomCollectionsFixture } from './fixtures/customCollections';
 import { installTauriMock, mockCommands, type CommandResult, type Fixture } from './fixtures/tauri';
-import type { JobDto, LearningLessonDto, StartJournalSynthesisRequestDto, LearningProgramDto, MessageDto, ModelCategoryDto, SynthesizeJournalEntriesResponseDto } from '../src/lib/bindings';
+import type {
+  ContentEditHistory,
+  ContentEditOutcome,
+  ContentEditPreview,
+  ContentEditRequest,
+  ContentRef,
+  EditableContent,
+  FieldSpec,
+  JobDto,
+  LearningLessonDto,
+  LearningProgramDto,
+  MessageDto,
+  ModelCategoryDto,
+  StartJournalSynthesisRequestDto,
+  SynthesizeJournalEntriesResponseDto,
+} from '../src/lib/bindings';
 import { openStudioSection } from './helpers/learningStudioNavigation';
 import { makeAppSettings } from '../src/tests/fixtures/appSettings';
 
@@ -1539,13 +1554,90 @@ test('creates a subject-agnostic flashcard deck in Studio, reviews, quizzes, ope
         card.lapses += Number(wrong); card.dueAt = Date.now() + (wrong ? 600_000 : 86_400_000); card.intervalDays = wrong ? 0 : 1;
         save(deck); return card;
       },
-      update_study_card: (args) => {
+      open_content_edit: (args) => {
         const deck = load();
         if (!deck) throw new Error('No saved deck');
-        const request = (args as { request: { cardId: string; question: string; answer: string; explanation: string } }).request;
-        const card = deck.cards.find(c => c.id === request.cardId)!;
-        Object.assign(card, { question: request.question, answer: request.answer, explanation: request.explanation });
-        card.options[card.correctIndex] = card.answer; save(deck); return null;
+        const { content } = args as { content: ContentRef };
+        if (content.kind !== 'study.card') throw new Error(`Unsupported content kind: ${content.kind}`);
+        const card = deck.cards.find(c => c.id === content.key);
+        if (!card) throw new Error('Study card not found');
+        const form: FieldSpec[] = [
+          { type: 'text', path: '/question', label: 'Question', format: 'markdown', required: true },
+          {
+            type: 'list',
+            path: '/choices',
+            label: 'Choices',
+            itemLabel: 'Choice',
+            minItems: 2,
+            maxItems: 8,
+            item: [
+              { type: 'text', path: '/text', label: 'Choice', format: 'plain', required: true },
+              { type: 'flag', path: '/correct', label: 'Right answer', exclusive: true },
+            ],
+          },
+          { type: 'text', path: '/explanation', label: 'Explanation', format: 'markdown', required: false },
+        ];
+        return {
+          content,
+          label: `Card: ${card.question.split('\n')[0] ?? ''}`,
+          scope: { feature: 'study', container: deck.id },
+          editable: { state: 'editable' },
+          form,
+          document: {
+            question: card.question,
+            choices: card.options.map((text, index) => ({ text, correct: card.correctIndex === index })),
+            explanation: card.explanation,
+          },
+          revision: `rev-${card.question.length}`,
+          notes: [],
+          editedPaths: [],
+        } satisfies EditableContent;
+      },
+      preview_content_edit: (args) => {
+        const { request } = args as { request: ContentEditRequest };
+        return {
+          current: true,
+          changed: request.ops.length > 0,
+          problems: [],
+          notices: [],
+          consequences: [],
+        } satisfies ContentEditPreview;
+      },
+      apply_content_edit: (args) => {
+        const deck = load();
+        if (!deck) throw new Error('No saved deck');
+        const { request } = args as { request: ContentEditRequest };
+        const card = deck.cards.find(c => c.id === request.content.key);
+        if (!card) throw new Error('Study card not found');
+        for (const op of request.ops) {
+          if (op.op === 'replace' && op.path === '/question' && typeof op.value === 'string') {
+            card.question = op.value;
+          } else if (op.op === 'replace' && op.path === '/explanation' && typeof op.value === 'string') {
+            card.explanation = op.value;
+          } else if (op.op === 'replace' && op.path === '/answer' && typeof op.value === 'string') {
+            card.answer = op.value;
+          }
+        }
+        card.options[card.correctIndex] = card.answer;
+        save(deck);
+        return {
+          editId: request.editId,
+          changed: request.ops.length > 0,
+          content: request.content,
+          scope: { feature: 'study', container: deck.id },
+          revision: `rev-${card.question.length}`,
+          affected: ['study.decks'],
+          consequences: [],
+          reverted: [],
+        } satisfies ContentEditOutcome;
+      },
+      get_content_edit_history: (args) => {
+        const { content } = args as { content: ContentRef };
+        return {
+          content,
+          revision: 'rev-1',
+          edits: [],
+        } satisfies ContentEditHistory;
       },
     };
   }, makeAppSettings());
@@ -1602,8 +1694,10 @@ test('creates a subject-agnostic flashcard deck in Studio, reviews, quizzes, ope
   await page.getByRole('button', { name: 'End session' }).click();
   await page.locator('summary').filter({ hasText: 'What absorbs the light used in photosynthesis?' }).click();
   await page.getByRole('button', { name: 'Edit card' }).click();
-  await page.getByLabel('Question', { exact: true }).fill('Which pigment absorbs the light used in photosynthesis?');
-  await page.getByRole('button', { name: 'Save card' }).click();
+  const cardEditor = page.getByRole('dialog');
+  await cardEditor.getByLabel('Question', { exact: true }).fill('Which pigment absorbs the light used in photosynthesis?');
+  await cardEditor.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(cardEditor).toHaveCount(0);
   await page.reload();
   await expect(page.locator('summary').filter({ hasText: 'Which pigment absorbs the light used in photosynthesis?' })).toBeVisible();
   await page.evaluate(() => localStorage.setItem('test:study-theme', 'light'));
