@@ -415,6 +415,7 @@ async fn the_rewritten_report_drops_findings_with_no_claim_whose_text_is_gone() 
         ended: &ended,
         written: &[("Mine is new.", &mine)],
         at: 7,
+        edit_id: "edit",
     });
 
     let quotes: Vec<&str> = report
@@ -719,6 +720,7 @@ fn rewrite_of<'a>(
         ended,
         written,
         at: 7,
+        edit_id: "edit",
     }
 }
 

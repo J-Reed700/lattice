@@ -171,27 +171,5 @@ pub(crate) fn put_sentence(
         .or_else(|| insert_sentence(text, &Anchor::End, sentence))
 }
 
-/// `text` with `removed` written back between `follows` and `precedes`, the
-/// shortest texts that stood on either side of it, but only where they still
-/// meet: both, exactly once together; only `precedes`, at the start; only
-/// `follows`, at the end; neither, in a blank text. `None` otherwise.
-pub(crate) fn put_at_junction(
-    text: &str,
-    removed: &str,
-    follows: Option<&str>,
-    precedes: Option<&str>,
-) -> Option<String> {
-    let at = match (follows, precedes) {
-        (Some(follows), Some(precedes)) => {
-            let (start, _) = span_of(text, &format!("{follows}{precedes}"))?;
-            start + follows.len()
-        }
-        (None, Some(precedes)) => text.starts_with(precedes).then_some(0)?,
-        (Some(follows), None) => text.ends_with(follows).then_some(text.len())?,
-        (None, None) => return text.trim().is_empty().then(|| removed.to_owned()),
-    };
-    Some(format!("{}{removed}{}", text.get(..at)?, text.get(at..)?))
-}
-
 #[cfg(test)]
 mod put_place_tests;

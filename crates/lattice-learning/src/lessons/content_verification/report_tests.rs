@@ -113,6 +113,7 @@ fn a_rewrite_that_takes_no_finding_puts_the_users_sentences_before_later_section
         ended: &HashSet::new(),
         written: &[("New sentence.", &written)],
         at: 1,
+        edit_id: "edit",
     });
 
     assert_eq!(report.findings[0].claim_id.as_deref(), Some("written"));

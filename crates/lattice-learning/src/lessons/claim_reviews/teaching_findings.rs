@@ -15,14 +15,16 @@
 //! changes.
 use std::collections::{BTreeSet, HashMap};
 
+use lattice_core::shared::edits::ContentAddress;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Database;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::repository::blocks;
 use super::repository::teaching_findings::{self as table, FindingWrite, Settle, StoredFinding};
+use super::repository::{blocks, questions};
 use super::teaching_summary::{derive, passage_shown, sentence_of, Stored};
+use crate::edits::keys;
 use crate::persistence::now;
 use crate::review_findings::{
     site_sha256, unit, FindingId, FindingKey, FindingKind, FindingSite, Held, ReviewFinding,
@@ -288,11 +290,27 @@ impl TeachingFindingsRepository {
     pub async fn list(&self, lesson_id: &str) -> Result<Vec<TeachingFindingDto>> {
         let rows = table::stored_findings(&self.database, lesson_id).await?;
         let sections = self.sections_for_old_rows(lesson_id, &rows).await?;
+        let question_ids = self.questions_for_rows(lesson_id, &rows).await?;
         rows.iter()
             .map(|row| {
                 let corrupt = || AppError::InternalError("Invalid stored teaching finding".into());
                 let site = site_of(&row.site, row.unit_index).ok_or_else(corrupt)?;
                 let kind = FindingKind::from_column(&row.kind).ok_or_else(corrupt)?;
+                let address = match site {
+                    FindingSite::Section(index) => Some(ContentAddress {
+                        content: keys::section_ref(lesson_id, index),
+                        path: Some("/body".into()),
+                        fragment: None,
+                    }),
+                    FindingSite::Question(index) => {
+                        question_ids.get(index).map(|q| ContentAddress {
+                            content: keys::question_ref(&q.id),
+                            path: None,
+                            fragment: None,
+                        })
+                    }
+                    FindingSite::Lesson => None,
+                };
                 let mut passage = row.passage.clone();
                 let mut sentence = row.sentence.clone();
                 let summary = match row.summary.clone().filter(|summary| !summary.is_empty()) {
@@ -347,10 +365,24 @@ impl TeachingFindingsRepository {
                         _ => TeachingFindingStateDto::Waiting,
                     },
                     part_changed: row.part_changed,
-                    address: None,
+                    address,
                 })
             })
             .collect()
+    }
+
+    async fn questions_for_rows(
+        &self,
+        lesson_id: &str,
+        rows: &[StoredFinding],
+    ) -> Result<Vec<questions::LessonQuestion>> {
+        if !rows.iter().any(|row| row.site == "question") {
+            return Ok(Vec::new());
+        }
+        let mut read = self.database.begin_read().await?;
+        let list = questions::lesson_questions(&mut read, lesson_id).await?;
+        read.commit().await?;
+        Ok(list)
     }
 
     /// The published sections a finding with no summary may be about, by
