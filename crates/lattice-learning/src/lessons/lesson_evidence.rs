@@ -1,6 +1,6 @@
 //! Learner-safe verification report. Assessment claims, keys and explanations
 //! stay on the backend; only teaching claims and original source passages leave.
-use lattice_core::application::contracts::replies::ReplyPieceDto;
+use lattice_core::application::contracts::replies::{AnchorDto, RelationDto, ReplyPieceDto};
 use lattice_core::domain::learning::claim_review::UnverifiedReason;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::persistence::Database;
@@ -94,6 +94,8 @@ pub enum LearningStatementClassDto {
 pub enum LearningClaimPartKindDto {
     /// A passage states it.
     Stated,
+    /// No passage states it, but what the passages state directly entails it.
+    Follows,
     /// No passage states it, and it is standard knowledge of the field.
     Common,
     /// No passage states it and none needs to: one of the lesson's own figures.
@@ -112,6 +114,9 @@ pub struct LearningClaimPartDto {
     pub kind: LearningClaimPartKindDto,
     /// The saved source version that states the part; none for another.
     pub source_version_id: Option<String>,
+    /// The source sentences the part rests on.
+    #[serde(default)]
+    pub anchors: Vec<AnchorDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -155,6 +160,9 @@ pub struct LearningClaimEvidenceDto {
     /// statement stands on; empty when it cites none.
     #[serde(default)]
     pub cites: Vec<u32>,
+    /// How the statement uses the sources its chips open; none when it cites none.
+    #[serde(default)]
+    pub relation: Option<RelationDto>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]

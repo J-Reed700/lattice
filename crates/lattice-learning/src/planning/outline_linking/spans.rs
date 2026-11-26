@@ -151,5 +151,5 @@ pub(super) fn citable_span(
         let cut = last_sentence_end(head).or_else(|| head.rfind(char::is_whitespace))?;
         text = text[..cut].trim_end();
     }
-    generation::long_enough_quote(text).then(|| text.to_owned())
+    lattice_core::shared::text::same_text::long_enough_quote(text).then(|| text.to_owned())
 }

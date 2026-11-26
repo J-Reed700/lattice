@@ -3,10 +3,10 @@ use super::copied_wording::{self, Wording};
 use crate::dto::{
     LearningBlockKind, LearningPracticeCriterionDto, LearningPracticeEvidenceDimension,
 };
-use crate::generation::{MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
 use crate::lessons::shape::LessonShape;
 use crate::review_findings::{FindingKind, FindingSite, Remedy, ReviewFinding, Rule};
 use lattice_core::shared::hash::sha256_hex;
+use lattice_core::shared::text::same_text::{MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},

@@ -39,8 +39,6 @@ pub(crate) use recall::recall_output_tokens;
 pub use recall::{generate_recall_drafts, GeneratedLearningCardDraft};
 
 const MIN_TEXT: usize = 3;
-pub(crate) const MIN_QUOTE_CHARS: usize = 25;
-pub(crate) const MIN_QUOTE_WORDS: usize = 5;
 /// The longest span the code itself picks as a quotation; a model's has no ceiling.
 pub(crate) const MAX_QUOTE_CHARS: usize = 1200;
 pub(crate) const OUTLINE_OUTPUT_RESERVE: usize = 4000;
@@ -53,12 +51,6 @@ fn invalid(message: impl Into<String>) -> AppError {
     AppError::InvalidInput(message.into())
 }
 
-/// Whether `quote` is long enough to be a quotation: the floor the prompts state.
-pub(crate) fn long_enough_quote(quote: &str) -> bool {
-    let quote = quote.trim();
-    quote.chars().count() >= MIN_QUOTE_CHARS && quote.split_whitespace().count() >= MIN_QUOTE_WORDS
-}
-
 /// A deterministic excerpt match establishes provenance for a quoted span;
 /// it does not establish that the generated explanation is semantically valid.
 fn validate_quote(quote: &str, source: &LearningSourceDto) -> Result<()> {
@@ -66,7 +58,7 @@ fn validate_quote(quote: &str, source: &LearningSourceDto) -> Result<()> {
 }
 
 pub(crate) fn validate_excerpt_quote(quote: &str, excerpt: &str) -> Result<()> {
-    if !long_enough_quote(quote) || same_text::find(excerpt, quote.trim()).is_none() {
+    if !same_text::long_enough_quote(quote) || same_text::find(excerpt, quote.trim()).is_none() {
         return Err(invalid("The generated quotation does not match a valid passage in the saved reference. No material was published."));
     }
     Ok(())
