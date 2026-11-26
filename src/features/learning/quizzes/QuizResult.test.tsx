@@ -9,10 +9,16 @@ import { QuizResult, type LessonCompletion } from '@/features/learning/quizzes/Q
 import { resetQuizStopStore } from '@/features/learning/quizzes/quizStopStore';
 import { criterion, formItem, itemResult, quizForm, rationale, reveal, submission } from '@/features/learning/quizzes/quizTestData';
 import type { LearningAssessmentFormDto, LearningGradeContestDto } from '@/lib/bindings';
+import { useEditMode } from '@/shared/edits/editMode';
+import { useEditorStore } from '@/shared/edits/editorStore';
 
 vi.mock('@/components/TiptapEditor', () => ({ TiptapViewer: ({ content }: { content: string }) => <div>{content}</div> }));
 
-const api = vi.hoisted(() => ({ resume: vi.fn(), cancel: vi.fn(), program: vi.fn(), contest: vi.fn(), override: vi.fn(), report: vi.fn(), misses: vi.fn() }));
+const api = vi.hoisted(() => ({
+  resume: vi.fn(), cancel: vi.fn(), program: vi.fn(), contest: vi.fn(), override: vi.fn(), report: vi.fn(), misses: vi.fn(),
+  correctedSince: vi.fn((_content: { kind: string; key: string } | null, _since: number | null) => false),
+}));
+vi.mock('@/shared/edits/useCorrectedSince', () => ({ useCorrectedSince: api.correctedSince }));
 vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: {
   resumeLearningQuizGrading: api.resume, cancelLearningGenerationJob: api.cancel, getLearningProgram: api.program, contestLearningQuizGrade: api.contest,
   overrideLearningQuizGrade: api.override, reportLearningQuizItem: api.report, addLearningQuizMissesToRecall: api.misses,
@@ -33,6 +39,9 @@ const submitted = (overrides: Partial<LearningAssessmentFormDto['submission'] & 
 describe('quiz result', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    api.correctedSince.mockReturnValue(false);
+    useEditMode.getState().set(false);
+    useEditorStore.setState({ current: null, next: null });
     resetQuizStopStore();
   });
 
@@ -204,5 +213,38 @@ describe('quiz result', () => {
       ],
     }));
     expect(await screen.findByText(/Grading stopped · 1 written answer waiting\./)).toBeVisible();
+  });
+
+  it('offers Edit question in edit mode, opens the shared editor, and keeps item actions working', async () => {
+    const user = userEvent.setup();
+    useEditMode.getState().set(true);
+    show(submitted({ passed: false, score: 0.4, itemResults: [
+      itemResult({ itemId: 'choice', pointsEarned: 0 }),
+      itemResult({ itemId: 'written', gradeStatus: 'provisional', pointsEarned: 2, pointsPossible: 4, rationale: rationale() }),
+    ] }));
+    await user.click(screen.getByRole('button', { name: 'Edit question 2' }));
+    expect(useEditorStore.getState().current?.address).toEqual({
+      content: { kind: 'learning.question', key: 'written' },
+      path: null,
+      fragment: null,
+    });
+    await user.click(screen.getByRole('button', { name: 'Report this question' }));
+    expect(screen.getByLabelText('What is wrong with this question?')).toBeVisible();
+  });
+
+  it('shows a note when a question changed after the quiz was drawn, and hides it otherwise', () => {
+    const drawnAt = 1_700_000_000_000;
+    const form = submitted({
+      createdAt: drawnAt,
+      itemResults: [itemResult({ itemId: 'choice' }), itemResult({ itemId: 'written' })],
+    });
+    const { rerender } = show(form);
+    expect(api.correctedSince).toHaveBeenCalledWith({ kind: 'learning.question', key: 'choice' }, drawnAt);
+    expect(api.correctedSince).toHaveBeenCalledWith({ kind: 'learning.question', key: 'written' }, drawnAt);
+    expect(screen.queryByText('This question was changed after this quiz was drawn. The quiz shows it as it was asked.')).not.toBeInTheDocument();
+
+    api.correctedSince.mockImplementation((content) => content?.key === 'written');
+    rerender(<QuizResult form={form} sources={[]} programRevision={3} onBack={vi.fn()} onRetake={vi.fn()} retakePending={false} />);
+    expect(screen.getByText('This question was changed after this quiz was drawn. The quiz shows it as it was asked.')).toBeVisible();
   });
 });
