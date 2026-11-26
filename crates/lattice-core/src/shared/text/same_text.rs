@@ -104,8 +104,11 @@ pub fn long_enough_quote(quote: &str) -> bool {
 }
 
 /// Where `text` holds `quote` as a quotation: long enough to stand as one, and word for word apart from spacing, typography, emphasis marks and letter case.
-pub fn quotation(_text: &str, _quote: &str) -> Option<(usize, usize)> {
-    None
+pub fn quotation(text: &str, quote: &str) -> Option<(usize, usize)> {
+    if !long_enough_quote(quote) {
+        return None;
+    }
+    find(text, quote.trim())
 }
 
 /// The bytes of `text` that `needle` stands for at each place it occurs once
