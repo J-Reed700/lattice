@@ -348,24 +348,23 @@ impl JobStore {
         tx.commit().await.map_err(AppError::from)
     }
 
-    /// Pending, running and interrupted jobs can be cancelled. The status is
-    /// final once committed: the worker's later transitions are conditional.
-    pub async fn cancel_in(tx: &mut WriteTx, id: &str) -> Result<()> {
-        let raw_status: String = sqlx::query_scalar("SELECT status FROM jobs WHERE id=?")
-            .bind(id)
-            .fetch_optional(&mut **tx)
-            .await?
-            .ok_or_else(not_found)?;
-        let status = JobStatus::parse(&raw_status)
-            .ok_or_else(|| AppError::Database("Invalid job status".into()))?;
-        if !matches!(
+    fn is_cancellable(status: JobStatus) -> bool {
+        matches!(
             status,
             JobStatus::Pending | JobStatus::Running | JobStatus::Interrupted
-        ) {
-            return Err(AppError::InvalidState(
-                "This job has already finished.".into(),
-            ));
-        }
+        )
+    }
+
+    async fn status_in(connection: &mut sqlx::SqliteConnection, id: &str) -> Result<JobStatus> {
+        let raw_status: String = sqlx::query_scalar("SELECT status FROM jobs WHERE id=?")
+            .bind(id)
+            .fetch_optional(connection)
+            .await?
+            .ok_or_else(not_found)?;
+        JobStatus::parse(&raw_status).ok_or_else(|| AppError::Database("Invalid job status".into()))
+    }
+
+    async fn mark_cancelled_in(tx: &mut WriteTx, id: &str) -> Result<()> {
         let stamp = now();
         sqlx::query("UPDATE jobs SET status='cancelled',finished_at=?,result_ref=NULL,error_code=NULL,cause_code=NULL,error_message=NULL,progress_message='Cancelled' WHERE id=?")
             .bind(stamp)
@@ -373,6 +372,36 @@ impl JobStore {
             .execute(&mut **tx)
             .await?;
         record_event(tx, id, JobStatus::Cancelled, "Cancelled", stamp).await
+    }
+
+    /// Verifies `id` exists and is pending, running, or interrupted.
+    pub async fn ensure_cancellable_in(
+        connection: &mut sqlx::SqliteConnection,
+        id: &str,
+    ) -> Result<()> {
+        if !Self::is_cancellable(Self::status_in(connection, id).await?) {
+            return Err(AppError::InvalidState(
+                "This job has already finished.".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Pending, running and interrupted jobs can be cancelled. The status is
+    /// final once committed: the worker's later transitions are conditional.
+    pub async fn cancel_in(tx: &mut WriteTx, id: &str) -> Result<()> {
+        Self::ensure_cancellable_in(tx, id).await?;
+        Self::mark_cancelled_in(tx, id).await
+    }
+
+    /// Cancels `id` when still pending, running, or interrupted, returning
+    /// `Ok(false)` without failing if it already reached a terminal status.
+    pub async fn cancel_if_active_in(tx: &mut WriteTx, id: &str) -> Result<bool> {
+        if !Self::is_cancellable(Self::status_in(tx, id).await?) {
+            return Ok(false);
+        }
+        Self::mark_cancelled_in(tx, id).await?;
+        Ok(true)
     }
 
     pub async fn retry(&self, id: &str, operation_id: &str, message: &str) -> Result<Admitted> {

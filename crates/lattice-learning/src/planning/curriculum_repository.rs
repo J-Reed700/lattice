@@ -33,6 +33,7 @@ mod jobs;
 mod preparation;
 mod programs;
 pub(crate) use jobs::lesson_rank_in;
+pub use jobs::CancelPreflight;
 pub use programs::ProgramVerifierAudit;
 
 use diagnostics::decode_diagnostic_row;

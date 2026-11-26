@@ -20,17 +20,29 @@ const SHORT_MARKDOWN_CHROME_LABELS: &[&str] = &[
 
 fn parse_standalone_markdown_link(trimmed: &str) -> Option<(&str, &str)> {
     let after_open = trimmed.strip_prefix('[')?;
-    let sep = after_open.find("](")?;
-    let label = &after_open[..sep];
-    if label.contains('[') || label.contains(']') {
+    let (label, after_sep) = after_open.split_once("](")?;
+    if label.contains('[') || label.contains(']') || !after_sep.ends_with(')') {
         return None;
     }
-    let after_sep = &after_open[sep + 2..];
-    let url = after_sep.strip_suffix(')')?;
-    if url.trim().is_empty() {
-        return None;
+    let mut depth = 1usize;
+    for (idx, ch) in after_sep.char_indices() {
+        if ch.is_whitespace() {
+            return None;
+        }
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    let is_last = idx + ch.len_utf8() == after_sep.len();
+                    let url = after_sep.get(..idx)?;
+                    return (is_last && !url.is_empty()).then_some((label, url));
+                }
+            }
+            _ => {}
+        }
     }
-    Some((label, url))
+    None
 }
 
 fn is_markdown_url(url: &str) -> bool {
@@ -94,12 +106,21 @@ pub fn strip_scraped_chrome(text: &str) -> String {
     if !stripped_any {
         return text.to_owned();
     }
-    while kept.last().is_some_and(|prev| prev.trim().is_empty()) {
-        kept.pop();
+    if just_dropped {
+        while kept.last().is_some_and(|prev| prev.trim().is_empty()) {
+            kept.pop();
+        }
     }
     let mut out = kept.concat();
-    if text.ends_with('\n') && !out.is_empty() && !out.ends_with('\n') {
-        out.push('\n');
+    if text.ends_with('\n') {
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+    } else if just_dropped && out.ends_with('\n') {
+        out.pop();
+        if out.ends_with('\r') {
+            out.pop();
+        }
     }
     out
 }
@@ -115,6 +136,9 @@ mod tests {
             strip_scraped_chrome(raw),
             "# Using dead-letter queues\n\nBody text stays."
         );
+        let with_parens =
+            "[View a markdown version of this page](https://example.com/a_(1).md)\n\n# Title";
+        assert_eq!(strip_scraped_chrome(with_parens), "# Title");
     }
 
     #[test]
@@ -139,5 +163,34 @@ mod tests {
             "[Read the AWS SQS guide](https://docs.aws.amazon.com/sqs.md)"
         );
         assert_eq!(strip_scraped_chrome(raw), raw);
+    }
+
+    #[test]
+    fn preserves_multi_link_lines_trailing_commentary_and_intentional_trailing_newlines() {
+        let multi = "[View as Markdown](https://a.md) | [Guide](https://b.md)\n\nBody";
+        assert_eq!(strip_scraped_chrome(multi), multi);
+
+        let exact_multi =
+            "[View a markdown version of this page](https://a.md) | [Guide](https://b.md)";
+        assert_eq!(strip_scraped_chrome(exact_multi), exact_multi);
+
+        let annotated = "[View a markdown version of this page](https://a.md) (notes)\n\nBody";
+        assert_eq!(strip_scraped_chrome(annotated), annotated);
+
+        let top_with_eof_blanks =
+            "[View a markdown version of this page](https://a.md)\n\nBody\n\n";
+        assert_eq!(strip_scraped_chrome(top_with_eof_blanks), "Body\n\n");
+
+        let trailing_without_eof_nl =
+            "Body\n[View a markdown version of this page](https://a.md)";
+        assert_eq!(strip_scraped_chrome(trailing_without_eof_nl), "Body");
+
+        let trailing_sep_without_eof_nl =
+            "Body\n\n[View a markdown version of this page](https://a.md)";
+        assert_eq!(strip_scraped_chrome(trailing_sep_without_eof_nl), "Body");
+
+        let trailing_crlf_without_eof_nl =
+            "Body\r\n[View a markdown version of this page](https://a.md)";
+        assert_eq!(strip_scraped_chrome(trailing_crlf_without_eof_nl), "Body");
     }
 }

@@ -463,6 +463,8 @@ impl JobRuntime {
             if lock(&runtime.requeued).remove(&id) {
                 runtime.dispatch(&id);
             }
+            // Wake after dropping `registration` so `dispatch` sees no stale active entry.
+            runtime.wake.notify_one();
         });
     }
 
@@ -602,8 +604,6 @@ impl JobRuntime {
             Err(error) => tracing::warn!(job_id = id, %error, "Could not finalize job"),
         }
         self.events.publish(id).await;
-        // A committed job may have queued others in its own transaction.
-        self.wake.notify_one();
     }
 
     /// Retries a write that settles a job whose worker has finished, for as
@@ -763,10 +763,7 @@ impl JobRuntime {
         self.dispatch(id);
     }
 
-    /// Signals a running worker to stop immediately and blocks new dispatches
-    /// for `id` until [`Self::finish_cancel`] or [`Self::abort_cancel`] runs.
-    /// Callers cancelling via SQLite should invoke this before waiting for a
-    /// write turn so active workers stop queuing writes right away.
+    /// Signals a running worker to stop and blocks dispatch until settled.
     pub fn begin_cancel(&self, id: &str) {
         let token = {
             let active = lock(&self.active);
@@ -795,18 +792,40 @@ impl JobRuntime {
         }
     }
 
-    /// Completes an in-flight cancellation started by [`Self::begin_cancel`]
-    /// after the database transition commits.
+    /// Completes an in-flight cancellation after the database transition commits.
     pub async fn finish_cancel(&self, id: &str) {
         self.release_cancel(id);
         self.cancelled(id).await;
     }
 
-    /// Clears an in-flight cancellation started by [`Self::begin_cancel`] when
-    /// the database transition is rejected, waking the dispatcher in case the
-    /// worker had already suspended back to pending.
+    /// Clears a failed cancellation and wakes the dispatcher for suspended work.
     pub fn abort_cancel(&self, id: &str) {
         if self.release_cancel(id) {
+            self.wake.notify_one();
+        }
+    }
+
+    /// Trips in-memory tokens and blocks dispatch for every job in `ids`.
+    pub fn begin_cancel_many<S: AsRef<str>>(&self, ids: &[S]) {
+        for id in ids {
+            self.begin_cancel(id.as_ref());
+        }
+    }
+
+    /// Releases batch cancellation guards and publishes cancelled events.
+    pub async fn finish_cancel_many<S: AsRef<str>>(&self, ids: &[S]) {
+        for id in ids {
+            self.finish_cancel(id.as_ref()).await;
+        }
+    }
+
+    /// Releases batch cancellation guards on failure and wakes the dispatcher once.
+    pub fn abort_cancel_many<S: AsRef<str>>(&self, ids: &[S]) {
+        let mut wake = false;
+        for id in ids {
+            wake |= self.release_cancel(id.as_ref());
+        }
+        if wake {
             self.wake.notify_one();
         }
     }

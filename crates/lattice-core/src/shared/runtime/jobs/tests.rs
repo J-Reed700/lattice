@@ -1898,3 +1898,71 @@ async fn cancelling_many_jobs_under_heavy_write_load_completes_promptly_without_
     assert_eq!(recorded.first().copied(), Some("cancel"));
     Ok(())
 }
+
+#[tokio::test]
+async fn work_exit_wakes_dispatcher_after_registration_drops_without_poll_delay() -> Result<()> {
+    let runtime = JobRuntime::with_poll_interval(db().await, Duration::from_secs(60));
+    let (handler, mut started) = gate();
+    runtime
+        .register(KIND, handler, JobKindConfig::new(RecoveryPolicy::Requeue))
+        .await?;
+
+    let job = runtime.submit(&new_job(KIND, "wake-after-drop", None)).await?;
+    assert_eq!(next(&mut started).await, job.id);
+
+    runtime.begin_cancel(&job.id);
+    // Worker stops cleanly and suspends back to pending, waking the dispatcher
+    // only after `Registration` drops. Even with a 60s poll interval, aborting
+    // cancel must re-dispatch immediately.
+    finished(&runtime, &job.id).await;
+    runtime.abort_cancel(&job.id);
+    assert_eq!(next(&mut started).await, job.id);
+
+    runtime.cancel(&job.id).await?;
+    finished(&runtime, &job.id).await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn batch_runtime_cancel_helpers_stop_and_recover_all_jobs() -> Result<()> {
+    let runtime = JobRuntime::with_poll_interval(db().await, Duration::from_secs(60));
+    let (handler, mut started) = gate();
+    runtime
+        .register(
+            KIND,
+            handler,
+            JobKindConfig::new(RecoveryPolicy::Requeue).concurrency(4),
+        )
+        .await?;
+
+    let mut ids = Vec::new();
+    for i in 0..3 {
+        let job = runtime
+            .submit(&new_job(KIND, &format!("batch-{i}"), None))
+            .await?;
+        ids.push(job.id);
+    }
+    for _ in 0..3 {
+        next(&mut started).await;
+    }
+
+    runtime.begin_cancel_many(&ids);
+    for id in &ids {
+        finished(&runtime, id).await;
+    }
+    runtime.abort_cancel_many(&ids);
+    for _ in 0..3 {
+        next(&mut started).await;
+    }
+
+    runtime.begin_cancel_many(&ids);
+    for id in &ids {
+        runtime.store().cancel(id).await?;
+    }
+    runtime.finish_cancel_many(&ids).await;
+    for id in &ids {
+        finished(&runtime, id).await;
+        assert_eq!(runtime.store().get_summary(id).await?.status, JobStatus::Cancelled);
+    }
+    Ok(())
+}

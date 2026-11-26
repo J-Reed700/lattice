@@ -1754,3 +1754,206 @@ async fn cancelling_eleven_jobs_concurrently_under_heavy_write_load_succeeds_pro
         .all(|j| j.status == LearningGenerationJobStatus::Cancelled));
     Ok(())
 }
+
+#[tokio::test]
+async fn preflight_cancel_rejects_invalid_requests_and_cancel_jobs_skips_terminal_siblings(
+) -> Result<()> {
+    use crate::planning::curriculum_repository::CancelPreflight;
+    use lattice_core::shared::runtime::jobs::{
+        JobContext, JobHandler, JobKindConfig, JobOutcome, JobRuntime, JobStatus, RecoveryPolicy,
+    };
+    use std::sync::Arc;
+    use tokio::sync::{mpsc, Notify};
+
+    struct SelectableHandler {
+        started: mpsc::UnboundedSender<String>,
+        finish_id: String,
+        hold: Arc<Notify>,
+    }
+
+    #[async_trait::async_trait]
+    impl JobHandler for SelectableHandler {
+        async fn run(&self, context: &JobContext) -> Result<JobOutcome> {
+            if context.id() == self.finish_id {
+                self.started.send(context.id().to_string()).unwrap();
+                return Ok(JobOutcome::Completed {
+                    result_ref: "ok".into(),
+                    message: "Done".into(),
+                });
+            }
+            self.started.send(context.id().to_string()).unwrap();
+            match context.until_cancelled(self.hold.notified()).await {
+                Some(()) => Ok(JobOutcome::Completed {
+                    result_ref: "ok".into(),
+                    message: "Done".into(),
+                }),
+                None => Ok(JobOutcome::Stopped),
+            }
+        }
+    }
+
+    let pool = pool().await?;
+    let database = Database::new(pool.clone());
+    let mut program = active_program(&database).await?;
+    let repo = LearningCurriculumRepository::new(database.clone());
+    let plan = repo.plan(&program.summary.id).await?;
+    let module_id = plan.accepted_revision.unwrap().modules[0].id.clone();
+    let existing = lesson_ids(&program, 0).len();
+    if existing < 3 {
+        let ops: Vec<_> = (existing..3)
+            .map(|i| LearningCurriculumOperation::AddLesson {
+                module_id: module_id.clone(),
+                after_lesson_id: None,
+                lesson: LearningCurriculumLesson {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    title: format!("Batch lesson {i}"),
+                    objective: "Test preflight and batch skip".into(),
+                    estimated_minutes: 10,
+                    state: LearningCurriculumLessonState::Outline,
+                    assessment_started: false,
+                    replacement_lesson_id: None,
+                },
+            })
+            .collect();
+        let preview = repo
+            .preview(&PreviewLearningCurriculumRevisionRequestDto {
+                operation_id: op_id(),
+                program_id: program.summary.id.clone(),
+                expected_revision: program.summary.revision,
+                reason: "Ensure 3 lessons".into(),
+                operations: ops,
+            })
+            .await?;
+        let _ = repo
+            .accept_revision(&LearningCurriculumRevisionActionRequestDto {
+                operation_id: op_id(),
+                program_id: program.summary.id.clone(),
+                revision_id: preview.draft_revision.unwrap().id,
+                expected_revision: program.summary.revision,
+            })
+            .await?;
+        program = LearningRepository::new(database.clone())
+            .get(&program.summary.id)
+            .await?;
+    }
+    let lessons: Vec<String> = lesson_ids(&program, 0).into_iter().take(3).collect();
+    let mut job_ids = Vec::new();
+    for lesson_id in &lessons {
+        let job = repo
+            .start_lesson_job(&StartLearningGenerationJobRequestDto {
+                operation_id: op_id(),
+                program_id: program.summary.id.clone(),
+                expected_revision: program.summary.revision,
+                kind: LearningGenerationJobKind::LessonPreparation,
+                request_json: serde_json::json!({"lessonIds": [lesson_id]}).to_string(),
+                progress_total: 1,
+            })
+            .await?;
+        job_ids.push(job.id);
+    }
+
+    let (started_tx, mut started_rx) = mpsc::unbounded_channel();
+    let hold = Arc::new(Notify::new());
+    let runtime =
+        JobRuntime::with_poll_interval(database.clone(), std::time::Duration::from_millis(25));
+    runtime
+        .register(
+            LESSON_PREPARATION,
+            Arc::new(SelectableHandler {
+                started: started_tx,
+                finish_id: job_ids[1].clone(),
+                hold: Arc::clone(&hold),
+            }),
+            JobKindConfig::new(RecoveryPolicy::Interrupt).concurrency(4),
+        )
+        .await?;
+    for id in &job_ids {
+        runtime.submitted(id).await;
+    }
+    for _ in 0..3 {
+        started_rx.recv().await.unwrap();
+    }
+    // Wait until job_ids[1] transitions to Completed concurrently.
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while jobs(&database).get_summary(&job_ids[1]).await?.status != JobStatus::Completed {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        Ok::<_, AppError>(())
+    })
+    .await
+    .unwrap()?;
+
+    // Preflight rejects bad op_id, stale revision, wrong program, and completed job.
+    assert!(repo
+        .preflight_cancel(&LearningGenerationJobActionRequestDto {
+            operation_id: "bad".into(),
+            program_id: program.summary.id.clone(),
+            job_id: job_ids[0].clone(),
+            expected_revision: program.summary.revision,
+        })
+        .await
+        .is_err());
+    assert!(repo
+        .preflight_cancel(&LearningGenerationJobActionRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            job_id: job_ids[0].clone(),
+            expected_revision: program.summary.revision + 5,
+        })
+        .await
+        .is_err());
+    assert!(repo
+        .preflight_cancel(&LearningGenerationJobActionRequestDto {
+            operation_id: op_id(),
+            program_id: uuid::Uuid::new_v4().to_string(),
+            job_id: job_ids[0].clone(),
+            expected_revision: program.summary.revision,
+        })
+        .await
+        .is_err());
+    assert!(repo
+        .preflight_cancel(&LearningGenerationJobActionRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            job_id: job_ids[1].clone(),
+            expected_revision: program.summary.revision,
+        })
+        .await
+        .is_err());
+    assert!(matches!(
+        repo.preflight_cancel(&LearningGenerationJobActionRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            job_id: job_ids[0].clone(),
+            expected_revision: program.summary.revision,
+        })
+        .await?,
+        CancelPreflight::Proceed
+    ));
+
+    // Batch cancel with live active tokens skips the already-Completed sibling
+    // rather than rolling back cancellation of job_ids[0] and job_ids[2].
+    let active_ids = [job_ids[0].clone(), job_ids[2].clone()];
+    runtime.begin_cancel_many(&active_ids);
+    let reqs: Vec<_> = job_ids
+        .iter()
+        .map(|id| LearningGenerationJobActionRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            job_id: id.clone(),
+            expected_revision: program.summary.revision,
+        })
+        .collect();
+    let results = repo.cancel_jobs(&reqs).await?;
+    runtime.finish_cancel_many(&active_ids).await;
+
+    assert_eq!(results.len(), 3);
+    assert_eq!(results[0].status, LearningGenerationJobStatus::Cancelled);
+    assert_eq!(results[1].status, LearningGenerationJobStatus::Completed);
+    assert_eq!(results[2].status, LearningGenerationJobStatus::Cancelled);
+    assert!(matches!(
+        repo.preflight_cancel(&reqs[0]).await?,
+        CancelPreflight::Replayed(job) if job.status == LearningGenerationJobStatus::Cancelled
+    ));
+    Ok(())
+}

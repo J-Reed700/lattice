@@ -21,6 +21,24 @@ use lattice_core::shared::runtime::jobs::{JobRecord, JobStatus, JobStore, NewJob
 use sqlx::Row;
 use std::collections::HashSet;
 
+/// Result of read-only cancellation preflight before tripping worker tokens.
+#[derive(Debug, Clone)]
+pub enum CancelPreflight {
+    /// Matching operation already committed; return the saved job without
+    /// tripping any runtime token or taking a write turn.
+    Replayed(LearningGenerationJob),
+    /// Inputs, program revision, ownership, and status permit cancellation.
+    Proceed,
+}
+
+enum ValidatedJobAction {
+    Replayed(String),
+    Ready {
+        payload: String,
+        content_is_current: bool,
+    },
+}
+
 impl LearningCurriculumRepository {
     pub async fn jobs(&self, program_id: &str) -> Result<Vec<LearningGenerationJob>> {
         let mut read = self.db.begin_read().await?;
@@ -411,9 +429,31 @@ impl LearningCurriculumRepository {
         Ok(preparable)
     }
 
-    /// Commits the cancellation on the urgent write lane. The caller should
-    /// signal [`JobRuntime::begin_cancel`] before calling this and
-    /// [`JobRuntime::finish_cancel`] or [`JobRuntime::abort_cancel`] after.
+    /// Validates a cancellation request via read-only query (`begin_read`)
+    /// before tripping any in-memory worker token or queuing on write turns.
+    pub async fn preflight_cancel(
+        &self,
+        request: &LearningGenerationJobActionRequestDto,
+    ) -> Result<CancelPreflight> {
+        let mut read = self.db.begin_read().await?;
+        let preflight =
+            match Self::validate_job_action_on(&mut read, request, JobAction::Cancel).await? {
+                ValidatedJobAction::Replayed(id) => {
+                    CancelPreflight::Replayed(Self::job_on(&mut read, &id).await?)
+                }
+                ValidatedJobAction::Ready { .. } => {
+                    JobStore::ensure_cancellable_in(&mut read, &request.job_id).await?;
+                    CancelPreflight::Proceed
+                }
+            };
+        read.commit().await?;
+        Ok(preflight)
+    }
+
+    /// Commits the cancellation on the urgent write lane. Callers should run
+    /// [`Self::preflight_cancel`] and signal [`JobRuntime::begin_cancel`]
+    /// before calling this, then [`JobRuntime::finish_cancel`] or
+    /// [`JobRuntime::abort_cancel`] after.
     pub async fn cancel_job(
         &self,
         request: &LearningGenerationJobActionRequestDto,
@@ -423,6 +463,13 @@ impl LearningCurriculumRepository {
     }
 
     /// Commits multiple cancellations in a single urgent write transaction.
+    ///
+    /// Already-terminal jobs (`Completed`, `Failed`, `Cancelled`) are skipped
+    /// so a concurrent finish does not roll back pauses for active siblings,
+    /// while invalid inputs, missing jobs, or program revision conflicts still
+    /// fail the batch atomically. Callers cancelling jobs tracked by a live
+    /// runtime should pair this with `JobRuntime::begin_cancel_many` and
+    /// `finish_cancel_many` / `abort_cancel_many`.
     pub async fn cancel_jobs(
         &self,
         requests: &[LearningGenerationJobActionRequestDto],
@@ -433,7 +480,7 @@ impl LearningCurriculumRepository {
         let mut tx = self.db.urgent().begin_write().await?;
         let mut jobs = Vec::with_capacity(requests.len());
         for request in requests {
-            let id = Self::job_action_on(&mut tx, request, JobAction::Cancel).await?;
+            let id = Self::cancel_batch_item_on(&mut tx, request).await?;
             jobs.push(Self::job_on(&mut tx, &id).await?);
         }
         tx.commit().await?;
@@ -481,27 +528,35 @@ impl LearningCurriculumRepository {
         Ok(job)
     }
 
-    async fn job_action_on(
-        tx: &mut WriteTx,
-        request: &LearningGenerationJobActionRequestDto,
+    fn action_operation<'a>(
+        request: &'a LearningGenerationJobActionRequestDto,
         action: JobAction,
-    ) -> Result<String> {
-        validate_operation_id(&request.operation_id)?;
-        let payload = hash(request)?;
-        let operation = curriculum_operation(
+        payload: &'a str,
+    ) -> crate::operations::Operation<'a> {
+        curriculum_operation(
             &request.operation_id,
             &request.program_id,
             action.operation_kind(),
-            &payload,
+            payload,
             "Operation ID was reused with different job action data.",
-        );
-        if let Some(id) = operation.replay::<String>(tx).await? {
-            return Ok(id);
+        )
+    }
+
+    async fn validate_job_action_on(
+        connection: &mut sqlx::SqliteConnection,
+        request: &LearningGenerationJobActionRequestDto,
+        action: JobAction,
+    ) -> Result<ValidatedJobAction> {
+        validate_operation_id(&request.operation_id)?;
+        let payload = hash(request)?;
+        let operation = Self::action_operation(request, action, &payload);
+        if let Some(id) = operation.replay::<String>(connection).await? {
+            return Ok(ValidatedJobAction::Replayed(id));
         }
         let program =
             sqlx::query("SELECT revision,content_revision FROM learning_programs WHERE id=?")
                 .bind(&request.program_id)
-                .fetch_optional(&mut **tx)
+                .fetch_optional(&mut *connection)
                 .await?
                 .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
         if program.get::<i64, _>("revision") != request.expected_revision {
@@ -509,10 +564,46 @@ impl LearningCurriculumRepository {
                 "Program changed; reload and retry.".into(),
             ));
         }
-        let scope = job_scope(tx, &request.job_id)
+        let scope = job_scope(connection, &request.job_id)
             .await?
             .filter(|scope| scope.program_id == request.program_id)
             .ok_or_else(|| AppError::NotFound("Generation job not found".into()))?;
+        Ok(ValidatedJobAction::Ready {
+            payload,
+            content_is_current: scope.content_revision
+                == Some(program.get::<i64, _>("content_revision")),
+        })
+    }
+
+    async fn cancel_batch_item_on(
+        tx: &mut WriteTx,
+        request: &LearningGenerationJobActionRequestDto,
+    ) -> Result<String> {
+        let payload = match Self::validate_job_action_on(tx, request, JobAction::Cancel).await? {
+            ValidatedJobAction::Replayed(id) => return Ok(id),
+            ValidatedJobAction::Ready { payload, .. } => payload,
+        };
+        if JobStore::cancel_if_active_in(tx, &request.job_id).await? {
+            Self::action_operation(request, JobAction::Cancel, &payload)
+                .record(tx, &request.job_id)
+                .await?;
+        }
+        Ok(request.job_id.clone())
+    }
+
+    async fn job_action_on(
+        tx: &mut WriteTx,
+        request: &LearningGenerationJobActionRequestDto,
+        action: JobAction,
+    ) -> Result<String> {
+        let (payload, content_is_current) =
+            match Self::validate_job_action_on(tx, request, action).await? {
+                ValidatedJobAction::Replayed(id) => return Ok(id),
+                ValidatedJobAction::Ready {
+                    payload,
+                    content_is_current,
+                } => (payload, content_is_current),
+            };
         let result_id = match action {
             JobAction::Cancel => {
                 JobStore::cancel_in(tx, &request.job_id).await?;
@@ -535,7 +626,7 @@ impl LearningCurriculumRepository {
                 } else {
                     Some(held_outlines(tx, &request.program_id, &old).await?)
                 };
-                if scope.content_revision != Some(program.get::<i64, _>("content_revision")) {
+                if !content_is_current {
                     return Err(AppError::InvalidState(
                         "Course content changed after this job was created. Start preparation again for the updated course.".into(),
                     ));
@@ -571,7 +662,9 @@ impl LearningCurriculumRepository {
                 admitted.id
             }
         };
-        operation.record(tx, &result_id).await?;
+        Self::action_operation(request, action, &payload)
+            .record(tx, &result_id)
+            .await?;
         Ok(result_id)
     }
 
