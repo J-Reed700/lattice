@@ -246,7 +246,9 @@ describe('Learning Studio program workflow', () => {
     await user.click(screen.getByRole('combobox', { name: 'Module' }));
     await user.type(screen.getByRole('combobox', { name: 'Search module' }), 'Putting it');
     await user.click(screen.getByRole('option', { name: /Putting it together/ }));
-    expect(screen.getAllByText(/Putting it together gives the course/).some((element) => element.closest('[hidden]') === null)).toBe(true);
+    await user.click(screen.getByRole('button', { name: 'Module details' }));
+    expect(screen.getByRole('dialog')).toHaveTextContent(/Putting it together gives the course/);
+    await user.keyboard('{Escape}');
     expect(mocks.complete).not.toHaveBeenCalled();
     // The row is one line: the title is its own button, and the state sits beside it (§2.2).
     const compareCard = screen.getByRole('button', { name: /^Compare approaches/ }).closest('article');
