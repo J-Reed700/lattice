@@ -170,14 +170,16 @@ async fn relevant_passages_still_respect_the_models_context_window_room() -> Res
             &json!({"id":"r0000","title":"Reference crane-0","url":null,"text":sources[0].excerpt}),
         )
     };
-    let window = (1_024..60_000)
-        .find(|window| {
-            let probe = ScriptedModel::new().window(*window);
-            ask::room::<ReviewEvidence>(&probe, &skeleton, &call)
-                .is_ok_and(|room| room >= 4 * passage_cost && room < 8 * passage_cost)
-        })
-        .expect("a window with room for four to seven passages");
-    let model = withheld_model(window);
+    let window = (1_024..60_000).find(|window| {
+        let probe = ScriptedModel::new().window(*window);
+        ask::room::<ReviewEvidence>(&probe, &skeleton, &call)
+            .is_ok_and(|room| room >= 4 * passage_cost && room < 8 * passage_cost)
+    });
+    assert!(
+        window.is_some(),
+        "a window with room for four to seven passages"
+    );
+    let model = withheld_model(window.unwrap());
     run_check(&model, note, &references).await?;
     let shown = passages_of(&asks(&model)[0]);
     assert!(shown.len() >= 4 && shown.len() < 8, "{}", shown.len());
