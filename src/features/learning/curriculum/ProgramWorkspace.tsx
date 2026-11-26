@@ -6,6 +6,7 @@ import { ArrowLeft, ArrowRight, ChevronDown, PanelRightClose, PanelRightOpen, Sl
 import { PlainError } from '@/components/PlainError';
 import { Button } from '@/components/ui/button';
 import { NavigationTabs } from '@/components/ui/NavigationTabs';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useLearningOutlineEvidence } from '@/features/learning/api/evidenceQueries';
 import { learningQuizOverviewKey } from '@/features/learning/api/learningQueryKeys';
 import { CourseCoach } from '@/features/learning/curriculum/CourseCoach';
@@ -89,14 +90,10 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   const [preparationExpanded, setPreparationExpanded] = useState(false);
   const [controlCenterOpen, setControlCenterOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
-  const [goalOpen, setGoalOpen] = useState(false);
-  const [moduleDetailsOpen, setModuleDetailsOpen] = useState(false);
   const [reviewingTopics, setReviewingTopics] = useState(false);
   const [contextVisible, setContextVisible] = useState(true);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
-  const goalDetailsRef = useRef<HTMLDetailsElement>(null);
-  const moduleDetailsRef = useRef<HTMLDetailsElement>(null);
   const [canvasOpened, setCanvasOpened] = useState(false);
   const practiceView = usePracticeView({ kind: 'home' });
   // The quiz open in the Quizzes tab (runner or result), and a module test row to bring into view.
@@ -292,23 +289,6 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
     return () => document.removeEventListener('keydown', closeOnEscape);
   }, [moreOpen]);
 
-  useEffect(() => {
-    if (!goalOpen && !moduleDetailsOpen) return;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      if (moduleDetailsOpen) {
-        setModuleDetailsOpen(false);
-        moduleDetailsRef.current?.querySelector('summary')?.focus();
-      }
-      if (goalOpen) {
-        setGoalOpen(false);
-        goalDetailsRef.current?.querySelector('summary')?.focus();
-      }
-    };
-    document.addEventListener('keydown', closeOnEscape);
-    return () => document.removeEventListener('keydown', closeOnEscape);
-  }, [goalOpen, moduleDetailsOpen]);
-
   const goToStep = (step: CourseStep) => {
     void afterNotebookSave(() => {
       const target = allLessons.find(({ lesson }) => lesson.id === step.lessonId);
@@ -408,38 +388,37 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
               ) : (
                 <h1 className="studio-course-title font-sans font-semibold tracking-[-0.025em]" title={program.summary.title}>{program.summary.title}</h1>
               )}
-              {showGoal && (
-                <details
-                  ref={goalDetailsRef}
-                  open={goalOpen}
-                  onToggle={(event) => setGoalOpen(event.currentTarget.open)}
-                  className="studio-course-goal"
-                >
-                  <summary>Goal</summary>
-                  <div className="studio-course-goal-card">
-                    <p className="whitespace-pre-line">{goal}</p>
-                  </div>
-                </details>
-              )}
-              <div className="studio-progress-pill" aria-label="Course progress">
-                <span>Lessons complete</span>
-                <strong>{completedCount}<span className="font-normal text-text-muted">/{allLessons.length}</span></strong>
-                <span className="studio-progress-pill-bar" aria-hidden="true">
-                  <span style={{ width: `${allLessons.length ? (completedCount / allLessons.length) * 100 : 0}%` }} />
-                </span>
-                {quizzes.data && quizzes.data.quizzesTotal > 0 && (
-                  <>
-                    <span aria-hidden="true" className="text-border-strong">·</span>
-                    <span>Quizzes passed</span>
-                    <strong>{quizzes.data.quizzesPassed}<span className="font-normal text-text-muted">/{quizzes.data.quizzesTotal}</span></strong>
-                  </>
+              <div className="studio-header-meta">
+                {showGoal && (
+                  <Popover>
+                    <PopoverTrigger className="studio-course-goal-trigger">Goal</PopoverTrigger>
+                    <PopoverContent align="start" collisionPadding={16} className="studio-course-goal-card">
+                      <p className="whitespace-pre-line">{goal}</p>
+                    </PopoverContent>
+                  </Popover>
+                )}
+                <div className="studio-progress-pill" aria-label="Course progress">
+                  <span className="studio-progress-pill-part">
+                    <span>Lessons complete</span>
+                    <strong>{completedCount}<span className="font-normal text-text-muted">/{allLessons.length}</span></strong>
+                    <span className="studio-progress-pill-bar" aria-hidden="true">
+                      <span style={{ width: `${allLessons.length ? (completedCount / allLessons.length) * 100 : 0}%` }} />
+                    </span>
+                  </span>
+                  {quizzes.data && quizzes.data.quizzesTotal > 0 && (
+                    <span className="studio-progress-pill-part">
+                      <span aria-hidden="true" className="text-border-strong">·</span>
+                      <span>Quizzes passed</span>
+                      <strong>{quizzes.data.quizzesPassed}<span className="font-normal text-text-muted">/{quizzes.data.quizzesTotal}</span></strong>
+                    </span>
+                  )}
+                </div>
+                {topicsPlanned && (
+                  <Button type="button" variant="outline" size="sm" disabled={savingBeforeMove} onClick={() => void afterNotebookSave(() => setReviewingTopics(true))} className="h-7 px-2 text-xs">
+                    Review topics
+                  </Button>
                 )}
               </div>
-              {topicsPlanned && (
-                <Button type="button" variant="outline" size="sm" disabled={savingBeforeMove} onClick={() => void afterNotebookSave(() => setReviewingTopics(true))} className="h-7 px-2 text-xs">
-                  Review topics
-                </Button>
-              )}
             </div>
 
             <div className="studio-header-actions">
@@ -499,7 +478,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
               idPrefix="workspace-tab"
               panelId="workspace-panel"
               actions={
-                <div className="ml-auto flex items-center gap-1 py-1">
+                <div className="ml-auto flex flex-wrap items-center gap-1 py-1">
                   {activeProgram && <CourseSyllabus compact program={program} moduleId={moduleId} evidence={visibleOutlineEvidence} onSelect={openLesson} onSelectModule={openModule} />}
                   <ProgramTangentsTrigger />
                   {activeProgram && <StudyHabitsBar compact onSelectFramework={handleSelectFramework} />}
@@ -602,16 +581,11 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
                   Prepare all lessons
                 </Button>
               )}
-              <details
-                ref={moduleDetailsRef}
-                open={moduleDetailsOpen}
-                onToggle={(event) => setModuleDetailsOpen(event.currentTarget.open)}
-                className="group relative shrink-0 text-xs"
-              >
-                <summary className="inline-flex h-7 cursor-pointer list-none items-center gap-1 rounded-md border border-border-subtle bg-surface px-2.5 font-medium text-text-secondary transition-colors hover:border-border-default hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring">
-                  Module details <ChevronDown size={12} aria-hidden="true" className="text-text-muted transition group-open:rotate-180" />
-                </summary>
-                <div className="surface-pop absolute right-0 z-20 mt-1.5 w-[min(24rem,calc(100vw-2rem))] rounded-xl bg-surface-overlay p-4 shadow-lg">
+              <Popover>
+                <PopoverTrigger className="group inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-border-subtle bg-surface px-2.5 text-xs font-medium text-text-secondary transition-colors hover:border-border-default hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring">
+                  Module details <ChevronDown size={12} aria-hidden="true" className="text-text-muted transition group-data-[state=open]:rotate-180" />
+                </PopoverTrigger>
+                <PopoverContent align="end" collisionPadding={16} className="w-[min(24rem,calc(100vw-2rem))] text-xs">
                   {currentModule?.summary && <p className="mb-2 text-xs leading-5 text-text-secondary">{currentModule.summary}</p>}
                   {showCitations && currentModule && (
                     <OutlineCitation citation={findOutlineCitation(visibleOutlineEvidence, 'module_summary', currentModule.id, currentModule.summary)} evidence={visibleOutlineEvidence} className="mb-3" />
@@ -625,8 +599,8 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
                       </li>
                     ))}
                   </ul>
-                </div>
-              </details>
+                </PopoverContent>
+              </Popover>
               <CitationVisibilityToggle />
               <Button
                 variant="ghost"

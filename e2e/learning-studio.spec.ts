@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import type { MockArgs } from "./fixtures/tauri";
 import { openStudioSection } from "./helpers/learningStudioNavigation";
@@ -286,7 +286,7 @@ test("Learning Studio citations trace saved evidence and support clean reading a
   await expect(page.getByRole('region', { name: 'Lesson evidence' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Show citations', exact: true }).click();
   await expect(page.getByRole('button', { name: 'View lesson evidence' }).first()).toBeVisible();
-  const citationSummary = page.locator('summary:visible').filter({ hasText: 'View citation' }).first();
+  const citationSummary = page.locator('.studio-lesson-reading summary:visible').filter({ hasText: 'View citation' }).first();
   const outlineCitation = citationSummary.locator('..');
   await citationSummary.click();
   await expect(outlineCitation.getByText(excerptSentinel, { exact: true })).toBeVisible();
@@ -419,7 +419,7 @@ async function runLearningStudioJourney(
   // autosave starts first and the note is written twice.
   await page.getByRole("button", { name: "All programs", exact: true }).press("Enter");
   await expect(
-    page.getByRole("heading", { name: "Programs", exact: true }),
+    page.getByRole("heading", { name: "Your programs", exact: true }),
   ).toBeVisible();
   await expect
     .poll(() =>
@@ -463,7 +463,8 @@ async function runLearningStudioJourney(
       .getByRole("tab", { name: "Recall", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
 
-  await page.getByLabel("Generate grounded drafts").selectOption("2");
+  await page.getByLabel("Generate grounded drafts").click();
+  await page.getByRole("option", { name: "2 cards", exact: true }).click();
   await page
     .getByRole("button", { name: "Generate drafts", exact: true })
     .click();
@@ -663,7 +664,7 @@ test('Studio supports both themes and saves margin notes before hiding the panel
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.goto('/studio');
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
-    const build = page.locator('.studio-library-actions .studio-button-primary');
+    const build = page.locator('.studio-library-actions').getByRole('button', { name: 'New course', exact: true });
     await expect(build).toBeVisible();
     expect((await build.evaluateAll(buttonContrast))[0].ratio).toBeGreaterThanOrEqual(4.5);
     await page.getByRole('button', { name: /Reasoning from field observations/ }).click();
@@ -796,7 +797,7 @@ test("Learning Studio programs overview and active workspace visual audit", asyn
     await page.setViewportSize(viewport);
     await page.goto("/studio");
     const external = watchExternalHttpRequests(page, new URL(page.url()).origin);
-    await expect(page.getByRole("heading", { name: "Programs", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Your programs", exact: true })).toBeVisible();
     await expect(page.getByRole("navigation", { name: "Main navigation" })).toBeVisible();
     await page.screenshot({ path: test.info().outputPath(`studio-programs-${viewport.width}px.png`), fullPage: true });
     await page.getByRole("button", { name: /Reasoning from field observations/ }).click();
@@ -993,13 +994,13 @@ async function runCanvasJourney(
 
   await page.getByRole("button", { name: "All programs", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Programs", exact: true }),
+    page.getByRole("heading", { name: "Your programs", exact: true }),
   ).toBeVisible();
   // Reload resets React/query state; the command fixture rehydrates from its
   // session-backed mock database so this checks the IPC read path as well.
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "Programs", exact: true }),
+    page.getByRole("heading", { name: "Your programs", exact: true }),
   ).toBeVisible();
   await page
     .getByRole("button", { name: /Reasoning from field observations/ })
@@ -1612,7 +1613,7 @@ async function runSourceLibraryJourney(
   // active version. The original and pending edition remain independently read.
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "Programs", exact: true }),
+    page.getByRole("heading", { name: "Your programs", exact: true }),
   ).toBeVisible();
   await page
     .getByRole("button", { name: /Reasoning from field observations/ })
@@ -1765,7 +1766,7 @@ async function runSourceLibraryJourney(
   expect(oldVersionId).toBeTruthy();
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "Programs", exact: true }),
+    page.getByRole("heading", { name: "Your programs", exact: true }),
   ).toBeVisible();
   await page
     .getByRole("button", { name: /Reasoning from field observations/ })
@@ -2304,7 +2305,7 @@ async function runPracticeWorkbenchJourney(
   );
 
   await page.reload();
-  await expect(page.getByRole("heading", { name: "Programs", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Your programs", exact: true })).toBeVisible();
   await page.getByRole("button", { name: /Reasoning from field observations/ }).click();
   await openStudioSection(page, "Written practice");
   const reopenedWorkbench = page.getByRole("region", { name: "Grounded Practice Workbench" });
@@ -2622,7 +2623,7 @@ test("lab drafts survive immediate program navigation and renderer restart witho
   const lines = ["measure = 'mean response time'", "period = 'one quarter'", "print(measure, period)"];
   await editor.fill(lines.join("\n"));
   await page.getByRole("button", { name: "All programs", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Programs", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Your programs", exact: true })).toBeVisible();
   await page.getByRole("button", { name: /Reasoning from field observations/ }).click();
   await expect((await openLab(page)).locator(".cm-line")).toHaveText(lines);
   await page.reload();
@@ -2648,7 +2649,7 @@ test("failed lab saves block leaving and retry lost acknowledgements without dup
   await page.getByRole("button", { name: "All programs", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("The draft could not be saved");
   await expect(editor).toContainText("important_work = True");
-  await expect(page.getByRole("heading", { name: "Programs", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Your programs", exact: true })).toHaveCount(0);
   await page.evaluate(() => {
     (window as unknown as { __LATTICE_LEARNING_STATE__: { labDraftFailuresBeforeSave: number } }).__LATTICE_LEARNING_STATE__.labDraftFailuresBeforeSave = 0;
   });
@@ -2783,6 +2784,33 @@ test("C# files remain readable at 390px and search controls have contrast in bot
 });
 
 
+test("Studio header popovers open inside the window at narrow, medium and wide widths", async ({ page }) => {
+  await installLearningStudioBackend(page);
+  await openProgram(page);
+  const insideWindow = async (panel: Locator, width: number, label: string) => {
+    await expect(panel, label).toBeVisible();
+    const box = await panel.boundingBox();
+    expect(box, label).not.toBeNull();
+    expect(box!.x, `${label}: left edge`).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width, `${label}: right edge`).toBeLessThanOrEqual(width);
+  };
+  for (const width of [390, 760, 1280]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.locator(".studio-ws-header").getByText("Goal", { exact: true }).click();
+    const goal = page.locator(".studio-course-goal-card");
+    await insideWindow(goal, width, `goal at ${width}px`);
+    await page.keyboard.press("Escape");
+    await expect(goal).toBeHidden();
+    await page.locator(".studio-context-strip").getByText("Module details", { exact: true }).click();
+    const outcomes = page.getByRole("heading", { name: "Outcomes", exact: true });
+    const details = outcomes.locator("xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' surface-pop ')][1]");
+    await insideWindow(details, width, `module details at ${width}px`);
+    await page.keyboard.press("Escape");
+    await expect(outcomes).toBeHidden();
+  }
+  await expectNoUnsupportedIpc(page);
+});
+
 test("topic-only course builder exposes depth, optional Spaces, and a complete syllabus", async ({ page }) => {
   await installLearningStudioBackend(page);
   await page.goto("/studio?new=1");
@@ -2798,7 +2826,8 @@ test("topic-only course builder exposes depth, optional Spaces, and a complete s
   await page.getByRole("button", { name: "Create outline", exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Program title" })).toHaveValue("Learn to design and interpret experiments");
   await expect(page.getByRole("region", { name: "Course syllabus" })).toBeVisible();
-  await expect(page.getByText("Topic-based course · AI-authored", { exact: false })).toBeVisible();
+  await page.getByText("Progress, source materials & authorship", { exact: true }).click();
+  await expect(page.getByText("Topic-based course — add references in Sources to ground future lessons.", { exact: false })).toBeVisible();
   await expectNoUnsupportedIpc(page);
 });
 

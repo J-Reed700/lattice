@@ -4,7 +4,7 @@
  * tokens so every pane reads as one calm minimalist surface.
  */
 
-import { settingsFieldClass } from '@/components/ui';
+import { settingsFieldClass } from '@/components/ui/SettingsSection';
 import { cn } from '@/lib/utils';
 
 /** A number or otherwise short field parked in a row's control column. */

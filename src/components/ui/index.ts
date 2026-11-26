@@ -48,8 +48,6 @@ export type { TabsVariant, TabsProps, TabsListProps, TabsTriggerProps } from './
 export { ScrollArea } from './ScrollArea';
 export { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent, TooltipPortal, TooltipArrow } from './tooltip';
 export type { TooltipProps, TooltipProviderProps } from './tooltip';
-export { DatePicker } from './DatePicker';
-export type { DatePickerProps } from './DatePicker';
 export { PageHeader, SectionHeading } from './PageHeader';
 export { SettingsSection, SettingsRow, settingsFieldClass, settingsTextareaClass } from './SettingsSection';
 export { IconButton } from './IconButton';

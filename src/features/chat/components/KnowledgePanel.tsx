@@ -5,7 +5,6 @@ import { ChevronRight } from 'lucide-react';
 
 import {
   Button,
-  DatePicker,
   Select,
   SelectContent,
   SelectItem,
@@ -13,6 +12,7 @@ import {
   SelectValue,
   Textarea,
 } from '@/components/ui';
+import { DatePicker } from '@/components/ui/DatePicker';
 import { useConversationKnowledgeQuery, useManageKnowledgeMutation } from '@/features/chat/hooks/useConversationKnowledge';
 import type { KnowledgeItemDto, KnowledgeRequestDto } from '@/lib/bindings';
 

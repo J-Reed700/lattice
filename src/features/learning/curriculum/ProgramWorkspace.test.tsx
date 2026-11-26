@@ -377,9 +377,11 @@ describe('Course page', () => {
   });
 
   it('keeps a goal that differs from the title behind one Goal disclosure', async () => {
+    const user = userEvent.setup();
     show(program('Circulation'));
     expect(await screen.findByRole('heading', { level: 1, name: 'Circulation' })).toBeVisible();
-    expect(screen.getByText('Goal')).toBeVisible();
+    expect(screen.queryByText(GOAL)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Goal' }));
     expect(screen.getAllByText(GOAL)).toHaveLength(1);
   });
 
@@ -412,21 +414,21 @@ describe('Course page', () => {
     expect(screen.getByRole('menuitem', { name: 'Import & export' })).toBeVisible();
     await user.keyboard('{Escape}');
 
-    const goalSummary = screen.getByText('Goal');
-    const goalDetails = goalSummary.closest('details') as HTMLDetailsElement;
-    await user.click(goalSummary);
-    expect(goalDetails).toHaveAttribute('open');
+    const goal = screen.getByRole('button', { name: 'Goal' });
+    await user.click(goal);
+    expect(goal).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('dialog')).toHaveTextContent(GOAL);
     await user.keyboard('{Escape}');
-    expect(goalDetails).not.toHaveAttribute('open');
-    expect(goalSummary).toHaveFocus();
+    expect(goal).toHaveAttribute('aria-expanded', 'false');
+    expect(goal).toHaveFocus();
 
-    const moduleSummary = screen.getByText('Module details');
-    const moduleDetails = moduleSummary.closest('details') as HTMLDetailsElement;
-    await user.click(moduleSummary);
-    expect(moduleDetails).toHaveAttribute('open');
+    const moduleDetails = screen.getByRole('button', { name: 'Module details' });
+    await user.click(moduleDetails);
+    expect(moduleDetails).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('heading', { name: 'Outcomes' })).toBeVisible();
     await user.keyboard('{Escape}');
-    expect(moduleDetails).not.toHaveAttribute('open');
-    expect(moduleSummary).toHaveFocus();
+    expect(moduleDetails).toHaveAttribute('aria-expanded', 'false');
+    expect(moduleDetails).toHaveFocus();
   });
 
   it('allows switching written practice to Feynman technique (Teach a beginner)', async () => {

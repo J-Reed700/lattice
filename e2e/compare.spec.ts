@@ -22,7 +22,7 @@ test('compares recipes picked in the Library, opens a cited sentence and saves t
   await columns.press('Enter');
   await expect(page.getByText('Name at least one column.')).toBeVisible();
   await page.getByRole('button', { name: COLUMNS.join(', '), exact: true }).click();
-  await expect(columns).toHaveValue(COLUMNS.join(', '));
+  for (const column of COLUMNS) await expect(page.getByRole('button', { name: `Remove column ${column}`, exact: true })).toBeVisible();
   await expect(page.getByText('3 columns', { exact: true })).toBeVisible();
 
   const reply = gate();

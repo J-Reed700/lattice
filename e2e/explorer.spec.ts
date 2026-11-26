@@ -50,10 +50,10 @@ for (const width of [1440, 800]) {
     await page.getByRole('button', { name: 'Show folder tree' }).click();
     await expect(tree).toBeVisible();
     await page.getByRole('button', { name: 'Close folder', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Pick the folder to work in.' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Folder Explorer', exact: true })).toBeVisible();
     expect(backend.state.closeCount).toBe(1);
     await page.reload();
-    await expect(page.getByRole('heading', { name: 'Pick the folder to work in.' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Folder Explorer', exact: true })).toBeVisible();
   });
 }
 
@@ -75,7 +75,7 @@ test('Explorer picker cancellation and permission failure preserve the start scr
   backend.state.picker = null;
   await page.goto('/explorer');
   await page.getByRole('button', { name: /Choose a folder/ }).click();
-  await expect(page.getByRole('heading', { name: 'Pick the folder to work in.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Folder Explorer', exact: true })).toBeVisible();
   expect(backend.calls.some(call => call.command === 'explorer_resolve_root')).toBe(false);
   backend.state.picker = ROOT;
   backend.state.failOpen = true;

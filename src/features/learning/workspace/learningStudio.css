@@ -315,9 +315,17 @@
 .studio-header-identity {
   display: flex;
   align-items: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 6px 10px;
   min-width: 0;
   flex: 1 1 auto;
+}
+.studio-header-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  min-width: 0;
 }
 .studio-course-back {
   display: inline-flex;
@@ -343,7 +351,9 @@
   letter-spacing: -0.025em;
   line-height: 1.25;
   color: hsl(var(--text-primary));
-  min-width: 0;
+  flex: 1 1 0;
+  min-width: min(100%, 12ch);
+  max-width: max-content;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -373,10 +383,12 @@
 .studio-progress-pill {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  height: 26px;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  min-height: 26px;
+  max-width: 100%;
   padding: 0 10px;
-  border-radius: var(--radius-full);
+  border-radius: 13px;
   border: 1px solid hsl(var(--border-subtle));
   background: hsl(var(--surface));
   font-size: 11px;
@@ -384,6 +396,11 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   flex-shrink: 0;
+}
+.studio-progress-pill-part {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 .studio-progress-pill strong {
   color: hsl(var(--text-primary));
@@ -407,11 +424,8 @@
   gap: 6px;
   flex-shrink: 0;
 }
-.studio-course-goal {
-  position: relative;
+.studio-course-goal-trigger {
   flex-shrink: 0;
-}
-.studio-course-goal summary {
   display: inline-flex;
   align-items: center;
   gap: 3px;
@@ -424,18 +438,17 @@
   font-weight: 500;
   color: hsl(var(--text-secondary));
   cursor: pointer;
-  list-style: none;
 }
-.studio-course-goal summary::-webkit-details-marker { display: none; }
-.studio-course-goal summary:hover {
+.studio-course-goal-trigger:hover,
+.studio-course-goal-trigger[data-state='open'] {
   border-color: hsl(var(--border-default));
   color: hsl(var(--text-primary));
 }
+.studio-course-goal-trigger:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
 .studio-course-goal-card {
-  position: absolute;
-  left: 0;
-  top: calc(100% + 6px);
-  z-index: 35;
   width: min(26rem, calc(100vw - 2rem));
   padding: 12px 14px;
   border-radius: var(--radius-xl);
@@ -469,6 +482,9 @@
 }
 .studio-workspace-tabs .ui-navigation-tablist {
   gap: 0 18px;
+}
+.studio-workspace-tabs .ui-navigation-actions {
+  max-width: 100%;
 }
 .studio-workspace-tabs .ui-navigation-tab {
   min-height: 40px;
@@ -508,6 +524,7 @@
   flex-wrap: wrap;
   gap: 4px 6px;
   flex-shrink: 0;
+  max-width: 100%;
 }
 .studio-module-title-inline {
   font-size: 12.5px;

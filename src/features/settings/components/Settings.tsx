@@ -523,16 +523,18 @@ export function Settings() {
                     value={activeTab}
                     onValueChange={(value) => selectTab(value as SettingsTab)}
                   >
-                    <TabsList
-                      aria-label={`${activeDomain.label} sections`}
-                      className="flex w-full justify-start overflow-x-auto"
-                    >
-                      {activeDomain.tabs.map((tab) => (
-                        <TabsTrigger key={tab.id} value={tab.id}>
-                          {tab.label}
-                        </TabsTrigger>
-                      ))}
-                    </TabsList>
+                    <div className="overflow-x-auto">
+                      <TabsList
+                        aria-label={`${activeDomain.label} sections`}
+                        className="flex w-max min-w-full justify-start"
+                      >
+                        {activeDomain.tabs.map((tab) => (
+                          <TabsTrigger key={tab.id} value={tab.id}>
+                            {tab.label}
+                          </TabsTrigger>
+                        ))}
+                      </TabsList>
+                    </div>
                   </Tabs>
                 </div>
               ) : null}
