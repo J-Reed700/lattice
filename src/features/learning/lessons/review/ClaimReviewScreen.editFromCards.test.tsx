@@ -1,17 +1,18 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ClaimReviewScreen } from '@/features/learning/lessons/review/ClaimReviewScreen';
 import { claimItem, review, teachingFinding } from '@/features/learning/lessons/review/claimReviewTestData';
-import type { ClaimReviewItemDto, LessonClaimReviewDto, TeachingFindingDto } from '@/lib/bindings';
+import type { ClaimReviewItemDto, ContentAddress, LessonClaimReviewDto, TeachingFindingDto } from '@/lib/bindings';
+import { closeEditor, useEditorStore } from '@/shared/edits/editorStore';
 
-// Teaching notes and taken-out sentences of a published lesson open the editor for their section.
-const api = vi.hoisted(() => ({ review: vi.fn(), audit: vi.fn(), plan: vi.fn(), trust: vi.fn(), program: vi.fn(), edit: vi.fn() }));
+// Teaching notes and taken-out sentences of a published lesson open the shared editor for their section.
+const api = vi.hoisted(() => ({ review: vi.fn(), audit: vi.fn(), plan: vi.fn(), trust: vi.fn(), program: vi.fn() }));
 vi.mock('@/lib/api', () => ({ default: {
   getLearningLessonClaimReview: api.review, getLearningLessonAudit: api.audit, getLearningPlan: api.plan, getLearningSourceTrust: api.trust,
-  getLearningProgram: api.program, editLearningLessonSection: api.edit,
+  getLearningProgram: api.program,
   courseIndexStatus: async () => ({ ok: true, data: { state: 'ready', mode: 'hybrid' } }),
 } }));
 vi.mock('@/features/reading/components/viewers/MarkdownViewer', () => ({ MarkdownViewer: ({ content }: { content: string }) => <div>{content}</div> }));
@@ -26,6 +27,16 @@ const BODIES = [
   `${BEFORE_BOILING} Pressure matters.`,
   `Ice forms below freezing. ${FREEZING} Salt lowers it.`,
 ];
+const NOTE_ADDRESS: ContentAddress = {
+  content: { kind: 'learning.section', key: 'lesson-1/1' },
+  path: '/body',
+  fragment: { exact: FREEZING, prefix: null, suffix: null, startByte: 26, endByte: 26 + FREEZING.length },
+};
+const QUESTION_ADDRESS: ContentAddress = {
+  content: { kind: 'learning.question', key: 'question-0' },
+  path: '/prompt',
+  fragment: null,
+};
 const program = {
   summary: { id: 'program-1', revision: 44, status: 'active' }, sources: [],
   modules: [{ id: 'module-1', lessons: [{ id: 'lesson-1', blocks: [
@@ -35,7 +46,7 @@ const program = {
 };
 
 const note = (overrides: Partial<TeachingFindingDto> = {}) => teachingFinding({
-  findingKey: 'teaching:section-1', unitIndex: 1, unitTitle: 'Section 2: Freezing', sentence: FREEZING, passage: null, ...overrides,
+  findingKey: 'teaching:section-1', unitIndex: 1, unitTitle: 'Section 2: Freezing', sentence: FREEZING, passage: null, address: NOTE_ADDRESS, ...overrides,
 });
 
 const cut = (claimId: string, sentence: string, unitIndex: number, putBackUnit: number | null, putBackBeside: string | null): ClaimReviewItemDto => claimItem({
@@ -48,7 +59,7 @@ const cut = (claimId: string, sentence: string, unitIndex: number, putBackUnit: 
 const statement = claimItem({
   claimId: 'claim-1', statement: FREEZING, state: { state: 'unverified', at: 2, reason: 'unsupported' }, verdictKind: null, reason: null,
   availableActions: ['confirm', 'edit', 'remove', 'attach_evidence'],
-  location: { unitIndex: 1, unitKind: 'block', unitTitle: 'Freezing', field: 'body', quote: FREEZING, span: null, address: null },
+  location: { unitIndex: 1, unitKind: 'block', unitTitle: 'Freezing', field: 'body', quote: FREEZING, span: null, address: NOTE_ADDRESS },
   presentation: { statement: FREEZING, sentence: FREEZING, contextBefore: 'Ice forms below freezing.', contextAfter: 'Salt lowers it.', place: 'Section 2 · Freezing' },
 });
 
@@ -73,42 +84,32 @@ const EDIT = { name: 'Edit the section' };
 describe('Claim review screen: editing the section from a note or a taken-out sentence', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    closeEditor();
     api.audit.mockResolvedValue(ok(null));
     api.plan.mockResolvedValue(ok({ jobs: [] }));
     api.trust.mockResolvedValue(ok({ sources: [], claim: null }));
     api.program.mockResolvedValue(ok(program));
   });
 
-  it('opens the editor on the section of a teaching note, at the note sentence', async () => {
-    show(review([], { state: 'ready', counts, teachingFindings: [note()] }));
-    const notes = await openNotes();
-    await userEvent.click(await within(notes).findByRole('button', EDIT));
-    expect(await screen.findByRole('dialog', { name: 'Edit section 2' })).toBeVisible();
-    expect(screen.getByLabelText('Title')).toHaveValue('Freezing');
-    const text = screen.getByLabelText('Text') as HTMLTextAreaElement;
-    expect(text).toHaveValue(BODIES[1]);
-    const start = BODIES[1].indexOf(FREEZING);
-    await waitFor(() => {
-      expect(text.selectionStart).toBe(start);
-      expect(text.selectionEnd).toBe(start + FREEZING.length);
-    });
+  afterEach(() => {
+    closeEditor();
   });
 
-  it('opens the editor with nothing selected when the section no longer holds the note text', async () => {
-    show(review([], { state: 'ready', counts, teachingFindings: [note({ sentence: 'A sentence that is gone.' })] }));
+  it('opens the shared editor on finding.address for a teaching note without rendering a dialog', async () => {
+    show(review([], { state: 'ready', counts, teachingFindings: [note()] }));
     const notes = await openNotes();
-    await userEvent.click(await within(notes).findByRole('button', EDIT));
-    expect(await screen.findByRole('dialog', { name: 'Edit section 2' })).toBeVisible();
-    const text = screen.getByLabelText('Text') as HTMLTextAreaElement;
-    expect(text).toHaveValue(BODIES[1]);
-    expect(text.selectionStart).toBe(text.selectionEnd);
+    const button = await within(notes).findByRole('button', EDIT);
+    await userEvent.click(button);
+    expect(useEditorStore.getState().current?.address).toEqual(NOTE_ADDRESS);
+    expect(useEditorStore.getState().current?.options.returnFocusTo).toBe(button);
+    expect(screen.queryByRole('dialog', { name: /Edit section/ })).not.toBeInTheDocument();
   });
 
   it('offers it on a note about a section only, not on a note about a question or the whole lesson', async () => {
     show(review([], { state: 'ready', counts, teachingFindings: [
       note(),
-      note({ findingKey: 'teaching:question-0', site: 'question', unitIndex: 0, unitTitle: 'Question 1', sentence: null }),
-      note({ findingKey: 'teaching:lesson', site: 'lesson', unitIndex: null, unitTitle: 'Whole lesson', sentence: null }),
+      note({ findingKey: 'teaching:question-0', site: 'question', unitIndex: 0, unitTitle: 'Question 1', sentence: null, address: QUESTION_ADDRESS }),
+      note({ findingKey: 'teaching:lesson', site: 'lesson', unitIndex: null, unitTitle: 'Whole lesson', sentence: null, address: null }),
     ] }));
     const notes = await openNotes();
     expect(await within(notes).findAllByRole('button', EDIT)).toHaveLength(1);
@@ -124,34 +125,18 @@ describe('Claim review screen: editing the section from a note or a taken-out se
     expect(within(notes).queryByRole('button', EDIT)).not.toBeInTheDocument();
   });
 
-  it('opens the editor on the section a sentence was taken out of, at the sentence before it', async () => {
-    show(review([cut('a', BOILING, 0, 0, BEFORE_BOILING)], { state: 'ready', counts, sections: [{ index: 0, title: 'Boiling' }] }));
+  it('opens the section of putBackUnit in the shared editor for a taken-out sentence', async () => {
+    show(review([cut('a', FREEZING, 1, 0, BEFORE_BOILING)], { state: 'ready', counts, sections: [{ index: 0, title: 'Boiling' }] }));
     const list = await openTakenOut();
-    await userEvent.click(await within(list).findByRole('button', EDIT));
-    expect(await screen.findByRole('dialog', { name: 'Edit section 1' })).toBeVisible();
-    expect(screen.getByLabelText('Title')).toHaveValue('Boiling');
-    const text = screen.getByLabelText('Text') as HTMLTextAreaElement;
-    expect(text).toHaveValue(BODIES[0]);
-    await waitFor(() => {
-      expect(text.selectionStart).toBe(0);
-      expect(text.selectionEnd).toBe(BEFORE_BOILING.length);
+    const button = await within(list).findByRole('button', EDIT);
+    await userEvent.click(button);
+    expect(useEditorStore.getState().current?.address).toEqual({
+      content: { kind: 'learning.section', key: 'lesson-1/0' },
+      path: '/body',
+      fragment: null,
     });
-  });
-
-  it('offers it only on a taken-out sentence whose section the course has', async () => {
-    show(review([cut('a', BOILING, 0, 0, null), cut('b', 'A sentence of a section that is gone.', 7, 7, null)], { state: 'ready', counts }));
-    const list = await openTakenOut();
-    expect(await within(list).findAllByRole('button', EDIT)).toHaveLength(1);
-    expect(within(within(list).getByText(BOILING).closest('li') as HTMLElement).getByRole('button', EDIT)).toBeVisible();
-  });
-
-  it('opens the section the sentence goes back into, not the one its old place names', async () => {
-    show(review([cut('a', FREEZING, 1, 0, BEFORE_BOILING)], { state: 'ready', counts }));
-    const list = await openTakenOut();
-    await userEvent.click(await within(list).findByRole('button', EDIT));
-    expect(await screen.findByRole('dialog', { name: 'Edit section 1' })).toBeVisible();
-    expect(screen.getByLabelText('Title')).toHaveValue('Boiling');
-    expect(screen.getByLabelText('Text')).toHaveValue(BODIES[0]);
+    expect(useEditorStore.getState().current?.options.returnFocusTo).toBe(button);
+    expect(screen.queryByRole('dialog', { name: /Edit section/ })).not.toBeInTheDocument();
   });
 
   it('does not offer it on a taken-out sentence with no known place', async () => {
@@ -164,8 +149,6 @@ describe('Claim review screen: editing the section from a note or a taken-out se
   it('still opens the section from the statement card', async () => {
     show(review([statement], { state: 'ready', counts }));
     await userEvent.click(await screen.findByRole('button', EDIT));
-    expect(await screen.findByRole('dialog', { name: 'Edit section 2' })).toBeVisible();
-    expect(screen.getByLabelText('Title')).toHaveValue('Freezing');
-    expect(screen.getByLabelText('Text')).toHaveValue(BODIES[1]);
+    expect(useEditorStore.getState().current?.address).toEqual(NOTE_ADDRESS);
   });
 });

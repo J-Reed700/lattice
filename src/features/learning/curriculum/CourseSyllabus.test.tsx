@@ -2,10 +2,11 @@ import type { ComponentProps } from 'react';
 
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CourseSyllabus } from '@/features/learning/curriculum/CourseSyllabus';
 import type { LearningOutlineEvidenceDto, LearningProgramDto } from '@/lib/bindings';
+import { useEditMode } from '@/shared/edits/editMode';
 
 const program = {
   summary: { id: 'program', title: 'Evidence course', status: 'draft' },
@@ -109,5 +110,34 @@ describe('course journey navigation', () => {
     await user.click(screen.getByRole('button', { name: 'Method' }));
     expect(onSelectModule).toHaveBeenCalledWith(active.modules[1]);
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
+  });
+});
+
+describe('course syllabus edit mode', () => {
+  beforeEach(() => {
+    useEditMode.getState().set(false);
+  });
+
+  afterEach(() => {
+    useEditMode.getState().set(false);
+  });
+
+  it('adds Edit buttons for modules and lessons in edit mode while preserving lesson selection', async () => {
+    useEditMode.getState().set(true);
+    const { onSelect } = renderJourney();
+    expect(screen.getByRole('button', { name: 'Edit module: Foundations' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Edit module: Method' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Edit lesson: Read closely' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Edit lesson: Weigh sources' })).toBeVisible();
+
+    await userEvent.click(screen.getByRole('button', { name: /Weigh sources/ }));
+    expect(onSelect).toHaveBeenCalledWith(journey.modules[0], 'l2');
+  });
+
+  it('shows no module or lesson Edit buttons when edit mode is off', () => {
+    useEditMode.getState().set(false);
+    renderJourney();
+    expect(screen.queryByRole('button', { name: /^Edit module:/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Edit lesson:/ })).not.toBeInTheDocument();
   });
 });

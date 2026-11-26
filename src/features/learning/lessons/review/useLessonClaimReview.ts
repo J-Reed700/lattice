@@ -1,21 +1,19 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
-import { learningClaimReviewKey, learningLessonEvidencePrefix, learningLessonQuestionKey, learningPlanKey, learningProgramKey } from '@/features/learning/api/learningQueryKeys';
+import { learningClaimReviewKey, learningPlanKey } from '@/features/learning/api/learningQueryKeys';
 import { learningSourcesKey } from '@/features/learning/sources/useLearningSources';
 import type {
   ClaimActionRequestDto,
   LearningGenerationJob,
   LessonClaimReviewDto,
-  LessonQuestionDto,
-  LessonQuestionEditDto,
-  LessonSectionEditDto,
   RemoveLearningTeachingSentencesResultDto,
   ResolveLearningClaimResultDto,
   SnapshotNoteDto,
   TeachingSettleDto,
 } from '@/lib/bindings';
 import { failureToError } from '@/lib/errorHandling';
+import { refreshAffected } from '@/shared/edits/affected';
 import type { ApiResult } from '@/types';
 
 function unwrap<T>(result: ApiResult<T>): T {
@@ -36,12 +34,8 @@ export function useLessonClaimReview(programId: string, lessonId: string, enable
   });
 }
 
-async function refreshAfterAction(client: QueryClient, programId: string, lessonId: string) {
-  await Promise.all([
-    client.invalidateQueries({ queryKey: learningClaimReviewKey(programId, lessonId) }),
-    client.invalidateQueries({ queryKey: learningLessonEvidencePrefix(programId) }),
-    client.invalidateQueries({ queryKey: learningProgramKey(programId) }),
-  ]);
+async function refreshAfterAction(client: QueryClient, programId: string) {
+  await refreshAffected(['learning.claims', 'learning.program'], { feature: 'learning', container: programId }, client);
 }
 
 export type ResolveClaimVariables = { claimId: string; action: ClaimActionRequestDto; expectedRevision: number };
@@ -59,7 +53,7 @@ export function useResolveLearningClaim(programId: string, lessonId: string) {
     mutationFn: async ({ claimId, action, expectedRevision }) => unwrap(await api.resolveLearningClaim({
       programId, lessonId, claimId, action, expectedRevision, operationId: operationId(),
     })),
-    onSettled: () => refreshAfterAction(client, programId, lessonId),
+    onSettled: () => refreshAfterAction(client, programId),
   });
 }
 
@@ -78,7 +72,7 @@ export function useResolveLearningClaims(programId: string, lessonId: string) {
     mutationFn: async ({ claimIds, action, expectedRevision }) => unwrap(await api.resolveLearningClaims({
       programId, lessonId, claimIds, action, expectedRevision, operationId: operationId(),
     })),
-    onSettled: () => refreshAfterAction(client, programId, lessonId),
+    onSettled: () => refreshAfterAction(client, programId),
   });
 }
 
@@ -95,7 +89,7 @@ export function useRemoveTeachingSentences(programId: string, lessonId: string) 
     mutationFn: async ({ findingKeys, expectedRevision }) => unwrap(await api.removeLearningTeachingSentences({
       programId, lessonId, findingKeys, expectedRevision,
     })),
-    onSettled: () => refreshAfterAction(client, programId, lessonId),
+    onSettled: () => refreshAfterAction(client, programId),
   });
 }
 
@@ -110,62 +104,6 @@ export function useSettleTeachingFindings(programId: string, lessonId: string) {
     retry: false,
     mutationFn: async ({ findingKeys, settle }) => unwrap(await api.settleLearningTeachingFindings({ programId, lessonId, findingKeys, settle })),
     onSettled: () => client.invalidateQueries({ queryKey: learningClaimReviewKey(programId, lessonId) }),
-  });
-}
-
-export type EditSectionVariables = {
-  sectionIndex: number;
-  beforeTitle: string;
-  beforeBody: string;
-  title: string;
-  body: string;
-};
-
-/**
- * Saves the user's rewrite of one section of a published lesson. The course,
- * its evidence and the review reload after success and after a refusal, so a
- * section that changed underneath never stays on screen as it was.
- */
-export function useEditLearningLessonSection(programId: string, lessonId: string) {
-  const api = useApi();
-  const client = useQueryClient();
-  return useMutation<LessonSectionEditDto, Error, EditSectionVariables>({
-    retry: false,
-    mutationFn: async (variables) => unwrap(await api.editLearningLessonSection({ programId, lessonId, ...variables, dryRun: false })),
-    onSettled: () => refreshAfterAction(client, programId, lessonId),
-  });
-}
-
-/** A published lesson's question as the editor opens it; read fresh each time the editor opens. */
-export function useLearningLessonQuestion(programId: string, lessonId: string, questionIndex: number) {
-  const api = useApi();
-  return useQuery<LessonQuestionDto>({
-    queryKey: learningLessonQuestionKey(programId, lessonId, questionIndex),
-    queryFn: async () => unwrap(await api.getLearningLessonQuestion(programId, lessonId, questionIndex)),
-    staleTime: Infinity,
-    gcTime: 0,
-    retry: false,
-  });
-}
-
-export type EditQuestionVariables = {
-  questionIndex: number;
-  before: LessonQuestionDto;
-  after: LessonQuestionDto;
-};
-
-/**
- * Saves the user's rewrite of one question of a published lesson. The course,
- * its evidence and the review reload after success and after a refusal, as
- * for a section.
- */
-export function useEditLearningLessonQuestion(programId: string, lessonId: string) {
-  const api = useApi();
-  const client = useQueryClient();
-  return useMutation<LessonQuestionEditDto, Error, EditQuestionVariables>({
-    retry: false,
-    mutationFn: async (variables) => unwrap(await api.editLearningLessonQuestion({ programId, lessonId, ...variables, dryRun: false })),
-    onSettled: () => refreshAfterAction(client, programId, lessonId),
   });
 }
 

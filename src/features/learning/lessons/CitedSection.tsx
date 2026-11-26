@@ -10,7 +10,7 @@ import { useReaderClosesWithOwner } from '@/features/reading/hooks/useReaderClos
 import { useReaderStore } from '@/features/reading/stores/readerStore';
 import type { LearningLessonEvidenceDto } from '@/lib/bindings';
 import type { SourceWithMetadata } from '@/types/conversation';
-import { markReply } from '@/utils/replyPieces';
+import { markReply, withoutMarks } from '@/utils/replyPieces';
 
 /** One lesson section drawn as a chat answer is: chips after the sentences that stand on a source, each checked sentence marked, and the sources it cites listed beneath. */
 export function CitedSection({ lessonId, sectionIndex, body, report, sources, showCitations, wrap }: {
@@ -61,6 +61,8 @@ export function CitedSection({ lessonId, sectionIndex, body, report, sources, sh
     });
   }, [pieces, citationMap]);
 
+  const lines = !marked || withoutMarks(marked.raw) === body;
+
   return (
     <>
       <section
@@ -71,11 +73,13 @@ export function CitedSection({ lessonId, sectionIndex, body, report, sources, sh
       >
         {wrap(
           <TiptapViewer
+            key={lines ? 'lines' : 'plain'}
             content={marked ? marked.raw : body}
             citationNumbers={citationNumbers}
             marks={marked?.numbers}
             claims={claimMarks}
             showEvidence={showCitations}
+            sourceLines={lines}
           />,
         )}
         {showCitations && cited.length > 0 && (
