@@ -330,10 +330,10 @@ A `Quoted` piece is written into the marked text between U+E00E and U+E00F, the 
 |---|---|---|---|---|---|---|
 | claude-haiku-5-5 | current | 402 | 11 | 4 | 2 | 0 |
 | claude-haiku-5-5 | pointing | 394 | 15 | 6 | 4 | 1 |
-| Qwen3.5-9B-Q4_K_M | current | see §8.4 | | | | |
-| Qwen3.5-9B-Q4_K_M | pointing | see §8.4 | | | | |
-| Qwen3.8-27B-Q5_K_S | current | see §8.4 | | | | |
-| Qwen3.8-27B-Q5_K_S | pointing | see §8.4 | | | | |
+| Qwen3.5-9B-Q4_K_M | current | 315 | 70 | 11 | 23 | 0 |
+| Qwen3.5-9B-Q4_K_M | pointing | 317 | 60 | 9 | 33 | 2 |
+| Qwen3.8-27B-Q5_K_S | current | 367 | 37 | 3 | 12 | 0 |
+| Qwen3.8-27B-Q5_K_S | pointing | 374 | 36 | 5 | 4 | 2 |
 
 **Haiku, current to pointing:**
 - 385 supported in both.
@@ -360,11 +360,22 @@ The pointing form is the one whose support can be shown.
 
 ### 8.3 Answer size
 
-The pointing form writes more than the current form: Haiku's output mean rose from 377 to 442 tokens with adaptive thinking on. On the local models, which run without thinking, the most a pointing answer wrote is in §8.4. No answer was cut off at 1,200 tokens, the room the replay gave every model. So the part-wise judge takes the room every durable check keeps, `ANSWER_ROOM_TOKENS`, instead of a constant of its own.
+The pointing form writes more than the current form: Haiku had 16,000 tokens of room including thinking, its output mean rose from 377 to 442 tokens, and its pointing output peaked at 1,386 tokens. On the local models, which ran without thinking and with 1,200 tokens of room, 9B pointing averaged 152 output tokens and peaked at 1,200 (3 answers over 600, 0 unanswered), and 27B pointing averaged 130 output tokens and peaked at 916 (1 answer over 600, 0 unanswered). So the part-wise judge takes the room every durable check keeps, `ANSWER_ROOM_TOKENS`, instead of a constant of its own.
 
-### 8.4 Local models
+### 8.4 Local models (`flowed_sentences` replay)
 
-Filled from `compare_anchors.py` when the runs end: outcome counts, moves, part kinds, relation split, output-token maximum, and a hand read of every moved statement.
+Measured with the shared `flowed_sentences` segmentation tool (`segment`) across the same 419 findings (`0 unanswered` on both pointing arms):
+
+- **Qwen3.5-9B-Q4_K_M (pointing, 317 supported):**
+  - **Outcomes:** 317 supported, 60 unsupported, 9 contradicted, 33 all common, 2 corrections, 0 unanswered (current: 315 supported, 70 unsupported, 11 contradicted, 23 all common, 0 corrections).
+  - **Tokens:** mean 152 / max 1,200 output tokens (3 answers over 600).
+  - **Sentences per supported statement (§2.3 union rules):** 195 × 1, 91 × 2–3, 26 × 4–8, 5 × 9+ sentences. The 9+ tail comes from framing parts (such as introductory clauses) naming broad spans on the 9B model; a "fewest sentences covering every part" alternative removes that tail on 9B but under-marks multi-sentence parts on 27B, so §2.3 stays as written and the tail is noted here as a 9B precision issue.
+  - **Relations:** 180 `restates`, 109 `infers`, 28 `summarizes`.
+- **Qwen3.8-27B-Q5_K_S (pointing, 374 supported):**
+  - **Outcomes:** 374 supported, 36 unsupported, 5 contradicted, 4 all common, 2 corrections, 0 unanswered (current: 367 supported, 37 unsupported, 3 contradicted, 12 all common, 0 corrections).
+  - **Tokens:** mean 130 / max 916 output tokens (1 answer over 600).
+  - **Sentences per supported statement (§2.3 union rules):** 240 × 1, 114 × 2–3, 19 × 4–8, 1 × 9+ sentences.
+  - **Relations:** 268 `restates`, 77 `infers`, 29 `summarizes`.
 
 ## 9. Tests
 

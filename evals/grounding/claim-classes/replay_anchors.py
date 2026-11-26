@@ -29,17 +29,16 @@ enums, at least one part); one correction after a refused, unreadable or
 cut-off answer, worded as the app words it. Both arms get the same output room,
 and each call's tokens are recorded.
 
-The app cuts passages with the shared segmenter (UAX #29 with Markdown
-tailorings); this replay approximates it: a line never joins the next, and a
-sentence ends at ., ! or ? before a space and a capital, digit, bracket, quote
-or emphasis mark, except after a listed abbreviation.
+Passages are cut by the app's shared segmenter (`flowed_sentences` via the
+standalone `segment` binary), converting UTF-8 byte spans to Python `str`
+character offsets.
 """
 import argparse
 import concurrent.futures
 import datetime
 import json
 import os
-import re
+import subprocess
 import sqlite3
 import sys
 import threading
@@ -77,35 +76,58 @@ POINTED = {"stated": "says", "follows": "entails", "contradicted": "contradicts"
 NOT_READ = "Your answer could not be read. Answer again in the form asked for."
 CUT_OFF = "Your answer was cut off before it ended. Answer again, more briefly."
 
-ABBREVIATIONS = {"e.g.", "i.e.", "etc.", "vs.", "cf.", "Dr.", "Mr.", "Ms.", "Mrs.", "Fig.", "No.", "approx.", "St."}
-SENTENCE_END = re.compile(r"(?<=[.!?])[\"'”’)\]]*\s+(?=[A-Z0-9\"'“‘(\[*_`#])")
+DEFAULT_SEGMENT_BIN = os.environ.get(
+    "SEGMENT_BIN",
+    "C:/Code/lattice-runs/citation-anchors/segment-target/release/segment.exe",
+)
+SEGMENT_BIN = DEFAULT_SEGMENT_BIN
+
 PLAIN = str.maketrans({"‘": "'", "’": "'", "‛": "'", "“": '"', "”": '"', "‟": '"',
                        "–": "-", "—": "-", "−": "-", "*": None, "_": None, "`": None})
 
 
+def byte_to_char_map(text):
+    """Map UTF-8 byte boundaries in `text` to Python `str` character indices."""
+    encoded = text.encode("utf-8")
+    table = [0] * (len(encoded) + 1)
+    byte_pos = 0
+    for char_pos, ch in enumerate(text):
+        table[byte_pos] = char_pos
+        byte_pos += len(ch.encode("utf-8"))
+    table[byte_pos] = len(text)
+    return table
+
+
+def segment_many(texts, segment_bin=None):
+    """The `flowed_sentences` character spans `(start, end)` of each text in `texts`."""
+    if not texts:
+        return []
+    for text in texts:
+        if "\0" in text:
+            raise ValueError("passage text contains NUL byte")
+    bin_path = segment_bin or SEGMENT_BIN
+    payload = "\0".join(texts).encode("utf-8")
+    raw = subprocess.check_output([bin_path], input=payload).decode("utf-8")
+    lines = raw.splitlines()
+    if len(lines) != len(texts):
+        raise RuntimeError(f"segment returned {len(lines)} lines for {len(texts)} texts")
+    out = []
+    for text, line in zip(texts, lines):
+        if not line.strip():
+            out.append([])
+            continue
+        b2c = byte_to_char_map(text)
+        spans = []
+        for token in line.split():
+            start_b, end_b = (int(x) for x in token.split(":"))
+            spans.append((b2c[start_b], b2c[end_b]))
+        out.append(spans)
+    return out
+
+
 def units(text):
-    """The approximate sentence units of `text`, as (start, end) character spans, trimmed."""
-    spans = []
-    offset = 0
-    for line in text.splitlines(keepends=True):
-        body = line.rstrip("\r\n")
-        start = 0
-        for match in SENTENCE_END.finditer(body):
-            words = body[start:match.start()].split()
-            if words and words[-1] in ABBREVIATIONS:
-                continue
-            spans.append((offset + start, offset + match.start()))
-            start = match.end()
-        spans.append((offset + start, offset + len(body)))
-        offset += len(line)
-    trimmed = []
-    for a, b in spans:
-        piece = text[a:b]
-        lead = len(piece) - len(piece.lstrip())
-        trail = len(piece) - len(piece.rstrip())
-        if b - trail > a + lead:
-            trimmed.append((a + lead, b - trail))
-    return trimmed
+    """The `flowed_sentences` spans of `text`, as `(start, end)` character spans."""
+    return segment_many([text])[0]
 
 
 def fold(text):
@@ -203,11 +225,12 @@ def current_request(item):
 def pointing_request(item):
     sentences = {}
     listed = []
-    for at, passage in enumerate(item["passages"]):
+    passage_spans = segment_many([p["text"] for p in item["passages"]])
+    for at, (passage, spans) in enumerate(zip(item["passages"], passage_spans)):
         text = passage["text"]
         out = []
         cursor = 0
-        for a, b in units(text):
+        for a, b in spans:
             handle = f"s{len(sentences) + 1}"
             sentences[handle] = {"passage": at, "start": a, "end": b, "text": text[a:b]}
             out.extend([text[cursor:a], f"[{handle}] ", text[a:b]])
@@ -392,6 +415,7 @@ def judge(backend, arm, item):
 
 
 def main():
+    global SEGMENT_BIN
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", required=True)
     parser.add_argument("--program", required=True)
@@ -403,9 +427,12 @@ def main():
     parser.add_argument("--url", default="")
     parser.add_argument("--builder-profile", default="",
                         help="a llama.cpp profile of ~/.config/builder/config.toml: its address and headers, never printed")
+    parser.add_argument("--segment", default=DEFAULT_SEGMENT_BIN,
+                        help="path to the compiled segment binary for flowed_sentences")
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--only", type=int, default=0, help="judge the first N statements (a trial)")
     args = parser.parse_args()
+    SEGMENT_BIN = args.segment
     if args.backend == "anthropic":
         backend = Anthropic(args.model, args.env_file)
     elif args.builder_profile:
