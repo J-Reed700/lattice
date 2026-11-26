@@ -51,11 +51,26 @@ export interface PartOpening {
 
 /** Where the reader opens for a part that names source sentences: the cited passage holding its anchors, marked as `contradicts` for a contradicted part, else with the statement's relation or `backs`. Null when the part has no anchors or none lies in a cited passage. */
 export function partOpening(
-  _claim: LearningClaimEvidenceDto,
-  _part: LearningClaimPartDto,
-  _citations: ReadonlyMap<number, LearningCitationDto>,
+  claim: LearningClaimEvidenceDto,
+  part: LearningClaimPartDto,
+  citations: ReadonlyMap<number, LearningCitationDto>,
 ): PartOpening | null {
-  return null;
+  const anchors = (part.anchors ?? []).filter((anchor) => anchor.span);
+  const first = anchors[0]?.span;
+  if (!first) return null;
+  const inside = (citation: LearningCitationDto, span: { start: number; end: number }) =>
+    citation.passage.startByte <= span.start && span.end <= citation.passage.endByte;
+  const holders = (claim.cites ?? []).flatMap((number) => {
+    const citation = citations.get(number);
+    return citation && inside(citation, first) ? [citation] : [];
+  });
+  const chosen = holders.find((citation) => citation.passage.sourceVersionId === part.sourceVersionId) ?? holders[0];
+  if (!chosen) return null;
+  const relation = part.kind === 'contradicted' ? 'contradicts' : claim.relation ?? 'backs';
+  return {
+    number: chosen.number,
+    anchoredBy: [{ occurrence: 0, relation, anchors: anchors.filter((anchor) => anchor.span && inside(chosen, anchor.span)) }],
+  };
 }
 
 type ReportCitations = Pick<LearningLessonEvidenceDto, 'citations'> | null | undefined;
@@ -89,6 +104,7 @@ export function resolutionText(claim: LearningClaimEvidenceDto): string {
 }
 
 export const UNSTATED_PARTS = [
+  { kind: 'follows', label: 'Follows from the source: ' },
   { kind: 'common', label: 'Common knowledge, not in the source: ' },
   { kind: 'own', label: "The lesson's own figures, not in the source: " },
 ] as const;

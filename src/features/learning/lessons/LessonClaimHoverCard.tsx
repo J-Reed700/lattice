@@ -1,6 +1,7 @@
 import { CircleCheck, CircleDashed, CircleHelp, CircleX } from 'lucide-react';
 
 import { checkWords, claimMarkVerdict, partsOfKind, resolutionText, UNSTATED_PARTS } from '@/features/learning/model/evidencePresentation';
+import { relationLabel } from '@/features/reading/citations';
 import { SentenceHoverCard, type ClaimHover } from '@/features/reading/components/SentenceHoverCard';
 import type { LearningCitationDto, LearningClaimEvidenceDto } from '@/lib/bindings';
 import { sanitizeFileName } from '@/utils/sanitize';
@@ -33,6 +34,7 @@ export function LessonClaimHoverCard({ hover, claim, citations }: {
         <Icon className="h-3.5 w-3.5 shrink-0" strokeWidth={1.8} aria-hidden="true" />
         {resolutionText(claim)}
       </p>
+      {claim.relation && <p className="mt-0.5 pl-5 text-xs text-text-muted">{relationLabel(claim.relation)}</p>}
       {how && <p className="mt-0.5 pl-5 text-xs text-text-muted">{how}</p>}
       {claim.resolution === 'not_verified' && claim.reason && (
         <p className="mt-2 text-xs leading-relaxed text-text-secondary">{claim.reason}</p>
