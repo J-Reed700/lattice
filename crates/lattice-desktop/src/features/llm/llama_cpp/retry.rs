@@ -1,15 +1,15 @@
 //! Retry generation only: never execute tools or persist an unfinished attempt.
 //!
-//! An outage is retried up to [`MAX_ATTEMPTS`]. A server failure is retried
-//! once with a fresh prompt cache; the same failure on the same request a
-//! second time is deterministic and ends as [`AppError::ModelRejected`], as
-//! does a server's refusal of the request itself.
+//! An outage is retried under the backends' shared rule (`llm::resend`). A
+//! server failure is retried once with a fresh prompt cache; the same failure
+//! on the same request a second time is deterministic and ends as
+//! [`AppError::ModelRejected`], as does a server's refusal of the request
+//! itself.
 use super::*;
 use crate::features::llm::fitting::Fitted;
+use crate::features::llm::resend::Resend;
 use crate::features::llm::scheduler::rejection;
 use lattice_core::application::ports::llm_port::RequestSize;
-
-const MAX_ATTEMPTS: usize = 5;
 
 /// Floor on how long a bundled server may take to send its first frame while
 /// it loads the model or prefills; cold Windows Vulkan can take 10s and more.
@@ -135,7 +135,9 @@ impl LlamaCppLlm {
             // The last server failure's status and error type, to know the
             // same failure when it comes back.
             let mut previous: Option<(Option<u16>, String)> = None;
-            for attempt in 1..=MAX_ATTEMPTS {
+            let mut resend = Resend::new("llama.cpp", deadline, on_retry);
+            loop {
+                let attempt = resend.attempt();
                 let mut emitted = false;
                 let outcome = self
                     .attempt(&body, first_frame, on_text, on_reasoning, &mut emitted)
@@ -165,10 +167,7 @@ impl LlamaCppLlm {
                         (failure.error(&texts), failure.retry_after)
                     }
                 };
-                if attempt == MAX_ATTEMPTS
-                    || (emitted && on_retry.is_none())
-                    || self.process_exited()
-                {
+                if self.process_exited() {
                     return Err(error);
                 }
                 // A failed inference may leave unusable server-side prompt
@@ -180,36 +179,9 @@ impl LlamaCppLlm {
                         object.insert("cache_prompt".into(), json!(false));
                     }
                 }
-                let ceiling_ms = (500u64 << (attempt - 1)).min(30_000);
-                let jitter = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .subsec_nanos() as u64;
-                let delay = retry_after
-                    .unwrap_or_else(|| {
-                        Duration::from_millis(ceiling_ms / 2 + jitter % (ceiling_ms / 2 + 1))
-                    })
-                    .min(Duration::from_secs(30));
-                // A backoff the budget cannot pay for would be reported as an
-                // expiry, hiding the cause the server already told us.
-                if deadline.is_some_and(|deadline| {
-                    deadline.saturating_duration_since(tokio::time::Instant::now()) <= delay
-                }) {
-                    return Err(error);
-                }
-                if let Some(reset) = on_retry {
-                    reset(attempt + 1)?;
-                }
-                tracing::warn!(
-                    attempt,
-                    max_attempts = MAX_ATTEMPTS,
-                    error = %error,
-                    "Retrying llama.cpp generation"
-                );
                 // Dropping this future cancels both the request and backoff.
-                tokio::time::sleep(delay).await;
+                resend.after(error, retry_after, emitted).await?;
             }
-            unreachable!("bounded attempts always return")
         };
         request.within_time_budget(generation).await.map_err(|_| {
             AppError::ServiceNotAvailable("llama.cpp generation exceeded its time budget".into())
