@@ -63,19 +63,19 @@ pub(super) fn stands_on(finding: &Finding) -> Vec<&EvidencePassage> {
     }
 }
 
-/// The byte of a section's body a statement's citation goes at: the end of
-/// the quote's first copy outside a fenced code block, moved past an inline
-/// code span it ends inside; none when the quote is not in the body outside a
-/// fence.
-pub(super) fn citation_point(body: &str, quote: &str) -> Option<usize> {
+/// Where in a section's body a statement's citation goes, as the start of the
+/// quote's first copy outside a fenced code block and the point after it: the
+/// end of that copy, moved past an inline code span it ends inside; none when
+/// the quote is not in the body outside a fence.
+pub(super) fn citation_point(body: &str, quote: &str) -> Option<(usize, usize)> {
     if quote.trim().is_empty() {
         return None;
     }
     let fences = code_fences(body);
-    let end = body
+    let (start, end) = body
         .match_indices(quote)
-        .map(|(at, _)| at + quote.len())
-        .find(|&end| {
+        .map(|(at, _)| (at, at + quote.len()))
+        .find(|&(_, end)| {
             !fences.iter().any(|fence| {
                 let whole = fence.whole();
                 whole.start < end && end < whole.end
@@ -88,12 +88,11 @@ pub(super) fn citation_point(body: &str, quote: &str) -> Option<usize> {
         .map_or(body.len(), |at| end + at);
     let line = body.get(line_start..line_end)?;
     let at = end - line_start;
-    Some(
-        code_spans(line)
-            .into_iter()
-            .find(|span| span.start < at && at < span.end)
-            .map_or(end, |span| line_start + span.end),
-    )
+    let point = code_spans(line)
+        .into_iter()
+        .find(|span| span.start < at && at < span.end)
+        .map_or(end, |span| line_start + span.end);
+    Some((start, point))
 }
 
 /// The lesson's numbered passages, what each statement cites and each
@@ -130,6 +129,7 @@ fn reference(number: u32) -> ReplyPieceDto {
             number,
             lines: None,
             name: None,
+            support: None,
         },
     }
 }
@@ -171,7 +171,7 @@ pub(super) fn number<'f>(bodies: &[&str], findings: &[&'f Finding]) -> Numbered<
                 continue;
             }
             match citation_point(body, &finding.quote) {
-                Some(point) => placed.push((point, index, stands)),
+                Some((_, point)) => placed.push((point, index, stands)),
                 None => unplaced.push((index, stands)),
             }
         }

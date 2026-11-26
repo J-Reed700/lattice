@@ -28,6 +28,7 @@ mod citations;
 mod cited_text;
 mod claim_ledger;
 mod claim_sentences;
+mod support;
 pub(crate) use citations::names_a_source;
 use citations::{section_citations, source_mentions, take_cited, Citations};
 #[cfg(test)]
