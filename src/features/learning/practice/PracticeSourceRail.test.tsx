@@ -70,7 +70,13 @@ describe('sourceClosedReason', () => {
 });
 
 describe('PracticeCitations', () => {
-  const citations = [{ sourceId: 'source-1', versionId: 'version-1', quote: 'careful observation' }];
+  const citations = [{
+    number: 1,
+    sourceId: 'source-1',
+    versionId: 'version-1',
+    quote: 'careful observation',
+    support: { relation: 'quotes' as const, anchors: [{ exact: 'careful observation', span: null }] },
+  }];
   const openChip = () => fireEvent.click(screen.getByRole('button', { name: /Citation 1/ }));
 
   it('lists each saved source cited with its chip, quote and title', async () => {
@@ -114,7 +120,7 @@ describe('PracticeCitations', () => {
 });
 
 describe('usePracticeSourceReader', () => {
-  type Selected = { sourceId: string; versionId: string; quote?: string | null } | null;
+  type Selected = { sourceId: string; versionId: string; quote?: string | null; number?: number; support?: import('@/lib/bindings').SupportDto | null } | null;
   const settle = () => act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
 
   it('opens the selected version in the docked reader for the owner', async () => {
@@ -188,5 +194,33 @@ describe('usePracticeSourceReader', () => {
     unmount();
 
     expect(useReaderStore.getState().session).toBeNull();
+  });
+
+  it('forwards backend citation numbers and support byte spans into the docked reader', async () => {
+    const fullText = '# Guide\n\nPréface: exact supporting passage here.';
+    const quote = 'exact supporting passage';
+    const enc = new TextEncoder();
+    const start = enc.encode(fullText.slice(0, fullText.indexOf(quote))).length;
+    const end = start + enc.encode(quote).length;
+    getVersion.mockResolvedValue(ok({
+      sourceId: 'source-1',
+      version: { id: 'version-1', versionNumber: 1, title: 'Field notes', publisher: null, resolvedUrl: null, excerpt: quote, contentSha256: 'sha', wordCount: 6, truncated: false, extractionVersion: 'reader-1', acquiredAt: 0, snapshotHash: null },
+      fullText,
+      usage: [],
+    }));
+    const selected: Selected = {
+      sourceId: 'source-1',
+      versionId: 'version-1',
+      quote,
+      number: 5,
+      support: { relation: 'quotes', anchors: [{ exact: quote, span: { start, end } }] },
+    };
+    renderHook(() => usePracticeSourceReader('program-1', 'attempt-1', selected), { wrapper });
+    await waitFor(() => expect(useReaderStore.getState().session).not.toBeNull());
+    const opened = useReaderStore.getState().session!.citations[0]!;
+    expect(opened.citationId).toBe(5);
+    expect(opened.anchoredBy?.[0]?.relation).toBe('quotes');
+    expect(opened.anchoredBy?.[0]?.anchors[0]?.span).toEqual({ start, end });
+    expect(opened.webSnapshot?.text).toBe(fullText);
   });
 });

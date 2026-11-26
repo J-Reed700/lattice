@@ -6,6 +6,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiProvider, type ApiClient } from '@/contexts/ApiContext';
 import { useSavedSourceReader } from '@/features/learning/sources/useSavedSourceReader';
+import { headingTrail, placeAnchors } from '@/features/reading/citations';
+import { articleBlocks } from '@/features/reading/model/articleBlocks';
 import { useReaderStore } from '@/features/reading/stores/readerStore';
 import { useToastStore } from '@/stores/toastStore';
 
@@ -61,7 +63,10 @@ beforeEach(() => {
 describe('useSavedSourceReader', () => {
   it('resolves sources from the library, fetches the exact versions and opens the reader', async () => {
     const { result } = renderHook(() => useSavedSourceReader('program-1'), { wrapper });
-    await act(() => result.current.open('owner-1', [{ versionId: 'va', quote: 'quoted a' }, { versionId: 'vb', quote: 'quoted b' }], { index: 1 }));
+    await act(() => result.current.open('owner-1', [
+      { versionId: 'va', quote: 'quoted a', number: 4 },
+      { versionId: 'vb', quote: 'quoted b', number: 9 },
+    ], { index: 1 }));
 
     expect(mocks.workspace).toHaveBeenCalledWith('program-1');
     expect(mocks.version).toHaveBeenCalledWith({ programId: 'program-1', sourceId: 'source-a', versionId: 'va' });
@@ -74,10 +79,53 @@ describe('useSavedSourceReader', () => {
     const first = session.citations[0]!;
     expect(first.documentId).toBe('course:va');
     expect(first.content).toBe('quoted a');
-    expect(first.citationId).toBe(1);
+    expect(first.citationId).toBe(4);
     expect(first.webSnapshot?.text).toContain('Full text of va.');
-    expect(session.citations[1]!.citationId).toBe(2);
+    expect(session.citations[1]!.citationId).toBe(9);
     expect(toasts()).toHaveLength(0);
+  });
+
+  it('does not fabricate index + 1 citation numbers when number is omitted', async () => {
+    const { result } = renderHook(() => useSavedSourceReader('program-1'), { wrapper });
+    await act(() => result.current.open('owner-1', [{ versionId: 'va', sourceId: 'source-a' }], { citing: false }));
+    const opened = useReaderStore.getState().session!.citations[0]!;
+    expect(opened.citationId).toBeUndefined();
+  });
+
+  it('passes raw fullText when support has UTF-8 byte spans so reader placement and headingTrail align', async () => {
+    const targetPhrase = 'Gluten forms when flour meets water.';
+    const text = `# Chapter One\n\n## Intro\n\n${targetPhrase}\n\n## Details\n\nPréface — café:\n\n${targetPhrase}\n\nMore prose.`;
+    const enc = new TextEncoder();
+    const secondOffset = text.lastIndexOf(targetPhrase);
+    const prefix = text.slice(0, secondOffset);
+    const start = enc.encode(prefix).length;
+    const end = start + enc.encode(targetPhrase).length;
+    mocks.version.mockResolvedValue(ok(detailFor('source-a', 'va', 'Alpha notes', text)));
+
+    const { result } = renderHook(() => useSavedSourceReader('program-1'), { wrapper });
+    await act(() =>
+      result.current.open('owner-1', [
+        {
+          versionId: 'va',
+          sourceId: 'source-a',
+          quote: targetPhrase,
+          number: 5,
+          support: { relation: 'quotes', anchors: [{ exact: targetPhrase, span: { start, end } }] },
+        },
+      ]),
+    );
+
+    const opened = useReaderStore.getState().session!.citations[0]!;
+    expect(opened.citationId).toBe(5);
+    expect(opened.anchorBase).toBe(0);
+    expect(opened.webSnapshot?.text).toBe(text);
+    expect(opened.anchoredBy?.[0]?.relation).toBe('quotes');
+    const placed = placeAnchors(opened.webSnapshot!.text, opened.anchoredBy![0]!.anchors, opened.anchorBase ?? 0);
+    expect(placed.ranges).toHaveLength(1);
+    const range = placed.ranges[0]!;
+    expect(range.start).toBe(secondOffset);
+    expect(opened.webSnapshot!.text.slice(range.start, range.end)).toBe(targetPhrase);
+    expect(headingTrail(opened.webSnapshot!.text, articleBlocks(opened.webSnapshot!.text), range.start)).toEqual(['Chapter One', 'Details']);
   });
 
   it('uses a target\'s own sourceId without the library', async () => {
@@ -97,7 +145,7 @@ describe('useSavedSourceReader', () => {
 
   it('opens without an earlier failed target, remapping the index and keeping citation numbers', async () => {
     const { result } = renderHook(() => useSavedSourceReader('program-1'), { wrapper });
-    await act(() => result.current.open('owner-1', [{ versionId: 'missing' }, { versionId: 'vb' }, { versionId: 'vc' }], { index: 2 }));
+    await act(() => result.current.open('owner-1', [{ versionId: 'missing', number: 1 }, { versionId: 'vb', number: 2 }, { versionId: 'vc', number: 3 }], { index: 2 }));
 
     const session = useReaderStore.getState().session!;
     expect(session.citations.map((c) => c.documentId)).toEqual(['course:vb', 'course:vc']);

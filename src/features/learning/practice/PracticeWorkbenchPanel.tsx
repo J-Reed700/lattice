@@ -114,9 +114,20 @@ export function PracticeWorkbenchPanel({
 
   const otherFailure = failure?.kind === 'tutor' ? null : failure;
 
-  const openCitation = (citation: { sourceId: string; versionId: string; quote?: string }) => {
+  const openCitation = (citation: {
+    sourceId: string;
+    versionId: string;
+    quote?: string;
+    number?: number;
+    support?: import('@/lib/bindings').SupportDto | null;
+  }) => {
     const src = sourceForVersion(sourceWorkspace.data?.sources ?? [], citation.sourceId, citation.versionId);
-    if (src) void doOpenSource(src, citation.versionId, saveNow, citation.quote);
+    if (src) {
+      void doOpenSource(src, citation.versionId, saveNow, citation.quote, {
+        number: citation.number,
+        support: citation.support,
+      });
+    }
   };
 
   return (

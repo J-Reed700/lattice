@@ -13,6 +13,7 @@ import type { SynthesisScope, WeekCandidateCounts } from '@/features/journal/com
 import type { JournalEntrySummary } from '@/features/journal/hooks/useJournalEntries';
 import type { JournalSourceSummary } from '@/features/journal/hooks/useJournalSources';
 import { journalCitationMap, toJournalCitationSource } from '@/features/journal/model/journalCitationSources';
+import { CitationHoverCard, type CitationHover } from '@/features/reading/components/CitationHoverCard';
 import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
 import { SourceCitations } from '@/features/reading/components/SourceCitations';
 import { useReaderStore } from '@/features/reading/stores/readerStore';
@@ -121,15 +122,20 @@ export function EntryEditor({
 }: EntryEditorProps) {
   const editorContainerRef = useRef<HTMLDivElement | null>(null);
   const [railOpen, setRailOpen] = useState(readRailOpen);
+  const [hover, setHover] = useState<CitationHover | null>(null);
   const readerSession = useReaderStore((state) => state.session);
   const openReader = useReaderStore((state) => state.open);
   const setReaderIndex = useReaderStore((state) => state.setIndex);
   const closeReader = useReaderStore((state) => state.close);
   const noteSources = useMemo(
-    () => (activeNote?.sources ?? []).map(toJournalCitationSource),
-    [activeNote?.sources],
+    () => (activeNote?.sources ?? []).map((source, index) => toJournalCitationSource(source, activeNote?.citations?.[index])),
+    [activeNote?.citations, activeNote?.sources],
   );
   const citationMap = useMemo(() => journalCitationMap(noteSources), [noteSources]);
+
+  useEffect(() => {
+    setHover(null);
+  }, [activeNote?.id]);
 
   useEffect(() => {
     if (readerSession?.ownerKey.startsWith('journal:') && readerSession.ownerKey !== `journal:${activeNote?.id ?? ''}`) {
@@ -142,12 +148,19 @@ export function EntryEditor({
   }, [closeReader]);
 
   const openJournalCitation = useCallback((number: number, occurrence: number | null = null) => {
+    setHover(null);
     const source = citationMap.get(number);
     if (!source || !activeNote) return;
     const citations = [...citationMap.entries()].sort(([a], [b]) => a - b).map(([, value]) => value);
     const index = citations.findIndex((candidate) => candidate.citationId === number);
     openReader(`journal:${activeNote.id}`, citations, index, occurrence);
   }, [activeNote, citationMap, openReader]);
+  const handleCitationHover = useCallback((number: number, occurrence: number, rect: DOMRect) => {
+    setHover({ number, occurrence, rect });
+  }, []);
+  const handleCitationLeave = useCallback(() => {
+    setHover(null);
+  }, []);
   const openJournalSource = useCallback((clickedSource: SourceWithMetadata, _occurrence?: number | null, chunkId?: string) => {
     if (!activeNote) return;
     const source = noteSources.find((candidate) => candidate.citationId === clickedSource.citationId) ?? clickedSource;
@@ -163,9 +176,25 @@ export function EntryEditor({
     const citations = [...citationMap.entries()].sort(([a], [b]) => a - b).map(([, value]) => value);
     const index = citations.findIndex((candidate) => candidate.citationId === source.citationId);
     // The shared reader resolves the selected passage from source metadata.
-    const selected = { ...source, chunkId: excerpt.chunkId, content: excerpt.excerpt,
-      excerpt: excerpt.excerpt, section: excerpt.section ?? source.section,
-      pageNumber: excerpt.pageNumber ?? source.pageNumber };
+    const selected = {
+      ...source,
+      chunkId: excerpt.chunkId,
+      content: excerpt.excerpt,
+      excerpt: excerpt.excerpt,
+      section: excerpt.section ?? source.section,
+      pageNumber: excerpt.pageNumber ?? source.pageNumber,
+      ...(source.anchoredBy?.length
+        ? {
+            anchoredBy: [
+              {
+                occurrence: 1,
+                relation: source.anchoredBy[0]!.relation,
+                anchors: excerpt.excerpt ? [{ exact: excerpt.excerpt, span: null }] : source.anchoredBy[0]!.anchors,
+              },
+            ],
+          }
+        : {}),
+    };
     if (index < 0) return;
     citations[index] = selected;
     openReader(`journal:${activeNote.id}`, citations, index, null);
@@ -270,8 +299,11 @@ export function EntryEditor({
                   selectionActions={selectionActions}
                   citationNumbers={[...citationMap.keys()]}
                   onCitationClick={openJournalCitation}
+                  onCitationHover={handleCitationHover}
+                  onCitationLeave={handleCitationLeave}
                 />
               </div>
+              <CitationHoverCard hover={hover} source={hover ? citationMap.get(hover.number) ?? null : null} />
             </>
           )}
         </div>

@@ -6,6 +6,7 @@ import { OutlineCitation } from '@/features/learning/curriculum/OutlineEvidence'
 import { findOutlineCitation } from '@/features/learning/model/evidencePresentation';
 import type {
   LearningModuleDto,
+  LearningOutlineCitationDto,
   LearningOutlineEvidenceDto,
   LearningProgramDto,
 } from '@/lib/bindings';
@@ -16,6 +17,7 @@ export function CourseSyllabus({
   onSelect,
   onSelectModule,
   evidence,
+  onOpenCitation,
   compact = false,
   renderTopics,
 }: {
@@ -25,6 +27,7 @@ export function CourseSyllabus({
   program: LearningProgramDto;
   moduleId: string;
   evidence?: LearningOutlineEvidenceDto | null;
+  onOpenCitation?: (citation: LearningOutlineCitationDto) => void;
   onSelect: (module: LearningModuleDto, lessonId: string) => void;
   onSelectModule: (module: LearningModuleDto) => void;
 }) {
@@ -111,7 +114,7 @@ export function CourseSyllabus({
                       </button>
                     </h3>
                     <p className="mt-2 text-xs leading-5 text-text-secondary">{module.summary}</p>
-                    <OutlineCitation citation={summaryCitation} evidence={evidence} />
+                    <OutlineCitation citation={summaryCitation} onOpen={onOpenCitation} />
                   </div>
                 </div>
                 {Boolean(module.prerequisiteModuleIds?.length) && (
@@ -133,7 +136,7 @@ export function CourseSyllabus({
                   {module.outcomes.map((outcome, outcomeIndex) => (
                     <li key={`${outcomeIndex}-${outcome}`} className="text-xs leading-5 text-text-secondary">
                       <div className="flex gap-2"><Check size={13} className="mt-1 shrink-0 text-accent" /><span>{outcome}</span></div>
-                      <OutlineCitation citation={findOutlineCitation(evidence, 'outcome', module.id, outcome, outcomeIndex)} evidence={evidence} className="ml-5" />
+                      <OutlineCitation citation={findOutlineCitation(evidence, 'outcome', module.id, outcome, outcomeIndex)} onOpen={onOpenCitation} className="ml-5" />
                     </li>
                   ))}
                 </ul>
@@ -154,7 +157,7 @@ export function CourseSyllabus({
                         <ArrowRight size={13} className="shrink-0 text-accent opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100" />
                       </button>
                       <p className="ml-10 text-[11px] leading-5 text-text-muted">{lesson.objective}</p>
-                      <OutlineCitation citation={findOutlineCitation(evidence, 'lesson_objective', module.id, lesson.objective, lessonIndex, lesson.id)} evidence={evidence} className="ml-10" />
+                      <OutlineCitation citation={findOutlineCitation(evidence, 'lesson_objective', module.id, lesson.objective, lessonIndex, lesson.id)} onOpen={onOpenCitation} className="ml-10" />
                       {renderTopics && <div className="ml-10">{renderTopics(lesson.id)}</div>}
                     </li>
                   ))}

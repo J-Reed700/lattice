@@ -242,6 +242,9 @@ impl LearningAssessmentRepository {
         let status = parse_form_status(h.get("status"))?;
         let mode = parse_mode(h.get("mode"))?;
         let program_id: String = h.get("program_id");
+        let version_sources =
+            crate::references::source_library::version_sources_on(&mut *connection, &program_id)
+                .await?;
         let rows = sqlx::query("SELECT i.*,rr.revision response_revision,rr.selected_indices_json,rr.text_response,rr.blank_responses_json,rr.matches_json,rr.ordered_values_json,rr.artifact_json FROM learning_assessment_form_items i LEFT JOIN learning_assessment_response_revisions rr ON rr.form_id=i.form_id AND rr.item_ordinal=i.ordinal AND rr.revision=(SELECT max(r2.revision) FROM learning_assessment_response_revisions r2 WHERE r2.form_id=i.form_id AND r2.item_ordinal=i.ordinal) WHERE i.form_id=? ORDER BY i.ordinal")
             .bind(form_id)
             .fetch_all(&mut *connection)
@@ -343,6 +346,11 @@ impl LearningAssessmentRepository {
                 points: r.get("points"),
                 source_version_ids: candidate.candidate.source_version_ids.clone(),
                 source_quote: candidate.source_quote.clone(),
+                source_citations: item_source_citations(
+                    &candidate.candidate.source_version_ids,
+                    &candidate.source_quote,
+                    &version_sources,
+                ),
                 previously_exposed: r.get::<i64, _>("previously_exposed") != 0,
                 selected_indices: response.selected_indices,
                 text_response: response.text,
@@ -355,7 +363,8 @@ impl LearningAssessmentRepository {
                 answer_hint,
             });
         }
-        let mut submission = Self::submission_in(connection, form_id, &outcomes).await?;
+        let mut submission =
+            Self::submission_in(connection, form_id, &outcomes, &version_sources).await?;
         if let Some(submission) = submission.as_mut() {
             for (result, parts) in submission.item_results.iter_mut().zip(graded_parts) {
                 result.part_results = parts
@@ -399,6 +408,7 @@ impl LearningAssessmentRepository {
         connection: &mut SqliteConnection,
         form_id: &str,
         outcomes: &HashMap<i64, Vec<String>>,
+        version_sources: &HashMap<String, (String, String)>,
     ) -> Result<Option<LearningAssessmentSubmissionDto>> {
         let Some(r) = sqlx::query("SELECT * FROM learning_assessment_submissions WHERE form_id=?")
             .bind(form_id)
@@ -413,6 +423,12 @@ impl LearningAssessmentRepository {
             .await?;
         let mut results = Vec::with_capacity(rows.len());
         let mut contests = Self::contests_in(connection, form_id).await?;
+        for contest in contests.values_mut() {
+            hydrate_rationale_citations(&mut contest.first_rationale, version_sources);
+            if let Some(regrade) = contest.regrade_rationale.as_mut() {
+                hydrate_rationale_citations(regrade, version_sources);
+            }
+        }
         for row in rows {
             let ordinal: i64 = row.get("item_ordinal");
             let outcome_ids = outcomes.get(&ordinal).cloned().unwrap_or_default();
@@ -420,7 +436,9 @@ impl LearningAssessmentRepository {
             let rationale = if rationale_json.trim() == "{}" {
                 None
             } else {
-                Some(decode::<LearningGradeRationaleDto>(&rationale_json)?)
+                let mut parsed = decode::<LearningGradeRationaleDto>(&rationale_json)?;
+                hydrate_rationale_citations(&mut parsed, version_sources);
+                Some(parsed)
             };
             results.push(LearningAssessmentItemResultDto {
                 item_id: row.get("candidate_id"),
@@ -604,6 +622,85 @@ impl LearningAssessmentRepository {
         let form = Self::form_in(&mut tx, &req.form_id).await?;
         tx.commit().await?;
         Ok(form)
+    }
+}
+
+fn item_source_citations(
+    version_ids: &[String],
+    source_quote: &str,
+    version_sources: &HashMap<String, (String, String)>,
+) -> Vec<LearningPracticeCitationDto> {
+    let quote = source_quote.trim();
+    let mut seen = std::collections::HashSet::new();
+    let mut citations = Vec::new();
+    for version_id in version_ids {
+        if !seen.insert(version_id.as_str()) {
+            continue;
+        }
+        let info = version_sources.get(version_id);
+        let source_id = info
+            .map(|(source_id, _)| source_id.clone())
+            .unwrap_or_default();
+        let full_text = info.map(|(_, text)| text.as_str());
+        let support = if quote.is_empty() {
+            lattice_core::application::contracts::replies::SupportDto::default()
+        } else {
+            lattice_core::application::contracts::replies::SupportDto::verify_quote(
+                full_text, quote,
+            )
+        };
+        citations.push(LearningPracticeCitationDto {
+            number: (citations.len() + 1) as u32,
+            source_id,
+            version_id: version_id.clone(),
+            quote: quote.to_string(),
+            support,
+        });
+    }
+    citations
+}
+
+fn hydrate_rationale_citations(
+    rationale: &mut LearningGradeRationaleDto,
+    version_sources: &HashMap<String, (String, String)>,
+) {
+    let mut next_number = 1u32;
+    for criterion in &mut rationale.criteria {
+        let Some(quote) = criterion
+            .source_quote
+            .as_deref()
+            .map(str::trim)
+            .filter(|q| !q.is_empty())
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        let Some(version_id) = criterion.source_version_id.as_deref() else {
+            continue;
+        };
+        let number = match criterion.source_number.filter(|n| *n > 0) {
+            Some(existing) => existing,
+            None => next_number,
+        };
+        next_number = next_number.max(number + 1);
+        criterion.source_number = Some(number);
+        let full_text = version_sources
+            .get(version_id)
+            .map(|(_, text)| text.as_str());
+        if let Some(full_text) = full_text {
+            criterion.source_support = Some(
+                lattice_core::application::contracts::replies::SupportDto::verify_quote(
+                    Some(full_text),
+                    &quote,
+                ),
+            );
+        } else if criterion.source_support.is_none() {
+            criterion.source_support = Some(
+                lattice_core::application::contracts::replies::SupportDto::verify_quote(
+                    None, &quote,
+                ),
+            );
+        }
     }
 }
 

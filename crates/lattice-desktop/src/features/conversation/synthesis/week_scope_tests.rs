@@ -136,6 +136,7 @@ impl SynthesisEntries for StoredPages {
                 sticky_notes: Vec::new(),
                 conversation_snapshots: Vec::new(),
                 sources: Vec::new(),
+                citations: Vec::new(),
                 created_at: page.created_at,
                 updated_at: page.updated_at,
             },

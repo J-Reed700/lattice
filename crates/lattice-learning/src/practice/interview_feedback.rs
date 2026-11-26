@@ -160,6 +160,11 @@ impl Choice {
             source_id: self.source.value().clone(),
             version_id: self.version.value().clone(),
             quote: self.quote.0.clone(),
+            number: 0,
+            support: lattice_core::application::contracts::replies::SupportDto::verify_quote(
+                None,
+                &self.quote.0,
+            ),
         }
     }
 }
@@ -725,11 +730,12 @@ impl ClosingEvidence {
         let mut citations: Vec<LearningPracticeCitationDto> = Vec::new();
         for picked in &review.sources {
             if let Some(choice) = choice_of(&material, picked.reference) {
-                let citation = choice.citation();
+                let mut citation = choice.citation();
                 if !citations
                     .iter()
                     .any(|known| same_citation(known, &citation))
                 {
+                    citation.number = (citations.len() + 1) as u32;
                     citations.push(citation);
                 }
             }

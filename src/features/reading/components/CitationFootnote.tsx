@@ -2,6 +2,15 @@ import { type FC, useRef } from 'react';
 
 import * as Popover from '@radix-ui/react-popover';
 
+import {
+  anchoredEntry,
+  anchoredText,
+  CitationCard,
+  headingTrail,
+  isAnchored,
+  placeAnchors,
+} from '@/features/reading/citations';
+import { articleBlocks } from '@/features/reading/model/articleBlocks';
 import { formatSourceLocation } from '@/shared/sources/passageLocator';
 import type { SourceWithMetadata } from '@/types/conversation';
 import { sanitizeFileName } from '@/utils/sanitize';
@@ -45,6 +54,16 @@ export const CitationFootnote: FC<CitationFootnoteProps> = ({
   // reader is a non-modal dialog that closes when focus moves outside it, so the
   // popover must not take focus back to the chip when it unmounts.
   const handedToReaderRef = useRef(false);
+  const entry = anchoredEntry(source, null);
+  const excerpts = entry?.anchors.map((anchor) => anchor.exact).filter(Boolean) ?? [];
+  const passage = (source.excerpt ?? source.content ?? '').trim();
+  const text = isAnchored(source) ? anchoredText(source) : null;
+  const firstPlaced = entry && text ? placeAnchors(text, entry.anchors, source.anchorBase ?? 0).ranges[0] : undefined;
+  const trail =
+    text && firstPlaced && firstPlaced.start > 0
+      ? headingTrail(text, articleBlocks(text), firstPlaced.start)
+      : undefined;
+  const meta = [provenanceLabel, location, source.category].filter(Boolean).join(' · ');
 
   return (
     <Popover.Root
@@ -75,45 +94,39 @@ export const CitationFootnote: FC<CitationFootnoteProps> = ({
           }}
           className="z-50 max-w-xs rounded-md border border-subtle bg-surface-raised p-3 text-[hsl(var(--text-primary))] shadow-md outline-hidden data-[state=open]:animate-in data-[state=open]:duration-base data-[state=open]:ease-out data-[state=closed]:animate-out data-[state=closed]:duration-fast data-[state=closed]:ease-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
         >
-          <div className="space-y-2">
-            <p className="text-sm font-semibold text-[hsl(var(--text-primary))] wrap-break-word">
-              {sanitizedFileName}
-            </p>
-            {source.category && (
-              <p className="text-xs text-[hsl(var(--text-muted))]">
-                {source.category}
-              </p>
-            )}
-            {location && (
-              <p className="text-xs text-[hsl(var(--text-muted))]">{location}</p>
-            )}
-            {provenanceLabel && (
-              <p className="text-xs text-[hsl(var(--text-muted))]">{provenanceLabel}</p>
-            )}
-            <p className="text-xs text-[hsl(var(--text-secondary))] line-clamp-3 wrap-break-word">
-              {source.excerpt ?? source.content}
-            </p>
-            {disabledReason ? (
-              <p className="pt-1 text-xs text-[hsl(var(--text-muted))]">{disabledReason}</p>
-            ) : (
-              <Popover.Close asChild>
-                <button
-                  type="button"
-                  onClick={() => {
-                    // Focus waits on the chip, not on this button, which is about to
-                    // go: the reader returns focus to whatever had it when it opened.
-                    triggerRef.current?.focus({ preventScroll: true });
-                    handedToReaderRef.current = true;
-                    onViewFile();
-                  }}
-                  className="block pt-1 text-xs text-[hsl(var(--accent))] underline-offset-2 hover:underline"
-                  title={`Open ${sanitizedFileName}`}
-                >
-                  View source
-                </button>
-              </Popover.Close>
-            )}
-          </div>
+          <CitationCard
+            number={number}
+            title={sanitizedFileName}
+            relation={entry?.relation}
+            excerpts={excerpts}
+            passage={excerpts.length === 0 ? passage : null}
+            trail={trail}
+            footer={
+              <>
+                {meta ? <p className="mt-2 text-xs text-[hsl(var(--text-muted))]">{meta}</p> : null}
+                {disabledReason ? (
+                  <p className="pt-1.5 text-xs text-[hsl(var(--text-muted))]">{disabledReason}</p>
+                ) : (
+                  <Popover.Close asChild>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        // Focus waits on the chip, not on this button, which is about to
+                        // go: the reader returns focus to whatever had it when it opened.
+                        triggerRef.current?.focus({ preventScroll: true });
+                        handedToReaderRef.current = true;
+                        onViewFile();
+                      }}
+                      className="mt-2 block text-xs text-[hsl(var(--accent))] underline-offset-2 hover:underline"
+                      title={`Open ${sanitizedFileName}`}
+                    >
+                      View source
+                    </button>
+                  </Popover.Close>
+                )}
+              </>
+            }
+          />
           <Popover.Arrow className="fill-[hsl(var(--surface-raised))]" />
         </Popover.Content>
       </Popover.Portal>

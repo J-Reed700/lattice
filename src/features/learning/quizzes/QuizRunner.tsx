@@ -37,7 +37,7 @@ function RunnerItem({ item, index, draft, practice, disabled, sources, onChange,
     </section>}
     {practice && !item.keyReveal && isAnswered(item, draft) && item.format !== 'explanation' && <button type="button" onClick={onCheck} className={`${quietPill} mt-5`}><Eye size={15} aria-hidden="true" /> Check my answer</button>}
     {practice && item.format === 'explanation' && <p className="mt-4 rounded-xl bg-background/70 px-4 py-2.5 text-xs leading-5 text-text-secondary">Written answers are graded when you finish the round, all together, so this one has no feedback until then.</p>}
-    <QuizSourceLine ids={item.sourceVersionIds} sources={sources} />
+    <QuizSourceLine citations={item.sourceCitations} sources={sources} />
   </article>;
 }
 

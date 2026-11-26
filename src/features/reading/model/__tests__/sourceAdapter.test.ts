@@ -141,18 +141,30 @@ describe('sourceAdapter canonical mappings', () => {
   });
 
   describe('fromStudySource', () => {
-    it('maps StudySourceDto with excerpt into locator', () => {
+    it('maps StudySourceDto with excerpt, backend citationId, and support into locator', () => {
       const study: StudySourceDto = {
         documentId: 'study-doc-1',
         chunkId: 'study-chunk-1',
         fileName: 'Cell Biology.pdf',
         filePath: '/vault/cell_bio.pdf',
         excerpt: 'Mitochondria are the powerhouse of the cell.',
+        citationId: 4,
+        support: {
+          relation: 'cites',
+          anchors: [{ exact: 'Mitochondria are the powerhouse of the cell.', span: null }],
+        },
       };
-      const target = fromStudySource(study, 2, 'conv-study-1');
+      const target = fromStudySource(study, 'conv-study-1');
       expect(target.source.documentId).toBe('study-doc-1');
       expect(target.source.chunkId).toBe('study-chunk-1');
-      expect(target.source.citationId).toBe(3);
+      expect(target.source.citationId).toBe(4);
+      expect(target.source.anchoredBy).toEqual([
+        {
+          occurrence: 1,
+          relation: 'cites',
+          anchors: [{ exact: 'Mitochondria are the powerhouse of the cell.', span: null }],
+        },
+      ]);
       expect(target.source.conversationId).toBe('conv-study-1');
       expect(target.locator).toEqual({
         text: 'Mitochondria are the powerhouse of the cell.',
@@ -165,11 +177,14 @@ describe('sourceAdapter canonical mappings', () => {
         fileName: 'Cell Biology Online',
         url: 'https://example.org/cell-biology',
         excerpt: 'Mitochondria generate ATP.',
+        citationId: 2,
+        support: { relation: 'cites', anchors: [] },
       } as unknown as StudySourceDto;
-      const target = fromStudySource(study, 0);
+      const target = fromStudySource(study);
       expect(target.source.filePath).toBe('https://example.org/cell-biology');
       expect(target.source.category).toBe('web');
       expect(target.source.mimeType).toBe('text/html');
+      expect(target.source.citationId).toBe(2);
       expect(target.locator?.text).toBe('Mitochondria generate ATP.');
     });
   });

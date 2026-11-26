@@ -3,11 +3,11 @@ import { useEffect, useMemo, useRef } from 'react';
 import { BookOpen, ChevronRight } from 'lucide-react';
 
 import { StatusLine } from '@/features/learning/practice/shared/StatusLine';
-import { SavedSourceCitations } from '@/features/learning/sources/SavedSourceCitations';
+import { numberedSavedSourceCitations, SavedSourceCitations } from '@/features/learning/sources/SavedSourceCitations';
 import { useLearningSourceWorkspace } from '@/features/learning/sources/useLearningSources';
 import { useSavedSourceReader } from '@/features/learning/sources/useSavedSourceReader';
 import { useReaderClosesWithOwner } from '@/features/reading/hooks/useReaderClosesWithOwner';
-import type { LearningPracticeCitationDto, LearningSourceLibraryItemDto } from '@/lib/bindings';
+import type { LearningPracticeCitationDto, LearningSourceLibraryItemDto, SupportDto } from '@/lib/bindings';
 
 function dateLabel(value: number) {
   const date = new Date(value);
@@ -114,14 +114,15 @@ export function PracticeCitations({
   /** Why sources cannot be opened right now; the chips still show what is cited. */
   disabledReason?: string;
 }) {
+  const numbered = numberedSavedSourceCitations(citations);
   return (
     <SavedSourceCitations
       programId={programId}
-      citations={citations}
+      citations={numbered}
       quotes
       label="Saved sources cited"
       disabledReason={disabledReason}
-      onOpen={(_citation, index) => onOpen(citations[index]!)}
+      onOpen={(_citation, index) => onOpen(numbered[index]!)}
     />
   );
 }
@@ -142,7 +143,7 @@ export function sourceClosedReason(sourceOpeningAllowed: boolean, busy: boolean)
 export function usePracticeSourceReader(
   programId: string,
   ownerKey: string,
-  selected: { sourceId: string; versionId: string; quote?: string | null } | null,
+  selected: { sourceId: string; versionId: string; quote?: string | null; number?: number; support?: SupportDto | null } | null,
 ) {
   const reader = useSavedSourceReader(programId);
   useReaderClosesWithOwner(ownerKey);

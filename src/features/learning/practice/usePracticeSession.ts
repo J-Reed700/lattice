@@ -24,6 +24,7 @@ import type {
   LearningProgramDto,
   LearningSourceLibraryItemDto,
   SaveLearningPracticeArtifactRequestDto,
+  SupportDto,
 } from '@/lib/bindings';
 import { registerPendingSave } from '@/lib/pendingSaves';
 
@@ -84,7 +85,13 @@ export function usePracticeSession({
 
   const [solutionConfirm, setSolutionConfirm] = useState(false);
   /** The source the attempt last opened, and the words it was opened on; the docked reader follows it. */
-  const [selectedSource, setSelectedSource] = useState<{ sourceId: string; versionId: string; quote?: string } | null>(null);
+  const [selectedSource, setSelectedSource] = useState<{
+    sourceId: string;
+    versionId: string;
+    quote?: string;
+    number?: number;
+    support?: SupportDto | null;
+  } | null>(null);
   const [hintUsed, setHintUsed] = useState<LearningPracticeHintLevel[]>([]);
 
   const revisionRef = useRef(0);
@@ -271,9 +278,21 @@ export function usePracticeSession({
     });
   };
 
-  const doOpenSource = async (source: LearningSourceLibraryItemDto, versionId: string, preSave?: () => Promise<boolean>, quote?: string) => {
+  const doOpenSource = async (
+    source: LearningSourceLibraryItemDto,
+    versionId: string,
+    preSave?: () => Promise<boolean>,
+    quote?: string,
+    citationMeta?: { number?: number; support?: SupportDto | null },
+  ) => {
     if (!summary || busyState !== 'idle') return;
-    const opened = quote ? { sourceId: source.id, versionId, quote } : { sourceId: source.id, versionId };
+    const opened = {
+      sourceId: source.id,
+      versionId,
+      ...(quote ? { quote } : {}),
+      ...(citationMeta?.number !== undefined ? { number: citationMeta.number } : {}),
+      ...(citationMeta?.support !== undefined ? { support: citationMeta.support } : {}),
+    };
     if (!active) {
       setSelectedSource(opened);
       return;

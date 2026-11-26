@@ -110,6 +110,9 @@ pub struct LearningAssessmentFormItemDto {
     pub source_version_ids: Vec<String>,
     /// The passage the question was written from, for the source line.
     pub source_quote: String,
+    /// Numbered, support-checked source citations matching `sourceVersionIds`.
+    #[serde(default)]
+    pub source_citations: Vec<super::LearningPracticeCitationDto>,
     pub previously_exposed: bool,
     /// Saved choice indices in shown order (single choice, true/false,
     /// multi-select).
@@ -496,6 +499,10 @@ pub struct LearningCriterionRationaleDto {
     pub full_credit_includes: String,
     pub source_quote: Option<String>,
     pub source_version_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_number: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_support: Option<lattice_core::application::contracts::replies::SupportDto>,
 }
 
 /// Why a model-graded answer earned what it did. A grade without a checkable

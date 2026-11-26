@@ -6051,7 +6051,7 @@ compressionRatio: number;
  */
 createdAt: string }
 export type CompareCellDto = { value: string | null; citation: CompareCitationDto | null }
-export type CompareCitationDto = { chunkId: string; excerpt: string }
+export type CompareCitationDto = { number: number; chunkId: string; excerpt: string; support: SupportDto }
 export type CompareDocumentsRequestDto = { documentIds: string[]; columns: string[] }
 export type CompareRowDto = { documentId: string; title: string; filePath: string;
 /**
@@ -8077,7 +8077,11 @@ export type LearningAssessmentFormItemDto = { id: string; outcomeIds: string[]; 
 /**
  * The passage the question was written from, for the source line.
  */
-sourceQuote: string; previouslyExposed: boolean;
+sourceQuote: string;
+/**
+ * Numbered, support-checked source citations matching `sourceVersionIds`.
+ */
+sourceCitations?: LearningPracticeCitationDto[]; previouslyExposed: boolean;
 /**
  * Saved choice indices in shown order (single choice, true/false,
  * multi-select).
@@ -8456,7 +8460,7 @@ yourWords: string[];
  * What a full-credit answer says: names the missing points, never a
  * model answer to copy.
  */
-fullCreditIncludes: string; sourceQuote: string | null; sourceVersionId: string | null }
+fullCreditIncludes: string; sourceQuote: string | null; sourceVersionId: string | null; sourceNumber?: number | null; sourceSupport?: SupportDto | null }
 /**
  * Section 4.3a. Uncertain when a quote failed its check against the answer
  * or the source.
@@ -8703,7 +8707,7 @@ export type LearningMemoryDto = { programId: string; journalId: string | null; l
 export type LearningModuleDto = { id: string; title: string; summary: string; outcomes: string[]; lessons: LearningLessonDto[]; prerequisiteModuleIds?: string[]; project?: LearningProjectMilestoneDto | null }
 export type LearningModuleQuizzesDto = { moduleId: string; test: LearningQuizStatusDto; lessons: LearningLessonQuizDto[] }
 export type LearningOutcomeDefinitionDto = { id: string; moduleId: string | null; lessonId: string | null; title: string; description: string; ordinal: number; createdAt: number }
-export type LearningOutlineCitationDto = { path: string; target: LearningOutlineCitationTarget; moduleId: string; lessonId: string | null; itemIndex: number | null; claim: string; sourceId: string; sourceTitle: string; sourceUrl: string | null; quote: string }
+export type LearningOutlineCitationDto = { number: number; path: string; target: LearningOutlineCitationTarget; moduleId: string; lessonId: string | null; itemIndex: number | null; claim: string; sourceId: string; sourceTitle: string; sourceUrl: string | null; quote: string; support: SupportDto }
 export type LearningOutlineCitationTarget = "module_summary" | "outcome" | "lesson_objective"
 export type LearningOutlineEvidenceDto = { reviewStatus: LearningOutlineReviewStatus; contentSha256: string; citations: LearningOutlineCitationDto[];
 /**
@@ -8927,7 +8931,7 @@ export type LearningPracticalWorkspaceDto = { programId: string; builtinRuntimes
 export type LearningPracticeArtifactDto = { revision: number; text: string; sha256: string; updatedAt: number }
 export type LearningPracticeAssistanceEventDto = { id: string; kind: LearningPracticeAssistanceKind; mode: LearningPracticeMode; artifactRevision: number; details: JsonValue; createdAt: number }
 export type LearningPracticeAssistanceKind = "source_opened" | "tutor_response" | "hint" | "solution_revealed" | "mode_changed"
-export type LearningPracticeCitationDto = { sourceId: string; versionId: string; quote: string }
+export type LearningPracticeCitationDto = { sourceId: string; versionId: string; quote: string; number?: number; support?: SupportDto }
 export type LearningPracticeCriterionDto = { id: string; dimension: LearningPracticeEvidenceDimension; title: string; description: string; maxPoints: number }
 export type LearningPracticeCriterionResultDto = { criterionId: string; dimension: LearningPracticeEvidenceDimension; score: number | null; maxPoints: number; observation: string; evidenceQuote: string | null }
 export type LearningPracticeEvidenceDimension = "recall" | "explanation" | "application" | "transfer"
@@ -11639,7 +11643,11 @@ export type StudySourceDto = { chunkId: string; documentId: string; fileName: st
 /**
  * External web source URL when this citation is not an indexed document.
  */
-url?: string | null }
+url?: string | null;
+/**
+ * Backend-supplied 1-based citation number within the card's cited sources.
+ */
+citationId?: number; support?: SupportDto }
 export type SubmitLearningDiagnosticRequestDto = { operationId: string; programId: string; diagnosticId: string; expectedRevision: number; responses: LearningDiagnosticResponseDto[]; saveOnly?: boolean; expectedDiagnosticRevision?: number | null }
 export type SubmitLearningPracticeAttemptRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number }
 /**
@@ -12578,6 +12586,7 @@ export type WikiLinkDto = { target: string; displayText: string | null; header: 
  * One "word 7 was ___" answer.
  */
 export type WordConfirmationDto = { index: number; word: string }
+export type WorkspaceNoteCitationDto = { number: number; support: SupportDto }
 export type WorkspaceNoteDto = {
 /**
  * Revision of the persisted snapshot; full edits must match it.
@@ -12590,7 +12599,11 @@ journalId: string | null; content: string; linkedDocumentIds: string[]; linkedCo
 /**
  * Source metadata backing inline citations in this note.
  */
-sources: SourceDto[]; createdAt: string; updatedAt: string }
+sources: SourceDto[];
+/**
+ * Relation and excerpt anchors for each entry in `sources`, in order.
+ */
+citations: WorkspaceNoteCitationDto[]; createdAt: string; updatedAt: string }
 
 /** tauri-specta globals **/
 

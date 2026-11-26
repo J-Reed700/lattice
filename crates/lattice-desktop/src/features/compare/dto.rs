@@ -12,8 +12,10 @@ pub struct CompareDocumentsRequestDto {
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CompareCitationDto {
+    pub number: u32,
     pub chunk_id: String,
     pub excerpt: String,
+    pub support: lattice_core::application::contracts::replies::SupportDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]

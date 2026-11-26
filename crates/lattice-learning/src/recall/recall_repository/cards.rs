@@ -84,13 +84,18 @@ impl LearningRecallRepository {
             .await?;
         if sources.is_empty() {
             // A deck card always names a source; this one is the learner's own.
+            let excerpt = "Learner-authored recall card without an external source.";
             sources.push(StudySourceDto {
                 chunk_id: format!("learning-recall:{}", req.card_id),
                 document_id: String::new(),
                 file_name: "Personal recall card".into(),
                 file_path: String::new(),
-                excerpt: "Learner-authored recall card without an external source.".into(),
+                excerpt: excerpt.into(),
                 url: None,
+                citation_id: 1,
+                support: lattice_core::application::contracts::replies::SupportDto::cites([
+                    excerpt,
+                ]),
             });
         }
         let source_json = json(&sources)?;
@@ -313,7 +318,7 @@ impl LearningRecallRepository {
         version_ids: &[String],
     ) -> Result<Vec<StudySourceDto>> {
         let mut out = Vec::with_capacity(version_ids.len());
-        for version_id in version_ids {
+        for (index, version_id) in version_ids.iter().enumerate() {
             let row = sqlx::query("SELECT v.id,v.title,v.excerpt,v.resolved_url,v.requested_url,s.id source_id,s.origin,s.kind,d.file_name,d.file_path FROM learning_source_versions v JOIN learning_source_library s ON s.program_id=v.program_id AND s.id=v.source_id LEFT JOIN documents d ON d.id=s.origin WHERE v.program_id=? AND v.id=?")
                 .bind(program_id)
                 .bind(version_id)
@@ -323,6 +328,7 @@ impl LearningRecallRepository {
             let url: Option<String> = row.get("resolved_url");
             let requested: Option<String> = row.get("requested_url");
             let is_web: String = row.get("kind");
+            let excerpt: String = row.get("excerpt");
             out.push(StudySourceDto {
                 chunk_id: row.get("id"),
                 document_id: row.get("source_id"),
@@ -332,8 +338,12 @@ impl LearningRecallRepository {
                 file_path: row
                     .get::<Option<String>, _>("file_path")
                     .unwrap_or_default(),
-                excerpt: row.get("excerpt"),
+                support: lattice_core::application::contracts::replies::SupportDto::cites([
+                    excerpt.as_str(),
+                ]),
+                excerpt,
                 url: (is_web == "web").then(|| url.or(requested)).flatten(),
+                citation_id: (index + 1) as u32,
             });
         }
         Ok(out)

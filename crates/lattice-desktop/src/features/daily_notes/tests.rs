@@ -812,3 +812,55 @@ async fn capture_preserves_markdown_and_replaces_legacy_wrappers() {
     .unwrap();
     assert_eq!(repository.get(&first.note_id).await.unwrap().content, table);
 }
+
+#[test]
+fn row_to_dto_emits_cites_support_and_fills_missing_citation_numbers() {
+    use lattice_core::application::contracts::replies::RelationDto;
+
+    let mut unnumbered = source(1, "unnumbered");
+    unnumbered.citation_id = None;
+    unnumbered.chunk_excerpts = Some(vec![
+        SourceChunkExcerptDto {
+            chunk_id: "c1".into(),
+            excerpt: "  First excerpt from note.  ".into(),
+            section: None,
+            chunk_index: None,
+            page_number: None,
+            score: 0.9,
+            highlights: None,
+        },
+        SourceChunkExcerptDto {
+            chunk_id: "c2".into(),
+            excerpt: "Second excerpt from note.".into(),
+            section: None,
+            chunk_index: None,
+            page_number: None,
+            score: 0.8,
+            highlights: None,
+        },
+    ]);
+    let numbered = source(2, "numbered");
+    let mut note = record("n1", "Notes", "Body [2] [1]", "2026-09-20T00:00:00Z");
+    note.sources_json = serde_json::to_string(&vec![unnumbered, numbered]).unwrap();
+
+    let dto = row_to_dto(note).unwrap();
+    assert_eq!(dto.citations.len(), 2);
+    assert_eq!(dto.citations[0].number, 1);
+    assert_eq!(dto.citations[0].support.relation, RelationDto::Cites);
+    assert_eq!(
+        dto.citations[0]
+            .support
+            .anchors
+            .iter()
+            .map(|a| (a.exact.as_str(), a.span))
+            .collect::<Vec<_>>(),
+        vec![
+            ("First excerpt from note.", None),
+            ("Second excerpt from note.", None),
+        ]
+    );
+    assert_eq!(dto.citations[1].number, 2);
+    assert_eq!(dto.citations[1].support.relation, RelationDto::Cites);
+    assert_eq!(dto.citations[1].support.anchors[0].exact, "excerpt");
+    assert!(dto.citations[1].support.anchors[0].span.is_none());
+}

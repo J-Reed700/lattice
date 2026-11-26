@@ -36,9 +36,25 @@ function renderWith(ui: ReactNode) {
 }
 
 const citations: SavedSourceCitation[] = [
-  { versionId: 'va', quote: 'first quote', title: 'Own title' },
-  { versionId: 'vb', quote: 'second quote' },
-  { versionId: 'unknown', quote: '  ' },
+  {
+    number: 1,
+    versionId: 'va',
+    quote: 'first quote',
+    title: 'Own title',
+    support: { relation: 'quotes', anchors: [{ exact: 'first quote', span: null }] },
+  },
+  {
+    number: 2,
+    versionId: 'vb',
+    quote: 'second quote',
+    support: { relation: 'quotes', anchors: [{ exact: 'second quote', span: null }] },
+  },
+  {
+    number: 3,
+    versionId: 'unknown',
+    quote: '  ',
+    support: { relation: 'cites', anchors: [] },
+  },
 ];
 
 const openChip = (n: number) => fireEvent.click(screen.getByRole('button', { name: new RegExp(`Citation ${n}`) }));
@@ -93,7 +109,17 @@ describe('SavedSourceCitations', () => {
   });
 
   it('shows a quote as the words a reader sees, and opens the reader on the raw quote', async () => {
-    const raw = [{ versionId: 'va', quote: 'The **x** matters, see [docs](https://example.com).' }];
+    const raw: SavedSourceCitation[] = [
+      {
+        number: 1,
+        versionId: 'va',
+        quote: 'The **x** matters, see [docs](https://example.com).',
+        support: {
+          relation: 'quotes',
+          anchors: [{ exact: 'The **x** matters, see [docs](https://example.com).', span: null }],
+        },
+      },
+    ];
     renderWith(<SavedSourceCitations programId="program-1" citations={raw} quotes ownerKey="owner-1" label="Passages" />);
 
     const item = within(screen.getByRole('list', { name: 'Passages' })).getAllByRole('listitem')[0]!;
@@ -106,8 +132,50 @@ describe('SavedSourceCitations', () => {
     expect(useReaderStore.getState().session?.citations[0]?.excerpt ?? '').toContain('**x**');
   });
 
+  it('uses backend citation numbers and omits quotation marks for cites relations', async () => {
+    const cited: SavedSourceCitation[] = [
+      {
+        number: 7,
+        versionId: 'va',
+        quote: 'paraphrased claim reference',
+        support: {
+          relation: 'cites',
+          anchors: [{ exact: 'paraphrased claim reference', span: null }],
+        },
+      },
+    ];
+    renderWith(<SavedSourceCitations programId="program-1" citations={cited} quotes ownerKey="owner-1" label="Passages" />);
+
+    const item = within(screen.getByRole('list', { name: 'Passages' })).getAllByRole('listitem')[0]!;
+    expect(within(item).getByRole('button', { name: /Citation 7/ })).toBeInTheDocument();
+    expect(item.querySelector('q')).toBeNull();
+    await waitFor(() => expect(item).toHaveTextContent('paraphrased claim reference — Library alpha'));
+    openChip(7);
+    const card = await screen.findByRole('group', { name: 'Source 7, Library alpha' });
+    expect(card).toHaveTextContent('paraphrased claim reference');
+    expect(card.textContent).not.toContain('“');
+    fireEvent.click(await screen.findByRole('button', { name: 'View source' }));
+    await waitFor(() => expect(useReaderStore.getState().session?.citations[0]?.citationId).toBe(7));
+    expect(useReaderStore.getState().session?.citations[0]?.anchoredBy?.[0]?.relation).toBe('cites');
+  });
+
   it('shows a quote that is all syntax as written rather than nothing', () => {
-    renderWith(<SavedSourceCitations programId="program-1" citations={[{ versionId: 'va', quote: '**' }]} quotes ownerKey="owner-1" label="Passages" />);
+    renderWith(
+      <SavedSourceCitations
+        programId="program-1"
+        citations={[
+          {
+            number: 1,
+            versionId: 'va',
+            quote: '**',
+            support: { relation: 'quotes', anchors: [{ exact: '**', span: null }] },
+          },
+        ]}
+        quotes
+        ownerKey="owner-1"
+        label="Passages"
+      />,
+    );
     expect(screen.getByRole('list', { name: 'Passages' }).querySelector('q')).toHaveTextContent('**');
   });
 

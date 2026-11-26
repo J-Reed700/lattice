@@ -27,6 +27,7 @@ pub enum LearningOutlineCitationTarget {
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LearningOutlineCitationDto {
+    pub number: u32,
     pub path: String,
     pub target: LearningOutlineCitationTarget,
     pub module_id: String,
@@ -37,6 +38,7 @@ pub struct LearningOutlineCitationDto {
     pub source_title: String,
     pub source_url: Option<String>,
     pub quote: String,
+    pub support: lattice_core::application::contracts::replies::SupportDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
@@ -81,6 +83,7 @@ fn project_field(
         return None;
     }
     Some(LearningOutlineCitationDto {
+        number: 0,
         path: target.path,
         target: target.kind,
         module_id: target.module_id.to_owned(),
@@ -91,6 +94,7 @@ fn project_field(
         source_title: source.title.clone(),
         source_url: source.url.clone(),
         quote: quote.to_owned(),
+        support: lattice_core::application::contracts::replies::SupportDto::default(),
     })
 }
 
@@ -122,9 +126,10 @@ fn matching_module<'a>(
     matches.next().is_none().then_some(found)
 }
 
-pub(crate) fn project(
+fn project_with_texts(
     program: &LearningProgramDto,
     draft: &OutlineDraft,
+    source_texts: Option<&std::collections::HashMap<String, String>>,
 ) -> LearningOutlineEvidenceDto {
     let mut citations = Vec::new();
     let mut unavailable_count = 0;
@@ -271,12 +276,34 @@ pub(crate) fn project(
         }
     }
 
+    for (index, citation) in citations.iter_mut().enumerate() {
+        citation.number = (index + 1) as u32;
+        let source_text = source_texts
+            .and_then(|texts| texts.get(&citation.source_id))
+            .map(String::as_str)
+            .or_else(|| {
+                program
+                    .sources
+                    .iter()
+                    .find(|source| source.id == citation.source_id)
+                    .map(|source| source.excerpt.as_str())
+            });
+        citation.support = lattice_core::application::contracts::replies::SupportDto::verify_quote(
+            source_text,
+            &citation.quote,
+        );
+    }
+
     LearningOutlineEvidenceDto {
         review_status: draft.review.status.clone(),
         content_sha256: draft.review.content_hash.clone(),
         citations,
         unavailable_count,
     }
+}
+
+pub fn project(program: &LearningProgramDto, saved: &OutlineDraft) -> LearningOutlineEvidenceDto {
+    project_with_texts(program, saved, None)
 }
 
 pub async fn get(
@@ -288,7 +315,8 @@ pub async fn get(
     let Some(draft) = repository.outline_draft(program_id).await? else {
         return Ok(None);
     };
-    Ok(Some(project(&program, &draft)))
+    let texts = crate::references::source_library::version_texts(database, program_id).await?;
+    Ok(Some(project_with_texts(&program, &draft, Some(&texts))))
 }
 
 #[cfg(test)]
@@ -542,6 +570,77 @@ mod tests {
         let bindings = saved.bindings.unwrap();
         assert_eq!(bindings[0].module_id, program.modules[0].id);
         assert_eq!(bindings[1].lesson_ids[1], program.modules[1].lessons[1].id);
+        Ok(())
+    }
+
+    #[test]
+    fn project_numbers_citations_sequentially_and_emits_byte_span_quotes() {
+        let (program, draft) = bound_fixture();
+        let evidence = project(&program, &draft);
+        assert_eq!(
+            evidence
+                .citations
+                .iter()
+                .map(|c| c.number)
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        for citation in &evidence.citations {
+            assert_eq!(
+                citation.support.relation,
+                lattice_core::application::contracts::replies::RelationDto::Quotes
+            );
+            assert_eq!(citation.support.anchors.len(), 1);
+            let span = citation.support.anchors[0]
+                .span
+                .expect("verified byte span");
+            assert_eq!(
+                &program.sources[0].excerpt[span.start as usize..span.end as usize],
+                citation.quote
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn get_loads_saved_full_text_and_handles_multibyte_utf8_byte_spans() -> Result<()> {
+        let pool = crate::tests::pool().await?;
+        let mut program = crate::tests::fixture();
+        let prefix = "Préface — résumé:\n";
+        let quote = "Conservation laws anchor every physical calculation across inertial frames.";
+        let full_text = format!("{prefix}{quote} Extra detail beyond the short excerpt.");
+        program.sources[0].excerpt = format!("{prefix}{quote}");
+        let mut draft = bound_fixture().1;
+        draft.candidate = json!({"modules":[{
+            "title": program.modules[0].title,
+            "summary": {"text": program.modules[0].summary, "sourceIndex": 0, "quote": quote},
+            "outcomes": [],
+            "lessons": []
+        }]});
+        draft.bindings = None;
+        draft.source_ids = vec![program.sources[0].id.clone()];
+        let db = Database::new(pool.clone());
+        let repo = LearningRepository::new(db.clone());
+        repo.create_outline_draft(&program, &[], Some(&draft))
+            .await?;
+        sqlx::query("UPDATE learning_source_versions SET full_text=?, excerpt=? WHERE id=?")
+            .bind(&full_text)
+            .bind(&program.sources[0].excerpt)
+            .bind(&program.sources[0].id)
+            .execute(&pool)
+            .await?;
+
+        let evidence = get(&db, &program.summary.id).await?.unwrap();
+        assert_eq!(evidence.citations.len(), 1);
+        let citation = &evidence.citations[0];
+        assert_eq!(citation.number, 1);
+        assert_eq!(
+            citation.support.relation,
+            lattice_core::application::contracts::replies::RelationDto::Quotes
+        );
+        let span = citation.support.anchors[0].span.expect("UTF-8 byte span");
+        assert_eq!(span.start as usize, prefix.len());
+        assert_eq!(span.end as usize, prefix.len() + quote.len());
+        assert_eq!(&full_text[span.start as usize..span.end as usize], quote);
         Ok(())
     }
 }

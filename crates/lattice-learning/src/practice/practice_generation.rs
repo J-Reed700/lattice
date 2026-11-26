@@ -404,11 +404,18 @@ fn citations(passages: &[Passage], cited: &[Picked<Quoted>]) -> Vec<LearningPrac
         .filter_map(|picked| {
             let (at, quote) = texts.found(picked.reference)?;
             let passage = passages.iter().find(|passage| passage.at == *at)?;
-            Some(LearningPracticeCitationDto {
-                source_id: passage.source_id.value().clone(),
-                version_id: passage.version_id.value().clone(),
-                quote: quote.to_owned(),
-            })
+            Some((passage, quote))
+        })
+        .enumerate()
+        .map(|(index, (passage, quote))| LearningPracticeCitationDto {
+            source_id: passage.source_id.value().clone(),
+            version_id: passage.version_id.value().clone(),
+            quote: quote.to_owned(),
+            number: (index + 1) as u32,
+            support: lattice_core::application::contracts::replies::SupportDto::verify_quote(
+                Some(&passage.text.0),
+                quote,
+            ),
         })
         .collect()
 }

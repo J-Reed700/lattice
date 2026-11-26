@@ -12,10 +12,10 @@ import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { toast } from '@/stores/toastStore';
 import type { CompareCellDto, CompareRowDto } from '@/types/api/compare';
 import type { PassageLocator, SourceWithMetadata } from '@/types/conversation';
-import { mimeTypeForPath } from '@/utils/mimeTypes';
 
 import { ColumnEditor, parseColumns } from './ColumnEditor';
 import { CompareTable } from './CompareTable';
+import { compareCitationSource } from '../model/compareCitationSource';
 import { compareTableToMarkdown } from '../model/compareMarkdown';
 
 function parseIds(value: string | null): string[] {
@@ -72,29 +72,35 @@ export function ComparePage() {
   );
 
   const openCitation = useCallback((row: CompareRowDto, cell: CompareCellDto) => {
-    if (!cell.citation) return;
+    const source = compareCitationSource(row, cell);
+    if (!source || !cell.citation) return;
     // The cited sentence is what the reader should land on, not the top of the
     // file. `chunkId` identifies the passage; `text` is what locates it.
     setPreviewLocator({
       text: cell.citation.excerpt,
       chunkId: cell.citation.chunkId,
     });
-    setPreviewSource({
-      documentId: row.documentId,
-      chunkId: cell.citation.chunkId,
-      fileName: row.title,
-      filePath: row.filePath,
-      mimeType: mimeTypeForPath(row.filePath),
-      category: '',
-      content: cell.citation.excerpt,
-      excerpt: cell.citation.excerpt,
-      highlights: [],
-      score: 1,
-      fileSizeBytes: 0,
-      // No mtime is known here; the comparison's own timestamp is not one.
-      modifiedAt: '',
-    });
+    setPreviewSource(source);
   }, []);
+
+  const allCitations = useMemo<SourceWithMetadata[]>(
+    () =>
+      (table?.rows ?? []).flatMap((row) =>
+        (row.cells ?? [])
+          .map((cell) => compareCitationSource(row, cell))
+          .filter((source): source is SourceWithMetadata => source !== null),
+      ),
+    [table],
+  );
+  const previewIndex = useMemo(() => {
+    if (!previewSource) return -1;
+    return allCitations.findIndex(
+      (candidate) =>
+        candidate.citationId === previewSource.citationId &&
+        candidate.chunkId === previewSource.chunkId &&
+        candidate.documentId === previewSource.documentId,
+    );
+  }, [allCitations, previewSource]);
 
   const saveToJournal = useCallback(async () => {
     if (!table) return;
@@ -209,6 +215,14 @@ export function ComparePage() {
         }}
         source={previewSource}
         initialLocator={previewLocator}
+        citations={allCitations}
+        citationIndex={previewIndex >= 0 ? previewIndex : undefined}
+        onCitationIndexChange={(nextIndex) => {
+          const next = allCitations[nextIndex];
+          if (!next) return;
+          setPreviewSource(next);
+          setPreviewLocator({ text: next.excerpt ?? next.content, chunkId: next.chunkId });
+        }}
       />
     </main>
   );

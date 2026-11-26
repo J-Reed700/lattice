@@ -157,7 +157,11 @@ impl LearningPracticeRepository {
         if upd.rows_affected() != 1 {
             return Err(conflict("Practice session changed; reload and retry."));
         }
-        let citations = json(&turn.citations)?;
+        let version_texts =
+            crate::references::source_library::version_texts_on(&mut tx, program_id).await?;
+        let mut hydrated_citations = turn.citations;
+        LearningPracticeCitationDto::hydrate_list(&mut hydrated_citations, &version_texts);
+        let citations = json(&hydrated_citations)?;
         let proposal_ids: Vec<String> = turn.proposals.iter().map(|p| p.id.clone()).collect();
         sqlx::query("INSERT INTO learning_practice_tutor_turns(id,program_id,session_id,operation_id,prompt,response,request_kind,hint_level,citations_json,proposal_ids_json,model_name,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").bind(&turn.id).bind(program_id).bind(session_id).bind(&turn.operation_id).bind(&turn.prompt).bind(&turn.response).bind(tutor_kind(&turn.request_kind)).bind(turn.hint_level.as_ref().map(hint)).bind(citations).bind(json(&proposal_ids)?).bind(&turn.model_name).bind(t).execute(&mut *tx).await?;
         for proposal in &turn.proposals {
@@ -232,8 +236,12 @@ impl LearningPracticeRepository {
             "Solution reveal is unavailable in Demonstrate mode.",
             "Worked solutions are available only in Explore mode.",
         )?;
+        let version_texts =
+            crate::references::source_library::version_texts_on(&mut tx, &req.program_id).await?;
+        let mut hydrated_citations = citations.to_vec();
+        LearningPracticeCitationDto::hydrate_list(&mut hydrated_citations, &version_texts);
         let t = now();
-        let upd=sqlx::query("UPDATE learning_practice_sessions SET revealed_solution=?,revealed_solution_citations_json=?,revision=revision+1,updated_at=? WHERE program_id=? AND id=? AND revision=? AND status='active'").bind(solution).bind(json(citations)?).bind(t).bind(&req.program_id).bind(&req.session_id).bind(req.expected_revision).execute(&mut *tx).await?;
+        let upd=sqlx::query("UPDATE learning_practice_sessions SET revealed_solution=?,revealed_solution_citations_json=?,revision=revision+1,updated_at=? WHERE program_id=? AND id=? AND revision=? AND status='active'").bind(solution).bind(json(&hydrated_citations)?).bind(t).bind(&req.program_id).bind(&req.session_id).bind(req.expected_revision).execute(&mut *tx).await?;
         if upd.rows_affected() != 1 {
             return Err(conflict("Practice session changed; reload and retry."));
         }

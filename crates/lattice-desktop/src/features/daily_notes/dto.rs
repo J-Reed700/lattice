@@ -1,7 +1,11 @@
-use lattice_core::application::contracts::notes::WorkspaceNoteDto;
-use lattice_core::application::contracts::notes::WorkspaceNoteRecord;
+use lattice_core::application::contracts::notes::{
+    WorkspaceNoteCitationDto, WorkspaceNoteDto, WorkspaceNoteRecord,
+};
+use lattice_core::application::contracts::replies::SupportDto;
+use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -93,7 +97,41 @@ where
     })
 }
 
+fn build_note_citations(sources: &[SourceDto]) -> Vec<WorkspaceNoteCitationDto> {
+    let mut used: HashSet<u32> = sources
+        .iter()
+        .filter_map(|source| source.citation_id.filter(|&id| id > 0))
+        .collect();
+    let mut next = 1u32;
+    sources
+        .iter()
+        .map(|source| {
+            let number = source.citation_id.filter(|&id| id > 0).unwrap_or_else(|| {
+                while used.contains(&next) {
+                    next += 1;
+                }
+                let assigned = next;
+                used.insert(assigned);
+                next += 1;
+                assigned
+            });
+            let excerpts: Vec<&str> = match source.chunk_excerpts.as_ref() {
+                Some(chunks) if chunks.iter().any(|c| !c.excerpt.trim().is_empty()) => {
+                    chunks.iter().map(|c| c.excerpt.as_str()).collect()
+                }
+                _ => source.excerpt.as_deref().into_iter().collect(),
+            };
+            WorkspaceNoteCitationDto {
+                number,
+                support: SupportDto::cites(excerpts),
+            }
+        })
+        .collect()
+}
+
 pub(super) fn row_to_dto(row: WorkspaceNoteRecord) -> Result<WorkspaceNoteDto> {
+    let sources: Vec<SourceDto> = from_json(&row.sources_json, "sources_json")?;
+    let citations = build_note_citations(&sources);
     Ok(WorkspaceNoteDto {
         revision: row.revision,
         id: row.id,
@@ -111,7 +149,8 @@ pub(super) fn row_to_dto(row: WorkspaceNoteRecord) -> Result<WorkspaceNoteDto> {
             &row.conversation_snapshots_json,
             "conversation_snapshots_json",
         )?,
-        sources: from_json(&row.sources_json, "sources_json")?,
+        sources,
+        citations,
         created_at: row.created_at,
         updated_at: row.updated_at,
     })

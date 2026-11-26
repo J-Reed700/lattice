@@ -15,6 +15,7 @@ import type {
   LearningSourceVersionSummaryDto,
   RecentDocument,
   StudySourceDto,
+  SupportDto,
 } from '@/lib/bindings';
 import { formatSourceLocation } from '@/shared/sources/passageLocator';
 import type { DocumentMetadata, SearchResult } from '@/types';
@@ -181,7 +182,6 @@ export function fromRecentDocument(doc: RecentDocument): ResolvedReaderTarget {
 /** Flashcard / Study recall citation (`StudySourceDto`) -> unified reader target. */
 export function fromStudySource(
   studySource: StudySourceDto,
-  index = 0,
   conversationId?: string,
 ): ResolvedReaderTarget {
   const externalUrl = studySource.url?.trim() && isHttpUrl(studySource.url) ? studySource.url.trim() : null;
@@ -189,13 +189,13 @@ export function fromStudySource(
   const effectivePath = externalUrl ?? rawPath;
   const web = Boolean(externalUrl || isHttpUrl(effectivePath));
   const excerpt = studySource.excerpt?.trim() || '';
-  const documentId = studySource.documentId?.trim() || (web ? `web:${effectivePath}` : effectivePath || `study-${index}`);
-  const chunkId = studySource.chunkId?.trim() || `${documentId}#${index}`;
+  const documentId = studySource.documentId?.trim() || (web ? `web:${effectivePath}` : effectivePath || `study-${studySource.citationId}`);
+  const chunkId = studySource.chunkId?.trim() || `${documentId}#cite-${studySource.citationId}`;
 
   const source: SourceWithMetadata = {
     documentId,
     chunkId,
-    fileName: studySource.fileName?.trim() || fileNameFromPathOrUrl(effectivePath, `Citation ${index + 1}`),
+    fileName: studySource.fileName?.trim() || fileNameFromPathOrUrl(effectivePath, 'Saved source'),
     filePath: effectivePath || documentId,
     mimeType: resolveMimeType(null, effectivePath, web ? 'web' : 'document'),
     category: web ? 'web' : 'document',
@@ -204,7 +204,19 @@ export function fromStudySource(
     score: 1,
     fileSizeBytes: 0,
     modifiedAt: new Date(0).toISOString(),
-    citationId: index + 1,
+    citationId: studySource.citationId,
+    ...(studySource.support
+      ? {
+          anchoredBy: [
+            {
+              occurrence: 1,
+              relation: studySource.support.relation,
+              anchors: studySource.support.anchors,
+            },
+          ],
+          anchorBase: 0,
+        }
+      : {}),
     conversationId,
   };
 
@@ -481,6 +493,8 @@ export interface LearningSourceVersionReading {
   quote?: string | null;
   /** The citation's number where the text that cites it numbers them. */
   number?: number;
+  /** Backend-verified relation and anchors for this citation. */
+  support?: SupportDto | null;
   /** The saved text as it should be read, when that differs from the immutable capture. */
   readerText?: string;
 }
@@ -528,6 +542,12 @@ export function fromLearningSourceVersion(
       fileSizeBytes: 0,
       modifiedAt: acquired ?? new Date(0).toISOString(),
       citationId: reading.number,
+      ...(reading.support
+        ? {
+            anchoredBy: [{ occurrence: 1, relation: reading.support.relation, anchors: reading.support.anchors }],
+            anchorBase: 0,
+          }
+        : {}),
     },
     locator: quote ? { text: quote, chunkId } : null,
   };

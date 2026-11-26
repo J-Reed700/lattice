@@ -32,7 +32,7 @@ import { SectionTangentBar, StudyTangentSelection } from '@/features/learning/ta
 import { MarkdownViewer } from '@/features/reading/components/viewers/MarkdownViewer';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import { ListenButton } from '@/features/speech/components/ListenButton';
-import type { LearningBlockKind, LearningLessonDto, LearningOutlineEvidenceDto, LearningProgramDto } from '@/lib/bindings';
+import type { LearningBlockKind, LearningLessonDto, LearningOutlineCitationDto, LearningOutlineEvidenceDto, LearningProgramDto } from '@/lib/bindings';
 import { jobErrorToError } from '@/lib/errorHandling';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
@@ -44,7 +44,7 @@ const blockLabels: Record<LearningBlockKind, string> = {
   guided_practice: 'Try it with guidance', independent_practice: 'Your assignment', reflection: 'From memory', recap: 'Key takeaways',
 };
 
-export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurrent, selected, pending, onPrepare, onComplete, onSelect, onPractice, onReview, quizCallout, topics, number, notebook, contextVisible = true, onSources }: {
+export function LessonCard({ lesson, moduleId, outlineEvidence, onOpenOutlineCitation, program, isCurrent, selected, pending, onPrepare, onComplete, onSelect, onPractice, onReview, quizCallout, topics, number, notebook, contextVisible = true, onSources }: {
   lesson: LearningLessonDto;
   number?: string;
   notebook?: ReactNode;
@@ -52,6 +52,7 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
   onSources?: () => void;
   moduleId: string;
   outlineEvidence?: LearningOutlineEvidenceDto | null;
+  onOpenOutlineCitation?: (citation: LearningOutlineCitationDto) => void;
   program: LearningProgramDto;
   isCurrent: boolean;
   selected: boolean;
@@ -181,7 +182,7 @@ export function LessonCard({ lesson, moduleId, outlineEvidence, program, isCurre
           <h3 className="studio-lesson-heading">{lesson.title}</h3>
           <div className="studio-lesson-objective"><StudyTangentSelection moduleId={moduleId} lessonId={lesson.id} sectionIndex={null} sectionTitle="Lesson Objective"><span>{lesson.objective || (lesson.preparation === 'outline' ? 'A lesson in the program outline. Prepare it when you are ready.' : 'A focused lesson with explanation and worked example.')}</span></StudyTangentSelection></div>
           <p className="studio-lesson-meta"><span><Clock3 size={13} />About {lesson.estimatedMinutes} min</span><span>{lesson.blocks.length} {lesson.blocks.length === 1 ? 'section' : 'sections'}</span><span>{lesson.completed ? 'Self-reported complete' : 'Not marked complete'}</span></p>
-          {showCitations && <OutlineCitation citation={objectiveCitation} evidence={outlineEvidence} className="mb-4 mt-0" />}
+          {showCitations && <OutlineCitation citation={objectiveCitation} onOpen={onOpenOutlineCitation} className="mb-4 mt-0" />}
           {lesson.preparation === 'outline' && topics}
           {lesson.preparation === 'outline' ? needsReview ? (
             <div className="space-y-4">

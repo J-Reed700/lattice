@@ -125,9 +125,14 @@ type PracticeHintLevel =
   | "partial_strategy"
   | "worked_explanation";
 type PracticeCitation = {
+  number: number;
   sourceId: string;
   versionId: string;
   quote: string;
+  support: {
+    relation: "quotes" | "backs" | "cites";
+    anchors: Array<{ exact: string; span?: { start: number; end: number } | null }>;
+  };
 };
 type PracticeCriterion = {
   id: string;
@@ -1184,14 +1189,18 @@ export async function installLearningStudioBackend(page: Page) {
           unavailableCount: 0,
           citations: [
             {
+              number: 1,
               path: "/modules/0/summary", target: "module_summary", moduleId: module.id,
               lessonId: null, itemIndex: null, claim: module.summary, sourceId: source.id,
               sourceTitle: source.title, sourceUrl: source.url, quote: source.excerpt,
+              support: { relation: "quotes", anchors: [{ exact: source.excerpt, span: null }] },
             },
             {
+              number: 2,
               path: "/modules/0/lessons/0/objective", target: "lesson_objective", moduleId: module.id,
               lessonId: currentLesson.id, itemIndex: 0, claim: currentLesson.objective, sourceId: source.id,
               sourceTitle: source.title, sourceUrl: source.url, quote: source.excerpt,
+              support: { relation: "quotes", anchors: [{ exact: source.excerpt, span: null }] },
             },
           ],
         };
@@ -1467,9 +1476,11 @@ export async function installLearningStudioBackend(page: Page) {
           if (!sourceId)
             throw new Error("Frozen source version is unavailable in the source library.");
           const citation: PracticeCitation = {
+            number: 1,
             sourceId,
             versionId,
             quote,
+            support: { relation: "quotes", anchors: [{ exact: quote, span: null }] },
           };
           const frozenText = sourceVersionTexts.get(versionId);
           if (
@@ -1547,7 +1558,13 @@ export async function installLearningStudioBackend(page: Page) {
           if (!sourceId)
             throw new Error("Frozen source version is unavailable in the source library.");
           session.revealedSolution = `Compare the same measure over the full observation period, then describe limits in the available cases. ${quote}`;
-          session.revealedSolutionCitations = [{ sourceId, versionId, quote }];
+          session.revealedSolutionCitations = [{
+            number: 1,
+            sourceId,
+            versionId,
+            quote,
+            support: { relation: "quotes", anchors: [{ exact: quote, span: null }] },
+          }];
           session.assistance.push({
             id: crypto.randomUUID(),
             kind: "solution_revealed",
@@ -2138,6 +2155,7 @@ export async function installLearningStudioBackend(page: Page) {
               stickyNotes: [],
               conversationSnapshots: [],
               sources: [],
+              citations: [],
               createdAt: timestamp,
               updatedAt: timestamp,
             },

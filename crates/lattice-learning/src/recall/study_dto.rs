@@ -23,6 +23,11 @@ pub struct StudySourceDto {
     /// External web source URL when this citation is not an indexed document.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Backend-supplied 1-based citation number within the card's cited sources.
+    #[serde(default)]
+    pub citation_id: u32,
+    #[serde(default)]
+    pub support: lattice_core::application::contracts::replies::SupportDto,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]

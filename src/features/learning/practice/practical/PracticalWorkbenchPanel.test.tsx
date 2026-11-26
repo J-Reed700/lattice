@@ -248,9 +248,14 @@ describe("Learning Studio Labs & simulations", () => {
               content: "What observation led you to that conclusion?",
               citations: [
                 {
+                  number: 1,
                   sourceId: "source-1",
                   versionId: "version-1",
                   quote: "A saved source quote.",
+                  support: {
+                    relation: "quotes",
+                    anchors: [{ exact: "A saved source quote.", span: null }],
+                  },
                 },
               ],
               modelName: "Simulation model",

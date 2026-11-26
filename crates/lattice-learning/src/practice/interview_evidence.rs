@@ -95,6 +95,11 @@ impl EvidenceBank {
                             source_id: source.source_id.clone(),
                             version_id: source.version.id.clone(),
                             quote: quote.into(),
+                            number: (bank.choices.len() + 1) as u32,
+                            support: lattice_core::application::contracts::replies::SupportDto::verify_quote(
+                                Some(&source.full_text),
+                                quote,
+                            ),
                         };
                         validate_citations(std::slice::from_ref(&citation), sources)?;
                         if bank

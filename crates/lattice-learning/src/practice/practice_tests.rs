@@ -368,6 +368,8 @@ fn citations_must_be_exact_quotes_from_the_frozen_owned_version() {
         source_id: "logical-source".into(),
         version_id: "version-1".into(),
         quote: "café passage".into(),
+        number: 1,
+        support: Default::default(),
     };
     assert!(
         validate_citations(std::slice::from_ref(&valid), std::slice::from_ref(&source)).is_ok()
@@ -852,7 +854,8 @@ mod contracts {
     #[tokio::test]
     async fn a_tutor_citation_is_the_sentence_the_app_holds() -> Result<()> {
         let session = started_session("I tried the second approach first.").await?;
-        let sources = [passage_source(&format!("{STEP} {TIDE}"))];
+        let full_text = format!("{STEP} {TIDE}");
+        let sources = [passage_source(&full_text)];
         let model = tutoring(|prompt, _| {
             tutor_reply(
                 "Which step carries the weight?",
@@ -867,6 +870,11 @@ mod contracts {
                 source_id: "logical-source".into(),
                 version_id: "version-1".into(),
                 quote: TIDE.into(),
+                number: 1,
+                support: lattice_core::application::contracts::replies::SupportDto::verify_quote(
+                    Some(&full_text),
+                    TIDE,
+                ),
             }]
         );
         let prompt = prompt_of(&model.sent()[0]);

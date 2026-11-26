@@ -641,6 +641,8 @@ async fn sources_and_solutions_are_aids_for_live_assisted_attempts_only() -> Res
         source_id: source_id.clone(),
         version_id: version_id.clone(),
         quote: "Gluten forms".into(),
+        number: 1,
+        support: Default::default(),
     };
     let reveal = RevealLearningPracticeSolutionRequestDto {
         operation_id: id(),
@@ -795,5 +797,72 @@ async fn in_practice_mode_hints_and_questions_are_given_but_worked_help_is_not()
     question.hint_level = None;
     repo.commit_tutor_turn(&pid, &sid, 1, question).await?;
     assert_eq!(repo.get_session(&sid).await?.summary.revision, 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_session_hydrates_saved_source_citations_with_utf8_byte_spans_and_cites_fallback(
+) -> Result<()> {
+    use lattice_core::application::contracts::replies::RelationDto;
+
+    let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
+    let repo = LearningPracticeRepository::new(db.clone());
+    let (program, lesson_id) = setup(&pool, &db).await?;
+    let (source_id, version_id) = add_version(&db, &program.summary.id).await?;
+    let prefix = "Note — résumé:\n";
+    let quote = "Gluten forms when flour meets water.";
+    let full_text = format!("{prefix}{quote} Then rest the dough.");
+    sqlx::query("UPDATE learning_source_versions SET full_text=?, excerpt=? WHERE id=?")
+        .bind(&full_text)
+        .bind(&full_text)
+        .bind(&version_id)
+        .execute(&pool)
+        .await?;
+
+    let start = start_request(&program, &lesson_id, LearningPracticeMode::Explore);
+    let session = repo.start(&start, "start").await?.sessions.remove(0);
+    let sid = session.id.clone();
+    let pid = program.summary.id.clone();
+
+    let quoted = LearningPracticeCitationDto {
+        source_id: source_id.clone(),
+        version_id: version_id.clone(),
+        quote: "Gluten  forms when flour meets water.".into(),
+        number: 0,
+        support: Default::default(),
+    };
+    let unmatched = LearningPracticeCitationDto {
+        source_id: source_id.clone(),
+        version_id: version_id.clone(),
+        quote: "Completely absent wording.".into(),
+        number: 0,
+        support: Default::default(),
+    };
+    let mut t = turn(LearningTutorRequestKind::Question, vec![]);
+    t.citations = vec![quoted, unmatched];
+    t.hint_level = None;
+    repo.commit_tutor_turn(&pid, &sid, 0, t).await?;
+
+    let fetched = repo.get_session(&sid).await?;
+    let cites = &fetched.tutor_turns[0].citations;
+    assert_eq!(cites.len(), 2);
+    assert_eq!(cites[0].number, 1);
+    assert_eq!(cites[0].support.relation, RelationDto::Quotes);
+    let span = cites[0].support.anchors[0].span.expect("byte span");
+    assert_eq!(
+        (span.start as usize, span.end as usize),
+        (prefix.len(), prefix.len() + quote.len())
+    );
+    assert_eq!(&full_text[span.start as usize..span.end as usize], quote);
+    assert_eq!(cites[0].support.anchors[0].exact, quote);
+
+    assert_eq!(cites[1].number, 2);
+    assert_eq!(cites[1].support.relation, RelationDto::Cites);
+    assert_eq!(cites[1].support.anchors[0].span, None);
+    assert_eq!(
+        cites[1].support.anchors[0].exact,
+        "Completely absent wording."
+    );
     Ok(())
 }
