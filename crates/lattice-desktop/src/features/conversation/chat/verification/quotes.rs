@@ -9,16 +9,12 @@
 use std::collections::{BTreeSet, HashSet};
 
 use lattice_core::application::contracts::sources::SourceDto;
-use unicode_normalization::UnicodeNormalization;
+use lattice_core::shared::text::same_text::{self, long_enough_quote, quotation};
 
-use super::lexical::{
-    lowercase_words, passage_text, prose_lines, source_index, split_sentences, LexicalClaim,
-};
+use super::lexical::{passage_text, prose_lines, source_index, split_sentences, LexicalClaim};
 use super::marked;
 use crate::features::conversation::chat::reply_text::ReplyText;
 
-/// Below this a quoted stretch is more often a term than a quotation.
-const MIN_QUOTE_WORDS: usize = 5;
 const QUOTE_MARKS: &[char] = &['"', '\u{201c}', '\u{201d}'];
 const ELLIPSES: &[&str] = &["...", "\u{2026}"];
 
@@ -37,26 +33,56 @@ pub(super) fn misquoted_claims(
 ) -> HashSet<usize> {
     let mut misquoted = HashSet::new();
     for line in prose_lines(&marked::marked(reply)) {
-        for quotation in quotations(&line) {
-            let Some(passages) = cited_passages(&quotation.cited, sources) else {
+        for quoted in quotations(&line) {
+            let Some(passages) = cited_passages(&quoted.cited, sources) else {
                 continue;
             };
-            for sentence in quoted_sentences(quotation.text) {
-                let words = letters(&sentence);
-                if passages.iter().any(|passage| passage.contains(&words)) {
+            for fragment in quoted_sentences(quoted.text) {
+                if passages
+                    .iter()
+                    .any(|passage| quotation(passage, &fragment).is_some())
+                {
                     continue;
                 }
                 misquoted.extend(claims.iter().enumerate().filter_map(|(index, claim)| {
                     let cites = claim
                         .citation_ids
                         .iter()
-                        .any(|id| quotation.cited.contains(id));
-                    (cites && letters(&claim.claim_text).contains(&words)).then_some(index)
+                        .any(|id| quoted.cited.contains(id));
+                    let claim_text = unwrap_case_edits(&claim.claim_text);
+                    (cites && same_text::find(&claim_text, &fragment).is_some()).then_some(index)
                 }));
             }
         }
     }
     misquoted
+}
+
+/// Matching spans `(start, end)` in `source_text` for explicit quotations found
+/// inside a cited prose slice `prose` (excluding misquoted fragments not held by
+/// `source_text`).
+pub(in crate::features::conversation::chat) fn matched_quotations(
+    prose: &str,
+    source_text: &str,
+) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let marks: Vec<usize> = prose.match_indices(QUOTE_MARKS).map(|(at, _)| at).collect();
+    let mut index = 0;
+    while let (Some(&open), Some(&close)) = (marks.get(index), marks.get(index + 1)) {
+        let before = prose.get(..open).unwrap_or_default();
+        let inner = prose.get(open..close).map(past_mark).unwrap_or_default();
+        if !opens_quotation(before, inner) {
+            index += 1;
+            continue;
+        }
+        index += 2;
+        for fragment in quoted_sentences(inner) {
+            if let Some(span) = quotation(source_text, &fragment) {
+                spans.push(span);
+            }
+        }
+    }
+    spans
 }
 
 /// The cited quotations of one line. Claims are cut at a full stop even inside
@@ -125,12 +151,12 @@ fn markers_before(text: &str) -> BTreeSet<u32> {
 
 /// Each cited passage's text, or None when one cannot be read: a quotation is
 /// not missing from a page nobody has the text of.
-fn cited_passages(cited: &BTreeSet<u32>, sources: &[SourceDto]) -> Option<Vec<String>> {
+fn cited_passages<'a>(cited: &BTreeSet<u32>, sources: &'a [SourceDto]) -> Option<Vec<&'a str>> {
     cited
         .iter()
         .map(|id| {
             let text = passage_text(sources.get(source_index(*id, sources)?)?);
-            (!text.trim().is_empty()).then(|| letters(text))
+            (!text.trim().is_empty()).then_some(text)
         })
         .collect()
 }
@@ -150,7 +176,8 @@ fn quoted_sentences(text: &str) -> Vec<String> {
         .into_iter()
         .flat_map(between_edits)
         .flat_map(split_sentences)
-        .filter(|sentence| sentence.split_whitespace().count() >= MIN_QUOTE_WORDS)
+        .map(|sentence| unwrap_case_edits(sentence.trim()))
+        .filter(|sentence| long_enough_quote(sentence))
         .collect()
 }
 
@@ -173,10 +200,51 @@ fn between_edits(text: &str) -> Vec<&str> {
     parts
 }
 
-/// `text` without what a line break, hyphenation, typography or letter case
-/// changes, so only a different word can fail a comparison.
-fn letters(text: &str) -> String {
-    lowercase_words(&text.nfkc().collect::<String>()).concat()
+/// Unwraps single-letter case edits like `[t]he` into `the` so `same_text` can
+/// match them without ignoring square brackets elsewhere.
+fn unwrap_case_edits(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut cursor = 0;
+    while let Some(rel_open) = text.get(cursor..).and_then(|rest| rest.find('[')) {
+        let open = cursor + rel_open;
+        let Some((inside, _)) = text.get(open + 1..).and_then(|rest| rest.split_once(']')) else {
+            break;
+        };
+        if inside.chars().count() == 1 && inside.chars().all(char::is_alphabetic) {
+            out.push_str(text.get(cursor..open).unwrap_or_default());
+            out.push_str(inside);
+            cursor = open + inside.len() + 2;
+        } else {
+            let end = open + 1;
+            out.push_str(text.get(cursor..end).unwrap_or_default());
+            cursor = end;
+        }
+    }
+    out.push_str(text.get(cursor..).unwrap_or_default());
+    out
+}
+
+/// Quoted stretches inside `prose` (character spans `(open_quote, close_quote_end)`),
+/// used to tell already-quoted prose from unquoted prose.
+pub(in crate::features::conversation::chat) fn quoted_ranges(prose: &str) -> Vec<(usize, usize)> {
+    let marks: Vec<usize> = prose.match_indices(QUOTE_MARKS).map(|(at, _)| at).collect();
+    let mut ranges = Vec::new();
+    let mut index = 0;
+    while let (Some(&open), Some(&close)) = (marks.get(index), marks.get(index + 1)) {
+        let before = prose.get(..open).unwrap_or_default();
+        let inner = prose.get(open..close).map(past_mark).unwrap_or_default();
+        if !opens_quotation(before, inner) {
+            index += 1;
+            continue;
+        }
+        index += 2;
+        let close_end = prose
+            .get(close..)
+            .and_then(|rest| rest.chars().next().map(|ch| close + ch.len_utf8()))
+            .unwrap_or(close);
+        ranges.push((open, close_end));
+    }
+    ranges
 }
 
 #[cfg(test)]

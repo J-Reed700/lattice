@@ -1,12 +1,7 @@
-import { useMemo } from 'react';
-
 import { Bookmark, ChevronDown, ChevronUp, MessageSquare, NotebookPen } from 'lucide-react';
 
 import { IconButton } from '@/components/ui';
-import { placeAnchors } from '@/features/reading/citations/anchors';
-import { headingTrail } from '@/features/reading/citations/headingTrail';
-import { anchoredEntry, anchoredText } from '@/features/reading/citations/source';
-import { articleBlocks } from '@/features/reading/model/articleBlocks';
+import { anchoredCardDetails } from '@/features/reading/citations';
 import { formatSourceLocation } from '@/shared/sources/passageLocator';
 import type { PassageLocator, SourceWithMetadata } from '@/types/conversation';
 
@@ -58,20 +53,10 @@ export function CitationRail({
   onAskAbout,
 }: CitationRailProps) {
   const showNav = typeof total === 'number' && total > 1 && typeof index === 'number';
-  const entry = anchoredEntry(source, occurrence);
-  const anchored = useMemo(() => {
-    if (!entry) return null;
-    const text = anchoredText(source);
-    const { ranges } = placeAnchors(text, entry.anchors, source.anchorBase ?? 0);
-    const first = ranges[0];
-    return {
-      excerpt: entry.anchors.map((anchor) => anchor.exact).filter(Boolean).join(' … '),
-      trail: first ? headingTrail(text, articleBlocks(text), first.start) : [],
-    };
-  }, [entry, source]);
-  const trail = anchored?.trail.join(' › ') ?? '';
+  const { entry, excerpts, trail: trailList } = anchoredCardDetails(source, occurrence);
+  const trail = trailList.join(' › ');
   const locationLabel = trail || (resolvedLabel ?? formatSourceLocation(source));
-  const excerpt = anchored?.excerpt || (locator.text?.trim() ?? '');
+  const excerpt = (entry ? excerpts.join(' … ') : '') || (locator.text?.trim() ?? '');
 
   return (
     <aside className="hidden w-[320px] shrink-0 flex-col gap-4 overflow-y-auto border-l border-subtle bg-surface px-5 py-6 lg:flex">

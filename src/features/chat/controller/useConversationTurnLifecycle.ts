@@ -251,6 +251,7 @@ export function useConversationTurnLifecycle({ queryClient, conversations, inval
             messageId: payload.verification.messageId,
             verification: payload.verification.verification,
             turn: payload.verification.turn ?? undefined,
+            reply: payload.verification.reply ?? undefined,
           };
           readyVerification = patch;
           queryClient.setQueryData<ConversationMessage[]>(

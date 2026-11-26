@@ -132,4 +132,49 @@ describe('EvidenceMargin', () => {
 
     expect(container).toBeEmptyDOMElement();
   });
+
+  it('renders CitationCard relation, excerpts, heading trail, and switches on activeOccurrence', () => {
+    const anchored: SourceWithMetadata = {
+      ...source(1, 'Guide.md', 'Fallback excerpt'),
+      webSnapshot: {
+        url: 'https://example.org/guide',
+        title: 'Guide',
+        text: '# Guide\n\n## Alpha\n\nQuoted words here.\n\n## Beta\n\nBacked words here.',
+        fetchedAt: null,
+        truncated: false,
+      },
+      anchoredBy: [
+        { occurrence: 0, relation: 'quotes', anchors: [{ exact: 'Quoted words here.' }] },
+        { occurrence: 1, relation: 'backs', anchors: [{ exact: 'Backed words here.' }] },
+      ],
+    };
+    const { rerender } = render(
+      <EvidenceMargin
+        citationMap={new Map([[1, anchored]])}
+        activeNumbers={[1]}
+        activeOccurrence={{ number: 1, occurrence: 0 }}
+        onOpen={vi.fn()}
+        onHoverNumber={vi.fn()}
+      />,
+    );
+
+    const note = screen.getByRole('button', { name: /Open passage 1/ });
+    expect(note).toHaveTextContent('Quoted from');
+    expect(note).toHaveTextContent('“Quoted words here.”');
+    expect(note).toHaveTextContent('Guide › Alpha');
+
+    rerender(
+      <EvidenceMargin
+        citationMap={new Map([[1, anchored]])}
+        activeNumbers={[1]}
+        activeOccurrence={{ number: 1, occurrence: 1 }}
+        onOpen={vi.fn()}
+        onHoverNumber={vi.fn()}
+      />,
+    );
+
+    expect(note).toHaveTextContent('Supported by');
+    expect(note).toHaveTextContent('Backed words here.');
+    expect(note).toHaveTextContent('Guide › Beta');
+  });
 });

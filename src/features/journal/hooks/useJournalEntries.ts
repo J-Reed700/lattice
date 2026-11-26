@@ -72,6 +72,7 @@ function normalizeMessage(
     content: asString(source.content),
     createdAt: asString(source.createdAt ?? source.created_at, nowIso()),
     metadata: source.metadata ?? null,
+    ...(source.reply ? { reply: source.reply } : {}),
   };
 }
 

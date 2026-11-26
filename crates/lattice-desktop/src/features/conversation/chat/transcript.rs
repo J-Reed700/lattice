@@ -1,6 +1,7 @@
 //! A conversation's messages as they are read back.
 
 use super::ports::ChatRuntime;
+use super::reply_support;
 use super::reply_text::ReplyText;
 use crate::features::conversation::dto::MessageDto;
 use crate::features::conversation::ConversationServiceTrait;
@@ -104,14 +105,17 @@ async fn replies_of(
             .as_deref()
             .and_then(|metadata| serde_json::from_str(metadata).ok())
             .unwrap_or(serde_json::Value::Null);
+        let sources: Vec<SourceDto> = metadata
+            .get("sources")
+            .and_then(|sources| serde_json::from_value(sources.clone()).ok())
+            .unwrap_or_default();
         let reply = ReplyText::stored(&message.content, &metadata).unwrap_or_else(|| {
-            let sources: Vec<SourceDto> = metadata
-                .get("sources")
-                .and_then(|sources| serde_json::from_value(sources.clone()).ok())
-                .unwrap_or_default();
             ReplyText::legacy(&names, source.as_ref(), &message.content, &sources)
         });
-        replies.insert(message.id.clone(), reply.pieces());
+        replies.insert(
+            message.id.clone(),
+            reply_support::pieces(&reply, &sources, metadata.get("verification")),
+        );
     }
     names.save().await?;
     Ok(replies)

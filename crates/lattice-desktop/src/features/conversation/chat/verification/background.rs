@@ -12,6 +12,7 @@ use tracing::{info, warn};
 
 use crate::features::conversation::chat::ports::ChatRecords;
 use crate::features::conversation::trait_def::ConversationServiceTrait;
+use lattice_core::application::contracts::replies::ReplyPieceDto;
 use lattice_core::application::contracts::settings::LLMVerificationSettingsDto;
 use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::application::ports::llm_port::OptionalLlmLoader;
@@ -20,6 +21,7 @@ use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 
+use super::super::reply_support;
 use super::super::reply_text::ReplyText;
 use super::super::source_snapshots;
 use super::super::turn_record::{TurnRecordDto, TurnStepKind, TurnStepState};
@@ -45,6 +47,9 @@ pub struct VerificationReadyDto {
     /// turn kept one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub turn: Option<TurnRecordDto>,
+    /// Drawn reply pieces recomputed against completed verification verdicts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply: Option<Vec<ReplyPieceDto>>,
 }
 
 /// Everything the check needs, owned, so it can outlive the turn.
@@ -198,12 +203,14 @@ impl BackgroundVerification {
             warn!(error = %e, "Could not persist the grounding check for this answer");
         }
 
+        let pieces = reply_support::pieces(&self.reply, &evidence, Some(&verification));
         (self.emit)(ChatStreamEventDto {
             status: Some(VERIFICATION_READY_STATUS.to_owned()),
             verification: Some(VerificationReadyDto {
                 message_id: self.message_id,
                 verification,
                 turn,
+                reply: Some(pieces),
             }),
             ..ChatStreamEventDto::new(&self.conversation_id, &self.request_id)
         });
@@ -247,12 +254,14 @@ impl BackgroundVerification {
         {
             warn!(error = %error, "Could not persist cancelled grounding check");
         }
+        let pieces = reply_support::pieces(&self.reply, &self.sources, Some(&verification));
         (self.emit)(ChatStreamEventDto {
             status: Some(VERIFICATION_READY_STATUS.to_owned()),
             verification: Some(VerificationReadyDto {
                 message_id: self.message_id.clone(),
                 verification,
                 turn,
+                reply: Some(pieces),
             }),
             ..ChatStreamEventDto::new(&self.conversation_id, &self.request_id)
         });

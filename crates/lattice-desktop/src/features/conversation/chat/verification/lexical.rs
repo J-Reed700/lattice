@@ -144,7 +144,10 @@ pub(super) fn lexical_pass(reply: &ReplyText, sources: &[SourceDto]) -> Vec<Lexi
 }
 
 /// The one source citation number `id` points at.
-pub(super) fn source_index(id: u32, sources: &[SourceDto]) -> Option<usize> {
+pub(in crate::features::conversation::chat) fn source_index(
+    id: u32,
+    sources: &[SourceDto],
+) -> Option<usize> {
     let mut matches = sources
         .iter()
         .enumerate()
@@ -155,12 +158,29 @@ pub(super) fn source_index(id: u32, sources: &[SourceDto]) -> Option<usize> {
 
 /// The text the judge reads for a source: the page, or its excerpt when the
 /// page came back empty.
-pub(super) fn passage_text(source: &SourceDto) -> &str {
+pub(in crate::features::conversation::chat) fn passage_text(source: &SourceDto) -> &str {
     if source.content.trim().is_empty() {
         source.excerpt.as_deref().unwrap_or_default()
     } else {
         source.content.as_str()
     }
+}
+
+/// Whether `claim` is a near-verbatim copy of `source` under the lexical
+/// verifier's four-word run rule without dropping a negation, date, number,
+/// or capitalised name.
+pub(in crate::features::conversation::chat) fn is_verbatim_copy(
+    claim: &str,
+    source: &SourceDto,
+) -> bool {
+    let clean = strip_emphasis_markers(claim);
+    let claim_tokens = extract_normalized_tokens(&formulas_as_words(&clean));
+    if claim_tokens.len() < MIN_COPIED_TOKENS || is_contradiction_prone(&clean) {
+        return false;
+    }
+    let mut cache = HashMap::new();
+    let copying = compare_wording(&clean, &[0], std::slice::from_ref(source), &mut cache);
+    copying.near_verbatim && !copying.drops_marker
 }
 
 /// Whether this claim is worth an LLM call. Every cited claim is, except a
@@ -556,7 +576,10 @@ fn claim_for_note(claim: &str) -> String {
 /// The sentence of `text` that shares the most vocabulary with `claim`, shown
 /// beside a verdict as the words it rests on. Taken from the passage, since a
 /// one-word judge cannot quote.
-pub(super) fn best_sentence(claim: &str, text: &str) -> Option<String> {
+pub(in crate::features::conversation::chat) fn best_sentence(
+    claim: &str,
+    text: &str,
+) -> Option<String> {
     let claim_tokens = extract_normalized_tokens(claim);
     let mut best: Option<(usize, String)> = None;
     for sentence in split_sentences(&normalize_whitespace(text)) {

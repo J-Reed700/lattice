@@ -84,4 +84,27 @@ describe('CitationFootnote', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: 'View source' })).not.toBeInTheDocument());
     await waitFor(() => expect(chip).toHaveFocus());
   });
+
+  it('renders CitationCard relation, curly-quoted excerpt, heading trail, and accessible name inside popover', async () => {
+    const anchored: SourceWithMetadata = {
+      ...source,
+      webSnapshot: {
+        url: 'https://example.org/source-1',
+        title: 'Source 1.md',
+        text: '# Manual\n\n## Rules\n\nExact quoted sentence from manual.',
+        fetchedAt: null,
+        truncated: false,
+      },
+      anchoredBy: [
+        { occurrence: 0, relation: 'quotes', anchors: [{ exact: 'Exact quoted sentence from manual.' }] },
+      ],
+    };
+    render(<CitationFootnote number={1} source={anchored} onViewFile={vi.fn()} />);
+    openPopover();
+
+    const group = await screen.findByRole('group', { name: 'Source 1, quoted from Source 1.md' });
+    expect(group).toHaveTextContent('Quoted from');
+    expect(group).toHaveTextContent('“Exact quoted sentence from manual.”');
+    expect(group).toHaveTextContent('Manual › Rules');
+  });
 });

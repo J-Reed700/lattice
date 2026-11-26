@@ -1,7 +1,6 @@
 import { createPortal } from 'react-dom';
 
-import { CitationCard } from '@/features/reading/citations/CitationCard';
-import { anchoredEntry } from '@/features/reading/citations/source';
+import { anchoredCardDetails, CitationCard } from '@/features/reading/citations';
 import type { SourceWithMetadata } from '@/types/conversation';
 import { sanitizeFileName } from '@/utils/sanitize';
 
@@ -44,7 +43,7 @@ export function CitationHoverCard({ hover, source, location, provenanceLabel }: 
     : { left, top: hover.rect.bottom + GAP, width: CARD_WIDTH };
   const meta = [provenanceLabel, location].filter(Boolean).join(' · ');
 
-  const entry = anchoredEntry(source, hover.occurrence);
+  const { relation, excerpts, trail } = anchoredCardDetails(source, hover.occurrence);
 
   return createPortal(
     <div
@@ -55,9 +54,10 @@ export function CitationHoverCard({ hover, source, location, provenanceLabel }: 
       <CitationCard
         number={hover.number}
         title={sanitizeFileName(source.fileName)}
-        relation={entry?.relation}
-        excerpts={entry?.anchors.map((anchor) => anchor.exact).filter(Boolean) ?? []}
+        relation={relation}
+        excerpts={excerpts}
         passage={passage}
+        trail={trail}
         footer={
           <>
             {meta ? <p className="mt-2 truncate text-xs text-text-muted">{meta}</p> : null}
