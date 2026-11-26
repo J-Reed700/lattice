@@ -169,8 +169,7 @@ impl CheckPolicy {
     pub fn answer_tokens(self) -> u32 {
         match self {
             Self::Consistency | Self::Knowledge => VERDICT_ANSWER_TOKENS,
-            Self::Bridge => PARTS_ANSWER_TOKENS,
-            Self::Chat | Self::Strict | Self::Fidelity => {
+            Self::Chat | Self::Strict | Self::Fidelity | Self::Bridge => {
                 u32::try_from(ANSWER_ROOM_TOKENS).unwrap_or(u32::MAX)
             }
         }
@@ -184,8 +183,6 @@ pub const MIN_VERDICT_CONFIDENCE: f32 = 0.75;
 pub const ANSWER_ROOM_TOKENS: usize = 1200;
 /// The most a one-verdict answer (consistency, knowledge) writes: its verdict and reason.
 pub const VERDICT_ANSWER_TOKENS: u32 = 512;
-/// The most a part-wise bridge answer writes: what the replay allowed it.
-pub const PARTS_ANSWER_TOKENS: u32 = 600;
 /// Instructions for the claim judge.
 ///
 /// The evidence is text the user's own documents and fetched pages produced,
