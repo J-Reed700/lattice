@@ -1,6 +1,7 @@
-import type { ComponentProps, ReactNode } from 'react';
+import { useState, type ComponentProps, type ReactNode } from 'react';
 
 import { fireEvent, render, screen } from '@testing-library/react';
+import { flushSync } from 'react-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Composer } from './Composer';
@@ -64,7 +65,7 @@ const attachments = () => ({
   staged: [], isImporting: false, remove: vi.fn(), clear: vi.fn(), pictures: [], isAttachingPictures: false, removePicture: vi.fn(), chooseFiles: vi.fn(),
 });
 
-const renderComposer = (overrides: Record<string, any> = {}) => {
+const composerProps = (overrides: Record<string, any> = {}) => {
   const props = {
     composer: makeComposer(overrides.composer),
     attachments: attachments(),
@@ -78,6 +79,11 @@ const renderComposer = (overrides: Record<string, any> = {}) => {
     ...overrides,
   };
   if (overrides.composer) props.composer = makeComposer(overrides.composer);
+  return props;
+};
+
+const renderComposer = (overrides: Record<string, any> = {}) => {
+  const props = composerProps(overrides);
   const view = render(<Composer {...(props as unknown as ComponentProps<typeof Composer>)} />);
   return { ...props, unmount: view.unmount };
 };
@@ -206,6 +212,28 @@ describe('Composer', () => {
     expect(screen.getByText('Generating…')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Stop generating response' }));
     expect(props.onCancel).toHaveBeenCalled();
+  });
+
+  it.each([
+    { button: 'Stop generating response', waitingFor: 'answer' },
+    { button: 'Cancel attaching files', waitingFor: 'files' },
+  ])('never sends the draft from a $button click that ends the wait', ({ button, waitingFor }) => {
+    const handleSubmit = vi.fn((event: Event) => event.preventDefault());
+    function Harness() {
+      const [waiting, setWaiting] = useState(true);
+      const stopWaiting = () => flushSync(() => setWaiting(false));
+      const props = composerProps({
+        composer: { input: 'Keep this question', handleSubmit },
+        attachments: { ...attachments(), isImporting: waiting && waitingFor === 'files', cancelImport: stopWaiting },
+        isSending: waiting && waitingFor === 'answer',
+        onCancel: stopWaiting,
+      });
+      return <Composer {...(props as unknown as ComponentProps<typeof Composer>)} />;
+    }
+    render(<Harness />);
+    fireEvent.click(screen.getByRole('button', { name: button }));
+    expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
+    expect(handleSubmit).not.toHaveBeenCalled();
   });
 
   it('disables editing and offers a clickable Cancel attaching files button while staged files import', () => {

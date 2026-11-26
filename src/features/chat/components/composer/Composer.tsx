@@ -274,6 +274,7 @@ export function Composer({
             {/* Send / Stop */}
             {isSending ? (
               <button
+                key="stop"
                 type="button"
                 onClick={onCancel}
                 aria-label="Stop generating response"
@@ -284,6 +285,7 @@ export function Composer({
               </button>
             ) : isAttaching ? (
               <button
+                key="cancel-attaching"
                 type="button"
                 onClick={() => attachments.cancelImport?.()}
                 aria-label="Cancel attaching files"
@@ -295,6 +297,7 @@ export function Composer({
               </button>
             ) : (
               <button
+                key="send"
                 type="submit"
                 disabled={!input.trim() || isChatUnavailable || isCompacting}
                 aria-label="Send message"
