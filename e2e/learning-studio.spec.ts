@@ -2531,7 +2531,7 @@ async function runExtendedStudioJourney(page: Page, width: number, height: numbe
   await cardDialog.getByLabel("Question", { exact: true }).fill("Which measure and period should be recorded?");
   await cardDialog.getByRole("button", { name: "Save", exact: true }).click();
   await expect(cardDialog).toHaveCount(0);
-  await expect(recall.getByText("Which measure and period should be recorded?")).toBeVisible();
+  await expect(recall.getByText("Which measure and period should be recorded?").first()).toBeVisible();
   await recall.getByRole("button", { name: "I don't know yet: show me", exact: true }).first().click();
   await recall.getByRole("button", { name: "good", exact: true }).first().click();
   await expect(recall.getByRole("status")).toContainText("Review saved to this card’s schedule.");

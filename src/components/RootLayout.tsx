@@ -9,18 +9,21 @@ import { useRestoreLockoutStore } from '../features/backup/restoreLockoutStore';
 import { useDeepResearchJobs } from '../features/jobs/research';
 import { useJournalSyntheses } from '../features/journal/synthesis/api';
 import { useSynthesisPanel } from '../features/journal/synthesis/synthesisPanel';
-import { registerLearningAffected } from '../features/learning/edits/affected';
 import { CommandPalette } from '../features/palette/components/CommandPalette';
 import { useRegisterPaletteCommands } from '../features/palette/hooks/useRegisterPaletteCommands';
 import { useStopSpeechOnChange } from '../features/speech/hooks/useSpeech';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
-import { ContentEditor } from '../shared/edits/ContentEditor';
 import { useEditMode } from '../shared/edits/editMode';
 import { EditModeBar } from '../shared/edits/EditModeBar';
+import { useEditorStore } from '../shared/edits/editorStore';
 import { NEW_ITEM_EVENT } from '../shared/newItemEvent';
 import { readClipboardText } from '../utils/clipboard';
 
 import type { PaletteCommand } from '../features/palette/stores/paletteCommandsStore';
+
+const ContentEditor = lazy(async () => ({
+  default: (await import('../shared/edits/ContentEditor')).ContentEditor,
+}));
 
 const QuickCaptureDialog = lazy(async () => ({
   default: (await import('../features/journal/components/QuickCaptureDialog')).QuickCaptureDialog,
@@ -29,8 +32,6 @@ const QuickCaptureDialog = lazy(async () => ({
 const SynthesisProgress = lazy(async () => ({
   default: (await import('../features/journal/synthesis/SynthesisProgress')).SynthesisProgress,
 }));
-
-registerLearningAffected();
 
 /**
  * RootLayout — wraps every route. Owns the command palette, the quick-capture
@@ -41,6 +42,11 @@ export function RootLayout() {
   const navigate = useAppNavigate();
   const location = useLocation();
   const toggleEditMode = useEditMode((state) => state.toggle);
+  const editorOpen = useEditorStore((state) => state.current !== null);
+  const [editorMounted, setEditorMounted] = useState(editorOpen);
+  useEffect(() => {
+    if (editorOpen) setEditorMounted(true);
+  }, [editorOpen]);
   useStopSpeechOnChange(location.pathname);
   // Syntheses are jobs: one that finished while the app was closed shows too.
   const syntheses = useJournalSyntheses();
@@ -189,7 +195,11 @@ export function RootLayout() {
       <div className="contents" inert={isDatabaseRestoredRestartRequired || undefined}>
         <Outlet />
         <EditModeBar />
-        <ContentEditor />
+        {(editorOpen || editorMounted) && (
+          <Suspense fallback={null}>
+            <ContentEditor />
+          </Suspense>
+        )}
         {hasSynthesis && (
           <Suspense fallback={null}>
             <SynthesisProgress />

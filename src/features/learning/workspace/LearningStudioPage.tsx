@@ -9,6 +9,7 @@ import { LearningModelNotice } from '@/features/learning/curriculum/LearningMode
 import { ProgramBuilder } from '@/features/learning/curriculum/ProgramBuilder';
 import { clearProgramBuilderDraft } from '@/features/learning/curriculum/programBuilderDraft';
 import { ProgramWorkspace } from '@/features/learning/curriculum/ProgramWorkspace';
+import { registerLearningAffected } from '@/features/learning/edits/affected';
 import type { FrameworkAction } from '@/features/learning/habits';
 import { ClaimReviewScreen } from '@/features/learning/lessons/review/ClaimReviewScreen';
 import { ExportAllCourses } from '@/features/learning/portability/ExportAllCourses';
@@ -42,6 +43,8 @@ import './learningStudio.css';
 type Screen = 'programs' | 'builder' | 'import' | 'export-all';
 
 function message(error: unknown) { return error instanceof Error ? error.message : String(error); }
+
+registerLearningAffected();
 
 export function LearningStudioPage() {
   const [destination, setDestination] = useState<StudyDestination>();
