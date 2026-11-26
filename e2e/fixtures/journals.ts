@@ -16,7 +16,7 @@ export function gardenJournal(): { journal: ConversationJournalDto; page: Worksp
   const page: WorkspaceNoteDto = {
     id: 'page-tomatoes', title: 'Tomato trial', journalId: journal.id, revision: 3,
     content: 'San Marzano seedlings went out on 2 May; the cherry tomatoes followed a week later.',
-    linkedDocumentIds: [], linkedConversationIds: [], highlights: [], stickyNotes: [], conversationSnapshots: [], sources: [],
+    linkedDocumentIds: [], linkedConversationIds: [], highlights: [], stickyNotes: [], conversationSnapshots: [], sources: [], citations: [],
     createdAt: stamp, updatedAt: stamp,
   };
   return { journal, page };
@@ -53,7 +53,7 @@ export async function installJournalsFixture(page: Page) {
       const request = args.request as CreateWorkspaceNoteRequestDto;
       const created: WorkspaceNoteDto = {
         id: `page-${randomUUID()}`, title: request.title ?? 'Untitled page', journalId: request.journalId, revision: 0, content: '',
-        linkedDocumentIds: [], linkedConversationIds: [], highlights: [], stickyNotes: [], conversationSnapshots: [], sources: [],
+        linkedDocumentIds: [], linkedConversationIds: [], highlights: [], stickyNotes: [], conversationSnapshots: [], sources: [], citations: [],
         createdAt: now(), updatedAt: now(),
       };
       state.pages.push(created);

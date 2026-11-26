@@ -108,7 +108,7 @@ describe('Learning Studio grounded practice workbench', () => {
     });
     mocks.mode.mockImplementation(async (request) => { if (currentSession) { currentSession.summary.mode = request.mode; updateRevision(); } return ok(toWorkspace()); });
     mocks.openSource.mockImplementation(async () => { if (currentSession) { currentSession.assistance.push({ id: 'assist-source', kind: 'source_opened', mode: currentSession.summary.mode, artifactRevision: currentSession.artifact.revision, details: {}, createdAt: Date.now() }); updateRevision(); } return ok(toWorkspace()); });
-    mocks.tutor.mockImplementation(async (request) => { if (currentSession) { if (request.requestKind === 'hint') currentSession.assistance.push({ id: `hint-${currentSession.tutorTurns.length}`, kind: 'hint', mode: currentSession.summary.mode, artifactRevision: currentSession.artifact.revision, details: { hintLevel: request.hintLevel }, createdAt: Date.now() }); currentSession.tutorTurns.push({ id: `turn-${currentSession.tutorTurns.length + 1}`, prompt: request.prompt, response: 'Start by separating the observation from your interpretation.', requestKind: request.requestKind, hintLevel: request.hintLevel, citations: [{ sourceId: 'source-1', versionId: 'version-1', quote: 'A saved excerpt.' }], proposalIds: [], modelName: 'Study model', createdAt: Date.now() }); updateRevision(); } return ok(toWorkspace()); });
+    mocks.tutor.mockImplementation(async (request) => { if (currentSession) { if (request.requestKind === 'hint') currentSession.assistance.push({ id: `hint-${currentSession.tutorTurns.length}`, kind: 'hint', mode: currentSession.summary.mode, artifactRevision: currentSession.artifact.revision, details: { hintLevel: request.hintLevel }, createdAt: Date.now() }); currentSession.tutorTurns.push({ id: `turn-${currentSession.tutorTurns.length + 1}`, prompt: request.prompt, response: 'Start by separating the observation from your interpretation.', requestKind: request.requestKind, hintLevel: request.hintLevel, citations: [{ number: 1, sourceId: 'source-1', versionId: 'version-1', quote: 'A saved excerpt.', support: { relation: 'quotes', anchors: [{ exact: 'A saved excerpt.', span: { start: 0, end: 16 } }] } }], proposalIds: [], modelName: 'Study model', createdAt: Date.now() }); updateRevision(); } return ok(toWorkspace()); });
     mocks.reveal.mockImplementation(async () => { if (currentSession) { currentSession.revealedSolution = 'A worked explanation of the inference.'; updateRevision(); } return ok(toWorkspace()); });
     mocks.submit.mockImplementation(async () => { if (currentSession) { currentSession.summary.status = 'submitted'; currentSession.summary.submittedAt = Date.now(); currentSession.summary.gradeStatus = 'uncertain'; currentSession.result = { gradeStatus: 'uncertain', artifactRevision: currentSession.artifact.revision, artifactText: currentSession.artifact.text, rubric: currentSession.rubric, criteria: [{ criterionId: 'criterion-1', dimension: 'explanation', score: null, maxPoints: 4, observation: 'There is not enough evidence to judge the connection.', evidenceQuote: null }], evidence: [{ dimension: 'explanation', observed: false, observation: 'No complete explanation was visible.', evidenceQuote: null, assistanceKinds: [] }], modeAtSubmission: currentSession.summary.mode, assistance: currentSession.assistance, graderModel: 'Study grader', submittedAt: Date.now() }; updateRevision(); } return ok(toWorkspace()); });
     mocks.acceptProposal.mockImplementation(async () => { if (currentSession) { currentSession.proposals[0].status = 'accepted'; updateRevision(); } return ok(toWorkspace()); });
@@ -198,7 +198,23 @@ describe('Learning Studio grounded practice workbench', () => {
   it('opens exact citations in embedded guided replies and hides them without changing the response', async () => {
     const user = userEvent.setup();
     currentSession!.summary.taskKind = 'guided';
-    currentSession!.tutorTurns = [{ id: 'turn-cited', prompt: 'Check my work.', response: 'Separate the observation from the inference.', requestKind: 'critique', hintLevel: null, citations: [{ sourceId: 'source-1', versionId: 'version-1', quote: 'A saved excerpt.' }], proposalIds: [], modelName: 'Study model', createdAt: Date.now() }];
+    currentSession!.tutorTurns = [{
+      id: 'turn-cited',
+      prompt: 'Check my work.',
+      response: 'Separate the observation from the inference.',
+      requestKind: 'critique',
+      hintLevel: null,
+      citations: [{
+        number: 1,
+        sourceId: 'source-1',
+        versionId: 'version-1',
+        quote: 'A saved excerpt.',
+        support: { relation: 'quotes', anchors: [{ exact: 'A saved excerpt.', span: null }] },
+      }],
+      proposalIds: [],
+      modelName: 'Study model',
+      createdAt: Date.now(),
+    }];
     currentWorkspace.sessions = [{ ...currentSession!.summary }];
     renderWorkbench(lesson, true);
 
@@ -308,7 +324,7 @@ describe('Learning Studio grounded practice workbench', () => {
   it('enforces No help and opens only frozen versions after submission', async () => {
     const user = userEvent.setup();
     currentSession!.summary.mode = 'demonstrate';
-    currentSession!.tutorTurns = [{ id: 'turn-earlier', prompt: 'Earlier.', response: 'An earlier reply.', requestKind: 'question', hintLevel: null, citations: [{ sourceId: 'source-1', versionId: 'version-1', quote: 'A saved excerpt.' }], proposalIds: [], modelName: 'Study model', createdAt: Date.now() }];
+    currentSession!.tutorTurns = [{ id: 'turn-earlier', prompt: 'Earlier.', response: 'An earlier reply.', requestKind: 'question', hintLevel: null, citations: [{ number: 1, sourceId: 'source-1', versionId: 'version-1', quote: 'A saved excerpt.', support: { relation: 'quotes', anchors: [{ exact: 'A saved excerpt.', span: { start: 0, end: 16 } }] } }], proposalIds: [], modelName: 'Study model', createdAt: Date.now() }];
     renderWorkbench();
     expect(await screen.findByRole('textbox', { name: 'Your response' })).toBeVisible();
     expect(screen.getByRole('button', { name: /^Field notes/ })).toBeDisabled();

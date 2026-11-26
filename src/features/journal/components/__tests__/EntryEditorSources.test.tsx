@@ -8,10 +8,35 @@ import { useReaderStore } from '@/features/reading/stores/readerStore';
 
 
 vi.mock('@/components/TiptapEditor', () => ({
-  TiptapEditor: ({ onCitationClick, ariaLabel }: { onCitationClick?: (number: number, occurrence: number) => void; ariaLabel?: string }) => (
+  TiptapEditor: ({
+    onCitationClick,
+    onCitationHover,
+    onCitationLeave,
+    ariaLabel,
+  }: {
+    onCitationClick?: (number: number, occurrence: number) => void;
+    onCitationHover?: (number: number, occurrence: number, rect: DOMRect) => void;
+    onCitationLeave?: () => void;
+    ariaLabel?: string;
+  }) => (
     <>
       <div role="textbox" aria-label={ariaLabel} />
-      <button type="button" onClick={() => onCitationClick?.(2, 1)}>Inline citation [2]</button>
+      <button
+        type="button"
+        onClick={() => onCitationClick?.(2, 0)}
+        onMouseEnter={(e) => onCitationHover?.(2, 0, e.currentTarget.getBoundingClientRect())}
+        onMouseLeave={() => onCitationLeave?.()}
+      >
+        Inline citation [2]
+      </button>
+      <button
+        type="button"
+        onClick={() => onCitationClick?.(2, 1)}
+        onMouseEnter={(e) => onCitationHover?.(2, 1, e.currentTarget.getBoundingClientRect())}
+        onMouseLeave={() => onCitationLeave?.()}
+      >
+        Second inline citation [2]
+      </button>
     </>
   ),
 }));
@@ -22,9 +47,23 @@ vi.mock('@/features/journal/components/EntryHighlightsStrip', () => ({
 }));
 vi.mock('@/features/journal/components/EntryActionRail', () => ({ EntryActionRail: () => <div>Actions</div> }));
 vi.mock('@/features/reading/components/FilePreviewModal', () => ({
-  FilePreviewModal: (props: { source: { documentId: string; chunkId: string; pageNumber?: number; content: string }; citationContent?: string; occurrence?: number | null }) => (
-    <div data-testid="source-reader" data-document={props.source?.documentId} data-chunk={props.source?.chunkId} data-page={props.source?.pageNumber}
-      data-occurrence={props.occurrence ?? ''} data-content={props.citationContent} data-passage={props.source?.content} />
+  FilePreviewModal: (props: {
+    source: { documentId: string; chunkId: string; pageNumber?: number; content: string; citationId?: number; anchoredBy?: Array<{ relation: string; anchors: Array<{ exact: string }> }> };
+    citationContent?: string;
+    occurrence?: number | null;
+  }) => (
+    <div
+      data-testid="source-reader"
+      data-document={props.source?.documentId}
+      data-chunk={props.source?.chunkId}
+      data-page={props.source?.pageNumber}
+      data-citation-id={props.source?.citationId ?? ''}
+      data-relation={props.source?.anchoredBy?.[0]?.relation ?? ''}
+      data-anchor-exact={props.source?.anchoredBy?.[0]?.anchors?.[0]?.exact ?? ''}
+      data-occurrence={props.occurrence ?? ''}
+      data-content={props.citationContent}
+      data-passage={props.source?.content}
+    />
   ),
 }));
 
@@ -39,7 +78,16 @@ const source = {
   ],
 };
 
-function renderEditor(sources = [source]) {
+function renderEditor(
+  sources = [source],
+  citations = sources.map((item) => ({
+    number: item.citationId ?? 1,
+    support: {
+      relation: 'cites' as const,
+      anchors: [{ exact: item.content, span: null }],
+    },
+  })),
+) {
   return render(
     <MemoryRouter>
       <TooltipProvider>
@@ -48,7 +96,7 @@ function renderEditor(sources = [source]) {
             id: 'page-1', revision: 0, title: 'Research', journalId: 'journal-1',
             content: 'The result is clear [2]. A second claim [2].',
             linkedDocumentIds: [], linkedConversationIds: [], highlights: [], stickyNotes: [],
-            conversationSnapshots: [], sources, createdAt: '', updatedAt: '',
+            conversationSnapshots: [], sources, citations, createdAt: '', updatedAt: '',
           }}
           isLoadingNote={false} loadError={null} saveError={null} hasPendingChanges={false} isSaving={false}
           onSaveNow={vi.fn()} onUpdateNoteContent={vi.fn()} onAddHighlight={vi.fn()} onRemoveHighlight={vi.fn()}
@@ -74,7 +122,7 @@ describe('EntryEditor source citations', () => {
   });
 
   it('opens the nested cited passage from Sources and the clicked inline citation with its occurrence', () => {
-    renderEditor();
+    renderEditor([source], []);
     fireEvent.click(screen.getByRole('tab', { name: /Sources/ }));
     fireEvent.click(screen.getByRole('button', { name: /1 source/ }));
     fireEvent.click(screen.getAllByRole('button', { name: /View passage/ })[1]!);
@@ -87,6 +135,10 @@ describe('EntryEditor source citations', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Inline citation [2]' }));
     reader = screen.getByTestId('source-reader');
     expect(reader).toHaveAttribute('data-chunk', 'chunk-main');
+    expect(reader).toHaveAttribute('data-occurrence', '0');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Second inline citation [2]' }));
+    reader = screen.getByTestId('source-reader');
     expect(reader).toHaveAttribute('data-occurrence', '1');
   });
 
@@ -132,5 +184,34 @@ describe('EntryEditor source citations', () => {
     const reader = screen.getByTestId('source-reader');
     expect(reader).toHaveAttribute('data-page', '11');
     expect(reader).toHaveAttribute('data-passage', `${sharedOpening}later ending`);
+  });
+
+  it('shows CitationCard hover card for inline note citations and opens reader with backend number and cites relation across occurrences', () => {
+    renderEditor(
+      [{ ...source, citationId: 1 }],
+      [{ number: 2, support: { relation: 'cites', anchors: [{ exact: 'Main excerpt', span: null }] } }],
+    );
+
+    const first = screen.getByRole('button', { name: 'Inline citation [2]' });
+    fireEvent.mouseEnter(first);
+    const firstCard = screen.getByRole('group', { name: 'Source 2, cited (not checked) in Study.pdf' });
+    expect(firstCard).toHaveTextContent('Main excerpt');
+    expect(firstCard.textContent).not.toContain('“');
+
+    fireEvent.mouseLeave(first);
+    expect(screen.queryByRole('group', { name: 'Source 2, cited (not checked) in Study.pdf' })).not.toBeInTheDocument();
+
+    const second = screen.getByRole('button', { name: 'Second inline citation [2]' });
+    fireEvent.mouseEnter(second);
+    const secondCard = screen.getByRole('group', { name: 'Source 2, cited (not checked) in Study.pdf' });
+    expect(secondCard).toHaveTextContent('Main excerpt');
+    fireEvent.mouseLeave(second);
+
+    fireEvent.click(second);
+    const reader = screen.getByTestId('source-reader');
+    expect(reader).toHaveAttribute('data-citation-id', '2');
+    expect(reader).toHaveAttribute('data-relation', 'cites');
+    expect(reader).toHaveAttribute('data-anchor-exact', 'Main excerpt');
+    expect(reader).toHaveAttribute('data-occurrence', '');
   });
 });

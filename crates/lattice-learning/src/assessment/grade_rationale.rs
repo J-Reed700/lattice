@@ -121,6 +121,7 @@ pub fn check(
     let mut possible = 0.0;
     let mut lost_points = false;
     let mut uncertain = false;
+    let mut next_source_number = 1u32;
     for criterion in rubric {
         let Some(graded) = raw.criteria.iter().find(|g| g.criterion_id == criterion.id) else {
             return Checked::Unexplained(UNEXPLAINED.into());
@@ -163,6 +164,25 @@ pub fn check(
         uncertain |= criterion_uncertain;
         earned += points;
         possible += max;
+        let verified_quote = source_quote.filter(|_| source_ok);
+        let verified_version =
+            verified_quote.and_then(|_| reference.and_then(|r| r.version_id.map(str::to_owned)));
+        let (source_number, source_support) = match (verified_quote, verified_version.as_ref()) {
+            (Some(quote), Some(_)) => {
+                let number = next_source_number;
+                next_source_number += 1;
+                (
+                    Some(number),
+                    Some(
+                        lattice_core::application::contracts::replies::SupportDto::verify_quote(
+                            reference.map(|r| r.text),
+                            quote,
+                        ),
+                    ),
+                )
+            }
+            _ => (None, None),
+        };
         criteria.push(LearningCriterionRationaleDto {
             criterion_id: criterion.id.clone(),
             title: criterion.title.clone(),
@@ -180,16 +200,10 @@ pub fn check(
             what_was_missing: missing,
             your_words: kept,
             full_credit_includes: graded.full_credit_includes.trim().to_string(),
-            source_quote: if source_ok {
-                source_quote.map(str::to_owned)
-            } else {
-                None
-            },
-            source_version_id: if source_ok && source_quote.is_some() {
-                reference.and_then(|r| r.version_id.map(str::to_owned))
-            } else {
-                None
-            },
+            source_quote: verified_quote.map(str::to_owned),
+            source_version_id: verified_version,
+            source_number,
+            source_support,
         });
     }
     let summary = raw.summary.trim().to_string();

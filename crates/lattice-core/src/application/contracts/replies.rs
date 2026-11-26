@@ -65,6 +65,69 @@ pub struct SupportDto {
     pub anchors: Vec<AnchorDto>,
 }
 
+impl Default for SupportDto {
+    fn default() -> Self {
+        Self {
+            relation: RelationDto::Cites,
+            anchors: Vec::new(),
+        }
+    }
+}
+
+impl SupportDto {
+    /// Unchecked citation support carrying one anchor per non-empty excerpt.
+    pub fn cites<I, S>(excerpts: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let anchors = excerpts
+            .into_iter()
+            .filter_map(|excerpt| {
+                let trimmed = excerpt.as_ref().trim();
+                (!trimmed.is_empty()).then(|| AnchorDto {
+                    exact: trimmed.to_string(),
+                    span: None,
+                })
+            })
+            .collect();
+        Self {
+            relation: RelationDto::Cites,
+            anchors,
+        }
+    }
+
+    /// Check `quote` against `full_text` with `same_text`: if found, emit
+    /// `RelationDto::Quotes` with the exact UTF-8 byte span in `full_text`;
+    /// otherwise emit `RelationDto::Cites`.
+    pub fn verify_quote(full_text: Option<&str>, quote: &str) -> Self {
+        let trimmed = quote.trim();
+        if trimmed.is_empty() {
+            return Self::default();
+        }
+        if let Some((text, (start, end))) = full_text
+            .and_then(|text| crate::shared::text::same_text::find(text, trimmed).map(|s| (text, s)))
+        {
+            if let Some(exact) = text.get(start..end) {
+                return Self {
+                    relation: RelationDto::Quotes,
+                    anchors: vec![AnchorDto {
+                        exact: exact.to_string(),
+                        span: Some(ByteSpanDto { start, end }),
+                    }],
+                };
+            }
+        }
+        Self {
+            relation: RelationDto::Cites,
+            anchors: vec![AnchorDto {
+                exact: trimmed.to_string(),
+                span: None,
+            }],
+        }
+    }
+}
+
 /// A marker of a reply that resolved, as the frontend draws it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -92,4 +155,39 @@ pub enum ReplyPieceDto {
     Text { text: String },
     Reference { reference: ReplyReferenceDto },
     Quoted { text: String },
+}
+
+#[cfg(test)]
+mod support_tests {
+    use super::{ByteSpanDto, RelationDto, SupportDto};
+
+    #[test]
+    fn verify_quote_returns_quotes_with_utf8_byte_span_when_found() {
+        let full = "Intro — résumé section.\nExact words matter here.";
+        let support = SupportDto::verify_quote(Some(full), "Exact  words\nmatter");
+        assert_eq!(support.relation, RelationDto::Quotes);
+        assert_eq!(support.anchors.len(), 1);
+        assert_eq!(support.anchors[0].exact, "Exact words\nmatter");
+        let start = full.find("Exact words").unwrap();
+        let end = start + "Exact words\nmatter".len();
+        assert_eq!(support.anchors[0].span, Some(ByteSpanDto { start, end }));
+    }
+
+    #[test]
+    fn verify_quote_falls_back_to_cites_when_unmatched_or_missing_text() {
+        let missing = SupportDto::verify_quote(Some("Different text."), "Not present");
+        assert_eq!(missing.relation, RelationDto::Cites);
+        assert_eq!(missing.anchors.len(), 1);
+        assert_eq!(missing.anchors[0].exact, "Not present");
+        assert_eq!(missing.anchors[0].span, None);
+
+        let no_text = SupportDto::verify_quote(None, "Cited wording");
+        assert_eq!(no_text.relation, RelationDto::Cites);
+        assert_eq!(no_text.anchors.len(), 1);
+        assert_eq!(no_text.anchors[0].span, None);
+
+        let blank = SupportDto::verify_quote(Some("Text"), "   ");
+        assert_eq!(blank.relation, RelationDto::Cites);
+        assert!(blank.anchors.is_empty());
+    }
 }

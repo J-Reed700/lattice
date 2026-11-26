@@ -89,6 +89,6 @@ export function QuizItemReview({ item, result, index, grading, practice, sources
     {rationaleFirst && review}
     {!result?.rationale && result?.feedback && result.gradeStatus !== 'pending' && <p className="mt-3 text-sm leading-6 text-text-secondary">{result.feedback}</p>}
     {!result?.rationale && <div className="mt-3 flex flex-wrap items-center gap-1">{recall}{contestControls}{result?.gradeStatus === 'deterministic' && !practice && <ReportLink itemId={item.id} actions={actions} />}</div>}
-    <QuizSourceLine ids={item.sourceVersionIds} sources={sources} label="Source" programId={programId} ownerKey={`quiz-item:${item.id}`} />
+    <QuizSourceLine citations={item.sourceCitations} sources={sources} label="Source" programId={programId} ownerKey={`quiz-item:${item.id}`} />
   </li>;
 }

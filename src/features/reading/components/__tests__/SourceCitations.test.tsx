@@ -72,6 +72,40 @@ describe('SourceCitations', () => {
     expect(screen.getByText('paper.pdf')).toBeInTheDocument();
     expect(screen.getByText('notes.md')).toBeInTheDocument();
   });
+
+  it('renders CitationCard with relation, excerpts, and heading trail for anchored sources', async () => {
+    const text = '# Guide\n\n## Methods\n\nThe sample size was 42 participants.';
+    const exact = 'The sample size was 42 participants.';
+    const start = new TextEncoder().encode(text.slice(0, text.indexOf(exact))).length;
+    const end = start + new TextEncoder().encode(exact).length;
+    render(
+      <SourceCitations
+        sources={[
+          source({
+            citationId: 4,
+            fileName: 'Guide.md',
+            content: text,
+            excerpt: exact,
+            anchoredBy: [
+              {
+                occurrence: 0,
+                relation: 'quotes',
+                anchors: [{ exact, span: { start, end } }],
+              },
+            ],
+            anchorBase: 0,
+          }),
+        ]}
+        onViewSource={vi.fn()}
+      />,
+    );
+    await expand();
+
+    const card = screen.getByRole('group', { name: 'Source 4, quoted from Guide.md' });
+    expect(card).toHaveTextContent('Quoted from');
+    expect(card).toHaveTextContent('“The sample size was 42 participants.”');
+    expect(card).toHaveTextContent('Guide › Methods');
+  });
 });
 
 it('opens the selected passage within a shared PDF without marking search keywords', async () => {

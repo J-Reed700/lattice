@@ -46,7 +46,7 @@ export function reveal(overrides: Partial<LearningKeyRevealDto> = {}): LearningK
 export function formItem(format: LearningItemFormat, overrides: Partial<LearningAssessmentFormItemDto> = {}): LearningAssessmentFormItemDto {
   return {
     id: `item-${format}`, outcomeIds: ['outcome-1'], format, difficulty: 2, prompt: `A ${format} question`, options: [], artifactKind: null, rubric: [],
-    points: 1, sourceVersionIds: [], sourceQuote: '', previouslyExposed: false, selectedIndices: [], blankResponses: [], matches: [],
+    points: 1, sourceVersionIds: [], sourceQuote: '', sourceCitations: [], previouslyExposed: false, selectedIndices: [], blankResponses: [], matches: [],
     leftItems: [], rightItems: [], blankCount: 0, textResponse: null, orderedValues: [], artifactJson: null, responseRevision: 0, keyReveal: null, answerHint: null,
     ...overrides,
   };
@@ -62,7 +62,7 @@ export function itemResult(overrides: Partial<LearningAssessmentItemResultDto> =
 export function criterion(overrides: Partial<LearningCriterionRationaleDto> = {}): LearningCriterionRationaleDto {
   return {
     criterionId: 'accuracy', title: 'Accuracy', verdict: 'met', points: 2, maxPoints: 2, whatWasMissing: '', yourWords: [], fullCreditIncludes: '',
-    sourceQuote: null, sourceVersionId: null, ...overrides,
+    sourceQuote: null, sourceVersionId: null, sourceNumber: null, sourceSupport: null, ...overrides,
   };
 }
 

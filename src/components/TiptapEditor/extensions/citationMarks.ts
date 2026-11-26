@@ -30,6 +30,10 @@ export interface CitationMarksOptions {
   isVisible: () => boolean;
   /** Called when an editable or read-only citation chip is activated. */
   onCitationClick?: (number: number, occurrence: number) => void;
+  /** Called when the pointer enters a citation chip. */
+  onCitationHover?: (number: number, occurrence: number, rect: DOMRect) => void;
+  /** Called when the pointer leaves a citation chip. */
+  onCitationLeave?: () => void;
 }
 
 /**
@@ -51,11 +55,23 @@ export const CitationMarks = Extension.create<CitationMarksOptions>({
   name: 'citationMarks',
 
   addOptions() {
-    return { isCitation: () => false, findMarks: () => [], isVisible: () => true, onCitationClick: undefined };
+    return {
+      isCitation: () => false,
+      findMarks: () => [],
+      isVisible: () => true,
+      onCitationClick: undefined,
+      onCitationHover: undefined,
+      onCitationLeave: undefined,
+    };
   },
 
   addProseMirrorPlugins() {
-    const { isCitation, findMarks, copyText, isVisible, onCitationClick } = this.options;
+    const { isCitation, findMarks, copyText, isVisible, onCitationClick, onCitationHover, onCitationLeave } = this.options;
+    const chipOf = (target: EventTarget | null) => {
+      const el = target as Element | null;
+      return el?.closest?.<HTMLElement>('[data-cite][data-cite-at]')
+        ?? el?.parentElement?.closest<HTMLElement>('[data-cite][data-cite-at]');
+    };
     return [
       new Plugin({
         key: citationMarksKey,
@@ -78,9 +94,7 @@ export const CitationMarks = Extension.create<CitationMarksOptions>({
             },
             click(_view, event) {
               if (!isVisible() || !onCitationClick) return false;
-              const target = event.target as Element | null;
-              const chip = target?.closest?.<HTMLElement>('[data-cite][data-cite-at]')
-                ?? target?.parentElement?.closest<HTMLElement>('[data-cite][data-cite-at]');
+              const chip = chipOf(event.target);
               if (!chip) return false;
               const number = Number(chip.dataset.cite);
               const occurrence = Number(chip.dataset.citeAt);
@@ -88,6 +102,24 @@ export const CitationMarks = Extension.create<CitationMarksOptions>({
               event.preventDefault();
               onCitationClick(number, occurrence);
               return true;
+            },
+            mouseover(_view, event) {
+              if (!isVisible() || !onCitationHover) return false;
+              const chip = chipOf(event.target);
+              if (!chip) return false;
+              const number = Number(chip.dataset.cite);
+              const occurrence = Number(chip.dataset.citeAt);
+              if (!Number.isInteger(number) || !Number.isInteger(occurrence)) return false;
+              onCitationHover(number, occurrence, chip.getBoundingClientRect());
+              return false;
+            },
+            mouseout(_view, event) {
+              if (!onCitationLeave) return false;
+              const chip = chipOf(event.target);
+              if (!chip) return false;
+              if (chipOf(event.relatedTarget) === chip) return false;
+              onCitationLeave();
+              return false;
             },
           },
           decorations(state) {

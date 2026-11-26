@@ -119,7 +119,7 @@ export function quizBackend() {
       };
     };
     const blankItem = (authored: Authored, scope: LearningQuizScopeDto, repeat: boolean): LearningAssessmentFormItemDto => ({
-      outcomeIds: ["outcome-1"], difficulty: 2, options: [], artifactKind: null, rubric: [], points: 1, sourceVersionIds: [], selectedIndices: [], blankResponses: [],
+      outcomeIds: ["outcome-1"], difficulty: 2, options: [], artifactKind: null, rubric: [], points: 1, sourceVersionIds: [], sourceCitations: [], selectedIndices: [], blankResponses: [],
       matches: (authored.item.leftItems ?? []).map(() => null), leftItems: [], rightItems: [], blankCount: 0, textResponse: null, orderedValues: [], artifactJson: null,
       responseRevision: 0, keyReveal: null, sourceQuote: "", answerHint: authored.key.kind === "text" ? { numeric: false, unitHint: null } : null, ...authored.item, id: `${scopeKey(scope)}:${authored.item.id}`, previouslyExposed: repeat,
     } as LearningAssessmentFormItemDto);
@@ -174,11 +174,12 @@ export function quizBackend() {
       return {
         summary: strong ? "You said what a fixed period removes and gave a case. Full credit." : "You explained what one sample shows, but gave no concrete example, which the question asked for.",
         criteria: [
-          { criterionId: "accuracy", title: "Accuracy", verdict: "met", points: 2, maxPoints: 2, whatWasMissing: "", yourWords: words ? [words] : [], fullCreditIncludes: "", sourceQuote: null, sourceVersionId: null },
+          { criterionId: "accuracy", title: "Accuracy", verdict: "met", points: 2, maxPoints: 2, whatWasMissing: "", yourWords: words ? [words] : [], fullCreditIncludes: "", sourceQuote: null, sourceVersionId: null, sourceNumber: null, sourceSupport: null },
           strong
-            ? { criterionId: "example", title: "Example", verdict: "met", points: 2, maxPoints: 2, whatWasMissing: "", yourWords: [], fullCreditIncludes: "", sourceQuote: null, sourceVersionId: null }
+            ? { criterionId: "example", title: "Example", verdict: "met", points: 2, maxPoints: 2, whatWasMissing: "", yourWords: [], fullCreditIncludes: "", sourceQuote: null, sourceVersionId: null, sourceNumber: null, sourceSupport: null }
             : { criterionId: "example", title: "Example", verdict: "missed", points: 0, maxPoints: 2, whatWasMissing: "No example of a second sample that differs.", yourWords: [],
-              fullCreditIncludes: "Names a second place or time where the count would differ.", sourceQuote: "the limits of the sample", sourceVersionId: "source-version-field-notes-1" },
+              fullCreditIncludes: "Names a second place or time where the count would differ.", sourceQuote: "the limits of the sample", sourceVersionId: "source-version-field-notes-1",
+              sourceNumber: 1, sourceSupport: { relation: "quotes", anchors: [{ exact: "the limits of the sample", span: null }] } },
         ],
         graderModel: "Configured local model", rubricVersion: "rubric-1", gradedAt: Date.now(),
       };

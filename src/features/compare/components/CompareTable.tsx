@@ -1,4 +1,10 @@
+import { useState } from 'react';
+
+import { CitationHoverCard, type CitationHover } from '@/features/reading/components/CitationHoverCard';
 import type { CompareCellDto, CompareRowDto, CompareTableDto } from '@/types/api/compare';
+import type { SourceWithMetadata } from '@/types/conversation';
+
+import { compareCitationSource } from '../model/compareCitationSource';
 
 interface CompareTableProps {
   table: CompareTableDto;
@@ -11,6 +17,8 @@ interface CompareTableProps {
  * the sentence behind an answer is a whisper under it, not a badge beside it.
  */
 export function CompareTable({ table, onOpenCitation }: CompareTableProps) {
+  const [hoverState, setHoverState] = useState<{ hover: CitationHover; source: SourceWithMetadata } | null>(null);
+
   return (
     <div className="overflow-x-auto">
       <table className="w-full border-collapse text-sm">
@@ -50,6 +58,20 @@ export function CompareTable({ table, onOpenCitation }: CompareTableProps) {
                 // `null` is the backend's "the document does not say"; an empty
                 // string is a value the model returned and is rendered as one.
                 const hasValue = cell?.value !== null && cell?.value !== undefined;
+                const citation = cell?.citation;
+                const showHover = (target: HTMLElement) => {
+                  if (!cell || !citation) return;
+                  const source = compareCitationSource(row, cell);
+                  if (!source) return;
+                  setHoverState({
+                    hover: {
+                      number: citation.number,
+                      occurrence: 0,
+                      rect: target.getBoundingClientRect(),
+                    },
+                    source,
+                  });
+                };
                 return (
                   <td
                     key={column}
@@ -58,14 +80,20 @@ export function CompareTable({ table, onOpenCitation }: CompareTableProps) {
                     {hasValue ? (
                       <>
                         <span className="text-text-primary">{cell.value}</span>
-                        {cell.citation ? (
+                        {citation ? (
                           <button
                             type="button"
-                            onClick={() => onOpenCitation(row, cell)}
+                            onClick={() => {
+                              setHoverState(null);
+                              onOpenCitation(row, cell);
+                            }}
+                            onMouseEnter={(e) => showHover(e.currentTarget)}
+                            onMouseLeave={() => setHoverState(null)}
+                            onFocus={(e) => showHover(e.currentTarget)}
+                            onBlur={() => setHoverState(null)}
                             className="mt-1 block max-w-[34ch] truncate text-left text-xs text-text-muted transition-colors duration-fast hover:text-accent"
-                            title={cell.citation.excerpt}
                           >
-                            “{cell.citation.excerpt}”
+                            [{citation.number}] {citation.support.relation === 'quotes' ? `“${citation.excerpt}”` : citation.excerpt}
                           </button>
                         ) : null}
                       </>
@@ -79,6 +107,7 @@ export function CompareTable({ table, onOpenCitation }: CompareTableProps) {
           ))}
         </tbody>
       </table>
+      <CitationHoverCard hover={hoverState?.hover ?? null} source={hoverState?.source ?? null} />
     </div>
   );
 }

@@ -19,8 +19,13 @@ function table(overrides: Partial<CompareTableDto> = {}): CompareTableDto {
           {
             value: 'randomised controlled trial',
             citation: {
+              number: 4,
               chunkId: 'chunk_2',
               excerpt: 'We conducted a randomised controlled trial.',
+              support: {
+                relation: 'cites',
+                anchors: [{ exact: 'We conducted a randomised controlled trial.', span: null }],
+              },
             },
           },
           { value: null, citation: null },
@@ -61,13 +66,22 @@ describe('CompareTable', () => {
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 
-  it('calls onOpenCitation with the row and cell', async () => {
+  it('calls onOpenCitation with the row and cell and renders backend number without native title tooltip', async () => {
     const user = userEvent.setup();
     const onOpenCitation = vi.fn();
     const source = table();
     render(<CompareTable table={source} onOpenCitation={onOpenCitation} />);
 
-    await user.click(screen.getByRole('button'));
+    const button = screen.getByRole('button');
+    expect(button).toHaveTextContent('[4] We conducted a randomised controlled trial.');
+    expect(button).not.toHaveAttribute('title');
+
+    await user.hover(button);
+    const card = screen.getByRole('group', { name: 'Source 4, cited (not checked) in trial.pdf' });
+    expect(card).toHaveTextContent('We conducted a randomised controlled trial.');
+    expect(card.textContent).not.toContain('“');
+
+    await user.click(button);
     expect(onOpenCitation).toHaveBeenCalledWith(source.rows[0], source.rows[0].cells[0]);
   });
 

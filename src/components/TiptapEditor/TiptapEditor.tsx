@@ -29,6 +29,8 @@ export interface TiptapEditorProps {
   /** Source numbers that should turn `[n]` text into clickable citation chips. */
   citationNumbers?: readonly number[];
   onCitationClick?: (number: number, occurrence: number) => void;
+  onCitationHover?: (number: number, occurrence: number, rect: DOMRect) => void;
+  onCitationLeave?: () => void;
 }
 
 /**
@@ -46,6 +48,8 @@ export function TiptapEditor({
   selectionActions,
   citationNumbers = [],
   onCitationClick,
+  onCitationHover,
+  onCitationLeave,
 }: TiptapEditorProps) {
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
@@ -53,6 +57,10 @@ export function TiptapEditor({
   citationNumbersRef.current = citationNumbers;
   const onCitationClickRef = useRef(onCitationClick);
   onCitationClickRef.current = onCitationClick;
+  const onCitationHoverRef = useRef(onCitationHover);
+  onCitationHoverRef.current = onCitationHover;
+  const onCitationLeaveRef = useRef(onCitationLeave);
+  onCitationLeaveRef.current = onCitationLeave;
   const citationSignature = citationNumbers.join(',');
 
   // The slash extension needs its callbacks at `createExtensions` time, and
@@ -85,6 +93,8 @@ export function TiptapEditor({
         isCitation: (number) => citationNumbersRef.current.includes(number),
         findMarks: findNoteMarks,
         onCitationClick: (number, occurrence) => onCitationClickRef.current?.(number, occurrence),
+        onCitationHover: (number, occurrence, rect) => onCitationHoverRef.current?.(number, occurrence, rect),
+        onCitationLeave: () => onCitationLeaveRef.current?.(),
       }),
       Markdown.configure({
         html: false,

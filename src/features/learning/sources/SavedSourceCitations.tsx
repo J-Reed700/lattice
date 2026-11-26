@@ -9,8 +9,20 @@ import { useCitationDisplayStore } from '@/features/reading/stores/citationDispl
 import type { SourceWithMetadata } from '@/types/conversation';
 
 export interface SavedSourceCitation extends SavedSourceTarget {
+  /** Backend-assigned citation number for this citation (1-based). */
+  number: number;
   /** The source's title when the caller already has it; else the course library's. */
   title?: string | null;
+}
+
+/** Narrow backend citation DTOs with valid 1-based numbers to saved-source targets. */
+export function numberedSavedSourceCitations<
+  T extends { sourceId?: string | null; versionId: string; quote?: string | null; number?: number; support?: SavedSourceTarget['support'] },
+>(citations: readonly T[]): (T & SavedSourceCitation)[] {
+  return citations.filter(
+    (citation): citation is T & SavedSourceCitation =>
+      typeof citation.number === 'number' && citation.number > 0,
+  );
 }
 
 /**
@@ -30,17 +42,35 @@ type SavedSourceOpener =
     };
 
 /** The words a quote shows: it is Markdown from the saved text, and a reader sees it without the syntax (unless it is all syntax). */
-function shownQuote(citation: SavedSourceCitation): string {
-  const raw = citation.quote?.trim() ?? '';
-  return visibleText(raw) || raw;
+function cleanQuoteText(raw?: string | null): string {
+  const trimmed = raw?.trim() ?? '';
+  return visibleText(trimmed) || trimmed;
 }
 
-/** What a citation's chip shows before its source is opened: the title and the quoted words. */
-function chipSource(citation: SavedSourceCitation, title: string, index: number): SourceWithMetadata {
+function shownQuote(citation: SavedSourceCitation): string {
+  return cleanQuoteText(citation.quote);
+}
+
+/** What a citation's chip shows before its source is opened: the title, support relation, and quoted words. */
+function chipSource(citation: SavedSourceCitation, title: string): SourceWithMetadata {
   const quote = shownQuote(citation);
+  const support = citation.support;
+  const anchoredBy = support
+    ? [
+        {
+          occurrence: 0,
+          relation: support.relation,
+          anchors: support.anchors.map((anchor) => ({
+            ...anchor,
+            exact: cleanQuoteText(anchor.exact),
+            span: null,
+          })),
+        },
+      ]
+    : undefined;
   return {
     documentId: `course:${citation.versionId}`,
-    chunkId: `${citation.versionId}#chip-${index}`,
+    chunkId: `${citation.versionId}#cite-${citation.number}`,
     fileName: title,
     filePath: '',
     mimeType: 'text/html',
@@ -50,7 +80,9 @@ function chipSource(citation: SavedSourceCitation, title: string, index: number)
     score: 1,
     fileSizeBytes: 0,
     modifiedAt: new Date(0).toISOString(),
-    citationId: index + 1,
+    citationId: citation.number,
+    anchoredBy,
+    anchorBase: 0,
   };
 }
 
@@ -87,7 +119,7 @@ export function SavedSourceCitations({
   useReaderClosesWithOwner(ownerKey);
   const { titleOf } = reader;
   const chips = useMemo(
-    () => citations.map((citation, index) => chipSource(citation, citation.title?.trim() || titleOf(citation.versionId) || 'Saved source', index)),
+    () => citations.map((citation) => chipSource(citation, citation.title?.trim() || titleOf(citation.versionId) || 'Saved source')),
     [citations, titleOf],
   );
   if (citations.length === 0) return null;
@@ -99,7 +131,7 @@ export function SavedSourceCitations({
   };
   const chip = (index: number) => (
     <CitationFootnote
-      number={index + 1}
+      number={citations[index]!.number}
       source={chips[index]!}
       onViewFile={() => view(index)}
       disabledReason={disabledReason}
@@ -112,8 +144,8 @@ export function SavedSourceCitations({
         label={label}
         className={className}
         entries={citations.map((citation, index) => ({
-          key: `${citation.versionId}-${index}`,
-          number: index + 1,
+          key: `${citation.versionId}-${citation.number}-${index}`,
+          number: citation.number,
           source: chips[index]!,
           onView: () => view(index),
           disabledReason,
@@ -127,11 +159,14 @@ export function SavedSourceCitations({
     <ol aria-label={label} className={`${className} space-y-2`}>
       {citations.map((citation, index) => {
         const quote = shownQuote(citation);
+        const isVerbatimQuote = citation.support?.relation === 'quotes';
         return (
-          <li key={`${citation.versionId}-${index}`} className="flex items-start gap-2 text-xs leading-5">
+          <li key={`${citation.versionId}-${citation.number}-${index}`} className="flex items-start gap-2 text-xs leading-5">
             <span className="mt-px shrink-0">{chip(index)}</span>
             <span className="min-w-0">
-              {quote && <q className="italic text-text-secondary">{quote}</q>}
+              {quote && (isVerbatimQuote
+                ? <q className="italic text-text-secondary">{quote}</q>
+                : <span className="text-text-secondary">{quote}</span>)}
               <span className="text-text-muted">{quote ? ' — ' : ''}{chips[index]!.fileName}</span>
             </span>
           </li>

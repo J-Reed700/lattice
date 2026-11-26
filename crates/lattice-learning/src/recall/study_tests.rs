@@ -40,6 +40,8 @@ fn source() -> StudySourceDto {
         file_path: "/library/chapter.pdf".into(),
         excerpt: PASSAGE.into(),
         url: None,
+        citation_id: 1,
+        support: lattice_core::application::contracts::replies::SupportDto::cites([PASSAGE]),
     }
 }
 fn deck() -> StudyDeckDto {
@@ -1074,13 +1076,18 @@ fn reaction_notes(i: usize, sentences: usize) -> String {
 }
 
 fn reaction_source(i: usize, sentences: usize) -> StudySourceDto {
+    let excerpt = reaction_notes(i, sentences);
     StudySourceDto {
         chunk_id: format!("chunk-{i}"),
         document_id: format!("run-{i}"),
         file_name: format!("run-{i}.md"),
         file_path: format!("/library/run-{i}.md"),
-        excerpt: reaction_notes(i, sentences),
+        support: lattice_core::application::contracts::replies::SupportDto::cites([
+            excerpt.as_str()
+        ]),
+        excerpt,
         url: None,
+        citation_id: 1,
     }
 }
 

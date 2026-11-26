@@ -221,6 +221,10 @@ async fn malformed_or_foreign_card_saves_are_rejected_without_writing() -> Resul
                 file_path: String::new(),
                 excerpt: "William won.".into(),
                 url: None,
+                citation_id: 1,
+                support: lattice_core::application::contracts::replies::SupportDto::cites([
+                    "William won.",
+                ]),
             },
             citations: vec![],
             topic: "History".into(),

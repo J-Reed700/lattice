@@ -30,7 +30,24 @@ vi.mock('@/stores/toastStore', () => ({
 }));
 
 vi.mock('@/features/reading/components/FilePreviewModal', () => ({
-  FilePreviewModal: () => null,
+  FilePreviewModal: (props: {
+    isOpen?: boolean;
+    source?: { documentId?: string; chunkId?: string; citationId?: number; anchoredBy?: Array<{ relation: string; anchors: Array<{ exact: string }> }> } | null;
+    citations?: Array<{ citationId?: number }>;
+    citationIndex?: number;
+  }) =>
+    props.isOpen ? (
+      <div
+        data-testid="compare-preview"
+        data-doc={props.source?.documentId ?? ''}
+        data-chunk={props.source?.chunkId ?? ''}
+        data-citation-id={props.source?.citationId ?? ''}
+        data-relation={props.source?.anchoredBy?.[0]?.relation ?? ''}
+        data-anchor={props.source?.anchoredBy?.[0]?.anchors?.[0]?.exact ?? ''}
+        data-total={props.citations?.length ?? 0}
+        data-index={props.citationIndex ?? -1}
+      />
+    ) : null,
 }));
 
 const table: CompareTableDto = {
@@ -136,5 +153,52 @@ describe('ComparePage', () => {
       expect(screen.getByText(/No model is loaded\./)).toBeInTheDocument(),
     );
     expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+  });
+
+  it('opens FilePreviewModal with backend citationId, cites support, and full citations list', async () => {
+    const user = userEvent.setup();
+    compareDocuments.mockResolvedValue({
+      ok: true,
+      data: {
+        ...table,
+        rows: [
+          {
+            ...table.rows[0]!,
+            cells: [{
+              value: 'randomised controlled trial',
+              citation: {
+                number: 6,
+                chunkId: 'chunk_1',
+                excerpt: 'Participants were randomly assigned.',
+                support: { relation: 'cites', anchors: [{ exact: 'Participants were randomly assigned.', span: null }] },
+              },
+            }],
+          },
+          {
+            ...table.rows[1]!,
+            cells: [{
+              value: 'meta-analysis',
+              citation: {
+                number: 7,
+                chunkId: 'chunk_2',
+                excerpt: 'We pooled twelve prior cohorts.',
+                support: { relation: 'cites', anchors: [{ exact: 'We pooled twelve prior cohorts.', span: null }] },
+              },
+            }],
+          },
+        ],
+      },
+    });
+    renderPage('/compare?ids=doc_1,doc_2&columns=method');
+
+    await user.click(await screen.findByRole('button', { name: /\[7\] We pooled twelve prior cohorts\./ }));
+    const preview = screen.getByTestId('compare-preview');
+    expect(preview).toHaveAttribute('data-doc', 'doc_2');
+    expect(preview).toHaveAttribute('data-chunk', 'chunk_2');
+    expect(preview).toHaveAttribute('data-citation-id', '7');
+    expect(preview).toHaveAttribute('data-relation', 'cites');
+    expect(preview).toHaveAttribute('data-anchor', 'We pooled twelve prior cohorts.');
+    expect(preview).toHaveAttribute('data-total', '2');
+    expect(preview).toHaveAttribute('data-index', '1');
   });
 });

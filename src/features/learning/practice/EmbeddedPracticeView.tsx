@@ -168,7 +168,12 @@ export function EmbeddedPracticeView({
                           citation.sourceId,
                           citation.versionId,
                         );
-                        if (src) void doOpenSource(src, citation.versionId, saveNow, citation.quote);
+                        if (src) {
+                          void doOpenSource(src, citation.versionId, saveNow, citation.quote, {
+                            number: citation.number,
+                            support: citation.support,
+                          });
+                        }
                       }}
                     />
                   )}

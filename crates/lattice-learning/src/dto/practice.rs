@@ -93,6 +93,30 @@ pub struct LearningPracticeCitationDto {
     pub source_id: String,
     pub version_id: String,
     pub quote: String,
+    #[serde(default)]
+    pub number: u32,
+    #[serde(default)]
+    pub support: lattice_core::application::contracts::replies::SupportDto,
+}
+
+impl LearningPracticeCitationDto {
+    /// Assign sequential citation numbers when missing and check every quote
+    /// against its saved version text with `same_text`.
+    pub(crate) fn hydrate_list(
+        citations: &mut [Self],
+        version_texts: &std::collections::HashMap<String, String>,
+    ) {
+        use lattice_core::application::contracts::replies::SupportDto;
+        for (index, citation) in citations.iter_mut().enumerate() {
+            if citation.number == 0 {
+                citation.number = (index + 1) as u32;
+            }
+            citation.support = SupportDto::verify_quote(
+                version_texts.get(&citation.version_id).map(String::as_str),
+                &citation.quote,
+            );
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]

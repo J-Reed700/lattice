@@ -922,10 +922,18 @@ fn citations_of(
             source_id: excerpt.source.value().clone(),
             version_id: excerpt.version.value().clone(),
             quote: quote.to_owned(),
+            number: 0,
+            support: lattice_core::application::contracts::replies::SupportDto::verify_quote(
+                Some(&excerpt.text.0),
+                quote,
+            ),
         };
         if !citations.contains(&citation) {
             citations.push(citation);
         }
+    }
+    for (index, citation) in citations.iter_mut().enumerate() {
+        citation.number = (index + 1) as u32;
     }
     citations
 }

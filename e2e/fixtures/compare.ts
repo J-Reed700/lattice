@@ -28,23 +28,28 @@ function row(id: string, cells: CompareRowDto['cells'], extra: Partial<CompareRo
   return { documentId: id, title: recipe.fileName, filePath: recipe.filePath, cells, error: null, degraded: null, ...extra };
 }
 
-const cite = (id: string, excerpt: string) => ({ chunkId: `${id}-chunk-1`, excerpt });
+const cite = (number: number, id: string, excerpt: string) => ({
+  number,
+  chunkId: `${id}-chunk-1`,
+  excerpt,
+  support: { relation: 'cites' as const, anchors: [{ exact: excerpt, span: null }] },
+});
 
 /** What the model fills in for each recipe; `null` is "the document does not say". */
 const ROWS: Record<string, () => CompareRowDto> = {
   'doc-shakshuka': () => row('doc-shakshuka', [
-    { value: '25 minutes', citation: cite('doc-shakshuka', 'Ready in 25 minutes.') },
-    { value: '4', citation: cite('doc-shakshuka', 'Serves 4.') },
-    { value: 'Eggs', citation: cite('doc-shakshuka', 'Eggs are poached directly in a spiced tomato and pepper sauce.') },
+    { value: '25 minutes', citation: cite(1, 'doc-shakshuka', 'Ready in 25 minutes.') },
+    { value: '4', citation: cite(2, 'doc-shakshuka', 'Serves 4.') },
+    { value: 'Eggs', citation: cite(3, 'doc-shakshuka', 'Eggs are poached directly in a spiced tomato and pepper sauce.') },
   ]),
   'doc-dal': () => row('doc-dal', [
-    { value: '40 minutes', citation: cite('doc-dal', 'Simmer for 40 minutes until the lentils collapse.') },
+    { value: '40 minutes', citation: cite(4, 'doc-dal', 'Simmer for 40 minutes until the lentils collapse.') },
     { value: null, citation: null },
-    { value: 'Red lentils', citation: cite('doc-dal', 'Red lentils carry the dish; finish with a tarka of cumin seeds.') },
+    { value: 'Red lentils', citation: cite(5, 'doc-dal', 'Red lentils carry the dish; finish with a tarka of cumin seeds.') },
   ]),
   // The model could not finish this one: the row says why, unfilled cells stay "not stated".
   'doc-coq': () => row('doc-coq', [
-    { value: 'Overnight plus two hours', citation: cite('doc-coq', 'Marinate the chicken overnight in red wine, then braise for two hours.') },
+    { value: 'Overnight plus two hours', citation: cite(1, 'doc-coq', 'Marinate the chicken overnight in red wine, then braise for two hours.') },
     { value: null, citation: null },
     { value: null, citation: null },
   ], { error: 'Stopped after the first column: the model took too long on this document.' }),

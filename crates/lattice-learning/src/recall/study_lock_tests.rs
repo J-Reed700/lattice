@@ -7,13 +7,16 @@ use std::time::Duration;
 const HELD: Duration = Duration::from_millis(300);
 
 fn source() -> StudySourceDto {
+    let excerpt = "A petition and an appeal address different procedural issues. Study the stated conditions before selecting a procedure.";
     StudySourceDto {
         chunk_id: "chunk".into(),
         document_id: uuid::Uuid::new_v4().to_string(),
         file_name: "chapter.pdf".into(),
         file_path: "/library/chapter.pdf".into(),
-        excerpt: "A petition and an appeal address different procedural issues. Study the stated conditions before selecting a procedure.".into(),
+        excerpt: excerpt.into(),
         url: None,
+        citation_id: 1,
+        support: lattice_core::application::contracts::replies::SupportDto::cites([excerpt]),
     }
 }
 

@@ -103,20 +103,26 @@ async fn runs_on(
 
 async fn turns_on(
     connection: &mut SqliteConnection,
+    program_id: &str,
     session_id: &str,
 ) -> Result<Vec<LearningSimulationTurnDto>> {
+    let version_texts =
+        crate::references::source_library::version_texts_on(&mut *connection, program_id).await?;
     sqlx::query("SELECT * FROM learning_simulation_turns WHERE session_id=? ORDER BY ordinal")
         .bind(session_id)
         .fetch_all(&mut *connection)
         .await?
         .iter()
         .map(|turn| {
+            let mut citations: Vec<crate::dto::LearningPracticeCitationDto> =
+                decode(turn.get("citations_json"))?;
+            crate::dto::LearningPracticeCitationDto::hydrate_list(&mut citations, &version_texts);
             Ok(LearningSimulationTurnDto {
                 id: turn.get("id"),
                 ordinal: turn.get("ordinal"),
                 speaker: parse_speaker(turn.get("speaker"))?,
                 content: turn.get("content"),
-                citations: decode(turn.get("citations_json"))?,
+                citations,
                 model_name: turn.get("model_name"),
                 created_at: turn.get("created_at"),
             })
@@ -204,7 +210,7 @@ impl LearningPracticalRepository {
             events: events_on(&mut tx, session_id).await?,
             examples: examples_on(&mut tx, session_id).await?,
             runs: runs_on(&mut tx, session_id, None).await?,
-            turns: turns_on(&mut tx, session_id).await?,
+            turns: turns_on(&mut tx, program_id, session_id).await?,
             scorecard: scorecard_on(&mut tx, session_id).await?,
             debrief: debrief_on(&mut tx, session_id).await?,
             row,

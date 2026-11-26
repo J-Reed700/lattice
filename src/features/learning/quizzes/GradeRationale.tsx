@@ -5,6 +5,7 @@ import { Check, ChevronDown, CircleDot, CircleHelp, X } from 'lucide-react';
 import { points, shortDate } from '@/features/learning/quizzes/quizCopy';
 import { listNumbers, numberQuotes } from '@/features/learning/quizzes/rationaleHighlights';
 import { SavedSourceCitations } from '@/features/learning/sources/SavedSourceCitations';
+import { CitationCard } from '@/features/reading/citations';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import type { LearningCriterionRationaleDto, LearningCriterionVerdict, LearningGradeRationaleDto, LearningSourceDto } from '@/lib/bindings';
 
@@ -49,14 +50,33 @@ function CriterionRow({ criterion, quotes, sources, programId, ownerKey }: { cri
     {quotes.length > 0 && <p className="mt-1.5 text-xs text-text-secondary">Rests on {quotes.length === 1 ? 'quote' : 'quotes'} {listNumbers(quotes)}, in your words.</p>}
     {lost && criterion.whatWasMissing.trim() && <p className="mt-1.5 text-sm leading-6 text-text-secondary"><span className="font-semibold text-text-primary">What was missing: </span>{criterion.whatWasMissing}</p>}
     {lost && criterion.fullCreditIncludes.trim() && <p className="mt-1 text-sm leading-6 text-text-secondary"><span className="font-semibold text-text-primary">Full credit includes: </span>{criterion.fullCreditIncludes}</p>}
-    {showCitations && criterion.sourceQuote && programId && ownerKey && criterion.sourceVersionId ? <SavedSourceCitations
+    {showCitations && criterion.sourceQuote && programId && ownerKey && criterion.sourceVersionId && criterion.sourceNumber != null ? <SavedSourceCitations
       programId={programId}
       ownerKey={`${ownerKey}:criterion:${criterion.criterionId}`}
-      citations={[{ versionId: criterion.sourceVersionId, quote: criterion.sourceQuote, title: sources.find((source) => source.id === criterion.sourceVersionId)?.title }]}
+      citations={[{
+        number: criterion.sourceNumber,
+        versionId: criterion.sourceVersionId,
+        quote: criterion.sourceQuote,
+        support: criterion.sourceSupport,
+        title: sources.find((source) => source.id === criterion.sourceVersionId)?.title,
+      }]}
       quotes
       label="Source"
       className="mt-2"
-    /> : showCitations && criterion.sourceQuote && <blockquote className="mt-2 border-l-2 border-accent/40 pl-3 text-xs italic leading-5 text-text-muted">“{criterion.sourceQuote}” <span className="not-italic">— {sourceTitle(sources, criterion.sourceVersionId)}</span></blockquote>}
+    /> : showCitations && criterion.sourceQuote && (criterion.sourceNumber != null ? (
+      <div className="mt-2 rounded-lg border border-border/70 bg-background/60 px-3 py-2">
+        <CitationCard
+          number={criterion.sourceNumber}
+          title={sourceTitle(sources, criterion.sourceVersionId)}
+          relation={criterion.sourceSupport?.relation}
+          excerpts={
+            criterion.sourceSupport?.anchors.map((a) => a.exact).filter(Boolean).length
+              ? criterion.sourceSupport.anchors.map((a) => a.exact).filter(Boolean)
+              : [criterion.sourceQuote]
+          }
+        />
+      </div>
+    ) : <blockquote className="mt-2 border-l-2 border-accent/40 pl-3 text-xs italic leading-5 text-text-muted">“{criterion.sourceQuote}” <span className="not-italic">— {sourceTitle(sources, criterion.sourceVersionId)}</span></blockquote>)}
   </li>;
 }
 

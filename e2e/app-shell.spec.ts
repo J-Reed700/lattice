@@ -1481,7 +1481,7 @@ test('restores a 45-PDF import and updates progress as files finish', async ({ p
 
 test('creates a subject-agnostic flashcard deck in Studio, reviews, quizzes, opens sources and saves edits', async ({ page }) => {
   await mockCommands(page, settings => {
-    const source = { chunkId: 'biology-chunk', documentId: 'biology', fileName: 'biology.md', filePath: '/library/biology.md', excerpt: 'Chlorophyll absorbs the light used in photosynthesis.' };
+    const source = { chunkId: 'biology-chunk', documentId: 'biology', fileName: 'biology.md', filePath: '/library/biology.md', excerpt: 'Chlorophyll absorbs the light used in photosynthesis.', citationId: 1, support: { relation: 'cites' as const, anchors: [{ exact: 'Chlorophyll absorbs the light used in photosynthesis.', span: null }] } };
     const original = {
       id: 'biology-deck', title: 'Biology review', focus: 'photosynthesis', studyGoal: 'Biology exam', modelName: 'test-model', createdAt: Date.now(),
       cards: [
