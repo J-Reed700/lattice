@@ -10444,11 +10444,7 @@ export type RepairOutcomeDto = { outcome: "rewritten" } | { outcome: "removed" }
 /**
  * One piece of a reply, in order.
  */
-export type ReplyPieceDto = { type: "text"; text: string } | { type: "reference"; reference: ReplyReferenceDto } |
-/**
- * Words drawn as a quotation.
- */
-{ type: "quoted"; text: string }
+export type ReplyPieceDto = { type: "text"; text: string } | { type: "reference"; reference: ReplyReferenceDto } | { type: "quoted"; text: string }
 /**
  * A marker of a reply that resolved, as the frontend draws it.
  */

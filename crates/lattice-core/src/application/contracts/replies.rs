@@ -89,14 +89,7 @@ pub struct ReplyReferenceDto {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase", tag = "type")]
 pub enum ReplyPieceDto {
-    Text {
-        text: String,
-    },
-    Reference {
-        reference: ReplyReferenceDto,
-    },
-    /// Words drawn as a quotation.
-    Quoted {
-        text: String,
-    },
+    Text { text: String },
+    Reference { reference: ReplyReferenceDto },
+    Quoted { text: String },
 }
