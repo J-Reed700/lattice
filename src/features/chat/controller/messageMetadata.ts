@@ -113,6 +113,7 @@ export interface VerificationPatch {
   messageId: string;
   verification: unknown;
   turn?: unknown;
+  reply?: ConversationMessage['reply'];
 }
 
 /**
@@ -184,7 +185,11 @@ export const applyVerificationPatch = (
   }
   metadata.verification = patch.verification;
   if (patch.turn) metadata.turn = patch.turn;
-  return { ...message, metadata: JSON.stringify(metadata) };
+  return {
+    ...message,
+    metadata: JSON.stringify(metadata),
+    ...(patch.reply !== undefined ? { reply: patch.reply } : {}),
+  };
 });
 
 /** Every message still waiting on its check is marked as never having got it. */

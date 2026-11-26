@@ -11,6 +11,7 @@ import { ReferenceList } from '@/features/references/components/ReferenceList';
 import { ReferenceReader } from '@/features/references/components/ReferenceReader';
 import { useReferenceInbox } from '@/features/references/hooks/useReferenceInbox';
 import { useAppNavigate } from '@/hooks/useAppNavigate';
+import { locatorFromSource } from '@/shared/sources/passageLocator';
 import { toast } from '@/stores/toastStore';
 import type { ConversationMessageBookmarkDto } from '@/types';
 import type { PassageReferenceDto } from '@/types/api/references';
@@ -58,6 +59,7 @@ export function ReferenceInbox() {
 
   const [previewSource, setPreviewSource] = useState<SourceWithMetadata | null>(null);
   const [previewLocator, setPreviewLocator] = useState<PassageLocator | null>(null);
+  const [previewOccurrence, setPreviewOccurrence] = useState<number | null>(null);
 
   const {
     selectedItem,
@@ -193,6 +195,7 @@ export function ReferenceInbox() {
   );
 
   const openPassageSource = useCallback((passage: PassageReferenceDto) => {
+    setPreviewOccurrence(null);
     // `section` is the label the reader shows; `initialLocator` is what makes
     // it land on the saved passage rather than the top of the file.
     setPreviewLocator({
@@ -242,15 +245,13 @@ export function ReferenceInbox() {
   );
 
   const handleViewSource = useCallback(
-    (source: SourceWithMetadata) => {
+    (source: SourceWithMetadata, occurrence: number | null = null) => {
       // The preview modal is already mounted on this surface: open the file
       // rather than naming it. A control that only announces itself is a lie.
-      setPreviewLocator(
-        source.content
-          ? { text: source.content, chunkId: source.chunkId || undefined }
-          : null,
-      );
+      const locator = locatorFromSource(source, source.chunkId || undefined, occurrence);
+      setPreviewLocator(locator.text ? locator : null);
       setPreviewSource(source);
+      setPreviewOccurrence(occurrence);
     },
     [],
   );
@@ -395,9 +396,13 @@ export function ReferenceInbox() {
         onClose={() => {
           setPreviewSource(null);
           setPreviewLocator(null);
+          setPreviewOccurrence(null);
         }}
         source={previewSource}
         initialLocator={previewLocator}
+        ownerKey={selectedBookmark ? `reference:${selectedBookmark.id}` : undefined}
+        conversationId={selectedBookmark?.conversationId ?? null}
+        occurrence={previewOccurrence}
       />
     </div>
   );

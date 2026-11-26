@@ -13,7 +13,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useApi } from '@/contexts/ApiContext';
 import { fetchConversationSpaceId } from '@/features/journal/api/queries';
-import { InsightMessage } from '@/features/journal/components/InsightMessage';
+import { InsightMessage, parseInsightSources } from '@/features/journal/components/InsightMessage';
 import type { JournalEntrySummary } from '@/features/journal/hooks/useJournalEntries';
 import {
   collectEntrySources,
@@ -22,6 +22,7 @@ import {
   type JournalMessageSource,
   type JournalSourceSummary,
 } from '@/features/journal/hooks/useJournalSources';
+import { attachAnchoredOccurrences } from '@/features/reading/citations';
 import { CitationVisibilityToggle } from '@/features/reading/components/CitationVisibilityToggle';
 import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
 import {
@@ -30,7 +31,9 @@ import {
 } from '@/features/reading/model/sourceAdapter';
 import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
+import { locatorFromSource } from '@/shared/sources/passageLocator';
 import type { SnapshotMessage } from '@/types/api/dailyNotes';
+import type { SourceWithMetadata } from '@/types/conversation';
 
 
 interface EntryFromConversationProps {
@@ -78,24 +81,51 @@ export function EntryFromConversation({
     () => messages.filter((m) => m.role === 'assistant'),
     [messages],
   );
+  const richMessageSources = useMemo(
+    () =>
+      assistantMessages.flatMap((m) =>
+        attachAnchoredOccurrences(parseInsightSources(m.metadata), m.reply),
+      ),
+    [assistantMessages],
+  );
   const entrySources = useMemo(() => collectEntrySources(messages), [messages]);
   const readerTargets = useMemo(
-    () => entrySources.map((s) => fromJournalSource(s, conversationId)),
-    [entrySources, conversationId],
+    () => entrySources.map((s) => fromJournalSource(s, conversationId, richMessageSources)),
+    [entrySources, conversationId, richMessageSources],
   );
   const [previewTarget, setPreviewTarget] = useState<{
     target: ResolvedReaderTarget;
     index?: number;
+    occurrence: number | null;
+    ownerKey?: string;
   } | null>(null);
 
-  const openSource = (source: JournalMessageSource | JournalSourceSummary) => {
-    const target = fromJournalSource(source, conversationId);
+  const openSource = (
+    source: JournalMessageSource | JournalSourceSummary | SourceWithMetadata,
+    occurrence: number | null = null,
+    ownerKey?: string,
+  ) => {
+    const isRichSource = 'chunkId' in source && 'fileSizeBytes' in source;
+    const target: ResolvedReaderTarget = isRichSource
+      ? {
+          source: {
+            ...source,
+            conversationId: source.conversationId ?? conversationId,
+          },
+          locator: locatorFromSource(source, source.chunkId, occurrence),
+        }
+      : fromJournalSource(source, conversationId, richMessageSources);
     const idx = readerTargets.findIndex(
       (r) =>
         (r.source.documentId && r.source.documentId === target.source.documentId) ||
         (r.source.filePath && r.source.filePath === target.source.filePath),
     );
-    setPreviewTarget({ target, index: idx >= 0 ? idx : undefined });
+    setPreviewTarget({
+      target,
+      index: idx >= 0 ? idx : undefined,
+      occurrence,
+      ownerKey,
+    });
   };
 
   const startNewChatFromEntrySources = async () => {
@@ -294,7 +324,7 @@ export function EntryFromConversation({
                       <InsightMessage
                         key={message.id}
                         message={message}
-                        onOpenSource={(src) => void openSource(src)}
+                        onOpenSource={(src, occ) => void openSource(src, occ ?? null, `insight:${message.id}`)}
                       />
                     ))}
                   </div>
@@ -424,11 +454,14 @@ export function EntryFromConversation({
         onClose={() => setPreviewTarget(null)}
         source={previewTarget?.target.source ?? null}
         initialLocator={previewTarget?.target.locator ?? null}
+        ownerKey={previewTarget?.ownerKey}
+        conversationId={previewTarget?.target.source.conversationId ?? conversationId}
+        occurrence={previewTarget?.occurrence ?? null}
         citations={previewTarget?.index !== undefined ? readerTargets.map((r) => r.source) : undefined}
         citationIndex={previewTarget?.index}
         onCitationIndexChange={(nextIdx) => {
           const next = readerTargets[nextIdx];
-          if (next) setPreviewTarget({ target: next, index: nextIdx });
+          if (next) setPreviewTarget({ target: next, index: nextIdx, occurrence: null });
         }}
       />
     </>

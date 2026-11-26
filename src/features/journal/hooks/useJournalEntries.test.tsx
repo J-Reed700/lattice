@@ -245,3 +245,33 @@ it('asks for every entry of the journal, with no limit or offset', async () => {
   const request = vi.mocked(VaultAPI.listJournalConversations).mock.calls[0]?.[0];
   expect(request).toEqual({ journalSpaceId: 'journal-a', query: null, includeArchived: true, limit: null, offset: null });
 });
+
+it('preserves backend reply pieces on normalized journal insight messages', async () => {
+  const replyPieces = [
+    { type: 'quoted', text: 'Exact sentence.' },
+    { type: 'text', text: ' ' },
+    {
+      type: 'reference',
+      reference: {
+        written: '[s1]',
+        kind: 'source',
+        number: 1,
+        support: { relation: 'quotes', anchors: [{ exact: 'Exact sentence.' }] },
+      },
+    },
+  ];
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  vi.mocked(VaultAPI.getConversationMessages).mockResolvedValue({
+    ok: true,
+    data: {
+      total: 1,
+      messages: [
+        { id: 'm-reply', role: 'assistant', content: 'Exact sentence. [s1]', createdAt: '2026-10-08T12:00:00Z', metadata: null, reply: replyPieces },
+      ],
+    },
+  } as unknown as MessagesResult);
+  const { result } = renderBareHook(() => useJournalEntries(initial), { wrapper });
+  await waitFor(() => expect(result.current.selectedMessages[0]?.id).toBe('m-reply'));
+  expect(result.current.selectedMessages[0]?.reply).toEqual(replyPieces);
+});

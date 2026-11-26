@@ -39,4 +39,20 @@ describe('CitationHoverCard', () => {
     expect(screen.getByText('Quoted from')).toBeInTheDocument();
     expect(screen.getByText('“Leaves stay dry.”')).toBeInTheDocument();
   });
+
+  it('includes the heading trail above an anchored excerpt in web snapshot text', () => {
+    const withHeadings: SourceWithMetadata = {
+      ...source,
+      webSnapshot: {
+        url: 'https://example.org/guide',
+        title: 'The Quillet Guide',
+        text: '# The Quillet Guide\n\n## Brewing\n\nTea is hot.\n\n## Storage\n\nLeaves stay dry.',
+        fetchedAt: null,
+        truncated: false,
+      },
+    };
+    render(<CitationHoverCard hover={{ number: 2, occurrence: 2, rect }} source={withHeadings} />);
+
+    expect(screen.getByText('The Quillet Guide › Storage')).toBeInTheDocument();
+  });
 });

@@ -1,7 +1,10 @@
 //! When two pieces of text are the same words. Text is folded before it is
-//! compared: Markdown emphasis and code markers dropped, typographic quotes
-//! and dashes made plain, whitespace runs one space, case ignored, and no
-//! space at either end.
+//! compared: Markdown emphasis and code markers dropped, compatibility forms
+//! (such as ligatures) normalized, hyphenated line breaks joined, typographic
+//! quotes and dashes made plain, whitespace runs one space, case ignored, and
+//! no space at either end.
+
+use unicode_normalization::UnicodeNormalization;
 
 use crate::shared::text::segmentation::sentences;
 
@@ -22,14 +25,38 @@ fn plain(character: char) -> char {
     }
 }
 
+/// Whether `text[after_hyphen..]` begins a broken word across a line break
+/// (`\nletter` or `\r\nletter`).
+fn continues_across_linebreak(after_hyphen: &str) -> Option<usize> {
+    let (nl_len, rest) = if let Some(rest) = after_hyphen.strip_prefix("\r\n") {
+        (2, rest)
+    } else {
+        let rest = after_hyphen.strip_prefix('\n')?;
+        (1, rest)
+    };
+    let next = rest.chars().next()?;
+    next.is_alphabetic().then_some(nl_len)
+}
+
 /// `text` folded, each character with its byte span in `text`.
 pub fn folded(text: &str) -> Folded {
     let mut out: Folded = Vec::new();
     let mut gap: Option<(usize, usize)> = None;
-    for (start, character) in text.char_indices() {
+    let mut chars = text.char_indices().peekable();
+    while let Some((start, character)) = chars.next() {
         let end = start + character.len_utf8();
         if matches!(character, '*' | '_' | '`') {
             continue;
+        }
+        if character == '-'
+            && gap.is_none()
+            && out.last().is_some_and(|(prev, _, _)| prev.is_alphabetic())
+        {
+            if let Some(nl_len) = text.get(end..).and_then(continues_across_linebreak) {
+                let resume_at = end + nl_len;
+                while chars.next_if(|&(idx, _)| idx < resume_at).is_some() {}
+                continue;
+            }
         }
         if character.is_whitespace() {
             if gap.is_none() && !out.is_empty() {
@@ -37,14 +64,24 @@ pub fn folded(text: &str) -> Folded {
             }
             continue;
         }
-        if let Some((from, to)) = gap.take() {
-            out.push((' ', from, to));
+        let mut utf8 = [0u8; 4];
+        let encoded = character.encode_utf8(&mut utf8);
+        for compat in encoded.nfkc() {
+            if compat.is_whitespace() {
+                if gap.is_none() && !out.is_empty() {
+                    gap = Some((start, end));
+                }
+                continue;
+            }
+            if let Some((from, to)) = gap.take() {
+                out.push((' ', from, to));
+            }
+            out.extend(
+                plain(compat)
+                    .to_lowercase()
+                    .map(|lower| (lower, start, end)),
+            );
         }
-        out.extend(
-            plain(character)
-                .to_lowercase()
-                .map(|lower| (lower, start, end)),
-        );
     }
     out
 }

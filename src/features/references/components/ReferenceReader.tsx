@@ -1,5 +1,8 @@
+import { useMemo } from 'react';
+
 import { Bookmark } from 'lucide-react';
 
+import { attachAnchoredOccurrences } from '@/features/reading/citations';
 import { CitationVisibilityToggle } from '@/features/reading/components/CitationVisibilityToggle';
 import { SourceCitations } from '@/features/reading/components/SourceCitations';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
@@ -32,7 +35,7 @@ interface ReferenceReaderProps {
   onCapture: () => Promise<void>;
   onCopy: () => Promise<boolean>;
   onDelete: () => void;
-  onViewSource: (source: SourceWithMetadata) => void;
+  onViewSource: (source: SourceWithMetadata, occurrence?: number | null) => void;
 }
 
 /**
@@ -56,6 +59,15 @@ export function ReferenceReader({
   onViewSource,
 }: ReferenceReaderProps) {
   const showCitations = useCitationDisplayStore((state) => state.visible);
+  const enrichedSources = useMemo(
+    () => attachAnchoredOccurrences(payload?.sources ?? [], payload?.reply),
+    [payload?.sources, payload?.reply],
+  );
+  const enrichedPayload = useMemo(
+    () => (payload ? { ...payload, sources: enrichedSources } : null),
+    [payload, enrichedSources],
+  );
+
   if (!bookmark) {
     return (
       <main className="relative flex min-h-0 flex-1 flex-col overflow-y-auto bg-[hsl(var(--bg))]">
@@ -76,7 +88,7 @@ export function ReferenceReader({
     );
   }
 
-  const sources = payload?.sources ?? [];
+  const sources = enrichedSources;
   const captureLabel = resolveCaptureLabel(captureDestination);
 
   return (
@@ -94,13 +106,16 @@ export function ReferenceReader({
         </div>
         <ReferenceBody
           bookmark={bookmark}
-          payload={payload}
+          payload={enrichedPayload}
           resolutionFailed={resolutionFailed}
           onViewSource={onViewSource}
         />
         {showCitations && sources.length > 0 && (
           <div className="mt-6">
-            <SourceCitations sources={sources} onViewSource={onViewSource} />
+            <SourceCitations
+              sources={sources}
+              onViewSource={(src, occ) => onViewSource(src, occ ?? null)}
+            />
           </div>
         )}
         <ReferenceAnnotationStrip

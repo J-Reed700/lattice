@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react';
 
 import { Columns3 } from 'lucide-react';
 
+import { anchoredCardDetails, CitationCard } from '@/features/reading/citations';
 import { formatSourceLocation } from '@/shared/sources/passageLocator';
 import type { ClaimVerdict, SourceWithMetadata } from '@/types/conversation';
 import { vaultDocumentIds } from '@/utils/conversationExport';
@@ -14,6 +15,8 @@ interface EvidenceMarginProps {
   citationMap: Map<number, SourceWithMetadata>;
   /** Citation numbers to light up: the chip or sentence under the pointer. */
   activeNumbers: readonly number[];
+  /** Specific hovered/focused chip occurrence, so multi-chip sources show the active chip's support. */
+  activeOccurrence?: { number: number; occurrence: number | null } | null;
   claimVerdicts?: readonly ClaimVerdict[];
   provenanceBySource?: Map<string, string>;
   resolvedLocations?: Map<string, string>;
@@ -55,6 +58,7 @@ function claimLine(number: number, verdicts: readonly ClaimVerdict[]): { text: s
 export function EvidenceMargin({
   citationMap,
   activeNumbers,
+  activeOccurrence = null,
   claimVerdicts = [],
   provenanceBySource,
   resolvedLocations,
@@ -113,6 +117,9 @@ export function EvidenceMargin({
               .join(' · ');
             const claims = claimLine(number, claimVerdicts);
             const passage = (source.excerpt || source.content || '').trim();
+            const matchedOcc =
+              activeOccurrence && activeOccurrence.number === number ? activeOccurrence.occurrence : null;
+            const { relation, excerpts, trail } = anchoredCardDetails(source, matchedOcc);
             return (
               <li key={number}>
                 <button
@@ -127,27 +134,30 @@ export function EvidenceMargin({
                   className="evidence-note"
                   aria-label={`Open passage ${number}, ${source.fileName}`}
                 >
-                  <span className="flex items-baseline gap-2">
-                    <span className="evidence-note-number">{number}</span>
-                    <span className="min-w-0 flex-1 truncate text-ui font-medium text-text-primary">
-                      {sanitizeFileName(source.fileName)}
-                    </span>
-                  </span>
-                  {meta ? <span className="mt-0.5 block truncate pl-[26px] text-xs text-text-muted">{meta}</span> : null}
-                  {passage ? (
-                    <span className="mt-1.5 pl-[26px] font-serif text-[13px] leading-[1.55] text-text-secondary line-clamp-3">
-                      {passage}
-                    </span>
-                  ) : null}
-                  {claims ? (
-                    <span
-                      className={`mt-1.5 block pl-[26px] text-[11px] ${
-                        claims.flagged ? 'text-[hsl(var(--warning-fg))]' : 'text-text-muted'
-                      }`}
-                    >
-                      {claims.text}
-                    </span>
-                  ) : null}
+                  <CitationCard
+                    number={number}
+                    title={sanitizeFileName(source.fileName)}
+                    relation={relation}
+                    excerpts={excerpts}
+                    passage={passage}
+                    trail={trail}
+                    footer={
+                      <>
+                        {meta ? (
+                          <span className="mt-1.5 block truncate text-xs text-text-muted">{meta}</span>
+                        ) : null}
+                        {claims ? (
+                          <span
+                            className={`mt-1.5 block text-[11px] ${
+                              claims.flagged ? 'text-[hsl(var(--warning-fg))]' : 'text-text-muted'
+                            }`}
+                          >
+                            {claims.text}
+                          </span>
+                        ) : null}
+                      </>
+                    }
+                  />
                 </button>
               </li>
             );

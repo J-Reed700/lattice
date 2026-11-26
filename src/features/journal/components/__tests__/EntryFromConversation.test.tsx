@@ -1,6 +1,6 @@
 import type { ComponentProps } from 'react';
 
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -21,11 +21,21 @@ vi.mock('@/features/journal/api/queries', async (importOriginal) => ({
   fetchConversationSpaceId: vi.fn(),
 }));
 vi.mock('@/features/reading/components/FilePreviewModal', () => ({
-  FilePreviewModal: (props: { isOpen: boolean; source: { fileName: string } | null; citationIndex?: number; onClose: () => void; onCitationIndexChange: (i: number) => void }) =>
+  FilePreviewModal: (props: {
+    isOpen: boolean;
+    source: { fileName: string; anchoredBy?: { occurrence: number; relation: string }[]; webSnapshot?: { text: string } } | null;
+    occurrence?: number | null;
+    citationIndex?: number;
+    onClose: () => void;
+    onCitationIndexChange: (i: number) => void;
+  }) =>
     props.isOpen ? (
       <div role="dialog" aria-label="Source preview">
         <span>Previewing {props.source?.fileName}</span>
         <span>Citation {props.citationIndex ?? 'none'}</span>
+        <span>Occurrence {props.occurrence ?? 'none'}</span>
+        <span>Anchored {props.source?.anchoredBy?.length ?? 0}</span>
+        <span>Snapshot {props.source?.webSnapshot?.text ? 'yes' : 'no'}</span>
         <button type="button" onClick={() => props.onCitationIndexChange((props.citationIndex ?? 0) + 1)}>Next citation</button>
         <button type="button" onClick={props.onClose}>Close preview</button>
       </div>
@@ -227,5 +237,61 @@ describe('EntryFromConversation', () => {
     await user.click(screen.getByRole('button', { name: 'View sources across all entries' }));
     expect(screen.getByText(text)).toBeInTheDocument();
     expect(screen.getByText(/Scanning 1 recent entr/)).toHaveTextContent('Scanning 1 recent entry');
+  });
+
+  it('opens anchored snapshot citations from an insight chip with exact occurrence', async () => {
+    const anchoredMessages: SnapshotMessage[] = [
+      {
+        id: 'm-anchored',
+        role: 'assistant',
+        content: 'Page Marisol Quenby and quote TCK-1836 [s7].',
+        createdAt: '2026-10-20T10:01:00Z',
+        reply: [
+          { type: 'quoted', text: 'Page Marisol Quenby and quote TCK-1836' },
+          { type: 'text', text: ' ' },
+          {
+            type: 'reference',
+            reference: {
+              written: '[s7]',
+              kind: 'source',
+              number: 7,
+              support: {
+                relation: 'quotes',
+                anchors: [{ exact: 'Page Marisol Quenby and quote TCK-1836.' }],
+              },
+            },
+          },
+          { type: 'text', text: '.' },
+        ],
+        metadata: JSON.stringify({
+          sources: [
+            {
+              citationId: 7,
+              documentId: 'web:https://example.org/runbook',
+              filePath: 'https://example.org/runbook',
+              fileName: 'Escalation Guide',
+              category: 'Web article',
+              content: 'Page Marisol Quenby and quote TCK-1836.',
+              webSnapshot: {
+                url: 'https://example.org/runbook',
+                title: 'Escalation Guide',
+                text: '# Guide\n\nPage Marisol Quenby and quote TCK-1836.',
+                fetchedAt: null,
+                truncated: false,
+              },
+            },
+          ],
+        }),
+      },
+    ];
+    renderEntry({ messages: anchoredMessages, embedded: true });
+
+    const chip = await screen.findByRole('button', { name: 'Citation 7' });
+    fireEvent.click(chip);
+    const preview = await screen.findByRole('dialog', { name: 'Source preview' });
+    expect(preview).toHaveTextContent('Previewing Escalation Guide');
+    expect(preview).toHaveTextContent('Occurrence 0');
+    expect(preview).toHaveTextContent('Anchored 1');
+    expect(preview).toHaveTextContent('Snapshot yes');
   });
 });

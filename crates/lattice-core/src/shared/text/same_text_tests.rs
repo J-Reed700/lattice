@@ -136,3 +136,15 @@ fn a_long_enough_quote_that_is_not_there_is_not_found() {
     let text = "Show the folder name now, then leave.";
     assert_eq!(quotation(text, "Open the folder name now please."), None);
 }
+
+#[test]
+fn a_quotation_joins_hyphenated_line_breaks_and_normalizes_ligatures() {
+    let text =
+        "The supplier\nshall main-\ntain the \u{201C}\u{FB01}nal\u{201D} register at all sites.";
+    let (start, end) =
+        quotation(text, "The supplier shall maintain the \"final\" register").unwrap();
+    assert_eq!(
+        &text[start..end],
+        "The supplier\nshall main-\ntain the \u{201C}\u{FB01}nal\u{201D} register"
+    );
+}

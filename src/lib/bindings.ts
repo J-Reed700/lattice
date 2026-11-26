@@ -12390,7 +12390,11 @@ verification: JsonValue;
  * The turn record with its "Checking the answer" step finished, when the
  * turn kept one.
  */
-turn?: TurnRecordDto | null }
+turn?: TurnRecordDto | null;
+/**
+ * Drawn reply pieces recomputed against completed verification verdicts.
+ */
+reply?: ReplyPieceDto[] | null }
 export type VersionInfoDto = { version: string; buildDate: string | null; commitHash: string | null }
 /**
  * A user's statement that a model takes pictures, and how its encoder

@@ -20,9 +20,9 @@ mod background;
 #[cfg(test)]
 mod gate_tests;
 mod judge;
-mod lexical;
+pub(in crate::features::conversation::chat) mod lexical;
 mod marked;
-mod quotes;
+pub(in crate::features::conversation::chat) mod quotes;
 
 pub use self::background::VerificationReadyDto;
 pub(super) use self::background::{pending_metadata, BackgroundVerification};

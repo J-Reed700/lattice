@@ -148,10 +148,24 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
 
   const mimeType = source.mimeType || '';
   const sourcePreviewKind = getSourcePreviewKind(source);
-  // A source whose chips say how they use it is read from its saved text, whatever kind of text it is.
   const anchored = isAnchored(source);
   const hasDocumentId = Boolean(source.documentId && UUID_PATTERN.test(source.documentId));
-  const looksUpDocumentPath = !anchored && hasDocumentId && !isHttpUrl(source.filePath);
+  const normalizedCategory = normalizeCategory(source.category ?? '');
+  const isWebCategory =
+    normalizedCategory.includes('web article') || normalizedCategory === 'web';
+  const externalSourceUrl = getSourceExternalUrl(source);
+  const isWebDocumentId = Boolean(source.documentId?.startsWith('web:'));
+  // Only sources whose anchored text IS their full reader document (saved course versions, web
+  // articles, or sources carrying a captured snapshot) replace the file reader; vault files
+  // still load their local PDF / Markdown / text viewers with anchored rail and passage locating.
+  const anchoredTextOnly = anchored && (
+    isCourseSource(source) ||
+    isWebDocumentId ||
+    isWebCategory ||
+    sourcePreviewKind === 'external-web' ||
+    Boolean(source.webSnapshot?.text.trim())
+  );
+  const looksUpDocumentPath = !anchoredTextOnly && hasDocumentId && !isHttpUrl(source.filePath);
   const documentPathQuery = useQuery({
     queryKey: readingKeys.documentPath(source.documentId ?? ''),
     queryFn: async () => {
@@ -170,11 +184,6 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   const { article: savedArticle, deciding } = useSavedWebArticle(source, archivePath);
   const isWebArchiveArticle = savedArticle !== null;
   const isExternalWebSource = !isWebArchiveArticle && sourcePreviewKind === 'external-web';
-  const normalizedCategory = normalizeCategory(source.category ?? '');
-  const isWebCategory =
-    normalizedCategory.includes('web article') || normalizedCategory === 'web';
-  const externalSourceUrl = getSourceExternalUrl(source);
-  const isWebDocumentId = Boolean(source.documentId?.startsWith('web:'));
   // An HTML file on disk is a page to render, not a web citation to read as
   // text: the sandboxed, theme-aware HTML viewer reads and shows it.
   const isLocalHtmlFile =
@@ -183,7 +192,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     !isWebCategory &&
     !isWebDocumentId;
   const isWebSourceLike =
-    anchored ||
+    anchoredTextOnly ||
     isWebArchiveArticle ||
     isExternalWebSource ||
     isWebCategory ||
@@ -235,7 +244,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     !isLocalHtmlFile &&
     // Course material carries its own text; there is no file behind it to read.
     !isCourseSource(source) &&
-    !anchored &&
+    !anchoredTextOnly &&
     (hasDocumentId || Boolean(source.filePath && !isHttpUrl(source.filePath)));
   const shouldResolveDocumentPath = hasDocumentId && !isWebSourceLike;
   // Citation metadata can retain the path from when it was indexed. A stable

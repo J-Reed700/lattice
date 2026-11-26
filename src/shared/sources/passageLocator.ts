@@ -50,17 +50,25 @@ export function buildNeedles(text: string): string[] {
   return needles;
 }
 
-/** Build a locator from a citation payload. */
+/** Build a locator from a citation payload, narrowing to the clicked occurrence's anchored words when present. */
 export function locatorFromSource(
   source: SourceWithMetadata,
-  chunkId?: string
+  chunkId?: string,
+  occurrence: number | null = null,
 ): PassageLocator {
   const matchedExcerpt = chunkId
     ? source.chunkExcerpts?.find((chunk) => chunk.chunkId === chunkId)
     : undefined;
+  const matchedEntry =
+    occurrence !== null && occurrence !== undefined
+      ? source.anchoredBy?.find((entry) => entry.occurrence === occurrence)
+      : undefined;
+  const anchoredText = matchedEntry?.anchors
+    .map((anchor) => anchor.exact.trim())
+    .find(Boolean);
 
   const text = (!chunkId || chunkId === source.chunkId)
-    ? source.content?.trim() || source.excerpt || ''
+    ? anchoredText || source.content?.trim() || source.excerpt || ''
     : matchedExcerpt?.excerpt ?? '';
   const section = matchedExcerpt?.section ?? source.section;
 

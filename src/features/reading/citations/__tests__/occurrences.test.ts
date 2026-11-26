@@ -4,7 +4,10 @@ import type { SupportDto } from '@/lib/bindings';
 import { cites, filePiece, said } from '@/tests/replyFixtures';
 import type { ReplyPiece } from '@/utils/replyPieces';
 
-import { anchoredOccurrences } from '../occurrences';
+import type { SourceWithMetadata } from '@/types/conversation';
+
+import { anchoredOccurrences, attachAnchoredOccurrences } from '../occurrences';
+import { anchoredCardDetails } from '../source';
 
 const restates: SupportDto = { relation: 'restates', anchors: [{ exact: 'Tea is hot.', span: { start: 4, end: 15 } }] };
 const quotes: SupportDto = { relation: 'quotes', anchors: [{ exact: 'Kettles boil water.' }] };
@@ -52,5 +55,38 @@ describe('anchoredOccurrences', () => {
 
   it('has nothing for a reply without support', () => {
     expect(anchoredOccurrences([said('Plain '), cites(1)]).size).toBe(0);
+  });
+});
+
+describe('attachAnchoredOccurrences & anchoredCardDetails', () => {
+  it('attaches anchoredBy by backend citationId and computes heading trails for occurrences', () => {
+    const text = '# Guide\n\n## Details\n\nKettles boil water.';
+    const source: SourceWithMetadata = {
+      documentId: 'web:https://example.org/guide',
+      chunkId: 'c1',
+      fileName: 'Guide',
+      filePath: 'https://example.org/guide',
+      mimeType: 'text/html',
+      category: 'Web article',
+      content: 'Kettles boil water.',
+      webSnapshot: { url: 'https://example.org/guide', title: 'Guide', text, fetchedAt: null, truncated: false },
+      score: 1,
+      fileSizeBytes: 0,
+      modifiedAt: '2026-10-08T00:00:00Z',
+      citationId: 4,
+    };
+    const unreferenced: SourceWithMetadata = { ...source, chunkId: 'c2', citationId: 9 };
+
+    const enriched = attachAnchoredOccurrences([source, unreferenced], [withSupport(4, quotes)]);
+    expect(enriched[0]?.anchoredBy).toEqual([{ occurrence: 0, relation: 'quotes', anchors: quotes.anchors }]);
+    expect(enriched[1]?.anchoredBy).toBeUndefined();
+
+    expect(anchoredCardDetails(enriched[0]!, 0)).toEqual({
+      entry: { occurrence: 0, relation: 'quotes', anchors: quotes.anchors },
+      relation: 'quotes',
+      excerpts: ['Kettles boil water.'],
+      trail: ['Guide', 'Details'],
+    });
+    expect(anchoredCardDetails(enriched[0]!, 5).relation).toBeNull();
   });
 });

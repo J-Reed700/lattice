@@ -176,6 +176,27 @@ describe('messageMetadata', () => {
       expect(JSON.parse(fromNone.metadata as string)).toEqual({ verification: null });
     });
 
+    it('updates message.reply when background verification delivers recomputed pieces', () => {
+      const reply = [
+        { type: 'text', text: 'Answer ' },
+        {
+          type: 'reference',
+          reference: {
+            written: '[s1]',
+            kind: 'source',
+            number: 1,
+            support: { relation: 'backs', anchors: [{ exact: 'Evidence.' }] },
+          },
+        },
+      ] as never;
+      const [patched] = applyVerificationPatch([message('m1', { sources: [] })], {
+        messageId: 'm1',
+        verification: { enabled: true },
+        reply,
+      });
+      expect(patched.reply).toEqual(reply);
+    });
+
     it('marks checks still pending as interrupted, and leaves the rest', () => {
       const pending = message('m1', { verification: { enabled: true, pending: true } });
       const done = message('m2', { verification: { enabled: true, pending: false } });

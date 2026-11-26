@@ -23,19 +23,21 @@ import { openInFolder, revealInFolder } from '@/features/chat/model/folderThread
 import { CitationHoverCard } from '@/features/reading/components/CitationHoverCard';
 import { CitationSourcesRow } from '@/features/reading/components/CitationSourcesRow';
 import { SourceCitations } from '@/features/reading/components/SourceCitations';
+import { attachAnchoredOccurrences } from '@/features/reading/citations';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import { useReaderStore } from '@/features/reading/stores/readerStore';
 import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { useDrawnReply } from '@/shared/conversations/useDrawnReply';
 import type { DisplayMessage, SourceWithMetadata } from '@/types/conversation';
+import { withoutMarks } from '@/utils/replyPieces';
 
 const NO_SOURCES: SourceWithMetadata[] = [];
 
 /** The answer as the reader sees it, each formula as its source. */
 function readAnswer(answer: HTMLElement | null): string {
   if (!answer) return '';
-  return textWithFormulas(answer) ?? answer.innerText;
+  return withoutMarks(textWithFormulas(answer) ?? answer.innerText);
 }
 
 interface MessageProps {
@@ -143,12 +145,17 @@ export const Message = memo(({
   const canDeleteMessage = Boolean(messageId);
   const domMessageId = messageId ? `message-${messageId}` : undefined;
 
-  const sources: SourceWithMetadata[] = useMemo(() => {
+  const rawSources: SourceWithMetadata[] = useMemo(() => {
     if ('sources' in message && message.sources && message.sources.length > 0) {
       return message.sources;
     }
     return storedSources ?? NO_SOURCES;
   }, [message, storedSources]);
+
+  const sources: SourceWithMetadata[] = useMemo(
+    () => attachAnchoredOccurrences(rawSources, message.reply),
+    [rawSources, message.reply],
+  );
 
   const isAssistantWithSources = !isUser && sources.length > 0;
 
@@ -432,6 +439,7 @@ export const Message = memo(({
           <EvidenceMargin
             citationMap={citationMap}
             activeNumbers={activeEvidence}
+            activeOccurrence={citationHover ? { number: citationHover.number, occurrence: citationHover.occurrence } : null}
             claimVerdicts={claimVerdicts}
             provenanceBySource={provenanceBySource}
             resolvedLocations={resolvedLocations}
