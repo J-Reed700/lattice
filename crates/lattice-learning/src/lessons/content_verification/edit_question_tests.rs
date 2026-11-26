@@ -673,7 +673,7 @@ async fn a_true_or_false_question_keeps_its_choices_and_changes_only_its_right_a
     let course = published().await?;
     let seen = rows(&course).await?;
 
-    let saved = edit(&course, 2, vec![replace("/answer", "True")]).await?;
+    let saved = edit(&course, 2, vec![replace("/answer", 0)]).await?;
 
     assert!(saved.changed);
     let now = rows(&course).await?;
@@ -744,7 +744,7 @@ async fn each_content_refusal_gives_its_text_and_writes_nothing() -> Result<()> 
                     path: "/choices/1".into(),
                 },
             ],
-            "Choices needs at least 2.",
+            "Choices (/choices) needs at least 2.",
         ),
         (
             vec![replace("/choices/1/text", "  ")],
@@ -760,7 +760,7 @@ async fn each_content_refusal_gives_its_text_and_writes_nothing() -> Result<()> 
         ),
         (
             (4..9).map(add_choice).collect(),
-            "Choices can have at most 8.",
+            "Choices (/choices) can have at most 8.",
         ),
     ];
 

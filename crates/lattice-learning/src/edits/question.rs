@@ -130,10 +130,9 @@ pub(crate) fn document_of(stored: &StoredCandidate) -> Value {
             })
         }
         LearningItemFormat::TrueFalse => {
-            let [true_label, false_label] = TRUE_FALSE;
             let answer = match candidate.key {
-                LearningAssessmentKey::Choice(0) => true_label,
-                _ => false_label,
+                LearningAssessmentKey::Choice(0) => 0usize,
+                _ => 1usize,
             };
             json!({
                 "prompt": candidate.prompt,
@@ -278,23 +277,20 @@ pub(crate) fn composed(
                 options = Some(texts);
             }
         }
-        LearningItemFormat::TrueFalse => {
-            let [true_label, false_label] = TRUE_FALSE;
-            match document.get("answer").and_then(Value::as_str) {
-                Some(val) if val == true_label => {
-                    key = Some(LearningAssessmentKey::Choice(0));
-                }
-                Some(val) if val == false_label => {
-                    key = Some(LearningAssessmentKey::Choice(1));
-                }
-                _ => {
-                    problems.push(FieldProblem {
-                        path: Some("/answer".into()),
-                        message: NO_RIGHT.into(),
-                    });
-                }
+        LearningItemFormat::TrueFalse => match document.get("answer").and_then(Value::as_u64) {
+            Some(0) => {
+                key = Some(LearningAssessmentKey::Choice(0));
             }
-        }
+            Some(1) => {
+                key = Some(LearningAssessmentKey::Choice(1));
+            }
+            _ => {
+                problems.push(FieldProblem {
+                    path: Some("/answer".into()),
+                    message: NO_RIGHT.into(),
+                });
+            }
+        },
         _ => {}
     }
 

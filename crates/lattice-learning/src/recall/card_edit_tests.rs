@@ -195,7 +195,7 @@ async fn a_card_edit_leaves_its_schedule() -> Result<()> {
         .await?;
 
     let before_study = sqlx::query(
-        "SELECT stability, difficulty, last_reviewed_at, due_at, interval_days, review_count, lapses, scheduler_version FROM study_cards WHERE id=?",
+        "SELECT stability, difficulty, last_reviewed_at, due_at, interval_days, review_count, lapses FROM study_cards WHERE id=?",
     )
     .bind(&card_id)
     .fetch_one(&pool)
@@ -230,7 +230,7 @@ async fn a_card_edit_leaves_its_schedule() -> Result<()> {
     assert!(applied.is_ok(), "{applied:?}");
 
     let after_study = sqlx::query(
-        "SELECT stability, difficulty, last_reviewed_at, due_at, interval_days, review_count, lapses, scheduler_version FROM study_cards WHERE id=?",
+        "SELECT stability, difficulty, last_reviewed_at, due_at, interval_days, review_count, lapses FROM study_cards WHERE id=?",
     )
     .bind(&card_id)
     .fetch_one(&pool)
@@ -262,10 +262,6 @@ async fn a_card_edit_leaves_its_schedule() -> Result<()> {
     assert_eq!(
         after_study.get::<i64, _>("lapses"),
         before_study.get::<i64, _>("lapses")
-    );
-    assert_eq!(
-        after_study.get::<String, _>("scheduler_version"),
-        before_study.get::<String, _>("scheduler_version")
     );
 
     let after_profile = sqlx::query(

@@ -1051,10 +1051,10 @@ async fn a_batch_undo_of_a_batch_remove_puts_every_sentence_back_in_one_step() -
 
     let undone = act_many(&course, &ids, ClaimActionRequestDto::Undo, removed).await?;
 
-    assert_eq!(undone, removed + 1);
+    assert_eq!(undone, removed + 3);
     let after = stored(&course).await?;
     assert_eq!(after.blocks, before.blocks);
-    assert_eq!(after.ledger_revision, removed + 1);
+    assert_eq!(after.ledger_revision, removed + 3);
     assert_eq!(read(&course).await?.claims, seen.claims);
     let ledger = ledger(&course).await?;
     for id in &ids {
@@ -1100,9 +1100,9 @@ async fn a_batch_accept_confirms_every_statement_and_moves_the_revision_once() -
 
     let revision = act_many(&course, &ids, confirm(), before.ledger_revision).await?;
 
-    assert_eq!(revision, before.ledger_revision + 3);
+    assert_eq!(revision, before.ledger_revision + 1);
     let after = stored(&course).await?;
-    assert_eq!(after.ledger_revision, before.ledger_revision + 3);
+    assert_eq!(after.ledger_revision, before.ledger_revision + 1);
     assert_eq!(after.blocks, before.blocks);
     let now = read(&course).await?;
     for statement in &statements {

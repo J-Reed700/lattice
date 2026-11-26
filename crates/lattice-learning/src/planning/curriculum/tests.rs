@@ -168,13 +168,13 @@ fn a_lesson_is_added_at_any_length() -> Result<()> {
         created_at: 20,
         operations: vec![LearningCurriculumOperation::AddLesson {
             module_id: id(4),
-            after_lesson_id: None,
+            after_lesson_id: Some(id(12)),
             lesson: added,
         }],
     };
     let result = apply_curriculum_revision(&base, Some(&id(11)), request)?;
-    assert_eq!(result.revision.modules[0].lessons[0].title, title);
-    assert_eq!(result.revision.modules[0].lessons[0].objective, objective);
+    assert_eq!(result.revision.modules[0].lessons[3].title, title);
+    assert_eq!(result.revision.modules[0].lessons[3].objective, objective);
     Ok(())
 }
 

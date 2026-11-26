@@ -286,7 +286,7 @@ async fn a_true_false_answer_and_its_reason_are_stored_together() -> Result<()> 
             vec![
                 EditOp::Replace {
                     path: "/answer".into(),
-                    value: json!("True"),
+                    value: json!(0),
                 },
                 EditOp::Replace {
                     path: "/explanation".into(),
@@ -399,13 +399,20 @@ async fn a_question_equal_to_another_is_refused() -> Result<()> {
                 value: json!("How does DictReader handle spaces in column names?"),
             },
             EditOp::Replace {
-                path: "/choices".into(),
-                value: json!([
-                    { "text": "It keeps them.", "correct": true, "rationale": "" },
-                    { "text": "It trims them.", "correct": false, "rationale": "" },
-                    { "text": "It drops the column.", "correct": false, "rationale": "" },
-                    { "text": "It raises an error.", "correct": false, "rationale": "" }
-                ]),
+                path: "/choices/0/text".into(),
+                value: json!("It keeps them."),
+            },
+            EditOp::Replace {
+                path: "/choices/1/text".into(),
+                value: json!("It trims them."),
+            },
+            EditOp::Replace {
+                path: "/choices/2/text".into(),
+                value: json!("It drops the column."),
+            },
+            EditOp::Replace {
+                path: "/choices/3/text".into(),
+                value: json!("It raises an error."),
             },
         ],
     );

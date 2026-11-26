@@ -6068,15 +6068,45 @@ export type ConfirmArchiveSetupRequestDto = { confirmations: WordConfirmationDto
  * Optional second unlock path. At least 8 characters when present.
  */
 passphrase?: string | null }
+/**
+ * Derived-data consequence surfaced on preview and save outcomes.
+ */
 export type Consequence = { code: string; message: string; related: RelatedContent[] }
+/**
+ * Points to an entity, an optional field inside its document, and an optional text fragment.
+ */
 export type ContentAddress = { content: ContentRef; path: string | null; fragment: TextSelector | null }
+/**
+ * Full revision-ordered history for one content entity.
+ */
 export type ContentEditHistory = { content: ContentRef; revision: string; edits: ContentEditRecord[] }
+/**
+ * Result returned after `apply_content_edit` or `revert_content_edit`.
+ */
 export type ContentEditOutcome = { editId: string; changed: boolean; content: ContentRef; scope: EditScope; revision: string; affected: string[]; consequences: Consequence[]; reverted: string[] }
+/**
+ * Dry-run output from `preview_content_edit`.
+ */
 export type ContentEditPreview = { current: boolean; changed: boolean; problems: FieldProblem[]; notices: FieldNotice[]; consequences: Consequence[] }
+/**
+ * Filter parameters for `list_content_edits`.
+ */
 export type ContentEditQuery = { scope: EditScope | null; contents: ContentRef[]; since: number | null }
+/**
+ * One edit log row returned in `ContentEditHistory`.
+ */
 export type ContentEditRecord = { id: string; seq: number; origin: EditOrigin; target: ContentAddress | null; changes: FieldChange[]; createdAt: number; revertsEditId: string | null; revertedBy: string | null; standing: boolean; revertible: boolean; later: number }
+/**
+ * Request payload for `preview_content_edit` and `apply_content_edit`.
+ */
 export type ContentEditRequest = { editId: string; content: ContentRef; expectedRevision: string; ops: EditOp[]; source: EditSource; target: ContentAddress | null }
+/**
+ * Compact summary row returned by `list_content_edits`.
+ */
 export type ContentEditSummary = { id: string; content: ContentRef; seq: number; origin: EditOrigin; paths: string[]; createdAt: number; revertsEditId: string | null }
+/**
+ * Identifies one editable entity by its registered kind and feature-owned key.
+ */
 export type ContentRef = { kind: string; key: string }
 export type ContestLearningQuizGradeRequestDto = { operationId: string; programId: string; formId: string; itemId: string;
 /**
@@ -6760,11 +6790,29 @@ export type DueItemDto = { kind: DueKind;
 label: string; count: number; dueAt: number; lessonId: string | null; material: string | null }
 export type DueKind = "coding_patterns" | "drill_lesson" | "drill_patterns"
 export type EditCoursePlanEntryRequestDto = { programId: string; outlineRevision: number; expectedEntryRevision: number; topics: PlannedLesson }
+/**
+ * A single patch operation against a loaded document.
+ */
 export type EditOp = { op: "replace"; path: string; value: JsonValue } | { op: "add"; path: string; value: JsonValue } | { op: "remove"; path: string }
+/**
+ * Recorded origin of an edit row, including pipeline reverts.
+ */
 export type EditOrigin = { type: "learner" } | { type: "proposal"; proposalId: string; model: string } | { type: "action"; name: string } | { type: "revert"; editId: string }
+/**
+ * Names the container an edit belongs to, used to filter history and invalidate frontend queries.
+ */
 export type EditScope = { feature: string; container: string }
+/**
+ * Where a caller-initiated edit request comes from.
+ */
 export type EditSource = { type: "learner" } | { type: "proposal"; proposalId: string; model: string } | { type: "action"; name: string }
+/**
+ * Whether an entity may currently be edited or must wait.
+ */
 export type Editability = { state: "editable" } | { state: "not_now"; reason: string }
+/**
+ * Loaded entity returned by `open_content_edit`.
+ */
 export type EditableContent = { content: ContentRef; label: string; scope: EditScope; editable: Editability; form: FieldSpec[]; document: JsonValue; revision: string; notes: string[]; editedPaths: string[] }
 /**
  * Frontend mirror of `EmbeddingCompatibility`.
@@ -7183,9 +7231,21 @@ export type FailedLearningPackExportDto = { programId: string; title: string; er
  * Favorite document with metadata
  */
 export type FavoriteDocument = { id: string; document_id: string; document_name: string; document_path: string; file_type: string | null; added_at: string }
+/**
+ * One changed field entry shown in an entity's edit history.
+ */
 export type FieldChange = { path: string; before: JsonValue | null; after: JsonValue | null }
+/**
+ * Non-blocking Markdown structure notice on a field.
+ */
 export type FieldNotice = { path: string; code: string; message: string; line: number | null }
+/**
+ * Validation problem on a field or the whole document.
+ */
 export type FieldProblem = { path: string | null; message: string }
+/**
+ * Describes one field in an entity's schema-driven editor form.
+ */
 export type FieldSpec = { type: "text"; path: string; label: string; format: TextFormat; required: boolean } | { type: "flag"; path: string; label: string; exclusive: boolean } | { type: "choice"; path: string; label: string; options: string[] } | { type: "number"; path: string; label: string; min: number; unit: string } | { type: "list"; path: string; label: string; itemLabel: string; minItems: number; maxItems: number | null; item: FieldSpec[] }
 /**
  * One entry of a file dialog's type list: a name and the extensions it shows.
@@ -10241,6 +10301,9 @@ total_functions: number;
  */
 call_counts: { [key in string]: number } }
 export type ReimportLearningSourceRequestDto = { operationId: string; programId: string; sourceId: string; versionId: string; expectedRevision: number; replacementText: string | null }
+/**
+ * Another piece of content related to a reactor consequence.
+ */
 export type RelatedContent = { content: ContentRef; label: string }
 /**
  * Whether each remote server has an authentication header value stored.
@@ -10687,6 +10750,9 @@ export type RevealedSourceDto = { title: string; text: string;
  * The version of the source the passage is the exact text of.
  */
 versionId: string }
+/**
+ * Request payload for `revert_content_edit`.
+ */
 export type RevertContentEditRequest = { revertId: string; editId: string; expectedRevision: string; andLater: boolean }
 export type ReviewLearningRecallCardRequestDto = { reviewId: string; programId: string; cardId: string; expectedReviewCount: number; rating: StudyRating; selectedOption: number | null }
 /**
@@ -11811,7 +11877,13 @@ export type TestCustomToolResponse = { finalUrl: string; status: number; content
 export type TestLlamaCppConnectionRequest = { url: string; model?: string; authHeaderName?: string; authHeaderValue?: string }
 export type TestOllamaConnectionRequest = { ollamaUrl: string; authHeaderName?: string; authHeaderValue?: string }
 export type TestOllamaConnectionResponse = { endpoint: string; models: string[] }
+/**
+ * Display and normalization mode for a text field.
+ */
 export type TextFormat = "line" | "plain" | "markdown"
+/**
+ * A W3C-shaped quote selector refined by UTF-8 byte offsets into a field's value.
+ */
 export type TextSelector = { exact: string; prefix: string | null; suffix: string | null; startByte: number; endByte: number }
 /**
  * Whether the model thinks, overriding the rule for its model.

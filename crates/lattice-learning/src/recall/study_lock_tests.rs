@@ -110,7 +110,7 @@ async fn editing_a_card_waits_for_a_writer_between_its_read_and_its_write() {
                 },
                 EditOp::Replace {
                     path: "/choices/0/text".into(),
-                    value: serde_json::json!("The stated conditions"),
+                    value: serde_json::json!("The procedural sequence"),
                 },
                 EditOp::Replace {
                     path: "/explanation".into(),
