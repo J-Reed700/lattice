@@ -25,8 +25,8 @@ pub fn register(registry: &mut EditRegistry, database: &Database) -> Result<()> 
     lesson::register(registry)?;
     module::register(registry)?;
     card::register(registry)?;
-    crate::lessons::claim_reviews::edit_reactor::register(registry, database)?;
     quiz_bank::register(registry)?;
+    crate::lessons::claim_reviews::edit_reactor::register(registry, database)?;
     outline::register(registry)?;
     duplicates::register(registry)?;
     Ok(())

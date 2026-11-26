@@ -38,19 +38,19 @@ mod tests;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct FindingTrust {
-    pub(super) profile: ClaimProfile,
-    pub(super) supports: Vec<Support>,
+    pub(in crate::lessons::content_verification) profile: ClaimProfile,
+    pub(in crate::lessons::content_verification) supports: Vec<Support>,
     /// Contrary passages for the same claim, levelled the same way: what one
     /// reading of the claim found saying otherwise when another supported it
     /// (course evidence index §5.1). The overturn rule weighs them against the
     /// supports.
     #[serde(default)]
-    pub(super) contrary: Vec<Contrary>,
-    pub(super) decision: Decision,
+    pub(in crate::lessons::content_verification) contrary: Vec<Contrary>,
+    pub(in crate::lessons::content_verification) decision: Decision,
     /// What the course has on the claim's subject, when the standing reach
     /// weighed the claim (claim sources design §6.1, §7.4).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) available: Option<Available>,
+    pub(in crate::lessons::content_verification) available: Option<Available>,
 }
 
 impl FindingTrust {

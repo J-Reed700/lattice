@@ -348,6 +348,17 @@ pub(super) async fn append_in(
     Ok(ordinal)
 }
 
+#[cfg(test)]
+pub(crate) async fn append_for_test_in(
+    tx: &mut WriteTx,
+    lesson_id: &str,
+    claim_id: &ClaimId,
+    provenance: EventProvenance,
+    event: ClaimEvent,
+) -> Result<()> {
+    append_in(tx, lesson_id, claim_id, provenance, event).await
+}
+
 pub(crate) async fn load_in(connection: &mut SqliteConnection, lesson_id: &str) -> Result<Ledger> {
     let review = sqlx::query("SELECT program_id,job_id,state,revision,draft_sha256,checker_model,stop_reason_json FROM learning_lesson_reviews WHERE lesson_id=?")
         .bind(lesson_id)

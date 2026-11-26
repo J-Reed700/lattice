@@ -300,6 +300,7 @@ async fn write_check(
             .await?;
         }
     }
+    crate::assessment_repository::sync_disputed_questions_in(&mut tx, lesson_id).await?;
     tx.commit().await?;
     Ok(moved)
 }

@@ -67,6 +67,7 @@ mod readings;
 mod resolution;
 #[cfg(any(test, feature = "test-support"))]
 pub use inventory::revisions::live_revision_fixture;
+pub(crate) use resolution::is_claim_active_unverified;
 #[cfg(any(test, feature = "test-support"))]
 pub async fn live_inventory_fixture(llm: &dyn LLMPort, content: &[Value]) -> Result<Value> {
     let db = lattice_core::shared::persistence::Database::new(crate::test_support::pool().await?);
@@ -435,6 +436,45 @@ pub struct LessonVerificationReport {
     /// their place, so an Undo brings them back.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     replaced_findings: Vec<report::ReplacedFindings>,
+}
+
+fn finding_is_unverified(finding: &Finding) -> bool {
+    matches!(
+        finding.resolution,
+        Some(resolution::Resolution::Unverified { .. })
+    ) || (finding.verdict != ClaimVerdict::Supported && finding.resolution.is_none())
+}
+
+/// Unverified or unsettled finding quotes keyed by block ordinal (`unit < block_count`).
+pub(crate) fn report_unverified_block_quotes(
+    report: &LessonVerificationReport,
+    block_count: usize,
+) -> std::collections::HashMap<usize, Vec<&str>> {
+    let mut by_block: std::collections::HashMap<usize, Vec<&str>> =
+        std::collections::HashMap::new();
+    for finding in &report.findings {
+        if finding.unit < block_count && finding_is_unverified(finding) {
+            by_block
+                .entry(finding.unit)
+                .or_default()
+                .push(&finding.quote);
+        }
+    }
+    by_block
+}
+
+/// Seeded question indices (`0..questions.len()`) carrying an unverified or
+/// unsettled finding in `report`.
+pub(crate) fn report_unverified_question_indices(
+    report: &LessonVerificationReport,
+    block_count: usize,
+) -> HashSet<usize> {
+    report
+        .findings
+        .iter()
+        .filter(|finding| finding.unit >= block_count && finding_is_unverified(finding))
+        .map(|finding| finding.unit - block_count)
+        .collect()
 }
 
 fn units(candidate: &Value) -> Result<Vec<Value>> {

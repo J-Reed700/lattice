@@ -1324,3 +1324,18 @@ fn a_rendered_lesson_meets_the_writers_schema() {
         "Water boils."
     );
 }
+
+#[test]
+fn lesson_writer_prompts_forbid_inventing_company_internals_and_quiz_meta_talk() {
+    let reqs = writer_requirements();
+    let system = lesson_system_with(writer_grounding());
+    assert!(
+        reqs.contains("real external company or organisation"),
+        "{reqs}"
+    );
+    assert!(reqs.contains("meta-talk"), "{reqs}");
+    assert!(
+        system.contains("neutral scenario entities rather than a real company"),
+        "{system}"
+    );
+}

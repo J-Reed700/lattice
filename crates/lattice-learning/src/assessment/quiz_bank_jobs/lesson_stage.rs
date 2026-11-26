@@ -51,12 +51,68 @@ pub(crate) fn lesson_seed_items(
     questions: &[LessonQuestion],
     keys: &[LessonAnswerKey],
 ) -> Vec<BankItem> {
+    lesson_seed_items_with_unverified(
+        lesson_id,
+        outcome_id,
+        questions,
+        keys,
+        &std::collections::HashSet::new(),
+    )
+}
+
+/// [`lesson_seed_items`] for a prepared lesson: any question whose unit
+/// carries an unverified/`no_source` claim is stored in place as `disputed`
+/// instead of `agreed`, keeping it out of quiz banks until verified or fixed.
+pub(crate) fn lesson_seed_items_verified(
+    lesson_id: &str,
+    outcome_id: &str,
+    prepared: &crate::dto::PreparedLearningLesson,
+) -> Vec<BankItem> {
+    let unverified =
+        prepared
+            .verification
+            .as_ref()
+            .map_or_else(std::collections::HashSet::new, |report| {
+                crate::assessment_repository::unverified_question_indices(
+                    prepared.blocks.len(),
+                    report,
+                )
+            });
+    lesson_seed_items_with_unverified(
+        lesson_id,
+        outcome_id,
+        &prepared.questions,
+        &prepared.keys,
+        &unverified,
+    )
+}
+
+fn lesson_seed_items_with_unverified(
+    lesson_id: &str,
+    outcome_id: &str,
+    questions: &[LessonQuestion],
+    keys: &[LessonAnswerKey],
+    unverified_indices: &std::collections::HashSet<usize>,
+) -> Vec<BankItem> {
     questions
         .iter()
-        .filter_map(|q| {
+        .enumerate()
+        .filter_map(|(index, q)| {
             let key = keys.iter().find(|k| k.question_id == q.id)?;
             let candidate = lesson_question_item(q, key, vec![outcome_id.to_string()]);
             let review_status = match engine::validate_candidate(&candidate) {
+                Ok(()) if unverified_indices.contains(&index) => {
+                    tracing::info!(question = %q.id, "An unverified lesson question was kept out of the quiz bank's draws");
+                    crate::lessons::trace::lesson_span(lesson_id).in_scope(|| {
+                        crate::lessons::trace::decided(
+                            crate::lessons::trace::Stage::Quiz,
+                            &format!("question {}", q.prompt),
+                            "kept out of the bank's draws",
+                            "Question relies on unverified or no-source claims.",
+                        );
+                    });
+                    "disputed"
+                }
                 Ok(()) => "agreed",
                 Err(error) => {
                     tracing::info!(question = %q.id, %error, "A lesson question was kept out of the quiz bank's draws");

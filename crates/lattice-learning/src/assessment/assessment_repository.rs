@@ -14,11 +14,13 @@ mod forms;
 mod overview;
 mod recall;
 mod submission;
+mod unverified;
 
 pub use bank::BankItem;
 pub(crate) use bank::{content_hash, insert_bank_items_in, quoted_questions_in};
 pub use contests::{ContestInput, Regrade};
 pub use submission::ItemGrade;
+pub(crate) use unverified::{sync_disputed_questions_in, unverified_question_indices};
 
 const STALE_EVIDENCE_MS: i64 = 90 * 24 * 60 * 60 * 1000;
 

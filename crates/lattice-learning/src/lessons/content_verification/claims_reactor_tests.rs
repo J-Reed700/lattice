@@ -645,3 +645,127 @@ async fn a_statement_carries_the_address_of_its_sentence() -> Result<()> {
     assert!(fragment.holds(&body));
     Ok(())
 }
+
+#[tokio::test]
+async fn editing_a_disputed_question_syncs_its_bank_status_across_partial_edits_and_revert(
+) -> Result<()> {
+    use lattice_core::domain::learning::claim_review::ReopenCause;
+    use lattice_core::shared::edits::RevertContentEditRequest;
+
+    let course = unchecked().await?;
+    let prompt = "How does DictReader handle spaces?";
+    let expl = "Header names keep spaces intact.";
+    let question_id = insert_question(
+        &course,
+        Some(&course.lesson_id),
+        "lesson",
+        prompt,
+        expl,
+    )
+    .await?;
+    let store = ClaimReviewRepository::new(course.db.clone());
+    let claim_prompt = ClaimId(Uuid::new_v4().to_string());
+    let claim_expl = ClaimId(Uuid::new_v4().to_string());
+    let prov = EventProvenance {
+        actor: Actor::Machine,
+        at: 1,
+        job_id: None,
+        app_version: "test".into(),
+        checker_model: Some("fixture".into()),
+    };
+    let mut rev = ledger(&course).await?.revision;
+    for (id, field, stmt) in [
+        (&claim_prompt, "prompt", prompt),
+        (&claim_expl, "explanation", expl),
+    ] {
+        rev = store
+            .append(
+                &course.lesson_id,
+                id,
+                prov.clone(),
+                ClaimEvent::Extracted {
+                    location: ClaimLocation::locate(2, UnitKind::AnswerKey, field, stmt, stmt),
+                    statement: stmt.into(),
+                },
+                rev,
+            )
+            .await?;
+        rev = store
+            .append(
+                &course.lesson_id,
+                id,
+                prov.clone(),
+                ClaimEvent::Confirmed {
+                    evidence: Default::default(),
+                },
+                rev,
+            )
+            .await?;
+        rev = store
+            .append(
+                &course.lesson_id,
+                id,
+                prov.clone(),
+                ClaimEvent::Reopened {
+                    cause: ReopenCause::SourceDeleted("v-src".into()),
+                },
+                rev,
+            )
+            .await?;
+    }
+    let mut tx = course.db.begin_write().await?;
+    crate::assessment_repository::sync_disputed_questions_in(&mut tx, &course.lesson_id).await?;
+    tx.commit().await?;
+    let initial_status: String =
+        sqlx::query_scalar("SELECT review_status FROM learning_assessment_candidates WHERE id=?")
+            .bind(&question_id)
+            .fetch_one(&course.pool)
+            .await?;
+    assert_eq!(initial_status, "disputed");
+
+    // Replacing only prompt leaves explanation claim reopened -> question remains disputed.
+    apply_edit(
+        &course,
+        keys::question_ref(&question_id),
+        vec![replace("/prompt", "What happens to whitespace in DictReader headers?")],
+    )
+    .await?;
+    let partial_status: String =
+        sqlx::query_scalar("SELECT review_status FROM learning_assessment_candidates WHERE id=?")
+            .bind(&question_id)
+            .fetch_one(&course.pool)
+            .await?;
+    assert_eq!(partial_status, "disputed");
+
+    // Replacing explanation resolves the last unverified claim -> question agrees again.
+    let second = apply_edit(
+        &course,
+        keys::question_ref(&question_id),
+        vec![replace("/explanation", "DictReader keeps header spaces verbatim.")],
+    )
+    .await?;
+    let agreed_status: String =
+        sqlx::query_scalar("SELECT review_status FROM learning_assessment_candidates WHERE id=?")
+            .bind(&question_id)
+            .fetch_one(&course.pool)
+            .await?;
+    assert_eq!(agreed_status, "agreed");
+
+    // Reverting the second edit reopens the explanation claim -> question returns to disputed.
+    course
+        .edits()
+        .revert(&RevertContentEditRequest {
+            revert_id: Uuid::new_v4().to_string(),
+            edit_id: second.edit_id,
+            expected_revision: second.revision,
+            and_later: false,
+        })
+        .await?;
+    let reverted_status: String =
+        sqlx::query_scalar("SELECT review_status FROM learning_assessment_candidates WHERE id=?")
+            .bind(&question_id)
+            .fetch_one(&course.pool)
+            .await?;
+    assert_eq!(reverted_status, "disputed");
+    Ok(())
+}

@@ -402,3 +402,20 @@ fn a_lesson_count_is_a_request_the_stored_outline_does_not_refuse() {
     let raw = outline(2, 9).0;
     assert!(decode_outline(&raw, &request(), &[]).is_ok());
 }
+
+#[test]
+fn the_outline_prompt_requires_honest_framing_when_naming_an_external_company() {
+    let model = ScriptedModel::new();
+    let input = describe(&model);
+    let mut scope = Scope::for_question();
+    let says = <super::describe::OutlineDescription as lattice_core::application::services::model_contract::ask::Answered>::says(
+        &input,
+        &mut scope.request(),
+    )
+    .unwrap();
+    assert!(
+        says.task.contains("real company or organisation"),
+        "{}",
+        says.task
+    );
+}

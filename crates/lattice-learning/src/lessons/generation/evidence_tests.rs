@@ -560,6 +560,10 @@ async fn an_unjudged_topic_is_not_researched_on_a_guess() -> Result<()> {
     let prompts = llm.prompts.lock().unwrap();
     let planner = &prompts[3];
     assert!(planner.contains("Random assignment"));
+    assert!(
+        planner.contains("random assignment confounding"),
+        "{planner}"
+    );
     assert!(!planner.contains("Allocation concealment"));
     Ok(())
 }

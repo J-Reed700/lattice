@@ -1817,3 +1817,224 @@ async fn a_claim_research_round_records_what_it_cost_a_claim_on_each_researched_
     }
     Ok(())
 }
+
+#[tokio::test]
+async fn expand_forwards_trust_gap_metadata_and_falls_back_to_alternatives() -> Result<()> {
+    use lattice_core::domain::provenance::{
+        AddedBy, Bar, ClaimKind, ClaimProfile, ClaimSubject, ClusterId, Decision, Missing,
+        NextStep, PassageKind, SourceDates, SubjectKind, Support, TemporalScope, Trust, TrustLevel,
+    };
+
+    struct FallbackWeb {
+        base: MockWebService,
+        queries: Mutex<Vec<(String, Option<String>, Option<String>, Option<String>)>>,
+    }
+
+    #[async_trait::async_trait]
+    impl WebServiceTrait for FallbackWeb {
+        async fn search_web(&self, input: &WebSearchInput) -> Result<WebSearchOutput> {
+            self.queries.lock().unwrap().push((
+                input.query.clone(),
+                input.kind.clone(),
+                input.identifier.clone(),
+                input.ecosystem.clone(),
+            ));
+            let results = if input.query.contains("RFC 7523")
+                && input.kind.as_deref() == Some("web")
+            {
+                vec![
+                    WebSearchResult {
+                        title: "Existing blog mirror".into(),
+                        url: "https://mirror.example.com/jwt".into(),
+                        snippet: "mirror".into(),
+                        published_date: None,
+                        source: None,
+                    },
+                    WebSearchResult {
+                        title: "IETF RFC 7523".into(),
+                        url: "https://www.rfc-editor.org/rfc/rfc7523.html".into(),
+                        snippet: "JWT profile".into(),
+                        published_date: None,
+                        source: None,
+                    },
+                ]
+            } else {
+                Vec::new()
+            };
+            Ok(WebSearchOutput {
+                query: input.query.clone(),
+                results,
+                result_count: 0,
+                total_results: 0,
+                page: input.page,
+                offset: 0,
+                has_more: false,
+                providers_used: Vec::new(),
+                unique_query_count: 1,
+                unique_url_count: 0,
+                unique_domain_count: 0,
+                followup_queries: Vec::new(),
+                outcomes: Vec::new(),
+                owner: None,
+            })
+        }
+        async fn fetch_reference_content(&self, url: &str) -> Result<FetchUrlContentOutput> {
+            self.base.fetch_url_content(url).await
+        }
+        async fn fetch_url_content(&self, _: &str) -> Result<FetchUrlContentOutput> {
+            panic!("use full captures")
+        }
+        fn validate_url(&self, url: &str) -> Result<()> {
+            self.base.validate_url(url)
+        }
+    }
+
+    let pool = crate::tests::pool().await?;
+    let db = Database::new(pool);
+    let repo = LearningRepository::new(db.clone());
+    let mut program = crate::tests::fixture();
+    program.summary.status = crate::dto::LearningProgramStatus::Active;
+    program.sources = vec![LearningSourceDto {
+        id: "src-mirror".into(),
+        title: "Blog summary".into(),
+        url: Some("https://mirror.example.com/jwt".into()),
+        excerpt: "Client assertions are short-lived.".into(),
+        acquired_at: 1,
+    }];
+    repo.create(&program).await?;
+    let sources = repo.verification_sources(&program.summary.id).await?;
+    let references = ReferenceCollection::lexical(&sources)?;
+
+    let rfc_url = "https://www.rfc-editor.org/rfc/rfc7523.html";
+    let web = Arc::new(FallbackWeb {
+        base: MockWebService::new(),
+        queries: Mutex::new(Vec::new()),
+    });
+    web.base.set_url_content(
+        rfc_url,
+        FetchUrlContentOutput {
+            url: rfc_url.into(),
+            title: Some("RFC 7523".into()),
+            content: CAPTURE.into(),
+            content_truncated: false,
+            word_count: 120,
+            fetch_time_ms: 1.0,
+            content_type: None,
+            from_cache: false,
+            read_via: Default::default(),
+        },
+    );
+
+    let mut finding = gap();
+    finding.trust = Some(Box::new(
+        crate::lessons::content_verification::provenance_gate::FindingTrust {
+            profile: ClaimProfile {
+                kind: ClaimKind::Specification,
+                subject: Some(ClaimSubject::new(
+                    "SMART Backend Services",
+                    SubjectKind::Standard,
+                    vec![],
+                    vec![],
+                )),
+                temporal: TemporalScope::Current,
+                measurement_origin: None,
+                attributed_to: None,
+                reasons: vec![],
+                policy: "p".into(),
+                model: "m".into(),
+            },
+            supports: vec![Support {
+                source_version_id: "src-mirror".into(),
+                origin_cluster: ClusterId("src-mirror".into()),
+                trust: Trust {
+                    level: TrustLevel::Established,
+                    reasons: vec![],
+                    override_: None,
+                },
+                dates: SourceDates::default(),
+                passage: PassageKind::Direct,
+                temporal: lattice_core::domain::provenance::TemporalValidity::Valid,
+                added_by: AddedBy::Outline,
+                cited_urls: vec![],
+                owner_hints: vec!["hl7.org".into()],
+            }],
+            contrary: vec![],
+            decision: Decision::Insufficient {
+                bar: Bar::Primary,
+                have: vec![],
+                missing: Missing::NoIndependentCorroboration { have: 1 },
+                next: vec![NextStep::SearchIndependent],
+                reasons: vec![],
+            },
+            available: None,
+        },
+    ));
+
+    let llm = ScriptedModel {
+        outputs: Mutex::new(
+            [
+                crate::references::web_research::needs_answer(json!([{
+                    "gap": 0,
+                    "query": "obscure primary standard query",
+                    "kind": "standard",
+                    "identifier": "rfc:7523",
+                    "alternatives": ["RFC 7523 client_assertion exp"]
+                }]))
+                .to_string(),
+                selection(&[0]),
+            ]
+            .into(),
+        ),
+        prompts: Mutex::new(vec![]),
+    };
+
+    run(
+        db,
+        program.summary.id,
+        program.summary.goal,
+        Some(web.clone()),
+        async {
+            let expanded = expand(&llm, &references, &[finding], &[], &ClaimChecks::default())
+                .await?
+                .saved()
+                .expect("alternative fallback captures RFC");
+            assert_eq!(expanded.sources.len(), 2);
+
+            let prompts = llm.prompts.lock().unwrap();
+            assert!(
+                prompts[0].contains("SMART Backend Services"),
+                "{}",
+                prompts[0]
+            );
+            assert!(prompts[0].contains("hl7.org"), "{}", prompts[0]);
+            assert!(prompts[0].contains("mirror.example.com"), "{}", prompts[0]);
+            // Selector only sees RFC 7523 in results, never the filtered mirror candidate URL.
+            assert!(
+                !prompts[1].contains("mirror.example.com/jwt"),
+                "{}",
+                prompts[1]
+            );
+            assert!(prompts[1].contains("rfc-editor.org"), "{}", prompts[1]);
+            let seen_queries = web.queries.lock().unwrap();
+            assert!(
+                seen_queries.iter().any(|(q, kind, ident, _)| {
+                    q == "RFC 7523 client_assertion exp"
+                        && kind.as_deref() == Some("standard")
+                        && ident.as_deref() == Some("rfc:7523")
+                }),
+                "{seen_queries:?}"
+            );
+            assert!(
+                seen_queries.iter().any(|(q, kind, ident, eco)| {
+                    q == "RFC 7523 client_assertion exp"
+                        && kind.as_deref() == Some("web")
+                        && ident.is_none()
+                        && eco.is_none()
+                }),
+                "{seen_queries:?}"
+            );
+            Ok(())
+        },
+    )
+    .await
+}

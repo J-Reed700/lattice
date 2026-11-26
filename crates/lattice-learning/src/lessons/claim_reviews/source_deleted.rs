@@ -108,6 +108,7 @@ async fn write(
     }
     bump_revision(connection, lesson_id).await?;
     if review.state == LessonReviewState::Ready {
+        crate::assessment_repository::sync_disputed_questions_in(connection, lesson_id).await?;
         let ledger = load_in(connection, lesson_id).await?;
         if end_state(&ledger.claims) == LessonReviewState::NeedsReview {
             reviews::mark_needs_review(connection, lesson_id, now()).await?;

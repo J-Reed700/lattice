@@ -8,7 +8,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use lattice_core::domain::learning::claim_review::{
     Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState, EventProvenance, LessonReview,
-    UnitKind, UserAction,
+    LessonReviewState, UnitKind, UserAction,
 };
 use lattice_core::domain::provenance::ClaimKind;
 use lattice_core::shared::edits::{
@@ -572,6 +572,10 @@ impl EditReactor for ClaimsReactor {
             )
             .await?;
             bump_revision(tx, &unit.lesson_id).await?;
+            if review.state == LessonReviewState::Ready {
+                crate::assessment_repository::sync_disputed_questions_in(tx, &unit.lesson_id)
+                    .await?;
+            }
             return Ok(Reaction {
                 receipt: Some(serde_json::to_value(&reverted)?),
                 affected: vec![affected::CLAIMS.into()],
@@ -598,6 +602,10 @@ impl EditReactor for ClaimsReactor {
             )
             .await?;
             bump_revision(tx, &unit.lesson_id).await?;
+            if review.state == LessonReviewState::Ready {
+                crate::assessment_repository::sync_disputed_questions_in(tx, &unit.lesson_id)
+                    .await?;
+            }
             return Ok(Reaction {
                 receipt: Some(serde_json::to_value(&receipt)?),
                 affected: vec![affected::CLAIMS.into()],
@@ -657,6 +665,9 @@ impl EditReactor for ClaimsReactor {
         .await?;
         bump_revision(tx, &unit.lesson_id).await?;
         let moved = settle_planned_in(tx, &ledger, &unit.lesson_id, &planned).await?;
+        if review.state == LessonReviewState::Ready {
+            crate::assessment_repository::sync_disputed_questions_in(tx, &unit.lesson_id).await?;
+        }
         let follow_up = (!moved.is_empty()).then(|| json!({ "kinds": moved }));
         let receipt = ClaimsReceipt {
             acted,
