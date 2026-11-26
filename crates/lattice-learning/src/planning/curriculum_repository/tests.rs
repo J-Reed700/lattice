@@ -1485,3 +1485,272 @@ async fn an_oversized_job_request_is_refused_before_it_is_read() -> Result<()> {
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn cancelling_eleven_jobs_concurrently_under_heavy_write_load_succeeds_promptly() -> Result<()>
+{
+    use lattice_core::shared::runtime::jobs::{
+        JobContext, JobHandler, JobKindConfig, JobOutcome, JobRuntime, JobStatus, RecoveryPolicy,
+    };
+    use std::sync::Arc;
+    use tokio::sync::{mpsc, Semaphore};
+
+    struct BlockingHandler {
+        started: mpsc::UnboundedSender<String>,
+        release: Arc<Semaphore>,
+    }
+
+    #[async_trait::async_trait]
+    impl JobHandler for BlockingHandler {
+        async fn run(&self, context: &JobContext) -> Result<JobOutcome> {
+            self.started.send(context.id().to_string()).unwrap();
+            match context.until_cancelled(self.release.acquire()).await {
+                Some(permit) => {
+                    permit.unwrap().forget();
+                    Ok(JobOutcome::Completed {
+                        result_ref: "ok".into(),
+                        message: "Done".into(),
+                    })
+                }
+                None => Ok(JobOutcome::Stopped),
+            }
+        }
+    }
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("pause-storm.sqlite");
+    lattice_core::shared::testing::sqlite::write_migrated(&path).await?;
+    let base =
+        crate::test_support::file_options(path).busy_timeout(std::time::Duration::from_secs(2));
+    let writer_pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(base.clone())
+        .await?;
+    let reader_pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(2)
+        .acquire_timeout(std::time::Duration::from_secs(5))
+        .connect_with(base.pragma("query_only", "ON"))
+        .await?;
+    let database = Database::with_writer_pool(reader_pool, writer_pool);
+    let mut program = active_program(&database).await?;
+    let repo = LearningCurriculumRepository::new(database.clone());
+    // Ensure we have at least 11 outline lessons in one program.
+    let plan = repo.plan(&program.summary.id).await?;
+    let module_id = plan.accepted_revision.unwrap().modules[0].id.clone();
+    let existing_count = lesson_ids(&program, 0).len();
+    if existing_count < 11 {
+        let ops: Vec<_> = (existing_count..11)
+            .map(|i| LearningCurriculumOperation::AddLesson {
+                module_id: module_id.clone(),
+                after_lesson_id: None,
+                lesson: LearningCurriculumLesson {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    title: format!("Pause lesson {i}"),
+                    objective: "Verify pause concurrency".into(),
+                    estimated_minutes: 10,
+                    state: LearningCurriculumLessonState::Outline,
+                    assessment_started: false,
+                    replacement_lesson_id: None,
+                },
+            })
+            .collect();
+        let preview = repo
+            .preview(&PreviewLearningCurriculumRevisionRequestDto {
+                operation_id: op_id(),
+                program_id: program.summary.id.clone(),
+                expected_revision: program.summary.revision,
+                reason: "Add lessons for pause stress test".into(),
+                operations: ops,
+            })
+            .await?;
+        let draft = preview.draft_revision.unwrap();
+        let _ = repo
+            .accept_revision(&LearningCurriculumRevisionActionRequestDto {
+                operation_id: op_id(),
+                program_id: program.summary.id.clone(),
+                revision_id: draft.id,
+                expected_revision: program.summary.revision,
+            })
+            .await?;
+        program = LearningRepository::new(database.clone())
+            .get(&program.summary.id)
+            .await?;
+    }
+    let target_lessons: Vec<String> = lesson_ids(&program, 0).into_iter().take(11).collect();
+    assert_eq!(target_lessons.len(), 11);
+
+    let (started_tx, mut started_rx) = mpsc::unbounded_channel();
+    let release = Arc::new(Semaphore::new(0));
+    let runtime =
+        JobRuntime::with_poll_interval(database.clone(), std::time::Duration::from_millis(25));
+    runtime
+        .register(
+            LESSON_PREPARATION,
+            Arc::new(BlockingHandler {
+                started: started_tx,
+                release: Arc::clone(&release),
+            }),
+            JobKindConfig::new(RecoveryPolicy::Requeue).concurrency(12),
+        )
+        .await?;
+
+    let mut job_ids = Vec::new();
+    for lesson_id in &target_lessons {
+        let job = repo
+            .start_lesson_job(&StartLearningGenerationJobRequestDto {
+                operation_id: op_id(),
+                program_id: program.summary.id.clone(),
+                expected_revision: program.summary.revision,
+                kind: LearningGenerationJobKind::LessonPreparation,
+                request_json: serde_json::json!({"lessonIds": [lesson_id]}).to_string(),
+                progress_total: 1,
+            })
+            .await?;
+        runtime.submitted(&job.id).await;
+        job_ids.push(job.id);
+    }
+    for _ in 0..11 {
+        tokio::time::timeout(std::time::Duration::from_secs(2), started_rx.recv())
+            .await
+            .expect("worker failed to start")
+            .unwrap();
+    }
+
+    // Save a checkpoint + large staged_result_json on each running job before pausing.
+    let large_staged = "s".repeat(128 * 1024);
+    for (lesson_id, job_id) in target_lessons.iter().zip(&job_ids) {
+        repo.save_lesson_checkpoint(
+            job_id,
+            lesson_id,
+            "draft",
+            serde_json::json!({"step": 1, "lesson": lesson_id}),
+        )
+        .await?;
+        assert!(
+            jobs(&database)
+                .update_staged(job_id, {
+                    let large_staged = large_staged.clone();
+                    move |_| Ok(serde_json::json!({"draft": large_staged}))
+                })
+                .await?
+        );
+    }
+
+    // Hold the writer lock briefly while queuing 12 background standard writes AND UI list polls.
+    let active_holder = database.begin_write().await.unwrap();
+    let mut bg_writers = Vec::new();
+    for i in 0..12 {
+        let repo = LearningCurriculumRepository::new(database.clone());
+        let job_id = job_ids[i % job_ids.len()].clone();
+        let lesson_id = target_lessons[i % target_lessons.len()].clone();
+        bg_writers.push(tokio::spawn(async move {
+            let _ = repo
+                .save_lesson_checkpoint(&job_id, &lesson_id, "late", serde_json::json!({"n": i}))
+                .await;
+        }));
+        tokio::task::yield_now().await;
+    }
+    let readers: Vec<_> = (0..6)
+        .map(|_| {
+            let repo = LearningCurriculumRepository::new(database.clone());
+            let pid = program.summary.id.clone();
+            tokio::spawn(async move { repo.jobs(&pid).await })
+        })
+        .collect();
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+    // Mimic 11 concurrent Control Center cancel_learning_generation_job calls.
+    let cancels: Vec<_> = job_ids
+        .iter()
+        .map(|job_id| {
+            let repo = LearningCurriculumRepository::new(database.clone());
+            let runtime = Arc::clone(&runtime);
+            let req = LearningGenerationJobActionRequestDto {
+                operation_id: op_id(),
+                program_id: program.summary.id.clone(),
+                job_id: job_id.clone(),
+                expected_revision: program.summary.revision,
+            };
+            tokio::spawn(async move {
+                runtime.begin_cancel(&req.job_id);
+                match repo.cancel_job(&req).await {
+                    Ok(job) => {
+                        runtime.finish_cancel(&job.id).await;
+                        Ok(job)
+                    }
+                    Err(e) => {
+                        runtime.abort_cancel(&req.job_id);
+                        Err(e)
+                    }
+                }
+            })
+        })
+        .collect();
+
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    active_holder.commit().await.unwrap();
+
+    for handle in cancels {
+        let cancelled = tokio::time::timeout(std::time::Duration::from_secs(3), handle)
+            .await
+            .expect("cancel_job stalled under write load")
+            .unwrap()?;
+        assert_eq!(cancelled.status, LearningGenerationJobStatus::Cancelled);
+    }
+    for reader in readers {
+        let listed = reader.await.unwrap()?;
+        assert_eq!(listed.len(), 11);
+    }
+    for bg in bg_writers {
+        bg.await.unwrap();
+    }
+
+    // Verify zero zombie jobs and preserved pre-cancel checkpoints.
+    tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+    for (lesson_id, job_id) in target_lessons.iter().zip(&job_ids) {
+        let final_job = repo.job(job_id).await?;
+        assert_eq!(final_job.status, LearningGenerationJobStatus::Cancelled);
+        assert_eq!(
+            jobs(&database).get_summary(job_id).await?.status,
+            JobStatus::Cancelled
+        );
+        let saved = repo.lesson_checkpoint(job_id, lesson_id, "draft").await?;
+        assert_eq!(
+            saved,
+            Some(serde_json::json!({"step": 1, "lesson": lesson_id}))
+        );
+    }
+
+    // Also cover batch cancel_jobs on a fresh pending batch in one urgent transaction.
+    let mut batch_ids = Vec::new();
+    for lesson_id in target_lessons.iter().take(3) {
+        let retried = repo
+            .retry_job(&LearningGenerationJobActionRequestDto {
+                operation_id: op_id(),
+                program_id: program.summary.id.clone(),
+                job_id: job_ids[target_lessons
+                    .iter()
+                    .position(|id| id == lesson_id)
+                    .unwrap()]
+                .clone(),
+                expected_revision: program.summary.revision,
+            })
+            .await?;
+        batch_ids.push(retried.id);
+    }
+    let batch_reqs: Vec<_> = batch_ids
+        .iter()
+        .map(|id| LearningGenerationJobActionRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            job_id: id.clone(),
+            expected_revision: program.summary.revision,
+        })
+        .collect();
+    let batch_cancelled = repo.cancel_jobs(&batch_reqs).await?;
+    assert_eq!(batch_cancelled.len(), 3);
+    assert!(batch_cancelled
+        .iter()
+        .all(|j| j.status == LearningGenerationJobStatus::Cancelled));
+    Ok(())
+}

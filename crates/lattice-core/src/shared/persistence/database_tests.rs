@@ -182,3 +182,70 @@ async fn vacuum_into_succeeds_when_reader_pool_enforces_query_only() {
     assert_eq!(notes(&mut copied).await, 1);
     copied.close().await.unwrap();
 }
+
+#[tokio::test]
+async fn an_urgent_write_waits_for_one_standard_unit_and_not_for_the_queue() {
+    let opened = open().await;
+    let held = opened.begin_write().await.unwrap();
+    let order = std::sync::Arc::new(std::sync::Mutex::new(Vec::<&'static str>::new()));
+
+    let mut standard = Vec::new();
+    for label in ["std-1", "std-2", "std-3"] {
+        let db = opened.clone();
+        let order = std::sync::Arc::clone(&order);
+        standard.push(tokio::spawn(async move {
+            let tx = db.begin_write().await.unwrap();
+            order.lock().unwrap().push(label);
+            tx.commit().await.unwrap();
+        }));
+        tokio::task::yield_now().await;
+    }
+
+    let urgent = {
+        let db = opened.clone();
+        let order = std::sync::Arc::clone(&order);
+        tokio::spawn(async move {
+            let tx = db.urgent().begin_write().await.unwrap();
+            order.lock().unwrap().push("urgent");
+            tx.commit().await.unwrap();
+        })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+    held.commit().await.unwrap();
+    urgent.await.unwrap();
+    for handle in standard {
+        handle.await.unwrap();
+    }
+
+    let recorded = order.lock().unwrap().clone();
+    assert_eq!(recorded.first().copied(), Some("urgent"));
+    assert_eq!(recorded.len(), 4);
+}
+
+#[tokio::test]
+async fn standard_writers_keep_their_order() {
+    let opened = open().await;
+    let held = opened.begin_write().await.unwrap();
+    let order = std::sync::Arc::new(std::sync::Mutex::new(Vec::<usize>::new()));
+
+    let mut handles = Vec::new();
+    for index in 1..=4 {
+        let db = opened.clone();
+        let order = std::sync::Arc::clone(&order);
+        handles.push(tokio::spawn(async move {
+            let tx = db.begin_write().await.unwrap();
+            order.lock().unwrap().push(index);
+            tx.commit().await.unwrap();
+        }));
+        tokio::task::yield_now().await;
+    }
+
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    held.commit().await.unwrap();
+    for handle in handles {
+        handle.await.unwrap();
+    }
+
+    assert_eq!(*order.lock().unwrap(), vec![1, 2, 3, 4]);
+}

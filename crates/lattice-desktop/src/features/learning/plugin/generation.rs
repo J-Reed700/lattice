@@ -20,14 +20,22 @@ pub async fn cancel_learning_generation_job(
     request: LearningGenerationJobActionRequestDto,
     container: State<'_, Container>,
 ) -> Result<LearningGenerationJob, ApiError> {
-    let job = crate::features::learning::curriculum_repository::LearningCurriculumRepository::new(
+    // Trip the in-memory cancellation token immediately before waiting on SQLite
+    // so an active worker stops starting new LLM/DB steps while write turns drain.
+    container.jobs().begin_cancel(&request.job_id);
+    let repo = crate::features::learning::curriculum_repository::LearningCurriculumRepository::new(
         container.database().clone(),
-    )
-    .cancel_job(&request)
-    .await
-    .map_err(ApiError::from)?;
-    container.jobs().cancelled(&job.id).await;
-    Ok(job)
+    );
+    match repo.cancel_job(&request).await {
+        Ok(job) => {
+            container.jobs().finish_cancel(&job.id).await;
+            Ok(job)
+        }
+        Err(error) => {
+            container.jobs().abort_cancel(&request.job_id);
+            Err(ApiError::from(error))
+        }
+    }
 }
 
 #[tauri::command]

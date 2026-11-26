@@ -191,7 +191,7 @@ impl Events {
             .unwrap_or_else(PoisonError::into_inner)
             .clone();
         let Some(observer) = observer else { return };
-        match self.store.get(id).await {
+        match self.store.get_summary(id).await {
             Ok(job) => observer(&JobDto::from(&job)),
             Err(error) => {
                 tracing::debug!(job_id = id, %error, "Could not read a job to publish its status")
@@ -263,6 +263,9 @@ pub struct JobRuntime {
     tasks: BackgroundTasks,
     kinds: RwLock<HashMap<String, Arc<Kind>>>,
     active: Arc<Mutex<HashMap<String, CancellationToken>>>,
+    /// Jobs with a cancellation currently in flight (checked under `active`
+    /// first so lock ordering stays canonical and dispatch cannot race).
+    cancelling: Mutex<HashMap<String, usize>>,
     /// Jobs whose worker was stopped to give up its turn; each queues again
     /// once that worker has ended.
     requeued: Mutex<HashSet<String>>,
@@ -293,6 +296,7 @@ impl JobRuntime {
             tasks: BackgroundTasks::default(),
             kinds: RwLock::default(),
             active: Arc::default(),
+            cancelling: Mutex::default(),
             requeued: Mutex::default(),
             arrivals: Arc::default(),
             subjects: Arc::default(),
@@ -438,7 +442,7 @@ impl JobRuntime {
         let cancel = self.tasks.token().child_token();
         {
             let mut active = lock(&self.active);
-            if active.contains_key(id) {
+            if active.contains_key(id) || lock(&self.cancelling).contains_key(id) {
                 return;
             }
             // Registered before spawning, so a queued job can be cancelled.
@@ -473,7 +477,7 @@ impl JobRuntime {
     }
 
     async fn work(&self, id: &str, cancel: CancellationToken, arrival: Arrival) {
-        let job = match self.store().get(id).await {
+        let job = match self.store().get_summary(id).await {
             Ok(job) => job,
             Err(error) => {
                 tracing::warn!(job_id = id, %error, "Could not read a saved job before running it");
@@ -526,6 +530,9 @@ impl JobRuntime {
         let Some(Ok(_slot)) = slot else {
             return;
         };
+        if cancel.is_cancelled() || lock(&self.cancelling).contains_key(id) {
+            return;
+        }
         let job = match self.store().claim(id).await {
             Ok(Some(job)) => job,
             Ok(None) => return,
@@ -756,11 +763,64 @@ impl JobRuntime {
         self.dispatch(id);
     }
 
-    /// Commits the cancellation, then signals the worker.
-    pub async fn cancel(&self, id: &str) -> Result<JobRecord> {
-        self.store().cancel(id).await?;
+    /// Signals a running worker to stop immediately and blocks new dispatches
+    /// for `id` until [`Self::finish_cancel`] or [`Self::abort_cancel`] runs.
+    /// Callers cancelling via SQLite should invoke this before waiting for a
+    /// write turn so active workers stop queuing writes right away.
+    pub fn begin_cancel(&self, id: &str) {
+        let token = {
+            let active = lock(&self.active);
+            let mut cancelling = lock(&self.cancelling);
+            *cancelling.entry(id.to_string()).or_default() += 1;
+            active.get(id).cloned()
+        };
+        lock(&self.requeued).remove(id);
+        if let Some(token) = token {
+            token.cancel();
+        }
+    }
+
+    fn release_cancel(&self, id: &str) -> bool {
+        let mut cancelling = lock(&self.cancelling);
+        match cancelling.get_mut(id) {
+            Some(count) if *count > 1 => {
+                *count -= 1;
+                false
+            }
+            Some(_) => {
+                cancelling.remove(id);
+                true
+            }
+            None => true,
+        }
+    }
+
+    /// Completes an in-flight cancellation started by [`Self::begin_cancel`]
+    /// after the database transition commits.
+    pub async fn finish_cancel(&self, id: &str) {
+        self.release_cancel(id);
         self.cancelled(id).await;
-        self.store().get(id).await
+    }
+
+    /// Clears an in-flight cancellation started by [`Self::begin_cancel`] when
+    /// the database transition is rejected, waking the dispatcher in case the
+    /// worker had already suspended back to pending.
+    pub fn abort_cancel(&self, id: &str) {
+        if self.release_cancel(id) {
+            self.wake.notify_one();
+        }
+    }
+
+    /// Signals the worker immediately, commits the cancellation on the urgent
+    /// write lane, and publishes the cancelled state.
+    pub async fn cancel(&self, id: &str) -> Result<JobRecord> {
+        self.begin_cancel(id);
+        if let Err(error) = self.store().cancel(id).await {
+            self.abort_cancel(id);
+            return Err(error);
+        }
+        self.finish_cancel(id).await;
+        self.store().get_summary(id).await
     }
 
     /// For a cancellation a feature committed in its own transaction: signal

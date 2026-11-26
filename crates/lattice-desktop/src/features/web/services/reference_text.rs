@@ -524,7 +524,8 @@ pub(super) fn extract_with_url(
     let base_url = page_url.and_then(|url| Url::parse(url).ok());
     let mut blocks = Vec::new();
     render_container(root, &mut blocks, 0, base_url.as_ref())?;
-    Ok((title, blocks.join("\n\n")))
+    let markdown = lattice_core::shared::text::strip_scraped_chrome(&blocks.join("\n\n"));
+    Ok((title, markdown))
 }
 
 #[cfg(test)]
@@ -585,5 +586,25 @@ mod tests {
             text,
             "Cargo stores output in the target directory. By default, this is inside the workspace.\n\nNext paragraph."
         );
+    }
+
+    #[test]
+    fn strips_scraped_markdown_mirror_chrome_while_preserving_normal_links() {
+        let html = r#"
+            <main>
+              <p><a href="https://docs.aws.amazon.com/foo/bar.md">View a markdown version of this page</a></p>
+              <h1>Guide Title</h1>
+              <p>Read the <a href="/guide">complete guide</a> for details.</p>
+              <pre><code class="language-markdown">[View a markdown version of this page](https://docs.aws.amazon.com/foo/bar.md)</code></pre>
+            </main>
+        "#;
+        let (_, text) =
+            super::extract_with_url(html, Some("https://docs.aws.amazon.com/foo/bar.html"))
+                .expect("readable reference");
+        assert!(!text.starts_with("[View a markdown version of this page]"));
+        assert!(text.contains("# Guide Title\n\nRead the [complete guide]"));
+        assert!(text.contains(
+            "```markdown\n[View a markdown version of this page](https://docs.aws.amazon.com/foo/bar.md)\n```"
+        ));
     }
 }

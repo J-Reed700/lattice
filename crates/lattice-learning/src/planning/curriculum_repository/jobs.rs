@@ -37,7 +37,7 @@ impl LearningCurriculumRepository {
         let mut jobs = Vec::new();
         for kind in [LESSON_PREPARATION, QUIZ_BANK, QUIZ_GRADING, COURSE_PLAN] {
             let mut of_kind =
-                JobStore::list_for_subject_in(&mut *connection, kind, program_id).await?;
+                JobStore::list_summaries_for_subject_in(&mut *connection, kind, program_id).await?;
             of_kind.reverse();
             jobs.extend(of_kind);
         }
@@ -165,19 +165,20 @@ impl LearningCurriculumRepository {
         .fetch_all(&mut *tx)
         .await?;
         let scopes = job_scopes(&mut tx, program_id).await?;
-        let covered = JobStore::list_for_subject_in(&mut tx, LESSON_PREPARATION, program_id)
-            .await?
-            .into_iter()
-            .filter(|job| {
-                scopes
-                    .get(&job.id)
-                    .is_some_and(|scope| scope.content_revision == Some(content_revision))
-            })
-            .map(|job| PreparationRequest::parse(&job.requested.to_string()))
-            .collect::<Result<Vec<_>>>()?
-            .into_iter()
-            .flat_map(|request| request.lesson_ids)
-            .collect::<HashSet<_>>();
+        let covered =
+            JobStore::list_summaries_for_subject_in(&mut tx, LESSON_PREPARATION, program_id)
+                .await?
+                .into_iter()
+                .filter(|job| {
+                    scopes
+                        .get(&job.id)
+                        .is_some_and(|scope| scope.content_revision == Some(content_revision))
+                })
+                .map(|job| PreparationRequest::parse(&job.requested.to_string()))
+                .collect::<Result<Vec<_>>>()?
+                .into_iter()
+                .flat_map(|request| request.lesson_ids)
+                .collect::<HashSet<_>>();
         let untried: Vec<String> = candidates
             .into_iter()
             .filter(|lesson| !covered.contains(lesson))
@@ -382,7 +383,7 @@ impl LearningCurriculumRepository {
         content_revision: i64,
     ) -> Result<Vec<(JobRecord, PreparationRequest)>> {
         let scopes = job_scopes(&mut *connection, program_id).await?;
-        JobStore::list_for_subject_in(&mut *connection, LESSON_PREPARATION, program_id)
+        JobStore::list_summaries_for_subject_in(&mut *connection, LESSON_PREPARATION, program_id)
             .await?
             .into_iter()
             .filter(|job| {
@@ -410,12 +411,33 @@ impl LearningCurriculumRepository {
         Ok(preparable)
     }
 
-    /// Commits the cancellation. The caller then signals the running worker.
+    /// Commits the cancellation on the urgent write lane. The caller should
+    /// signal [`JobRuntime::begin_cancel`] before calling this and
+    /// [`JobRuntime::finish_cancel`] or [`JobRuntime::abort_cancel`] after.
     pub async fn cancel_job(
         &self,
         request: &LearningGenerationJobActionRequestDto,
     ) -> Result<LearningGenerationJob> {
-        self.job_action(request, JobAction::Cancel).await
+        let tx = self.db.urgent().begin_write().await?;
+        Self::commit_job_action(tx, request, JobAction::Cancel).await
+    }
+
+    /// Commits multiple cancellations in a single urgent write transaction.
+    pub async fn cancel_jobs(
+        &self,
+        requests: &[LearningGenerationJobActionRequestDto],
+    ) -> Result<Vec<LearningGenerationJob>> {
+        if requests.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut tx = self.db.urgent().begin_write().await?;
+        let mut jobs = Vec::with_capacity(requests.len());
+        for request in requests {
+            let id = Self::job_action_on(&mut tx, request, JobAction::Cancel).await?;
+            jobs.push(Self::job_on(&mut tx, &id).await?);
+        }
+        tx.commit().await?;
+        Ok(jobs)
     }
 
     /// Saves a new attempt that inherits the job's saved work. The caller
@@ -424,7 +446,7 @@ impl LearningCurriculumRepository {
         &self,
         request: &LearningGenerationJobActionRequestDto,
     ) -> Result<LearningGenerationJob> {
-        self.job_action(request, JobAction::Retry).await
+        self.standard_job_action(request, JobAction::Retry).await
     }
 
     /// Saves a new attempt of a completed job whose lessons wait for the
@@ -436,15 +458,23 @@ impl LearningCurriculumRepository {
         &self,
         request: &LearningGenerationJobActionRequestDto,
     ) -> Result<LearningGenerationJob> {
-        self.job_action(request, JobAction::ContinueReview).await
+        self.standard_job_action(request, JobAction::ContinueReview).await
     }
 
-    async fn job_action(
+    async fn standard_job_action(
         &self,
         request: &LearningGenerationJobActionRequestDto,
         action: JobAction,
     ) -> Result<LearningGenerationJob> {
-        let mut tx = self.db.begin_write().await?;
+        let tx = self.db.begin_write().await?;
+        Self::commit_job_action(tx, request, action).await
+    }
+
+    async fn commit_job_action(
+        mut tx: WriteTx,
+        request: &LearningGenerationJobActionRequestDto,
+        action: JobAction,
+    ) -> Result<LearningGenerationJob> {
         let id = Self::job_action_on(&mut tx, request, action).await?;
         let job = Self::job_on(&mut tx, &id).await?;
         tx.commit().await?;
@@ -483,15 +513,15 @@ impl LearningCurriculumRepository {
             .await?
             .filter(|scope| scope.program_id == request.program_id)
             .ok_or_else(|| AppError::NotFound("Generation job not found".into()))?;
-        let old = JobStore::find_in(tx, &request.job_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("Generation job not found".into()))?;
         let result_id = match action {
             JobAction::Cancel => {
                 JobStore::cancel_in(tx, &request.job_id).await?;
                 request.job_id.clone()
             }
             JobAction::Retry | JobAction::ContinueReview => {
+                let old = JobStore::find_summary_in(tx, &request.job_id)
+                    .await?
+                    .ok_or_else(|| AppError::NotFound("Generation job not found".into()))?;
                 let lessons = if action == JobAction::Retry {
                     if !matches!(
                         old.status,
@@ -560,7 +590,7 @@ impl LearningCurriculumRepository {
         let scope = job_scope(&mut *connection, id)
             .await?
             .ok_or_else(not_found)?;
-        let job = JobStore::find_in(&mut *connection, id)
+        let job = JobStore::find_summary_in(&mut *connection, id)
             .await?
             .ok_or_else(not_found)?;
         learning_job(job, scope)

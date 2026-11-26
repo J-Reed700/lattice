@@ -398,6 +398,10 @@ const LEARNER: &str = "The learner sees only the lesson: added or changed text t
 const KEPT_TO_THE_CONTRACT: &str =
     "Added or changed text uses a term, or asks the learner to do or use something, only where the lesson has taught it by that point; otherwise it says there what the term means or how to do it. It never says again what the sentence before or after it already says.";
 
+/// Explanations and worked examples stay conceptual and never import practice workflows.
+const SECTION_ROLES: &str =
+    "Only practice sections (guided_practice, independent_practice) ask the learner to create deliverables, files, or external work, and only when originalRequirements asks for them; explanation, worked_example, contrast, check, reflection, and recap sections never introduce deliverable, repository, commit, viewer, file-saving, or external-tooling instructions.";
+
 /// The instructions of an edit repair, with the rules of citing when the material takes citations.
 pub(in crate::lessons) fn system(cites: bool) -> String {
     let mut parts = vec![
@@ -407,6 +411,7 @@ pub(in crate::lessons) fn system(cites: bool) -> String {
         SMALLEST.to_owned(),
         LEARNER.to_owned(),
         KEPT_TO_THE_CONTRACT.to_owned(),
+        SECTION_ROLES.to_owned(),
     ];
     if cites {
         parts.push(citing());
@@ -670,7 +675,7 @@ fn rewrite_prompt(request: &Request<'_>, requirements: Value) -> Map<String, Val
         ("candidate", request.candidate.clone()),
         ("sourceQuoteChecks", json!(request.quote_checks)),
         ("issuesToFix", issues),
-        ("instruction", json!(format!("Give the complete corrected material. Change every defective passage, exercise, key or explanation identified above. An unchanged draft is not a repair. Preserve valid content. Do not mention this internal review, the course plan or the sources' excerpts in the learner-facing material. {KEPT_TO_THE_CONTRACT}"))),
+        ("instruction", json!(format!("Give the complete corrected material. Change every defective passage, exercise, key or explanation identified above. An unchanged draft is not a repair. Preserve valid content. Do not mention this internal review, the course plan or the sources' excerpts in the learner-facing material. {KEPT_TO_THE_CONTRACT} {SECTION_ROLES}"))),
     ]
     .into_iter()
     .map(|(key, value)| (key.to_owned(), value))

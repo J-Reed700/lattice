@@ -1827,3 +1827,66 @@ async fn a_statement_cut_after_two_rewrites_that_were_not_applied_records_its_th
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn section_repair_shows_surrounding_lesson_context_and_forbids_contradictions_or_payload_extrapolation(
+) -> Result<()> {
+    let explanation =
+        "In HL7 v2, MSH-10 holds each message's own control ID and MSA-2 echoes the sent MSH-10.";
+    let worked = "Compare MSA-2 with the sent MSH-10.";
+    let unrelated_practice = "Practice in your own notes.";
+    let contrast = "Duplicate detection relies on the sender's store rather than broker-assigned producer sequences.";
+    let candidate = json!({
+        "blocks": [
+            {"kind": "explanation", "title": "ACK fields", "body": explanation, "citations": []},
+            {"kind": "worked_example", "title": "Check ACK", "body": worked, "citations": []},
+            {"kind": "guided_practice", "title": "Try it", "body": unrelated_practice, "citations": []},
+            {"kind": "contrast", "title": "Sender vs broker", "body": contrast, "citations": []}
+        ],
+        "questions": []
+    });
+    let llm = recording(vec![
+        json!({"edits": [{"path": "/blocks/0/body", "before": worked, "after": "Compare the reply fields with the sent ID."}]}).to_string(),
+    ]);
+    let mut ledger = rewriting(&llm, worked, &[("c1", worked)]).await?;
+    let context = json!({
+        "requirements": {},
+        "candidate": candidate,
+        "failedClaims": [{
+            "unit": 1usize,
+            "claimId": "c1",
+            "statement": worked,
+            "sentence": worked,
+            "verdict": "contradicted",
+            "reason": "Sample shows MSA|AA|20150503223000 without prose naming MSA-2.",
+            "evidence": ["ev-raw"]
+        }],
+        "evidence": [passage_row("ev-raw", "MSH|^~\\&|A|B|C|D|20150503223000||ACK|20150503223000|P|2.5\nMSA|AA|20150503223000")],
+        "executions": [],
+        "exampleClaims": [],
+        "repairHistory": []
+    });
+    let _ = repaired(&llm, &mut ledger, (context, schema()), 4_000).await?;
+
+    let sent = llm.sent.lock().unwrap().clone();
+    assert_eq!(sent.len(), 1);
+    let (system_prompt, _) = crate::lessons::structured_call::task_messages(&sent[0]);
+    assert!(
+        system_prompt.contains("never introduce a claim that contradicts another section"),
+        "{system_prompt}"
+    );
+    assert!(
+        system_prompt.contains("Never extrapolate a general protocol rule, field meaning, or architecture-wide mechanism from an unlabelled sample payload"),
+        "{system_prompt}"
+    );
+    let task = task_in(&sent[0]).unwrap();
+    let sections = task["lessonSections"].as_array().unwrap();
+    assert_eq!(sections.len(), 4);
+    assert_eq!(sections[0]["context"], explanation);
+    // Target section (unit 1) stays without duplicated context body.
+    assert!(sections[1].get("context").is_none());
+    // Immediate neighbor (unit 2) and non-adjacent contrast block (unit 3) both surface context.
+    assert_eq!(sections[2]["context"], unrelated_practice);
+    assert_eq!(sections[3]["context"], contrast);
+    Ok(())
+}

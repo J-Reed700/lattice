@@ -58,20 +58,20 @@ pub fn preview(
     id: &str,
     captured: &crate::source_library::CapturedLearningSource,
 ) -> LearningSourceDto {
-    let headings = captured
-        .text
+    let cleaned = lattice_core::shared::text::strip_scraped_chrome(&captured.text);
+    let headings = cleaned
         .lines()
         .filter(|line| line.trim_start().starts_with('#'))
         .take(35)
         .collect::<Vec<_>>()
         .join("\n");
     let text = if headings.is_empty() {
-        captured.text.clone()
+        cleaned
     } else {
         format!(
             "{}\n\n{}",
             headings.chars().take(1200).collect::<String>(),
-            captured.text
+            cleaned
         )
     };
     LearningSourceDto {

@@ -763,3 +763,28 @@ fn a_flat_key_change_becomes_a_keys_item_for_the_first_sentence_of_the_right_opt
         None
     );
 }
+
+#[test]
+fn system_forbids_deliverable_or_tooling_workflows_outside_practice_sections() {
+    for text in [system(true), system(false)] {
+        assert!(text.contains(SECTION_ROLES), "{text}");
+        assert!(text.contains("guided_practice, independent_practice"));
+        assert!(text.contains("never introduce deliverable, repository, commit, viewer"));
+    }
+    let authoring = json!({"sources": []});
+    let candidate = material();
+    let request = Request {
+        system: "Fix",
+        schema: &json!({"type": "object"}),
+        authoring: &authoring,
+        candidate: &candidate,
+        quote_checks: &[],
+        issues: Vec::new(),
+        wording: &Wording::default(),
+        keeps: Keeps::Anything,
+        output_tokens: 1_000,
+    };
+    let prompt = Value::Object(rewrite_prompt(&request, authoring.clone()));
+    let instruction = prompt["instruction"].as_str().unwrap();
+    assert!(instruction.contains(SECTION_ROLES), "{instruction}");
+}

@@ -1469,3 +1469,53 @@ async fn a_finding_may_cite_nine_evidence_ids() -> Result<()> {
     assert_eq!(asks(&model).len(), 1);
     Ok(())
 }
+
+#[tokio::test]
+async fn internal_contradiction_with_domain_terms_is_established_without_external_references(
+) -> Result<()> {
+    let candidate = json!({
+        "blocks": [
+            {
+                "kind": "explanation",
+                "title": "HL7 v2 ACK Correlation",
+                "body": "Each HL7 v2 message carries its own unique MSH-10 control ID, and an ACK echoes the sent control ID in MSA-2."
+            },
+            {
+                "kind": "explanation",
+                "title": "Placeholder",
+                "body": "Other background context."
+            },
+            {
+                "kind": "worked_example",
+                "title": "Verify an ACK",
+                "body": "Step 5: Compare the reply's MSH-10 with the sent MSH-10 to match the acknowledgement."
+            }
+        ],
+        "questions": []
+    });
+    let issues = proposal(
+        "The worked example verifies the reply by checking whether the acknowledgement's MSH-10 equals the sent message's MSH-10; given each message has its own MSH-10, a correct acknowledgement would fail the check.",
+    );
+    let model = answering(|shows| {
+        Some(decided(
+            "actionable",
+            "internal_conflict",
+            &[shows.part("Section 1"), shows.part("Section 3")],
+            &[],
+            &shows.part("Section 3"),
+            "none",
+        ))
+    });
+    let checked = run(&model, &issues, Beside::NONE, &candidate, &[]).await?;
+    let sent = asks(&model);
+    assert!(
+        instructions(&sent[0])
+            .contains("classify it as actionable internal_conflict citing those candidateIds"),
+        "{}",
+        instructions(&sent[0])
+    );
+    assert_eq!(checked.established.len(), 1);
+    assert_eq!(checked.established[0].site, Some(FindingSite::Section(2)));
+    assert_eq!(checked.established[0].also, Some(FindingSite::Section(0)));
+    Ok(())
+}
