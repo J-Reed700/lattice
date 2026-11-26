@@ -176,7 +176,7 @@ Repair a saved curriculum module. Apply each listed finding exactly as its instr
   "include_reasoning": false,
   "sampling": null,
   "thinking": "off",
-  "max_output_tokens": 119945,
+  "max_output_tokens": 119955,
   "stop": [],
   "want_logprobs": false,
   "priority": "background",
