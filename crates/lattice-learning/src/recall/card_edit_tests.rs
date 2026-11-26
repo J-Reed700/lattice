@@ -120,15 +120,26 @@ async fn a_card_edit_reaches_the_recall_profile_and_adds_a_version() -> Result<(
     let card_id = created.card_id.clone();
     recall.save_card(&created).await?;
 
-    // First failing form on P0: the legacy study path updates `study_cards` alone.
-    StudyRepository::new(db.clone())
-        .update_card(&UpdateStudyCardRequestDto {
-            card_id: card_id.clone(),
-            question: "Updated prompt?".into(),
-            answer: "Updated answer.".into(),
-            explanation: "Initial explanation.".into(),
-        })
-        .await?;
+    let edits = content_edits(&db)?;
+    let opened = edits.open(&card_ref(&card_id)).await;
+    assert!(opened.is_ok(), "{opened:?}");
+    let applied = edits
+        .apply(&edit_request(
+            &card_id,
+            opened.unwrap().revision,
+            vec![
+                EditOp::Replace {
+                    path: "/question".into(),
+                    value: json!("Updated prompt?"),
+                },
+                EditOp::Replace {
+                    path: "/answer".into(),
+                    value: json!("Updated answer."),
+                },
+            ],
+        ))
+        .await;
+    assert!(applied.is_ok(), "{applied:?}");
 
     let row = sqlx::query("SELECT question, answer FROM study_cards WHERE id=?")
         .bind(&card_id)

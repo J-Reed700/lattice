@@ -18,9 +18,11 @@ use lattice_core::shared::persistence::{Database, WriteTx};
 use sqlx::{Row, SqliteConnection};
 use std::collections::HashSet;
 
+pub(crate) mod card_text;
 mod cards;
 #[cfg(test)]
 mod cards_tests;
+pub(crate) use cards::suggest_duplicates_in;
 pub(super) mod interview;
 mod selectors;
 mod workspace;
