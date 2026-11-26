@@ -10,9 +10,23 @@ pub mod service;
 pub mod types;
 
 #[cfg(test)]
+mod fake;
+#[cfg(test)]
+mod marks_tests;
+#[cfg(test)]
 mod migration_tests;
 #[cfg(test)]
+mod notices_tests;
+#[cfg(test)]
+mod ops_tests;
+#[cfg(test)]
+mod pipeline_tests;
+#[cfg(test)]
 mod registry_tests;
+#[cfg(test)]
+mod revert_tests;
+#[cfg(test)]
+mod revision_tests;
 #[cfg(test)]
 mod types_tests;
 
