@@ -287,3 +287,103 @@ fn the_confirming_read_says_when_two_statements_contradict() {
         "Two statements contradict each other when there is a case in which one says something happens or holds and the other says it cannot; statements that can both be true, read with their conditions, do not."
     ));
 }
+
+#[test]
+fn deletion_only_prompt_does_not_claim_deletions_cannot_introduce_contradictions() {
+    for prompt in [FIND_DELETION_SYSTEM, FIND_DELETION_BRIEF] {
+        assert!(
+            !prompt.contains("cannot introduce a contradiction"),
+            "{prompt}"
+        );
+        assert!(!prompt.contains("skip contradictions"), "{prompt}");
+        assert!(!prompt.contains("Run only checks 1 and 3"), "{prompt}");
+        assert!(prompt.contains("contradiction"), "{prompt}");
+        assert!(prompt.contains("qualifier"), "{prompt}");
+    }
+    assert!(
+        FIND_DELETION_SYSTEM.contains("contradictions: two statements that cannot both be true")
+    );
+}
+
+#[tokio::test]
+async fn pure_deletion_checks_for_contradictions_introduced_by_removing_a_qualifier() -> Result<()>
+{
+    struct DeletionSweep {
+        script: scripted::Script,
+        clash: String,
+        systems: Mutex<Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LLMPort for DeletionSweep {
+        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+            let (system, user) = crate::lessons::structured_call::task_messages(request);
+            self.systems.lock().unwrap().push(system.to_owned());
+            if crate::lessons::structured_call::is_draft_request(request) {
+                return Ok(fixture_completion(request, Vec::new()));
+            }
+            if system.starts_with(confirm::CLASH_SYSTEM) {
+                return Ok(CompletionResponse::from_text(self.clash.as_str()));
+            }
+            let reply = match scripted::ask_of(system, user) {
+                Some(ask) => self.script.reply(ask, user),
+                None => scripted::CONTRACT_NOTHING.to_owned(),
+            };
+            Ok(fixture_completion(request, vec![reply]))
+        }
+        fn model_name(&self) -> &str {
+            "deletion-sweep"
+        }
+        fn count_tokens(&self, text: &str) -> usize {
+            text.len() / 4
+        }
+        fn max_context_tokens(&self) -> usize {
+            128_000
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+        fn enforces(
+            &self,
+            _schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
+        }
+    }
+
+    let qualifier = "Only cold water fills the kettle before heating.";
+    let before = json!({"blocks":[
+        {"kind":"explanation","title":"Heating","body":format!("{EMPTY} {qualifier}")},
+        {"kind":"explanation","title":"Pouring","body":FULL}
+    ],"questions":[]});
+    let after_deletion = kettle();
+    let clash_plan = json!({
+        "planned": [],
+        "usedBeforeTaught": [],
+        "contradictions": [{"quote": EMPTY, "otherQuote": FULL}],
+        "unseen": []
+    })
+    .to_string();
+    let model = DeletionSweep {
+        script: scripted::Script::new(vec![scripted::CONTRACT_NOTHING.to_owned(), clash_plan]),
+        clash: upheld(CASE).to_string(),
+        systems: Mutex::new(Vec::new()),
+    };
+    let mut receipts = Receipts::default();
+    let first = check(&model, &json!({}), &before, &[], &mut receipts, &[]).await?;
+    assert!(first.findings.is_empty(), "{:?}", first.findings);
+
+    let second = check(&model, &json!({}), &after_deletion, &[], &mut receipts, &[]).await?;
+    let found = clashes(&second.findings);
+    assert_eq!(found.len(), 1, "{:?}", second.findings);
+    assert_eq!(
+        found[0].note,
+        told(&format!(" Where they conflict: {CASE}"))
+    );
+    let systems = model.systems.lock().unwrap();
+    assert!(
+        systems.iter().any(|s| s.starts_with(FIND_DELETION_SYSTEM)),
+        "pure deletion must invoke FIND_DELETION_SYSTEM"
+    );
+    Ok(())
+}
