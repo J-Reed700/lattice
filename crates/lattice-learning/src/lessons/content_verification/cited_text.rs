@@ -1,10 +1,8 @@
 //! Where a lesson's citation chips go, which passages they open and how they
 //! are numbered down the lesson.
-use super::learner_view::statement_class;
+use super::support::{anchor_dto, cited, Cited};
 use super::{EvidencePassage, Finding};
-use crate::lesson_evidence::LearningStatementClassDto;
-use lattice_core::application::contracts::replies::{ReplyPieceDto, ReplyReferenceDto};
-use lattice_core::application::services::claim_verification::PartKind;
+use lattice_core::application::contracts::replies::{ReplyPieceDto, ReplyReferenceDto, SupportDto};
 use lattice_core::shared::text::code_spans;
 use lattice_core::shared::text::segmentation::code_fences;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -19,63 +17,19 @@ fn place(passage: &EvidencePassage) -> Place<'_> {
     )
 }
 
-fn distinct<'p>(
-    passages: impl IntoIterator<Item = &'p EvidencePassage>,
-) -> Vec<&'p EvidencePassage> {
-    let mut seen = BTreeSet::new();
-    passages
-        .into_iter()
-        .filter(|passage| seen.insert(place(passage)))
-        .collect()
-}
-
-/// The passages a statement cites, each once and never an example's run.
-pub(super) fn stands_on(finding: &Finding) -> Vec<&EvidencePassage> {
-    let sources = || finding.evidence.iter().filter(|passage| !passage.is_run());
-    match finding
-        .class
-        .and_then(|classed| statement_class(classed.class))
-    {
-        Some(LearningStatementClassDto::Common) => Vec::new(),
-        Some(LearningStatementClassDto::Reasoning) => distinct(sources()),
-        Some(LearningStatementClassDto::Sourced) | None => {
-            let stated = distinct(
-                finding
-                    .two_pass
-                    .parts
-                    .iter()
-                    .filter(|part| part.kind == PartKind::Stated)
-                    .filter_map(|part| part.source_id.as_deref())
-                    .filter_map(|id| sources().find(|passage| passage.source_id == id)),
-            );
-            if !stated.is_empty() {
-                return stated;
-            }
-            finding
-                .supporting_quote
-                .as_deref()
-                .filter(|quote| !quote.is_empty())
-                .and_then(|quote| sources().find(|passage| passage.text.contains(quote)))
-                .or_else(|| sources().next())
-                .into_iter()
-                .collect()
-        }
-    }
-}
-
-/// The byte of a section's body a statement's citation goes at: the end of
-/// the quote's first copy outside a fenced code block, moved past an inline
-/// code span it ends inside; none when the quote is not in the body outside a
-/// fence.
-pub(super) fn citation_point(body: &str, quote: &str) -> Option<usize> {
+/// Where in a section's body a statement's citation goes, as the start of the
+/// quote's first copy outside a fenced code block and the point after it: the
+/// end of that copy, moved past an inline code span it ends inside; none when
+/// the quote is not in the body outside a fence.
+pub(super) fn citation_point(body: &str, quote: &str) -> Option<(usize, usize)> {
     if quote.trim().is_empty() {
         return None;
     }
     let fences = code_fences(body);
-    let end = body
+    let (start, end) = body
         .match_indices(quote)
-        .map(|(at, _)| at + quote.len())
-        .find(|&end| {
+        .map(|(at, _)| (at, at + quote.len()))
+        .find(|&(_, end)| {
             !fences.iter().any(|fence| {
                 let whole = fence.whole();
                 whole.start < end && end < whole.end
@@ -88,12 +42,11 @@ pub(super) fn citation_point(body: &str, quote: &str) -> Option<usize> {
         .map_or(body.len(), |at| end + at);
     let line = body.get(line_start..line_end)?;
     let at = end - line_start;
-    Some(
-        code_spans(line)
-            .into_iter()
-            .find(|span| span.start < at && at < span.end)
-            .map_or(end, |span| line_start + span.end),
-    )
+    let point = code_spans(line)
+        .into_iter()
+        .find(|span| span.start < at && at < span.end)
+        .map_or(end, |span| line_start + span.end);
+    Some((start, point))
 }
 
 /// The lesson's numbered passages, what each statement cites and each
@@ -120,9 +73,31 @@ impl<'f> Passages<'f> {
         self.numbers.insert(place(passage), number);
         number
     }
+
+    /// The numbers of the passages `found` opens, each with the support its
+    /// chip carries: the relation and the anchors that lie in its own passage.
+    fn chips(&mut self, found: &Cited<'f>) -> Vec<(u32, SupportDto)> {
+        found
+            .on
+            .iter()
+            .map(|(passage, anchors)| {
+                let passage: &'f EvidencePassage = *passage;
+                let support = SupportDto {
+                    relation: found.relation.into(),
+                    anchors: anchors
+                        .iter()
+                        .filter_map(|anchor| anchor_dto(passage, anchor))
+                        .collect(),
+                };
+                (self.number_of(passage), support)
+            })
+            .collect()
+    }
 }
 
-fn reference(number: u32) -> ReplyPieceDto {
+type Marks = BTreeMap<usize, BTreeMap<u32, SupportDto>>;
+
+fn reference(number: u32, support: &SupportDto) -> ReplyPieceDto {
     ReplyPieceDto::Reference {
         reference: ReplyReferenceDto {
             written: format!("[{number}]"),
@@ -130,28 +105,60 @@ fn reference(number: u32) -> ReplyPieceDto {
             number,
             lines: None,
             name: None,
+            support: Some(support.clone()),
         },
     }
 }
 
-fn pieces(body: &str, marks: &BTreeMap<usize, BTreeSet<u32>>) -> Vec<ReplyPieceDto> {
-    let text = |text: &str| ReplyPieceDto::Text { text: text.into() };
+/// The spans of a body that are drawn as quotations: each of the `copies`
+/// that overlaps none already kept and has no other statement's chip inside it.
+fn quotations(copies: Vec<(usize, usize)>, marks: &Marks) -> Vec<(usize, usize)> {
+    let mut kept: Vec<(usize, usize)> = Vec::new();
+    for (start, end) in copies {
+        let overlaps = kept.iter().any(|&(from, to)| start < to && from < end);
+        let split = marks.keys().any(|&point| start < point && point < end);
+        if !overlaps && !split {
+            kept.push((start, end));
+        }
+    }
+    kept
+}
+
+fn pieces(body: &str, marks: &Marks, quotations: &[(usize, usize)]) -> Vec<ReplyPieceDto> {
+    let mut cuts: BTreeSet<usize> = marks.keys().copied().collect();
+    cuts.extend(quotations.iter().flat_map(|&(start, end)| [start, end]));
     let mut pieces = Vec::new();
     let mut from = 0;
-    for (&point, numbers) in marks {
-        if let Some(before) = body.get(from..point).filter(|before| !before.is_empty()) {
-            pieces.push(text(before));
+    for cut in cuts {
+        if let Some(before) = body.get(from..cut).filter(|before| !before.is_empty()) {
+            let text = before.into();
+            pieces.push(
+                if quotations
+                    .iter()
+                    .any(|&(start, end)| start <= from && cut <= end)
+                {
+                    ReplyPieceDto::Quoted { text }
+                } else {
+                    ReplyPieceDto::Text { text }
+                },
+            );
         }
-        pieces.extend(numbers.iter().map(|&number| reference(number)));
-        from = point;
+        if let Some(chips) = marks.get(&cut) {
+            pieces.extend(
+                chips
+                    .iter()
+                    .map(|(&number, support)| reference(number, support)),
+            );
+        }
+        from = cut;
     }
     if let Some(rest) = body.get(from..).filter(|rest| !rest.is_empty()) {
-        pieces.push(text(rest));
+        pieces.push(ReplyPieceDto::Text { text: rest.into() });
     }
     pieces
 }
 
-/// Numbers the passages the `findings` stand on down the lesson and cuts each
+/// Numbers the passages the `findings` cite down the lesson and cuts each
 /// body, `bodies[unit]`, at its citation points: every placed statement first,
 /// block by block in reading order, then the statements without a chip;
 /// passages only compared come last and get no chip.
@@ -166,36 +173,40 @@ pub(super) fn number<'f>(bodies: &[&str], findings: &[&'f Finding]) -> Numbered<
             if finding.unit != unit {
                 continue;
             }
-            let stands = stands_on(finding);
-            if stands.is_empty() {
+            let Some(found) = cited(finding) else {
                 continue;
-            }
+            };
             match citation_point(body, &finding.quote) {
-                Some(point) => placed.push((point, index, stands)),
-                None => unplaced.push((index, stands)),
+                Some((start, point)) => {
+                    placed.push((point, index, (start, start + finding.quote.len()), found));
+                }
+                None => unplaced.push((index, found)),
             }
         }
-        placed.sort_by_key(|(point, index, _)| (*point, *index));
-        let mut marks: BTreeMap<usize, BTreeSet<u32>> = BTreeMap::new();
-        for (point, index, stands) in placed {
-            let numbers: Vec<u32> = stands
-                .into_iter()
-                .map(|passage| passages.number_of(passage))
-                .collect();
-            marks
-                .entry(point)
-                .or_default()
-                .extend(numbers.iter().copied());
+        placed.sort_by_key(|(point, index, _, _)| (*point, *index));
+        let mut marks = Marks::new();
+        let mut copies = Vec::new();
+        for (point, index, copy, found) in placed {
+            let chips = passages.chips(&found);
             if let Some(slot) = cites.get_mut(index) {
-                *slot = numbers;
+                *slot = chips.iter().map(|(number, _)| *number).collect();
+            }
+            let at = marks.entry(point).or_default();
+            for (number, support) in chips {
+                at.entry(number).or_insert(support);
+            }
+            if found.quoted && copy.1 == point {
+                copies.push(copy);
             }
         }
-        sections.push(pieces(body, &marks));
+        let quoted = quotations(copies, &marks);
+        sections.push(pieces(body, &marks, &quoted));
     }
-    for (index, stands) in unplaced {
-        let numbers: Vec<u32> = stands
+    for (index, found) in unplaced {
+        let numbers = passages
+            .chips(&found)
             .into_iter()
-            .map(|passage| passages.number_of(passage))
+            .map(|(number, _)| number)
             .collect();
         if let Some(slot) = cites.get_mut(index) {
             *slot = numbers;

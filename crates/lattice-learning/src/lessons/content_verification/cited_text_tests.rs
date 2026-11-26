@@ -1,8 +1,12 @@
 use super::*;
+use crate::content_verification::support::{cited, Cited};
 use crate::content_verification::{CheckedPart, ClaimVerdict, Classed, EvidencePassage, Finding};
 use crate::reference_collection::PassageKind;
-use lattice_core::application::contracts::replies::{ReplyPieceDto, ReplyReferenceDto};
+use lattice_core::application::contracts::replies::{
+    AnchorDto, ByteSpanDto, RelationDto, ReplyPieceDto, ReplyReferenceDto, SupportDto,
+};
 use lattice_core::application::services::claim_verification::PartKind;
+use lattice_core::domain::citation::{Anchor, Relation};
 use lattice_core::domain::learning::claim_review::{Class, ClassifiedBy};
 
 fn passage(source: &str, start: usize, text: &str) -> EvidencePassage {
@@ -54,13 +58,32 @@ fn stated(source: &str) -> CheckedPart {
         part: "a part".into(),
         kind: PartKind::Stated,
         source_id: Some(source.into()),
+        anchors: Vec::new(),
     }
 }
 
-fn places(found: Vec<&EvidencePassage>) -> Vec<(&str, usize)> {
+fn anchored(source: &str, kind: PartKind, spans: &[(usize, usize)]) -> CheckedPart {
+    CheckedPart {
+        part: "a part".into(),
+        kind,
+        source_id: None,
+        anchors: spans
+            .iter()
+            .map(|&(start_byte, end_byte)| Anchor {
+                source_version_id: source.into(),
+                start_byte,
+                end_byte,
+            })
+            .collect(),
+    }
+}
+
+fn places(found: Option<Cited<'_>>) -> Vec<(&str, usize)> {
     found
+        .map(|found| found.on)
+        .unwrap_or_default()
         .into_iter()
-        .map(|passage| (passage.source_id.as_str(), passage.start_byte))
+        .map(|(passage, _)| (passage.source_id.as_str(), passage.start_byte))
         .collect()
 }
 
@@ -81,7 +104,7 @@ fn text(body: &str) -> ReplyPieceDto {
     ReplyPieceDto::Text { text: body.into() }
 }
 
-fn cite(n: u32) -> ReplyPieceDto {
+fn cite_as(n: u32, relation: RelationDto, anchors: Vec<AnchorDto>) -> ReplyPieceDto {
     ReplyPieceDto::Reference {
         reference: ReplyReferenceDto {
             written: format!("[{n}]"),
@@ -89,15 +112,31 @@ fn cite(n: u32) -> ReplyPieceDto {
             number: n,
             lines: None,
             name: None,
+            support: Some(SupportDto { relation, anchors }),
         },
     }
+}
+
+fn cite(n: u32) -> ReplyPieceDto {
+    cite_as(n, RelationDto::Agrees, Vec::new())
+}
+
+fn words(exact: &str, start: usize, end: usize) -> AnchorDto {
+    AnchorDto {
+        exact: exact.into(),
+        span: Some(ByteSpanDto { start, end }),
+    }
+}
+
+fn quoted(body: &str) -> ReplyPieceDto {
+    ReplyPieceDto::Quoted { text: body.into() }
 }
 
 fn rebuilt(pieces: &[ReplyPieceDto]) -> String {
     pieces
         .iter()
         .filter_map(|piece| match piece {
-            ReplyPieceDto::Text { text } => Some(text.as_str()),
+            ReplyPieceDto::Text { text } | ReplyPieceDto::Quoted { text } => Some(text.as_str()),
             ReplyPieceDto::Reference { .. } => None,
         })
         .collect()
@@ -110,7 +149,7 @@ fn a_citation_goes_after_the_sentence_it_backs() {
             "Rust has ownership. It frees memory.",
             "Rust has ownership."
         ),
-        Some(19)
+        Some((0, 19))
     );
 }
 
@@ -130,39 +169,42 @@ fn a_quote_inside_a_fenced_block_has_no_point() {
 #[test]
 fn a_quote_that_ends_right_before_a_fence_keeps_its_end() {
     let body = "Intro.\n\n```text\ncode\n```\n";
-    assert_eq!(citation_point(body, "Intro."), Some(6));
+    assert_eq!(citation_point(body, "Intro."), Some((0, 6)));
 }
 
 #[test]
 fn a_quote_after_a_fence_is_placed_at_its_end() {
     let body = "```text\ncode\n```\nAfter it.";
-    assert_eq!(citation_point(body, "After it."), Some(body.len()));
+    assert_eq!(
+        citation_point(body, "After it."),
+        Some((body.len() - 9, body.len()))
+    );
 }
 
 #[test]
 fn a_quote_that_ends_inside_a_code_span_moves_to_after_its_closing_backticks() {
     let body = "Use `x.y` to read it.";
-    assert_eq!(citation_point(body, "Use `x."), Some(9));
+    assert_eq!(citation_point(body, "Use `x."), Some((0, 9)));
     let body = "Call ``a`b`` now.";
-    assert_eq!(citation_point(body, "Call ``a"), Some(12));
+    assert_eq!(citation_point(body, "Call ``a"), Some((0, 12)));
 }
 
 #[test]
 fn a_quote_that_ends_right_before_a_code_span_keeps_its_end() {
     let body = "Use `x.y` to read it.";
-    assert_eq!(citation_point(body, "Use "), Some(4));
+    assert_eq!(citation_point(body, "Use "), Some((0, 4)));
 }
 
 #[test]
 fn a_quote_that_ends_right_after_a_code_span_keeps_its_end() {
     let body = "Use `x.y` to read it.";
-    assert_eq!(citation_point(body, "Use `x.y`"), Some(9));
+    assert_eq!(citation_point(body, "Use `x.y`"), Some((0, 9)));
 }
 
 #[test]
 fn a_common_statement_cites_nothing() {
     let found = finding(0, "q", Some(Class::Common), vec![passage("a", 0, "text")]);
-    assert!(stands_on(&found).is_empty());
+    assert!(cited(&found).is_none());
 }
 
 #[test]
@@ -178,7 +220,10 @@ fn a_reasoning_statement_cites_every_passage_but_runs_each_once() {
             passage("a", 0, "one"),
         ],
     );
-    assert_eq!(places(stands_on(&found)), vec![("a", 0), ("b", 5)]);
+    let agreed = cited(&found).unwrap();
+    assert_eq!(agreed.relation, Relation::Agrees);
+    assert!(agreed.on.iter().all(|(_, anchors)| anchors.is_empty()));
+    assert_eq!(places(Some(agreed)), vec![("a", 0), ("b", 5)]);
 }
 
 #[test]
@@ -200,30 +245,42 @@ fn a_sourced_statement_cites_the_first_passage_of_each_source_it_states_in_part_
             part: "common".into(),
             kind: PartKind::Common,
             source_id: None,
+            anchors: Vec::new(),
         },
         stated("a"),
         stated("b"),
     ];
-    assert_eq!(places(stands_on(&found)), vec![("b", 0), ("a", 0)]);
+    assert_eq!(places(cited(&found)), vec![("b", 0), ("a", 0)]);
 }
 
 #[test]
-fn a_sourced_statement_without_stated_parts_cites_the_passage_holding_its_supporting_quote() {
+fn a_sourced_statement_without_stated_parts_cites_the_sentence_holding_its_supporting_quote() {
     let mut found = finding(
         0,
         "q",
         Some(Class::Sourced),
         vec![
-            passage("a", 0, "the first passage"),
-            passage("a", 20, "the second passage"),
+            passage("a", 0, "the first passage."),
+            passage("a", 20, "the second passage. Another sentence."),
         ],
     );
-    found.supporting_quote = Some("second".into());
-    assert_eq!(places(stands_on(&found)), vec![("a", 20)]);
+    found.supporting_quote = Some("second passage".into());
+    let backed = cited(&found).unwrap();
+    assert_eq!(backed.relation, Relation::Backs);
+    assert_eq!(backed.on.len(), 1);
+    assert_eq!(backed.on[0].0.start_byte, 20);
+    assert_eq!(
+        backed.on[0].1,
+        vec![Anchor {
+            source_version_id: "a".into(),
+            start_byte: 20,
+            end_byte: 39,
+        }]
+    );
 }
 
 #[test]
-fn a_sourced_statement_whose_quote_is_in_no_passage_cites_the_first_passage() {
+fn a_sourced_statement_whose_quote_is_in_no_passage_cites_nothing() {
     let mut found = finding(
         0,
         "q",
@@ -234,9 +291,9 @@ fn a_sourced_statement_whose_quote_is_in_no_passage_cites_the_first_passage() {
         ],
     );
     found.supporting_quote = Some("nowhere".into());
-    assert_eq!(places(stands_on(&found)), vec![("a", 0)]);
+    assert!(cited(&found).is_none());
     found.supporting_quote = None;
-    assert_eq!(places(stands_on(&found)), vec![("a", 0)]);
+    assert!(cited(&found).is_none());
 }
 
 #[test]
@@ -248,9 +305,9 @@ fn a_statement_with_no_class_is_read_as_sourced() {
         vec![passage("a", 0, "one"), passage("b", 0, "two")],
     );
     found.two_pass.parts = vec![stated("b")];
-    assert_eq!(places(stands_on(&found)), vec![("b", 0)]);
+    assert_eq!(places(cited(&found)), vec![("b", 0)]);
     found.two_pass.parts.clear();
-    assert_eq!(places(stands_on(&found)), vec![("a", 0)]);
+    assert!(cited(&found).is_none());
 }
 
 #[test]
@@ -259,7 +316,7 @@ fn a_run_is_never_cited() {
         let mut found = finding(0, "q", class, vec![run("run-1", "output")]);
         found.two_pass.parts = vec![stated("run-1")];
         found.supporting_quote = Some("output".into());
-        assert!(stands_on(&found).is_empty(), "{class:?}");
+        assert!(cited(&found).is_none(), "{class:?}");
     }
 }
 
@@ -300,8 +357,8 @@ fn numbers_follow_reading_order_across_blocks_even_when_report_order_differs() {
 fn a_passage_cited_by_two_statements_keeps_one_number() {
     let shared = passage("a", 0, "shared");
     let findings = vec![
-        finding(0, "One fact.", None, vec![shared.clone()]),
-        finding(0, "Another fact.", None, vec![shared]),
+        finding(0, "One fact.", Some(Class::Reasoning), vec![shared.clone()]),
+        finding(0, "Another fact.", Some(Class::Reasoning), vec![shared]),
     ];
     let numbered = numbering(&["One fact. Another fact."], &findings);
 
@@ -356,10 +413,15 @@ fn compared_only_passages_are_numbered_after_every_cited_one_and_get_no_chip() {
         finding(
             0,
             "One.",
-            None,
+            Some(Class::Reasoning),
             vec![passage("a", 0, "p1"), passage("a", 10, "p2")],
         ),
-        finding(1, "Two.", None, vec![passage("b", 0, "p3")]),
+        finding(
+            1,
+            "Two.",
+            Some(Class::Reasoning),
+            vec![passage("b", 0, "p3")],
+        ),
     ];
     let numbered = numbering(&["One.", "Two."], &findings);
 
@@ -372,9 +434,24 @@ fn compared_only_passages_are_numbered_after_every_cited_one_and_get_no_chip() {
 #[test]
 fn a_statement_without_a_chip_is_numbered_after_every_placed_one_in_the_lesson() {
     let findings = vec![
-        finding(0, "Title text.", None, vec![passage("t", 0, "pt")]),
-        finding(0, "Body sentence.", None, vec![passage("b", 0, "pb")]),
-        finding(1, "Later.", None, vec![passage("l", 0, "pl")]),
+        finding(
+            0,
+            "Title text.",
+            Some(Class::Reasoning),
+            vec![passage("t", 0, "pt")],
+        ),
+        finding(
+            0,
+            "Body sentence.",
+            Some(Class::Reasoning),
+            vec![passage("b", 0, "pb")],
+        ),
+        finding(
+            1,
+            "Later.",
+            Some(Class::Reasoning),
+            vec![passage("l", 0, "pl")],
+        ),
     ];
     let numbered = numbering(&["Body sentence. More.", "Later."], &findings);
 
@@ -394,9 +471,10 @@ Rust has ownership.
 ```
 Rust has ownership. Next.";
     let quote = "Rust has ownership.";
+    let start = body.rfind(quote).unwrap();
     assert_eq!(
         citation_point(body, quote),
-        Some(body.rfind(quote).unwrap() + quote.len())
+        Some((start, start + quote.len()))
     );
 }
 
@@ -406,12 +484,13 @@ fn the_text_pieces_rebuild_every_body_exactly() {
         "First one. Second one.\n\n- item a.\n- item b.\n",
         "**Bold sentence.** Next.",
     ];
+    let reason = Some(Class::Reasoning);
     let findings = vec![
-        finding(0, "First one.", None, vec![passage("a", 0, "p1")]),
-        finding(0, "Second one.", None, vec![passage("a", 10, "p2")]),
-        finding(0, "item a.", None, vec![passage("a", 20, "p3")]),
-        finding(0, "item b.", None, vec![passage("a", 30, "p4")]),
-        finding(1, "Bold sentence.", None, vec![passage("b", 0, "p5")]),
+        finding(0, "First one.", reason, vec![passage("a", 0, "p1")]),
+        finding(0, "Second one.", reason, vec![passage("a", 10, "p2")]),
+        finding(0, "item a.", reason, vec![passage("a", 20, "p3")]),
+        finding(0, "item b.", reason, vec![passage("a", 30, "p4")]),
+        finding(1, "Bold sentence.", reason, vec![passage("b", 0, "p5")]),
     ];
     let numbered = numbering(&bodies, &findings);
 
@@ -441,4 +520,183 @@ fn a_body_without_citations_is_one_text_piece_and_an_empty_body_has_none() {
     assert!(numbered.sections[1].is_empty());
     assert_eq!(numbered.cites, vec![Vec::<u32>::new()]);
     assert_eq!(ids(&numbered), vec![("a", 0)]);
+}
+
+#[test]
+fn a_statement_that_is_not_supported_gets_no_chip() {
+    let mut found = finding(
+        0,
+        "Rust has ownership.",
+        Some(Class::Reasoning),
+        vec![passage("a", 0, "pa")],
+    );
+    found.verdict = ClaimVerdict::Unsupported;
+    let numbered = numbering(&["Rust has ownership."], &[found]);
+
+    assert_eq!(numbered.cites, vec![Vec::<u32>::new()]);
+    assert_eq!(numbered.sections[0], vec![text("Rust has ownership.")]);
+}
+
+#[test]
+fn a_chip_carries_the_relation_and_the_anchors_of_its_own_passage() {
+    let mut found = finding(
+        0,
+        "The lesson says the second.",
+        Some(Class::Sourced),
+        vec![passage("a", 100, "First sentence. Second sentence.")],
+    );
+    found.two_pass.parts = vec![anchored("a", PartKind::Stated, &[(116, 132)])];
+    let numbered = numbering(&["The lesson says the second."], &[found]);
+
+    assert_eq!(
+        numbered.sections[0],
+        vec![
+            text("The lesson says the second."),
+            cite_as(
+                1,
+                RelationDto::Restates,
+                vec![words("Second sentence.", 116, 132)]
+            ),
+        ]
+    );
+    assert_eq!(numbered.cites, vec![vec![1]]);
+}
+
+#[test]
+fn a_statement_on_two_passages_gets_two_chips_each_with_its_own_anchors() {
+    let mut found = finding(
+        0,
+        "The lesson joins both.",
+        Some(Class::Sourced),
+        vec![
+            passage("a", 0, "Alpha says one."),
+            passage("b", 50, "Beta says two."),
+        ],
+    );
+    found.two_pass.parts = vec![
+        anchored("a", PartKind::Stated, &[(0, 15)]),
+        anchored("b", PartKind::Stated, &[(50, 64)]),
+    ];
+    let numbered = numbering(&["The lesson joins both."], &[found]);
+
+    assert_eq!(numbered.cites, vec![vec![1, 2]]);
+    assert_eq!(
+        numbered.sections[0],
+        vec![
+            text("The lesson joins both."),
+            cite_as(
+                1,
+                RelationDto::Summarizes,
+                vec![words("Alpha says one.", 0, 15)]
+            ),
+            cite_as(
+                2,
+                RelationDto::Summarizes,
+                vec![words("Beta says two.", 50, 64)]
+            ),
+        ]
+    );
+}
+
+#[test]
+fn two_statements_at_one_point_keep_each_number_once_with_the_first_statements_support() {
+    let shared = passage("a", 0, "Alpha says one.");
+    let mut backed = finding(
+        0,
+        "Rust has ownership.",
+        Some(Class::Sourced),
+        vec![shared.clone()],
+    );
+    backed.two_pass.parts = vec![stated("a")];
+    let findings = vec![
+        finding(
+            0,
+            "Rust has ownership.",
+            Some(Class::Reasoning),
+            vec![shared],
+        ),
+        backed,
+    ];
+    let numbered = numbering(&["Rust has ownership."], &findings);
+
+    assert_eq!(numbered.cites, vec![vec![1], vec![1]]);
+    assert_eq!(
+        numbered.sections[0],
+        vec![text("Rust has ownership."), cite(1)]
+    );
+}
+
+fn quotation_of(quote: &str, source: &str) -> Finding {
+    finding(
+        0,
+        quote,
+        Some(Class::Sourced),
+        vec![passage("a", 0, source)],
+    )
+}
+
+#[test]
+fn a_quoted_statement_is_drawn_as_a_quoted_piece_with_its_chip_after_it() {
+    let quote = "The quick brown fox jumps over.";
+    let found = quotation_of(quote, quote);
+    let body = format!("He wrote: {quote} Then left.");
+    let numbered = numbering(&[body.as_str()], &[found]);
+
+    assert_eq!(
+        numbered.sections[0],
+        vec![
+            text("He wrote: "),
+            quoted(quote),
+            cite_as(1, RelationDto::Quotes, vec![words(quote, 0, 31)]),
+            text(" Then left."),
+        ]
+    );
+    assert_eq!(rebuilt(&numbered.sections[0]), body);
+}
+
+#[test]
+fn a_quoted_statement_whose_point_moved_past_a_code_span_stays_unquoted() {
+    let source = "Read the value of `config.name.first` aloud.";
+    let quote = "Read the value of `config.name";
+    let found = quotation_of(quote, source);
+    let numbered = numbering(&[source], &[found]);
+
+    assert_eq!(
+        numbered.sections[0],
+        vec![
+            text("Read the value of `config.name.first`"),
+            cite_as(1, RelationDto::Quotes, vec![words(quote, 0, 30)]),
+            text(" aloud."),
+        ]
+    );
+}
+
+#[test]
+fn a_quoted_span_that_overlaps_one_already_quoted_stays_text() {
+    let first = "The quick brown fox jumps over";
+    let second = "brown fox jumps over the lazy dog.";
+    let body = "The quick brown fox jumps over the lazy dog.";
+    let findings = vec![
+        quotation_of(first, body),
+        finding(
+            0,
+            second,
+            Some(Class::Sourced),
+            vec![passage("b", 0, second)],
+        ),
+    ];
+    let numbered = numbering(&[body], &findings);
+
+    assert_eq!(numbered.sections[0].len(), 4);
+    assert_eq!(numbered.sections[0][0], quoted(first));
+    assert!(matches!(
+        numbered.sections[0][1],
+        ReplyPieceDto::Reference { .. }
+    ));
+    assert_eq!(numbered.sections[0][2], text(" the lazy dog."));
+    assert!(matches!(
+        numbered.sections[0][3],
+        ReplyPieceDto::Reference { .. }
+    ));
+    assert_eq!(rebuilt(&numbered.sections[0]), body);
 }
