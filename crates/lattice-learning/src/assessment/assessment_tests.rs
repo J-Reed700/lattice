@@ -2052,3 +2052,86 @@ fn a_lesson_question_that_cannot_be_asked_is_stored_dropped_in_its_place() {
         ]
     );
 }
+
+#[tokio::test]
+async fn an_edited_question_leaves_drawn_quizzes_and_their_grades_as_they_were() -> Result<()> {
+    let pool = crate::tests::pool().await?;
+    let database = Database::new(pool);
+    let (program_id, scope) = lesson_program(&database).await?;
+    let repo = LearningAssessmentRepository::new(database.clone());
+
+    let first = start_lesson_quiz(&repo, &program_id, &scope).await?;
+    let first_right = first.position("Alpha");
+    let first_result = answer_and_submit(&repo, &first, first_right).await?;
+    assert_eq!(first_result.correct, Some(true), "{}", first_result.detail);
+    assert_eq!(first_result.score, 1.0);
+
+    let edits = crate::edits::content_edits(&database)?;
+    let content = crate::edits::keys::question_ref(&first.keyed);
+    let opened = edits.open(&content).await;
+    assert!(opened.is_ok(), "{opened:?}");
+    let opened = opened?;
+
+    let applied = edits
+        .apply(&lattice_core::shared::edits::ContentEditRequest {
+            edit_id: id(),
+            content,
+            expected_revision: opened.revision,
+            ops: vec![
+                lattice_core::shared::edits::EditOp::Replace {
+                    path: "/prompt".into(),
+                    value: serde_json::json!("Revised prompt after submission."),
+                },
+                lattice_core::shared::edits::EditOp::Replace {
+                    path: "/choices/0/correct".into(),
+                    value: serde_json::json!(false),
+                },
+                lattice_core::shared::edits::EditOp::Replace {
+                    path: "/choices/1/correct".into(),
+                    value: serde_json::json!(true),
+                },
+                lattice_core::shared::edits::EditOp::Replace {
+                    path: "/explanation".into(),
+                    value: serde_json::json!("Bravo is now right after the edit."),
+                },
+            ],
+            source: lattice_core::shared::edits::EditSource::Learner,
+            target: None,
+        })
+        .await?;
+    assert!(applied.changed);
+
+    let stored_first = repo.get_form(&first.form.id).await?;
+    let stored_item = stored_first
+        .items
+        .iter()
+        .find(|i| i.id == first.keyed)
+        .unwrap();
+    assert_ne!(stored_item.prompt, "Revised prompt after submission.");
+    let stored_reveal = reveal_of(&stored_first, &first.keyed);
+    assert_eq!(stored_reveal.explanation, "Because the lesson says so.");
+    assert_eq!(stored_reveal.correct_indices, vec![first_right]);
+    let stored_result = stored_first
+        .submission
+        .unwrap()
+        .item_results
+        .into_iter()
+        .find(|r| r.item_id == first.keyed)
+        .unwrap();
+    assert_eq!(stored_result.correct, Some(true));
+    assert_eq!(stored_result.score, 1.0);
+
+    let second = start_lesson_quiz(&repo, &program_id, &scope).await?;
+    assert_eq!(second.keyed, first.keyed);
+    let second_item = second
+        .form
+        .items
+        .iter()
+        .find(|i| i.id == first.keyed)
+        .unwrap();
+    assert_eq!(second_item.prompt, "Revised prompt after submission.");
+    let second_alpha = answer_and_submit(&repo, &second, second.position("Alpha")).await?;
+    assert_eq!(second_alpha.correct, Some(false), "{}", second_alpha.detail);
+    assert_eq!(second_alpha.score, 0.0);
+    Ok(())
+}
