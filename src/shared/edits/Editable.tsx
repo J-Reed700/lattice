@@ -4,9 +4,10 @@ import { Pencil } from 'lucide-react';
 
 import { useEditMode } from './editMode';
 import { openEditor } from './editorStore';
-import './edits.css';
 
 import type { ContentRef } from './types';
+
+import './edits.css';
 
 export interface EditableProps {
   content: ContentRef;
