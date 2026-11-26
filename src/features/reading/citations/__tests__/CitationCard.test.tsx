@@ -22,7 +22,7 @@ describe('CitationCard', () => {
     render(<CitationCard number={2} title="The Quillet Guide" relation={relation} excerpts={['Tea is hot.']} />);
 
     expect(screen.getByText(label)).toBeInTheDocument();
-    expect(screen.getByRole('group', { name: expect.stringContaining('The Quillet Guide') })).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: /The Quillet Guide/ })).toBeInTheDocument();
   });
 
   it('has no relation line without a relation', () => {
