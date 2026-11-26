@@ -95,11 +95,7 @@ pub fn check_memory_admission(
     };
 
     let headroom = available / HEADROOM_DIVISOR;
-    let max_input_bytes = if memory_multiplier == 0 {
-        u64::MAX
-    } else {
-        headroom / memory_multiplier
-    };
+    let max_input_bytes = headroom.checked_div(memory_multiplier).unwrap_or(u64::MAX);
     let admitted = estimated_bytes <= headroom;
 
     MemoryAdmissionDecision {

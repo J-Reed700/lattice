@@ -598,6 +598,7 @@ async fn server_status(
 /// still has a name the chat template can render.
 const UNNAMED_TOOL: &str = "unnamed_tool";
 
+#[cfg(test)]
 pub(crate) fn parse_completion(value: Value) -> Result<CompletionResponse> {
     parse_completion_with_budget(value, ResponseBudget::default().max_tool_calls)
 }

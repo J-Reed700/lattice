@@ -619,6 +619,7 @@ impl ServerFailure {
 }
 
 impl Decoder {
+    #[cfg(test)]
     pub fn for_completion() -> Self {
         Self::with_budget(ResponseBudget::default())
     }
