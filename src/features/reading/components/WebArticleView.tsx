@@ -429,7 +429,7 @@ export function WebArticleView({
       )}
 
       {everyAnchorMissing && (
-        <p role="status" className="shrink-0 border-b border-subtle py-2 text-xs font-medium text-[hsl(var(--text-primary))]">
+        <p role="status" className="shrink-0 border-b border-border-subtle py-2 text-xs font-medium text-[hsl(var(--text-primary))]">
           The cited sentence is not in the saved text of this source.
         </p>
       )}
