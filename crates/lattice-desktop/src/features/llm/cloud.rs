@@ -1,8 +1,9 @@
 //! Native OpenAI Responses and Anthropic Messages adapters.
 //! Explicit selection only; Auto never sends local documents to a cloud provider.
-use crate::features::llm::backend::{ignore_text, ModelBackend, Progress, TextSink};
+use crate::features::llm::backend::{ModelBackend, Progress, RetrySink, TextSink};
 use crate::features::llm::engine::vision::not_set_up_to_see;
 use crate::features::llm::fitting::{Fitted, OutputLimits, Thinking};
+use crate::features::llm::resend::Resend;
 use crate::features::llm::scheduler::{InferenceScheduler, SchedulerRegistry};
 use async_trait::async_trait;
 use lattice_core::application::services::model_contract::shape::Schema;
@@ -15,6 +16,7 @@ use lattice_core::shared::error::WithCauses;
 use lattice_core::shared::error::{AppError, Result};
 use protocol::{cloud_provider, protocols, CompletionProtocol, ProviderApi};
 use serde_json::Value;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -124,20 +126,23 @@ impl CloudLlm {
     }
 
     /// Every attempt and its wait share one `deadline`, so a retry never
-    /// multiplies the caller's time budget. A refusal for load is resent when
-    /// the provider's scheduler reopens admission: as often as a `retry-after`
-    /// asks, otherwise three attempts in all. `bound_body` applies what is
-    /// left of it to the whole exchange; without it only the wait for response
-    /// headers is bounded and the streamed body is left to stall detection.
+    /// multiplies the caller's time budget. A request lost on its way or
+    /// refused by a server error is sent again under `resend`'s rule. A
+    /// refusal for load is resent when the provider's scheduler reopens
+    /// admission: as often as a `retry-after` asks, otherwise three attempts
+    /// in all. `bound_body` applies what is left of the budget to the whole
+    /// exchange; without it only the wait for response headers is bounded and
+    /// the streamed body is left to stall detection.
     /// Returns the response with the instant its attempt went out.
     async fn post(
         &self,
         body: &Value,
         deadline: Option<Instant>,
         bound_body: bool,
+        resend: &mut Resend<'_>,
     ) -> Result<(reqwest::Response, Instant)> {
         let mut last_error = None;
-        let mut attempt = 0u32;
+        let mut throttles = 0u32;
         loop {
             let remaining =
                 deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
@@ -158,14 +163,15 @@ impl CloudLlm {
                     .map_err(|_| self.budget_error())?
             } else {
                 send.await
-            }
-            .map_err(|e| {
-                if e.is_timeout() {
-                    self.budget_error()
-                } else {
-                    AppError::Network(format!("Cloud request failed: {}", WithCauses(&e)))
+            };
+            let response = match response {
+                Ok(response) => response,
+                Err(error) => {
+                    let error = self.exchange_failure(error, deadline, "Cloud request failed");
+                    resend.after(error, None, false).await?;
+                    continue;
                 }
-            })?;
+            };
             let status = response.status();
             if status.is_success() {
                 self.scheduler.accepted();
@@ -193,20 +199,22 @@ impl CloudLlm {
             let error = refusal(self.protocol, response).await;
             let rate_limited = matches!(error, AppError::RateLimitExceeded(_));
             let overloaded = status.as_u16() == 529;
-            let throttled = rate_limited || overloaded;
-            if !(throttled || status.is_server_error()) {
-                return Err(error);
+            if !(rate_limited || overloaded) {
+                if !status.is_server_error() {
+                    return Err(error);
+                }
+                resend
+                    .after(error, retry_after.map(Duration::from_secs), false)
+                    .await?;
+                continue;
             }
             let asked_to_wait = rate_limited && retry_after.is_some();
-            if attempt >= 2 && !asked_to_wait {
+            if throttles >= 2 && !asked_to_wait {
                 return Err(error);
             }
-            let delay = if throttled {
-                self.scheduler
-                    .throttled(retry_after.map(Duration::from_secs))
-            } else {
-                Duration::from_secs(1 << attempt)
-            };
+            let delay = self
+                .scheduler
+                .throttled(retry_after.map(Duration::from_secs));
             // Sleeping past the deadline would report a budget expiry instead of
             // the provider's own reason for refusing.
             if deadline
@@ -215,12 +223,8 @@ impl CloudLlm {
                 return Err(error);
             }
             last_error = Some(error);
-            if throttled {
-                self.scheduler.until_open().await;
-            } else {
-                tokio::time::sleep(delay).await;
-            }
-            attempt = attempt.saturating_add(1);
+            self.scheduler.until_open().await;
+            throttles = throttles.saturating_add(1);
         }
     }
 
@@ -232,17 +236,33 @@ impl CloudLlm {
         ))
     }
 
+    /// A failed exchange: the outage it is, unless the caller's deadline is
+    /// what ended it.
+    fn exchange_failure(
+        &self,
+        error: reqwest::Error,
+        deadline: Option<Instant>,
+        what: &str,
+    ) -> AppError {
+        if error.is_timeout() && deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            self.budget_error()
+        } else {
+            AppError::Network(format!("{what}: {}", WithCauses(&error)))
+        }
+    }
+
     /// Sends `body`, and once more with what the provider's fallback makes of
     /// it when the provider refuses it in a way the fallback answers.
     async fn send_with_fallback(
         &self,
-        body: Value,
+        body: &Value,
         deadline: Option<Instant>,
         bound_body: bool,
+        resend: &mut Resend<'_>,
     ) -> Result<(reqwest::Response, Instant)> {
-        match self.post(&body, deadline, bound_body).await {
-            Err(error) => match self.protocol.resend_after(&error, &body) {
-                Some(rewritten) => self.post(&rewritten, deadline, bound_body).await,
+        match self.post(body, deadline, bound_body, resend).await {
+            Err(error) => match self.protocol.resend_after(&error, body) {
+                Some(rewritten) => self.post(&rewritten, deadline, bound_body, resend).await,
                 None => Err(error),
             },
             sent => sent,
@@ -257,15 +277,26 @@ impl CloudLlm {
             .request()
             .wall_clock_budget()
             .map(|budget| Instant::now() + budget);
-        let (response, _) = self
-            .send_with_fallback(self.body(fitted, false)?, deadline, true)
-            .await?;
-        let value: Value = response.json().await.map_err(|e| {
-            AppError::Network(format!("Invalid cloud response: {}", WithCauses(&e)))
-        })?;
-        // Without the server's own timings a whole answer at once has no
-        // edge between reading and writing, so it is not timed.
-        self.protocol.parse_reply(value)
+        let body = self.body(fitted, false)?;
+        let mut resend = Resend::new(
+            self.protocol.name(),
+            deadline.map(tokio::time::Instant::from_std),
+            None,
+        );
+        loop {
+            let (response, _) = self
+                .send_with_fallback(&body, deadline, true, &mut resend)
+                .await?;
+            match response.json::<Value>().await {
+                // Without the server's own timings a whole answer at once has no
+                // edge between reading and writing, so it is not timed.
+                Ok(value) => return self.protocol.parse_reply(value),
+                Err(error) => {
+                    let error = self.exchange_failure(error, deadline, "Invalid cloud response");
+                    resend.after(error, None, false).await?;
+                }
+            }
+        }
     }
 
     /// The answer as it is written, text and thinking handed on as they arrive.
@@ -273,26 +304,55 @@ impl CloudLlm {
         &self,
         fitted: &Fitted<'_>,
         on_text: &TextSink<'_>,
-        on_reasoning: &TextSink<'_>,
+        on_reasoning: Option<&TextSink<'_>>,
+        on_retry: Option<&RetrySink<'_>>,
     ) -> Result<CompletionResponse> {
         let request = fitted.request();
         let deadline = request
             .wall_clock_budget()
             .map(|budget| Instant::now() + budget);
+        let body = self.body(fitted, true)?;
+        let mut resend = Resend::new(
+            self.protocol.name(),
+            deadline.map(tokio::time::Instant::from_std),
+            on_retry,
+        );
         request
             .within_time_budget(async {
-                let (response, sent) = self
-                    .send_with_fallback(self.body(fitted, true)?, deadline, false)
-                    .await?;
-                streaming::drain(
-                    self.protocol,
-                    response.bytes_stream(),
-                    self.stall_timeout,
-                    sent,
-                    on_text,
-                    on_reasoning,
-                )
-                .await
+                loop {
+                    let (response, sent) = self
+                        .send_with_fallback(&body, deadline, false, &mut resend)
+                        .await?;
+                    let delivered = AtomicBool::new(false);
+                    let text = |piece: String| {
+                        delivered.store(true, Ordering::Relaxed);
+                        on_text(piece)
+                    };
+                    let reasoning = |piece: String| match on_reasoning {
+                        Some(on_reasoning) => {
+                            delivered.store(true, Ordering::Relaxed);
+                            on_reasoning(piece)
+                        }
+                        None => Ok(()),
+                    };
+                    match streaming::drain(
+                        self.protocol,
+                        response.bytes_stream(),
+                        self.stall_timeout,
+                        sent,
+                        &text,
+                        &reasoning,
+                    )
+                    .await
+                    {
+                        Err(error @ AppError::Network(_)) => {
+                            resend
+                                .after(error, None, delivered.load(Ordering::Relaxed))
+                                .await?
+                        }
+                        answer => return answer,
+                    }
+                }
             })
             .await
             .map_err(|_| self.budget_error())?
@@ -344,9 +404,9 @@ impl ModelBackend for CloudLlm {
             Progress::Streamed {
                 on_text,
                 on_reasoning,
-                ..
+                on_retry,
             } => {
-                self.complete_streamed(fitted, on_text, on_reasoning.unwrap_or(&ignore_text))
+                self.complete_streamed(fitted, on_text, on_reasoning, on_retry)
                     .await
             }
         }
@@ -427,6 +487,9 @@ fn status_error(api: &dyn ProviderApi, status: reqwest::StatusCode, reply: &Valu
         _ => AppError::ModelRejected(format!("{shown} rejected this request (HTTP {status}).")),
     }
 }
+
+#[cfg(test)]
+mod resend_tests;
 
 #[cfg(test)]
 mod transport_tests;
