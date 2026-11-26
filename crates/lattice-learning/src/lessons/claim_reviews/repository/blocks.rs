@@ -76,17 +76,15 @@ pub(crate) async fn write_section(
     Ok(())
 }
 
-/// The published sections' text, by section index.
-pub(in crate::lessons::claim_reviews) async fn section_bodies(
-    database: &Database,
+/// The published sections' text, by section index, within an open read connection.
+pub(in crate::lessons::claim_reviews) async fn section_bodies_in(
+    connection: &mut SqliteConnection,
     lesson_id: &str,
 ) -> Result<HashMap<usize, String>> {
-    let mut read = database.begin_read().await?;
     let rows = sqlx::query("SELECT ordinal, body FROM learning_blocks WHERE lesson_id=?")
         .bind(lesson_id)
-        .fetch_all(&mut *read)
+        .fetch_all(&mut *connection)
         .await?;
-    read.commit().await?;
     Ok(rows
         .iter()
         .filter_map(|row| {
@@ -96,6 +94,17 @@ pub(in crate::lessons::claim_reviews) async fn section_bodies(
             ))
         })
         .collect())
+}
+
+/// The published sections' text, by section index.
+pub(in crate::lessons::claim_reviews) async fn section_bodies(
+    database: &Database,
+    lesson_id: &str,
+) -> Result<HashMap<usize, String>> {
+    let mut read = database.begin_read().await?;
+    let bodies = section_bodies_in(&mut *read, lesson_id).await?;
+    read.commit().await?;
+    Ok(bodies)
 }
 
 /// The lesson's stored verification report, as JSON.

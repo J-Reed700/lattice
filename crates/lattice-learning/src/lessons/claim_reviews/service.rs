@@ -337,14 +337,14 @@ impl ClaimReviewService {
         let mut findings = TeachingFindingsRepository::new(self.database.clone())
             .list(lesson_id)
             .await?;
-        let bodies = blocks::section_bodies(&self.database, lesson_id).await?;
         let edits = crate::edits::content_edits(&self.database)?;
-        let newest = {
+        let (bodies, newest) = {
+            let mut read = self.database.begin_read().await?;
+            let bodies = blocks::section_bodies_in(&mut *read, lesson_id).await?;
             let refs: Vec<_> = bodies
                 .keys()
                 .map(|&unit| keys::section_ref(lesson_id, unit))
                 .collect();
-            let mut read = self.database.begin_read().await?;
             let map: HashMap<usize, _> = edits
                 .newest(&mut read.reading(), &refs, keys::CLAIMS_REACTOR)
                 .await?
@@ -354,7 +354,7 @@ impl ClaimReviewService {
                 })
                 .collect();
             read.commit().await?;
-            map
+            (bodies, map)
         };
         name_claims(&ledger, &bodies, &newest, &mut findings);
         let mut chosen: Vec<&TeachingFindingDto> = Vec::new();

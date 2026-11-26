@@ -49,9 +49,29 @@ pub(super) struct NewEditRow<'a> {
     pub created_at: i64,
 }
 
-const COLUMNS: &str = "id, kind, content_key, scope_feature, scope_container, seq, origin_json, \
-    target_json, ops_json, inverse_json, before_revision, after_revision, reverts_edit_id, \
-    request_sha256, outcome_json, created_at";
+macro_rules! edit_columns {
+    () => {
+        "id, kind, content_key, scope_feature, scope_container, seq, origin_json, \
+         target_json, ops_json, inverse_json, before_revision, after_revision, \
+         reverts_edit_id, request_sha256, outcome_json, created_at"
+    };
+}
+
+const SELECT_BY_ID: &str = concat!(
+    "SELECT ",
+    edit_columns!(),
+    " FROM content_edits WHERE id = ?"
+);
+const SELECT_ENTITY_EDITS: &str = concat!(
+    "SELECT ",
+    edit_columns!(),
+    " FROM content_edits WHERE kind = ? AND content_key = ? ORDER BY seq ASC"
+);
+const SELECT_QUERY_PREFIX: &str = concat!(
+    "SELECT ",
+    edit_columns!(),
+    " FROM content_edits WHERE 1 = 1"
+);
 
 fn parse_row(row: &SqliteRow) -> Result<StoredEditRow> {
     let origin: EditOrigin = serde_json::from_str(&row.get::<String, _>("origin_json"))?;
@@ -91,8 +111,7 @@ pub(super) async fn find_edit_by_id(
     connection: &mut SqliteConnection,
     id: &str,
 ) -> Result<Option<StoredEditRow>> {
-    let sql = format!("SELECT {COLUMNS} FROM content_edits WHERE id = ?");
-    let row = sqlx::query(&sql)
+    let row = sqlx::query(SELECT_BY_ID)
         .bind(id)
         .fetch_optional(connection)
         .await?;
@@ -103,10 +122,7 @@ pub(super) async fn load_entity_edits(
     connection: &mut SqliteConnection,
     content: &ContentRef,
 ) -> Result<Vec<StoredEditRow>> {
-    let sql = format!(
-        "SELECT {COLUMNS} FROM content_edits WHERE kind = ? AND content_key = ? ORDER BY seq ASC"
-    );
-    let rows = sqlx::query(&sql)
+    let rows = sqlx::query(SELECT_ENTITY_EDITS)
         .bind(&content.kind)
         .bind(&content.key)
         .fetch_all(connection)
@@ -233,9 +249,7 @@ pub(super) async fn query_edits(
     connection: &mut SqliteConnection,
     query: &ContentEditQuery,
 ) -> Result<Vec<StoredEditRow>> {
-    let mut builder: QueryBuilder<'_, Sqlite> = QueryBuilder::new("SELECT ");
-    builder.push(COLUMNS);
-    builder.push(" FROM content_edits WHERE 1 = 1");
+    let mut builder = QueryBuilder::<Sqlite>::new(SELECT_QUERY_PREFIX);
 
     if let Some(scope) = &query.scope {
         builder.push(" AND scope_feature = ");

@@ -43,7 +43,7 @@ fn parse_index(segment: &str, path: &str) -> Result<usize> {
         .map_err(|_| bad_path(path, "list index is out of range."))
 }
 
-fn key_of(spec: &FieldSpec, path: &str) -> Result<&str> {
+fn key_of<'a>(spec: &'a FieldSpec, path: &str) -> Result<&'a str> {
     spec.path()
         .strip_prefix('/')
         .ok_or_else(|| bad_path(path, "field descriptor path is malformed."))

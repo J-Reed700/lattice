@@ -186,12 +186,12 @@ async fn vacuum_into_succeeds_when_reader_pool_enforces_query_only() {
 #[tokio::test]
 async fn an_urgent_write_waits_for_one_standard_unit_and_not_for_the_queue() {
     let opened = open().await;
-    let held = opened.db.begin_write().await.unwrap();
+    let held = opened.begin_write().await.unwrap();
     let order = std::sync::Arc::new(std::sync::Mutex::new(Vec::<&'static str>::new()));
 
     let mut standard = Vec::new();
     for label in ["std-1", "std-2", "std-3"] {
-        let db = opened.db.clone();
+        let db = opened.clone();
         let order = std::sync::Arc::clone(&order);
         standard.push(tokio::spawn(async move {
             let tx = db.begin_write().await.unwrap();
@@ -202,7 +202,7 @@ async fn an_urgent_write_waits_for_one_standard_unit_and_not_for_the_queue() {
     }
 
     let urgent = {
-        let db = opened.db.clone();
+        let db = opened.clone();
         let order = std::sync::Arc::clone(&order);
         tokio::spawn(async move {
             let tx = db.urgent().begin_write().await.unwrap();
@@ -226,12 +226,12 @@ async fn an_urgent_write_waits_for_one_standard_unit_and_not_for_the_queue() {
 #[tokio::test]
 async fn standard_writers_keep_their_order() {
     let opened = open().await;
-    let held = opened.db.begin_write().await.unwrap();
+    let held = opened.begin_write().await.unwrap();
     let order = std::sync::Arc::new(std::sync::Mutex::new(Vec::<usize>::new()));
 
     let mut handles = Vec::new();
     for index in 1..=4 {
-        let db = opened.db.clone();
+        let db = opened.clone();
         let order = std::sync::Arc::clone(&order);
         handles.push(tokio::spawn(async move {
             let tx = db.begin_write().await.unwrap();

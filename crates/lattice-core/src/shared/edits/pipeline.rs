@@ -16,8 +16,8 @@ use super::store::{self, NewEditRow, StoredEditRow};
 use super::types::{
     Consequence, ContentEditHistory, ContentEditOutcome, ContentEditPreview, ContentEditQuery,
     ContentEditRecord, ContentEditRequest, ContentEditSummary, ContentRef, EditOp, EditOrigin,
-    EditScope, Editability, EditableContent, FieldChange, FieldNotice, FieldSpec, NewestEdit,
-    ReadMark, RevertContentEditRequest, TextFormat, Uncommitted,
+    Editability, EditableContent, FieldChange, FieldNotice, FieldSpec, NewestEdit, ReadMark,
+    RevertContentEditRequest, TextFormat, Uncommitted,
 };
 use crate::shared::error::{AppError, Result};
 use crate::shared::hash::sha256_hex;
