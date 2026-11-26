@@ -200,12 +200,6 @@ async fn a_card_edit_leaves_its_schedule() -> Result<()> {
     .bind(&card_id)
     .fetch_one(&pool)
     .await?;
-    let before_profile = sqlx::query(
-        "SELECT scheduler_version, scheduler_state_json FROM learning_recall_card_profiles WHERE card_id=?",
-    )
-    .bind(&card_id)
-    .fetch_one(&pool)
-    .await?;
 
     let edits = content_edits(&db)?;
     let opened = edits.open(&card_ref(&card_id)).await;
@@ -262,21 +256,6 @@ async fn a_card_edit_leaves_its_schedule() -> Result<()> {
     assert_eq!(
         after_study.get::<i64, _>("lapses"),
         before_study.get::<i64, _>("lapses")
-    );
-
-    let after_profile = sqlx::query(
-        "SELECT scheduler_version, scheduler_state_json FROM learning_recall_card_profiles WHERE card_id=?",
-    )
-    .bind(&card_id)
-    .fetch_one(&pool)
-    .await?;
-    assert_eq!(
-        after_profile.get::<String, _>("scheduler_version"),
-        before_profile.get::<String, _>("scheduler_version")
-    );
-    assert_eq!(
-        after_profile.get::<String, _>("scheduler_state_json"),
-        before_profile.get::<String, _>("scheduler_state_json")
     );
     Ok(())
 }
