@@ -37,6 +37,8 @@ export interface TiptapViewerProps {
   streaming?: boolean;
   /** Draw ```mermaid fences as diagrams (default on). Read when the viewer is created. */
   diagrams?: boolean;
+  /** Attach `data-source-lines` to rendered markdown blocks (default false). Read when the viewer is created. */
+  sourceLines?: boolean;
   /**
    * A chat answer's pictures, for its `![caption](img-N)` refs. Given (even
    * empty), no other image address is loaded; absent, images render plainly.
