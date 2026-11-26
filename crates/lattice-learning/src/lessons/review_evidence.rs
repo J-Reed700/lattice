@@ -574,10 +574,9 @@ pub async fn check(
         &call,
     )?;
     // Each finding's search gets an equal share of the room the request
-    // leaves for reference passages, capped so large context windows do not
-    // pack hundreds of low-relevance passages for one or two findings.
-    const MAX_REVIEW_EVIDENCE_ISSUE_TOKENS: usize = 6_000;
-    let share = (room / issues.len().max(1)).min(MAX_REVIEW_EVIDENCE_ISSUE_TOKENS);
+    // leaves for reference passages, stopping at the query's relevance cutoff
+    // so large context windows do not pack low-relevance passages.
+    let share = room / issues.len().max(1);
     let shown_as = |at: usize, passage: &ReferencePassage| {
         let source = references
             .sources
@@ -601,7 +600,7 @@ pub async fn check(
     let mut found_for: Vec<Vec<usize>> = Vec::new();
     for issue in issues {
         let found = references
-            .retrieve_within(&issue.note, |passages| {
+            .retrieve_relevant_within(&issue.note, |passages| {
                 passages
                     .iter()
                     .map(|passage| cost_of(&shown_as(0, passage)))
@@ -784,3 +783,7 @@ pub(crate) fn decided(
 #[cfg(test)]
 #[path = "review_evidence/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "review_evidence/relevance_tests.rs"]
+mod relevance_tests;
