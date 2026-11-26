@@ -531,7 +531,8 @@ fn a_statement_that_is_not_supported_gets_no_chip() {
         vec![passage("a", 0, "pa")],
     );
     found.verdict = ClaimVerdict::Unsupported;
-    let numbered = numbering(&["Rust has ownership."], &[found]);
+    let findings = [found];
+    let numbered = numbering(&["Rust has ownership."], &findings);
 
     assert_eq!(numbered.cites, vec![Vec::<u32>::new()]);
     assert_eq!(numbered.sections[0], vec![text("Rust has ownership.")]);
@@ -546,7 +547,8 @@ fn a_chip_carries_the_relation_and_the_anchors_of_its_own_passage() {
         vec![passage("a", 100, "First sentence. Second sentence.")],
     );
     found.two_pass.parts = vec![anchored("a", PartKind::Stated, &[(116, 132)])];
-    let numbered = numbering(&["The lesson says the second."], &[found]);
+    let findings = [found];
+    let numbered = numbering(&["The lesson says the second."], &findings);
 
     assert_eq!(
         numbered.sections[0],
@@ -577,7 +579,8 @@ fn a_statement_on_two_passages_gets_two_chips_each_with_its_own_anchors() {
         anchored("a", PartKind::Stated, &[(0, 15)]),
         anchored("b", PartKind::Stated, &[(50, 64)]),
     ];
-    let numbered = numbering(&["The lesson joins both."], &[found]);
+    let findings = [found];
+    let numbered = numbering(&["The lesson joins both."], &findings);
 
     assert_eq!(numbered.cites, vec![vec![1, 2]]);
     assert_eq!(
@@ -640,7 +643,8 @@ fn a_quoted_statement_is_drawn_as_a_quoted_piece_with_its_chip_after_it() {
     let quote = "The quick brown fox jumps over.";
     let found = quotation_of(quote, quote);
     let body = format!("He wrote: {quote} Then left.");
-    let numbered = numbering(&[body.as_str()], &[found]);
+    let findings = [found];
+    let numbered = numbering(&[body.as_str()], &findings);
 
     assert_eq!(
         numbered.sections[0],
@@ -659,7 +663,8 @@ fn a_quoted_statement_whose_point_moved_past_a_code_span_stays_unquoted() {
     let source = "Read the value of `config.name.first` aloud.";
     let quote = "Read the value of `config.name";
     let found = quotation_of(quote, source);
-    let numbered = numbering(&[source], &[found]);
+    let findings = [found];
+    let numbered = numbering(&[source], &findings);
 
     assert_eq!(
         numbered.sections[0],

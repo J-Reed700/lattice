@@ -81,7 +81,7 @@ impl<'f> Passages<'f> {
             .on
             .iter()
             .map(|(passage, anchors)| {
-                let passage: &'f EvidencePassage = *passage;
+                let passage = *passage;
                 let support = SupportDto {
                     relation: found.relation.into(),
                     anchors: anchors
