@@ -4,6 +4,7 @@ use super::cited_text::{number, Numbered};
 use super::claim_ledger::stands_in_part;
 use super::provenance_gate::FindingTrust;
 use super::resolution::{ended_mark, standing, Placed, Resolution, Standing};
+use super::support::{anchor_dto, cited};
 use super::{ClaimVerdict, EvidencePassage, Finding, LessonVerificationReport};
 use crate::{
     dto::{LearningLessonDto, LearningSourceTrustDto, LearningSufficiencyDto},
@@ -117,6 +118,7 @@ fn passage_dto(
 fn part_kind(kind: PartKind) -> LearningClaimPartKindDto {
     match kind {
         PartKind::Stated => LearningClaimPartKindDto::Stated,
+        PartKind::Follows => LearningClaimPartKindDto::Follows,
         PartKind::Common => LearningClaimPartKindDto::Common,
         PartKind::Own => LearningClaimPartKindDto::Own,
         PartKind::SpecificMissing => LearningClaimPartKindDto::SpecificMissing,
@@ -389,9 +391,24 @@ impl LessonVerificationReport {
                         .map(|part| LearningClaimPartDto {
                             part: part.part.clone(),
                             kind: part_kind(part.kind),
-                            source_version_id: part.source_id.clone(),
+                            source_version_id: part.source_id.clone().or_else(|| {
+                                part.anchors
+                                    .first()
+                                    .map(|anchor| anchor.source_version_id.clone())
+                            }),
+                            anchors: part
+                                .anchors
+                                .iter()
+                                .filter_map(|anchor| {
+                                    finding
+                                        .evidence
+                                        .iter()
+                                        .find_map(|passage| anchor_dto(passage, anchor))
+                                })
+                                .collect(),
                         })
                         .collect(),
+                    relation: cited(finding).map(|cited| cited.relation.into()),
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -424,6 +441,10 @@ impl LessonVerificationReport {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "learner_view_support_tests.rs"]
+mod support_tests;
 
 #[cfg(test)]
 mod tests {
@@ -488,11 +509,13 @@ mod tests {
                 part: "Quillet is a lexer".into(),
                 kind: PartKind::Stated,
                 source_id: Some("version-1".into()),
+                anchors: Vec::new(),
             },
             CheckedPart {
                 part: "a lexer turns characters into tokens".into(),
                 kind: PartKind::Common,
                 source_id: None,
+                anchors: Vec::new(),
             },
         ];
         let claim = &report
@@ -721,7 +744,9 @@ mod tests {
 
     #[test]
     fn a_lesson_reads_with_numbered_citations_its_statements_stand_on() {
-        use lattice_core::application::contracts::replies::{ReplyPieceDto, ReplyReferenceDto};
+        use lattice_core::application::contracts::replies::{
+            RelationDto, ReplyPieceDto, ReplyReferenceDto, SupportDto,
+        };
 
         let (mut lesson, mut report) = fixture();
         lesson.blocks[0].body = "Quillet reads source text. It then emits tokens.".into();
@@ -744,6 +769,7 @@ mod tests {
             part: "Quillet reads source text".into(),
             kind: PartKind::Stated,
             source_id: Some("version-1".into()),
+            anchors: Vec::new(),
         }];
         let mut second = report.findings[0].clone();
         second.quote = "It then emits tokens.".into();
@@ -780,13 +806,17 @@ mod tests {
         assert_eq!(view.citations[1].passage.title, "Executed example");
         assert_eq!(view.teaching_claims[0].cites, vec![1]);
         assert_eq!(view.teaching_claims[1].cites, vec![1]);
-        let mark = ReplyPieceDto::Reference {
+        let mark = |relation| ReplyPieceDto::Reference {
             reference: ReplyReferenceDto {
                 written: "[1]".into(),
                 kind: "source".into(),
                 number: 1,
                 lines: None,
                 name: None,
+                support: Some(SupportDto {
+                    relation,
+                    anchors: Vec::new(),
+                }),
             },
         };
         let text = |text: &str| ReplyPieceDto::Text { text: text.into() };
@@ -796,9 +826,9 @@ mod tests {
             view.sections[0].pieces,
             vec![
                 text("Quillet reads source text."),
-                mark.clone(),
+                mark(RelationDto::Backs),
                 text(" It then emits tokens."),
-                mark,
+                mark(RelationDto::Agrees),
             ]
         );
     }
@@ -840,6 +870,7 @@ mod tests {
             part: "Quillet reads source text".into(),
             kind: PartKind::Stated,
             source_id: Some("version-1".into()),
+            anchors: Vec::new(),
         }];
         let mut second = report.findings[0].clone();
         second.unit = 1;
