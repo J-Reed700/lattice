@@ -229,8 +229,10 @@ export function useCitationInteractions({
       if (claimHover) setClaimHover(null);
       setLit(null);
       const number = Number(chip.dataset.cite);
-      if (citationHover?.number === number) return;
-      setCitationHover({ number, occurrence: null, rect: chip.getBoundingClientRect() });
+      const at = chip.dataset.citeAt ? Number(chip.dataset.citeAt) : Number.NaN;
+      const occurrence = Number.isInteger(at) ? at : null;
+      if (citationHover?.number === number && citationHover.occurrence === occurrence) return;
+      setCitationHover({ number, occurrence, rect: chip.getBoundingClientRect() });
       return;
     }
     if (citationHover) setCitationHover(null);

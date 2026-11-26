@@ -7,7 +7,10 @@
  */
 
 import { sentenceSpans } from '@/features/reading/model/sourcedPassages';
-import { MARK, markIndex, markReply, type ReplyPiece } from '@/utils/replyPieces';
+import { MARK, markIndex, markReply, QUOTE_END, QUOTE_START, type ReplyPiece } from '@/utils/replyPieces';
+
+/** The marks a quotation travels between: the words matter to a matcher, the marks do not. */
+const QUOTE_MARKS = new RegExp(`[${QUOTE_START}${QUOTE_END}]`, 'g');
 
 /** Markdown that carries no words: list bullets, headings, quotes, table pipes. */
 const BLOCK_PREFIX = /^\s*(?:[-*+]\s+|\d{1,3}[.)]\s+|#{1,6}\s+|>\s*|\|\s*)/;
@@ -102,7 +105,7 @@ function replyReader(numbers: readonly number[]): ReferenceReader {
       Array.from(sentence.matchAll(MARK), (match) => numbers[markIndex(match[1])]).filter(
         (number): number is number => number !== undefined
       ),
-    withoutReferences: (sentence) => closeGaps(sentence.replace(MARK, ' ')),
+    withoutReferences: (sentence) => closeGaps(sentence.replace(MARK, ' ').replace(QUOTE_MARKS, '')),
   };
 }
 

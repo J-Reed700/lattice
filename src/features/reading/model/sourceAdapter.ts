@@ -435,7 +435,9 @@ export function fromLearningEvidencePassage(
 ): ResolvedReaderTarget {
   const url = learningPassageUrl(passage);
   const web = Boolean(url);
-  const text = passage.text?.trim() || '';
+  const passageText = passage.text ?? '';
+  const text = passageText.trim() ? passageText : '';
+  const savedText = fullText?.trim() ? fullText : '';
   const documentId = url ? `web:${url}` : passage.sourceVersionId || `passage-${index}`;
   const chunkId = `${passage.sourceVersionId}:${passage.startByte}-${passage.endByte}`;
 
@@ -447,14 +449,14 @@ export function fromLearningEvidencePassage(
       filePath: url ?? passage.sourceVersionId,
       mimeType: web ? 'text/html' : 'text/plain',
       category: web ? 'web' : 'document',
-      content: text || fullText?.trim() || '',
+      content: text || savedText,
       excerpt: text || undefined,
       webSnapshot:
-        web && (fullText?.trim() || text)
+        web && (savedText || text)
           ? {
               url: url!,
               title: passage.title?.trim() || null,
-              text: fullText?.trim() || text,
+              text: savedText || text,
               fetchedAt: null,
               truncated: false,
             }
@@ -463,10 +465,11 @@ export function fromLearningEvidencePassage(
       fileSizeBytes: 0,
       modifiedAt: new Date(0).toISOString(),
       citationId: index + 1,
+      anchorBase: web && savedText ? 0 : passage.startByte,
     },
     locator: text
       ? {
-          text,
+          text: text.trim(),
           chunkId,
         }
       : null,
@@ -496,7 +499,7 @@ export function fromLearningSourceVersion(
 ): ResolvedReaderTarget {
   const { version } = detail;
   const url = version.resolvedUrl?.trim() && isHttpUrl(version.resolvedUrl) ? version.resolvedUrl.trim() : null;
-  const text = (reading.readerText ?? detail.fullText).trim();
+  const text = reading.readerText ?? detail.fullText;
   const quote = reading.quote?.trim() || '';
   const title = version.title?.trim() || (url ? fileNameFromPathOrUrl(url) : 'Saved source');
   const acquired = Number.isFinite(version.acquiredAt) ? new Date(version.acquiredAt).toISOString() : null;

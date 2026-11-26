@@ -1,6 +1,12 @@
+import { useMemo } from 'react';
+
 import { Bookmark, ChevronDown, ChevronUp, MessageSquare, NotebookPen } from 'lucide-react';
 
 import { IconButton } from '@/components/ui';
+import { placeAnchors } from '@/features/reading/citations/anchors';
+import { headingTrail } from '@/features/reading/citations/headingTrail';
+import { anchoredEntry, anchoredText } from '@/features/reading/citations/source';
+import { articleBlocks } from '@/features/reading/model/articleBlocks';
 import { formatSourceLocation } from '@/shared/sources/passageLocator';
 import type { PassageLocator, SourceWithMetadata } from '@/types/conversation';
 
@@ -11,6 +17,9 @@ import type { PassageLocator, SourceWithMetadata } from '@/types/conversation';
  * Keeps the cited sentence visible while the reader looks at the document
  * around it, and offers the same three capture verbs as the selection toolbar,
  * acting on the excerpt itself.
+ *
+ * For a chip that says how it uses its source the excerpt is the sentences it
+ * rests on and the location is the headings above the first of them.
  *
  * How confidently the passage was found is *not* said here: this rail is
  * `lg:flex`, and below 1024px it would take that admission with it. The
@@ -39,6 +48,7 @@ export function CitationRail({
   source,
   locator,
   resolvedLabel,
+  occurrence = null,
   index,
   total,
   onPrevious,
@@ -48,8 +58,20 @@ export function CitationRail({
   onAskAbout,
 }: CitationRailProps) {
   const showNav = typeof total === 'number' && total > 1 && typeof index === 'number';
-  const locationLabel = resolvedLabel ?? formatSourceLocation(source) ?? 'Location unknown';
-  const excerpt = locator.text?.trim() ?? '';
+  const entry = anchoredEntry(source, occurrence);
+  const anchored = useMemo(() => {
+    if (!entry) return null;
+    const text = anchoredText(source);
+    const { ranges } = placeAnchors(text, entry.anchors, source.anchorBase ?? 0);
+    const first = ranges[0];
+    return {
+      excerpt: entry.anchors.map((anchor) => anchor.exact).filter(Boolean).join(' … '),
+      trail: first ? headingTrail(text, articleBlocks(text), first.start) : [],
+    };
+  }, [entry, source]);
+  const trail = anchored?.trail.join(' › ') ?? '';
+  const locationLabel = trail || (resolvedLabel ?? formatSourceLocation(source));
+  const excerpt = anchored?.excerpt || (locator.text?.trim() ?? '');
 
   return (
     <aside className="hidden w-[320px] shrink-0 flex-col gap-4 overflow-y-auto border-l border-subtle bg-surface px-5 py-6 lg:flex">
@@ -79,7 +101,7 @@ export function CitationRail({
         </div>
       )}
 
-      <p className="text-xs text-[hsl(var(--text-muted))]">{locationLabel}</p>
+      {locationLabel ? <p className="text-xs text-[hsl(var(--text-muted))]">{locationLabel}</p> : null}
 
       {excerpt && (
         <blockquote className="border-l-2 border-border-default pl-4 font-serif text-sm leading-relaxed text-[hsl(var(--text-secondary))]">

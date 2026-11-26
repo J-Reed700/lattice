@@ -25,7 +25,7 @@ export const QUOTE_END = '\uE00F';
 
 export const MARK = /\uE000([\uE001-\uE00A]+)\uE00B/g;
 export const FILE_MARK = /\uE00C([\uE001-\uE00A]+)\uE00D/g;
-const ANY_MARK = /[\uE000-\uE00D]/g;
+const ANY_MARK = /[\uE000-\uE00F]/g;
 
 function digitsOf(index: number): string {
   return Array.from(String(index), (digit) => String.fromCharCode(DIGIT_BASE + Number(digit))).join('');
@@ -90,9 +90,15 @@ export function extendReply(reply: readonly ReplyPiece[], parts: readonly ReplyP
   return next;
 }
 
+/** A quotation as it reads in plain text: between curly quotes. */
+function curly(text: string): string {
+  return `“${text}”`;
+}
+
 /** What a part adds to the message's own text: the words, or the handle as written. */
 export function writtenOf(part: ReplyPiece): string {
-  return part.type === 'reference' ? part.reference.written : part.text;
+  if (part.type === 'reference') return part.reference.written;
+  return part.type === 'quoted' ? curly(part.text) : part.text;
 }
 
 /**
@@ -107,8 +113,10 @@ export function markReply(
   const files: FileTarget[] = [];
   let raw = '';
   for (const piece of reply) {
-    if (piece.type !== 'reference') {
+    if (piece.type === 'text') {
       raw += piece.text;
+    } else if (piece.type === 'quoted') {
+      raw += `${QUOTE_START}${piece.text}${QUOTE_END}`;
     } else if (piece.reference.kind === 'source') {
       raw += markFor(numbers.length);
       numbers.push(piece.reference.number);
@@ -144,7 +152,9 @@ export function writeMarksAsNumbers(text: string, numbers: readonly number[]): s
       const number = numbers[markIndex(captured)];
       return number === undefined ? '' : `[${number}]`;
     })
-    .replace(FILE_MARK, '');
+    .replace(FILE_MARK, '')
+    .replace(new RegExp(QUOTE_START, 'g'), '“')
+    .replace(new RegExp(QUOTE_END, 'g'), '”');
 }
 
 export interface DrawnReply {
@@ -164,6 +174,11 @@ export function drawReply(reply: readonly ReplyPiece[], folder = false): DrawnRe
   return { markdown, readable: writeMarksAsNumbers(markdown, numbers), numbers, files };
 }
 
+function writtenAsText(piece: ReplyPiece): string {
+  if (piece.type === 'reference') return fileLabel(fileOf(piece.reference));
+  return piece.type === 'quoted' ? curly(piece.text) : piece.text;
+}
+
 /**
  * A reply's plain text for a surface that shows it as a line of text (a
  * preview, a title, what is spoken): each source reference is left out, with
@@ -178,7 +193,7 @@ export function replyPlainText(reply: readonly ReplyPiece[]): string {
       dropped = true;
       continue;
     }
-    const text = piece.type === 'reference' ? fileLabel(fileOf(piece.reference)) : piece.text;
+    const text = writtenAsText(piece);
     if (dropped && /^[\s.,;:!?]/.test(text)) out = out.replace(/[ \t]+$/, '');
     dropped = false;
     out += text;
