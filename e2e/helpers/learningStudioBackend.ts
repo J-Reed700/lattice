@@ -1269,21 +1269,36 @@ export async function installLearningStudioBackend(page: Page) {
         return structuredClone(state.verifierAudit);
       },
       get_learning_lesson_audit: () => null,
-      get_learning_lesson_evidence: () => ({
+      get_learning_lesson_evidence: () => {
+        const excerpt = source.excerpt;
+        const secondParagraph = "ACTIVE_SOURCE_SENTINEL: Record the same measure across the observation period. The original edition remains available for exact citation review.";
+        const quotedText = "The original edition remains available for exact citation review.";
+        const fullText = sourceVersionTexts.get(sourceV1.id) ?? `${excerpt}\n\n${secondParagraph}`;
+        const passage = (text: string, startByte = fullText.indexOf(text)) => ({ sourceVersionId: source.id, title: source.title, url: source.url, text, startByte, endByte: startByte + text.length, retrievalKind: "hybrid" });
+        const anchor = (text: string, start = fullText.indexOf(text)) => ({ exact: text, span: { start, end: start + text.length } });
+        return {
         policy: "lesson-evidence-v2", checkedAt: Date.UTC(2026, 9, 4), checkerModel: "Evidence fixture",
         retrievalMode: "hybrid", embeddingModel: "Embedding fixture", contentSha256: "a".repeat(64),
         claimCount: 14, confirmedCount: 0, executedExamples: 0, unexecutedLanguages: [], sourcesCurrent: true,
         teachingClaims: [{ sectionIndex: 0, contentQuote: "A comparison begins by naming the measure and the period under observation.",
           claim: "A careful comparison records the chosen measure and observation period.", verdict: "supported",
-          reason: "The saved reference supports this teaching claim.", supportingQuote: source.excerpt,
-          passages: [{ sourceVersionId: source.id, title: source.title, url: source.url, text: source.excerpt,
-            startByte: 0, endByte: source.excerpt.length, retrievalKind: "hybrid" }], resolution: "verified", note: null, cites: [1] }],
-        citations: [{ number: 1, sourceId: "logical-source-field-notes", passage: { sourceVersionId: source.id, title: source.title, url: source.url,
-          text: source.excerpt, startByte: 0, endByte: source.excerpt.length, retrievalKind: "hybrid" } }],
+          reason: "The saved reference supports this teaching claim.", supportingQuote: excerpt,
+          passages: [passage(excerpt)], resolution: "verified", note: null, cites: [1], relation: "restates",
+          parts: [
+            { part: "A comparison begins by naming the measure", kind: "stated", sourceVersionId: source.id, anchors: [anchor(excerpt)] },
+            { part: "the period under observation", kind: "follows", sourceVersionId: source.id, anchors: [anchor(excerpt)] },
+          ] }],
+        citations: [
+          { number: 1, sourceId: "logical-source-field-notes", passage: passage(excerpt) },
+          { number: 2, sourceId: "logical-source-field-notes", passage: passage(secondParagraph) },
+        ],
         sections: lesson.blocks.map((block, sectionIndex) => ({ sectionIndex, pieces: sectionIndex === 0
-          ? [{ type: "text", text: block.body }, { type: "reference", reference: { written: "[s1]", kind: "source", number: 1 } }]
-          : [{ type: "text", text: block.body }] })),
-      }),
+          ? [{ type: "text", text: block.body }, { type: "reference", reference: { written: "[s1]", kind: "source", number: 1, support: { relation: "restates", anchors: [anchor(excerpt)] } } }]
+          : sectionIndex === 1
+            ? [{ type: "quoted", text: quotedText }, { type: "reference", reference: { written: "[s2]", kind: "source", number: 2, support: { relation: "quotes", anchors: [anchor(quotedText)] } } }]
+            : [{ type: "text", text: block.body }] })),
+        };
+      },
       get_learning_memory: () => copyMemory(),
       get_learning_practice_workspace: (args) => {
         const programId = String(getArg(args, "id"));
