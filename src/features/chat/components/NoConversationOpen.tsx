@@ -11,10 +11,10 @@ export function NoConversationOpen({
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-1 items-center justify-center bg-bg">
       <div className="max-w-md px-8 text-center">
-        <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-xl bg-[hsl(var(--text-primary)/0.05)] text-text-tertiary shadow-[inset_0_0_0_1px_hsl(var(--text-primary)/0.05)]">
+        <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-xl border border-border-subtle bg-surface text-accent shadow-sm">
           <MessageCircle className="h-5 w-5" strokeWidth={1.6} />
         </div>
-        <p className="font-serif text-[19px] font-medium tracking-[-0.015em] text-text-primary">No conversation open.</p>
+        <p className="font-sans text-[19px] font-semibold tracking-[-0.02em] text-text-primary">No conversation open.</p>
         <p className="mt-1.5 text-ui leading-relaxed text-text-muted">Pick one from the list, or start a new one and ask your library a question.</p>
         <button
           type="button"

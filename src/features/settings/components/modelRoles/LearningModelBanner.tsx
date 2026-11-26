@@ -45,9 +45,9 @@ export function learningModelState(settings: LLMSettings, models: DownloadedMode
 }
 
 const ROW_CLASS =
-  'mb-6 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning-muted))] px-4 py-3 text-xs leading-relaxed text-[hsl(var(--warning-fg))]';
+  'mb-6 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-xl border border-border-default bg-surface px-3.5 py-2.5 text-xs leading-relaxed text-text-primary shadow-sm';
 const ACTION_CLASS =
-  'shrink-0 rounded-md border border-border-default bg-surface px-2.5 py-1 text-xs font-medium text-text-primary transition-colors duration-fast hover:bg-surface-raised focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60';
+  'shrink-0 rounded-lg border border-border-default bg-surface px-3 py-1.5 text-xs font-medium text-text-primary shadow-control transition-colors duration-fast hover:border-border-strong hover:bg-surface-raised focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60';
 
 /**
  * Opens the Configure menu of the first row that can take the Learning role,
@@ -69,9 +69,11 @@ export function LearningModelBanner() {
   if (state.kind === 'unavailable') {
     return (
       <div role="status" className={ROW_CLASS}>
-        <span className="flex min-w-0 items-center gap-2">
-          <TriangleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          {state.message}
+        <span className="flex min-w-0 items-center gap-2.5">
+          <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-warning-muted text-warning-fg" aria-hidden="true">
+            <TriangleAlert className="h-3.5 w-3.5" />
+          </span>
+          <span className="font-medium text-text-primary">{state.message}</span>
         </span>
         <button type="button" onClick={openLearningChoices} className={ACTION_CLASS}>
           Choose another
@@ -82,9 +84,13 @@ export function LearningModelBanner() {
 
   return (
     <div role="status" className={ROW_CLASS}>
-      <span className="flex min-w-0 items-center gap-2">
-        <TriangleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-        Learning: not set — lessons, outlines and study decks will not run until you choose one
+      <span className="flex min-w-0 items-center gap-2.5">
+        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-md bg-accent-muted text-accent" aria-hidden="true">
+          <TriangleAlert className="h-3.5 w-3.5" />
+        </span>
+        <span className="text-text-secondary">
+          Learning: not set — lessons, outlines and study decks will not run until you choose one
+        </span>
       </span>
       {chatModel ? (
         <button type="button" onClick={() => void adopt()} disabled={isPending} className={ACTION_CLASS}>

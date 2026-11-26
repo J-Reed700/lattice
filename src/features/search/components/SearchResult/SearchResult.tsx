@@ -1,10 +1,23 @@
-import { memo, useCallback, useMemo } from 'react';
+import { memo, useCallback, useMemo, type ReactNode } from 'react';
 
+import { Eye } from 'lucide-react';
+
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui';
+import { cn } from '@/lib/utils';
 import type { SearchResult as SearchResultType } from '@/types';
+
+import {
+  cleanSearchPath,
+  describeSearchLocation,
+  inferSearchResultType,
+} from '../SearchInterface/searchFacets';
 
 interface SearchResultProps {
   result: SearchResultType;
   query?: string;
+  isSelected?: boolean;
+  showQuickPreviewAction?: boolean;
+  onSelect?: (result: SearchResultType) => void;
   onOpen?: (result: SearchResultType) => void;
 }
 
@@ -32,7 +45,7 @@ function termSalience(term: string): number {
   return entropy * (0.65 + 0.35 * lengthFactor);
 }
 
-function selectInformativeTerms(terms: string[], maxTerms: number): string[] {
+export function selectInformativeTerms(terms: string[], maxTerms: number): string[] {
   const normalized = Array.from(
     new Set(
       terms
@@ -60,34 +73,158 @@ function selectInformativeTerms(terms: string[], maxTerms: number): string[] {
   return ranked.slice(0, maxTerms).map((entry) => entry.term);
 }
 
-/**
- * Fused retrieval score, shown as the 0–1 number it actually is.
- * BM25 is an unbounded relevance score, not a percentage — it is printed raw
- * on the component line below.
- */
-/** "Papers › Halvorsen 2024.pdf" reads; "/Users/mira/Lattice Vault/Papers/…" does not. */
-function describeLocation(path: string | undefined): string | null {
-  if (!path) return null;
-  if (/^https?:\/\//i.test(path)) {
-    try {
-      return new URL(path).hostname.replace(/^www\./, '');
-    } catch {
-      return path;
-    }
+export function getQueryTerms(query?: string): string[] {
+  if (!query) return [];
+  const terms = query
+    .split(/\s+/)
+    .map((term) => term.trim().toLowerCase());
+  return selectInformativeTerms(terms, 10);
+}
+
+export function renderHighlightedExcerpt(text: string, queryTerms: string[]): ReactNode {
+  if (queryTerms.length === 0) {
+    return text;
   }
-  const parts = path.split(/[\\/]/).filter(Boolean);
-  if (parts.length <= 1) return null;
-  return parts.slice(Math.max(0, parts.length - 3), -1).join(' › ');
+
+  const escapedTerms = queryTerms.map(escapeRegExp);
+  if (escapedTerms.length === 0) {
+    return text;
+  }
+
+  const splitRegex = new RegExp(`(${escapedTerms.join('|')})`, 'gi');
+  const matchRegex = new RegExp(`^(${escapedTerms.join('|')})$`, 'i');
+  const parts = text.split(splitRegex);
+
+  return parts.map((part, idx) => {
+    if (matchRegex.test(part)) {
+      return (
+        <mark key={`${part}-${idx}`} className="text-text-primary">
+          {part}
+        </mark>
+      );
+    }
+    return <span key={`${part}-${idx}`}>{part}</span>;
+  });
 }
 
-function formatScore(score: number): string {
-  return score.toFixed(2);
+export function getSearchResultDisplayMeta(result: SearchResultType) {
+  const displayTitle = (result.title && result.title !== result.id)
+    ? result.title
+    : (result.metadata.filename as string || result.id);
+  const rawPath = result.path || (result.metadata.path as string | undefined);
+  const displayPath = cleanSearchPath(rawPath) ?? undefined;
+  const location = describeSearchLocation(rawPath);
+  const typeLabel = inferSearchResultType(result);
+
+  const scoreComponents: string[] = [];
+  if (result.vectorScore != null) {
+    scoreComponents.push(`vec ${result.vectorScore.toFixed(2)}`);
+  }
+  if (result.bm25Score != null) {
+    scoreComponents.push(`bm25 ${result.bm25Score.toFixed(1)}`);
+  }
+
+  const relevance = Math.max(0, Math.min(1, result.score));
+
+  return {
+    displayTitle,
+    rawPath,
+    displayPath,
+    location,
+    typeLabel,
+    scoreComponents,
+    relevance,
+    formattedScore: result.score.toFixed(2),
+  };
 }
 
-function SearchResultComponent({ result, query, onOpen }: SearchResultProps) {
+export function RelevanceMeter({
+  score,
+  formattedScore,
+  components,
+}: {
+  score: number;
+  formattedScore: string;
+  components: string[];
+}) {
+  const relevance = Math.max(0, Math.min(1, score));
+  const detailText = components.join(' · ');
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className="inline-flex items-center gap-2 rounded-md px-1.5 py-0.5 transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.05)]"
+          aria-label={detailText ? `Match score ${formattedScore} (${detailText})` : `Match score ${formattedScore}`}
+        >
+          <span
+            aria-hidden="true"
+            className="h-1.5 w-11 overflow-hidden rounded-full bg-[hsl(var(--text-primary)/0.09)]"
+          >
+            <span
+              className="block h-full rounded-full bg-accent transition-[width] duration-base"
+              style={{ width: `${Math.max(8, relevance * 100)}%` }}
+            />
+          </span>
+          <span className="w-7 text-right text-xs tabular-nums text-text-secondary">
+            {formattedScore}
+          </span>
+          {detailText && <span className="sr-only">{detailText}</span>}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="left" className="space-y-0.5 px-2.5 py-1.5">
+        <div className="text-[11px] font-medium text-text-primary tabular-nums">
+          Match relevance {formattedScore}
+        </div>
+        {detailText && (
+          <div className="font-mono text-[10.5px] text-text-secondary tabular-nums">
+            {detailText}
+          </div>
+        )}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+export function getSearchTypeTone(typeLabel: string): string {
+  const lower = typeLabel.toLowerCase();
+  if (lower === 'web' || lower === 'html') {
+    return 'bg-sky-500/10 text-sky-700 ring-1 ring-inset ring-sky-500/15 dark:bg-sky-400/15 dark:text-sky-300 dark:ring-sky-400/20';
+  }
+  if (lower === 'markdown' || lower === 'md') {
+    return 'bg-accent-muted text-accent ring-1 ring-inset ring-accent/15';
+  }
+  if (lower === 'pdf') {
+    return 'bg-rose-500/10 text-rose-700 ring-1 ring-inset ring-rose-500/15 dark:bg-rose-400/15 dark:text-rose-300 dark:ring-rose-400/20';
+  }
+  if (lower === 'code' || lower === 'json') {
+    return 'bg-teal-500/10 text-teal-700 ring-1 ring-inset ring-teal-500/15 dark:bg-teal-400/15 dark:text-teal-300 dark:ring-teal-400/20';
+  }
+  if (lower === 'spreadsheet' || lower === 'csv') {
+    return 'bg-emerald-500/10 text-emerald-700 ring-1 ring-inset ring-emerald-500/15 dark:bg-emerald-400/15 dark:text-emerald-300 dark:ring-emerald-400/20';
+  }
+  if (lower === 'word' || lower === 'docx' || lower === 'epub') {
+    return 'bg-amber-500/10 text-amber-700 ring-1 ring-inset ring-amber-500/15 dark:bg-amber-400/15 dark:text-amber-300 dark:ring-amber-400/20';
+  }
+  return 'bg-slate-500/10 text-slate-700 ring-1 ring-inset ring-slate-500/15 dark:bg-slate-400/15 dark:text-slate-300 dark:ring-slate-400/20';
+}
+
+function SearchResultComponent({
+  result,
+  query,
+  isSelected = false,
+  showQuickPreviewAction = false,
+  onSelect,
+  onOpen,
+}: SearchResultProps) {
   const handleClick = useCallback(() => {
+    onSelect?.(result);
     onOpen?.(result);
-  }, [onOpen, result]);
+  }, [onOpen, onSelect, result]);
+
+  const handleSelect = useCallback(() => {
+    onSelect?.(result);
+  }, [onSelect, result]);
 
   const highlightedExcerpts = useMemo(() => {
     const baseExcerpts = (result.highlights && result.highlights.length > 0)
@@ -101,98 +238,90 @@ function SearchResultComponent({ result, query, onOpen }: SearchResultProps) {
     return trimmed.slice(0, 3);
   }, [result.content, result.highlights]);
 
-  const queryTerms = useMemo(() => {
-    if (!query) {
-      return [];
-    }
-
-    const terms = query
-      .split(/\s+/)
-      .map((term) => term.trim())
-      .map((term) => term.toLowerCase());
-    return selectInformativeTerms(terms, 10);
-  }, [query]);
-
-  const renderHighlightedText = useCallback((text: string) => {
-    if (queryTerms.length === 0) {
-      return text;
-    }
-
-    const escapedTerms = queryTerms.map(escapeRegExp);
-    if (escapedTerms.length === 0) {
-      return text;
-    }
-
-    const splitRegex = new RegExp(`(${escapedTerms.join('|')})`, 'gi');
-    const matchRegex = new RegExp(`^(${escapedTerms.join('|')})$`, 'i');
-    const parts = text.split(splitRegex);
-
-    return parts.map((part, idx) => {
-      if (matchRegex.test(part)) {
-        return (
-          <mark key={`${part}-${idx}`} className="text-text-primary">
-            {part}
-          </mark>
-        );
-      }
-      return <span key={`${part}-${idx}`}>{part}</span>;
-    });
-  }, [queryTerms]);
-
-  const displayTitle = (result.title && result.title !== result.id)
-    ? result.title
-    : (result.metadata.filename as string || result.id);
-  const displayPath = result.path || (result.metadata.path as string | undefined);
-
-  const components: string[] = [];
-  if (result.vectorScore != null) {
-    components.push(`vec ${result.vectorScore.toFixed(2)}`);
-  }
-  if (result.bm25Score != null) {
-    components.push(`bm25 ${result.bm25Score.toFixed(1)}`);
-  }
-  const relevance = Math.max(0, Math.min(1, result.score));
-  const location = describeLocation(displayPath);
+  const queryTerms = useMemo(() => getQueryTerms(query), [query]);
+  const meta = useMemo(() => getSearchResultDisplayMeta(result), [result]);
 
   return (
-    <button
-      type="button"
-      className="row-hover group w-full rounded-xl px-3.5 py-3.5 text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
-      onClick={handleClick}
-    >
-      <div className="flex items-center gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-[15px] font-medium tracking-[-0.005em] text-text-primary">{displayTitle}</div>
-          {location && (
-            <div className="mt-0.5 truncate text-xs text-text-muted" title={displayPath}>{location}</div>
-          )}
-        </div>
-        <div className="shrink-0 text-right">
-          <div className="flex items-center justify-end gap-2">
-            <span aria-hidden="true" className="h-1 w-10 overflow-hidden rounded-full bg-[hsl(var(--text-primary)/0.08)]">
-              <span className="block h-full rounded-full bg-accent" style={{ width: `${relevance * 100}%` }} />
-            </span>
-            <span className="w-7 text-right text-xs tabular-nums text-text-secondary">{formatScore(result.score)}</span>
-          </div>
-          {components.length > 0 && (
-            <div className="mt-0.5 font-mono text-[10.5px] text-text-muted">{components.join(' · ')}</div>
-          )}
-        </div>
-      </div>
-
-      {highlightedExcerpts.length > 0 && (
-        <div className="mt-2 space-y-1.5">
-          {highlightedExcerpts.map((excerpt, index) => (
-            <p
-              className="line-clamp-2 border-l-2 border-border-default pl-3 font-serif text-[14.5px] leading-relaxed text-text-secondary"
-              key={`${result.id}-excerpt-${index}`}
-            >
-              {renderHighlightedText(excerpt)}
-            </p>
-          ))}
-        </div>
+    <div
+      className={cn(
+        'group relative border-b border-border-subtle transition-colors duration-fast last:border-b-0',
+        isSelected
+          ? 'bg-accent-muted/45'
+          : 'row-hover'
       )}
-    </button>
+    >
+      <div className="flex items-start gap-1">
+        <button
+          type="button"
+          className="min-w-0 flex-1 px-4 py-3.5 text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          onClick={handleClick}
+          onFocus={handleSelect}
+        >
+          <div className="flex items-start gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="truncate font-sans text-[15px] font-semibold tracking-[-0.015em] text-text-primary">
+                {meta.displayTitle}
+              </div>
+              <div className="mt-1 flex items-center gap-1.5 text-xs text-text-muted">
+                <span className={cn('inline-flex shrink-0 items-center rounded-md px-1.5 py-0.5 text-[10.5px] font-semibold', getSearchTypeTone(meta.typeLabel))}>
+                  {meta.typeLabel}
+                </span>
+                {meta.location && (
+                  <span className="truncate" title={meta.rawPath}>
+                    {meta.location}
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="shrink-0 pt-0.5">
+              <RelevanceMeter
+                score={meta.relevance}
+                formattedScore={meta.formattedScore}
+                components={meta.scoreComponents}
+              />
+            </div>
+          </div>
+
+          {highlightedExcerpts.length > 0 && (
+            <div className="mt-2.5 space-y-1.5">
+              {highlightedExcerpts.map((excerpt, index) => (
+                <p
+                  className="line-clamp-2 border-l-2 border-border-default pl-3 font-serif text-[14.5px] leading-relaxed text-text-secondary"
+                  key={`${result.id}-excerpt-${index}`}
+                >
+                  {renderHighlightedExcerpt(excerpt, queryTerms)}
+                </p>
+              ))}
+            </div>
+          )}
+        </button>
+
+        {showQuickPreviewAction && onSelect && (
+          <div className="shrink-0 pr-2 pt-3">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label="Inspect in quick preview"
+                  aria-pressed={isSelected}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSelect(result);
+                  }}
+                  className={cn(
+                    'flex h-7 w-7 items-center justify-center rounded-md text-text-tertiary transition-[opacity,background-color,color] duration-fast hover:bg-[hsl(var(--text-primary)/0.07)] hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
+                    isSelected ? 'opacity-100 text-accent' : 'opacity-0 group-hover:opacity-100'
+                  )}
+                >
+                  <Eye className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">Quick preview</TooltipContent>
+            </Tooltip>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

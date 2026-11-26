@@ -40,7 +40,14 @@ vi.mock('@/components/TiptapEditor', () => ({
     </>
   ),
 }));
-vi.mock('@/features/journal/components/EntryHeader', () => ({ EntryHeader: () => <div>Page header</div> }));
+vi.mock('@/features/journal/components/EntryHeader', () => ({
+  EntryHeader: ({ actions }: { actions?: React.ReactNode }) => (
+    <div>
+      Page header
+      {actions}
+    </div>
+  ),
+}));
 vi.mock('@/features/journal/components/EntryFromConversation', () => ({ EntryFromConversation: () => <div>Conversation panel</div> }));
 vi.mock('@/features/journal/components/EntryHighlightsStrip', () => ({
   EntryHighlightsStrip: () => <div>Highlights panel</div>,
@@ -78,16 +85,24 @@ const source = {
   ],
 };
 
-function renderEditor(
-  sources = [source],
-  citations = sources.map((item) => ({
+function defaultCitations(sources: typeof source[]) {
+  return sources.map((item) => ({
     number: item.citationId ?? 1,
     support: {
       relation: 'cites' as const,
       anchors: [{ exact: item.content, span: null }],
     },
-  })),
+  }));
+}
+
+function renderEditor(
+  sources = [source],
+  overridesOrCitations:
+    | Partial<React.ComponentProps<typeof EntryEditor>>
+    | NonNullable<React.ComponentProps<typeof EntryEditor>['activeNote']>['citations'] = {},
+  citations = Array.isArray(overridesOrCitations) ? overridesOrCitations : defaultCitations(sources),
 ) {
+  const overrides = Array.isArray(overridesOrCitations) ? {} : overridesOrCitations;
   return render(
     <MemoryRouter>
       <TooltipProvider>
@@ -105,6 +120,7 @@ function renderEditor(
           selectedEntryLoading={false} pinnedEntryCount={0} deckCount={0} crossEntrySources={[]}
           crossEntryLoading={false} scannedConversationCount={0} onJumpToEntry={vi.fn()}
           onSynthesize={vi.fn(async () => true)} onNotify={vi.fn()}
+          {...overrides}
         />
       </TooltipProvider>
     </MemoryRouter>,
@@ -114,6 +130,43 @@ function renderEditor(
 describe('EntryEditor source citations', () => {
   beforeEach(() => {
     useReaderStore.setState({ session: null });
+    localStorage.clear();
+  });
+
+  it('defaults the context rail closed and toggles it open from the header', () => {
+    renderEditor();
+    expect(screen.queryByRole('tab', { name: /Sources/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Show conversation and highlights' }));
+    expect(screen.getByRole('tab', { name: /Sources/ })).toBeInTheDocument();
+  });
+
+  it('keeps the rail collapsed on initial mount even with a selected entry, and opens it on explicit pick', () => {
+    const picked = { id: 'entry-1', title: 'Canopy notes', updatedAt: '2026-10-18T00:00:00Z', messageCount: 2 };
+    const { rerender } = renderEditor([source], { selectedEntry: picked, openContextRequest: 0 });
+    expect(screen.queryByRole('tab', { name: /Conversation/ })).not.toBeInTheDocument();
+
+    rerender(
+      <MemoryRouter>
+        <TooltipProvider>
+          <EntryEditor
+            activeNote={{
+              id: 'page-1', revision: 0, title: 'Research', journalId: 'journal-1',
+              content: 'The result is clear [2]. A second claim [2].',
+              linkedDocumentIds: [], linkedConversationIds: [], highlights: [], stickyNotes: [],
+              conversationSnapshots: [], sources: [source], citations: defaultCitations([source]), createdAt: '', updatedAt: '',
+            }}
+            isLoadingNote={false} loadError={null} saveError={null} hasPendingChanges={false} isSaving={false}
+            onSaveNow={vi.fn()} onUpdateNoteContent={vi.fn()} onAddHighlight={vi.fn()} onRemoveHighlight={vi.fn()}
+            pinnedHighlightIds={new Set()} onTogglePinnedHighlight={vi.fn()} journalName="Journal" pageTitle="Research"
+            isDefaultPage={false} onRenamePage={vi.fn()} selectedEntry={picked} selectedEntryMessages={[]}
+            selectedEntryLoading={false} pinnedEntryCount={0} deckCount={0} crossEntrySources={[]}
+            crossEntryLoading={false} scannedConversationCount={0} onJumpToEntry={vi.fn()}
+            onSynthesize={vi.fn(async () => true)} onNotify={vi.fn()} openContextRequest={1}
+          />
+        </TooltipProvider>
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('tab', { name: /Conversation/ })).toBeInTheDocument();
   });
 
   it('names the writing surface so it can be found and announced', () => {
@@ -123,6 +176,7 @@ describe('EntryEditor source citations', () => {
 
   it('opens the nested cited passage from Sources and the clicked inline citation with its occurrence', () => {
     renderEditor([source], []);
+    fireEvent.click(screen.getByRole('button', { name: 'Show conversation and highlights' }));
     fireEvent.click(screen.getByRole('tab', { name: /Sources/ }));
     fireEvent.click(screen.getByRole('button', { name: /1 source/ }));
     fireEvent.click(screen.getAllByRole('button', { name: /View passage/ })[1]!);
@@ -151,6 +205,7 @@ describe('EntryEditor source citations', () => {
       citationId: 3,
     };
     renderEditor([source, secondSource]);
+    fireEvent.click(screen.getByRole('button', { name: 'Show conversation and highlights' }));
     fireEvent.click(screen.getByRole('tab', { name: /Sources/ }));
     fireEvent.click(screen.getByRole('button', { name: /2 sources/ }));
     fireEvent.click(screen.getAllByRole('button', { name: /View passage/ })[2]!);
@@ -177,6 +232,7 @@ describe('EntryEditor source citations', () => {
       ],
     };
     renderEditor([firstSnapshot, laterSnapshot]);
+    fireEvent.click(screen.getByRole('button', { name: 'Show conversation and highlights' }));
     fireEvent.click(screen.getByRole('tab', { name: /Sources/ }));
     fireEvent.click(screen.getByRole('button', { name: /1 source/ }));
     fireEvent.click(screen.getAllByRole('button', { name: /View passage/ })[3]!);

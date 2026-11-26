@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { ChevronLeft } from 'lucide-react';
 
-import { Switch } from '@/components/ui';
+import { Button, Checkbox, Switch } from '@/components/ui';
 import { useSettingsQuery, useUpdateSettingsMutation } from '@/features/settings/hooks/useSettingsQuery';
 import type { JsonValue, LocalModelConfigDto } from '@/lib/bindings';
 import { toast } from '@/stores/toastStore';
@@ -13,7 +13,8 @@ import { contextFitWarning, fittedLaunchWindow } from '@/utils/chatModelSelectio
 import { RoleButton } from './RoleButton';
 import { ROLES } from './roleConfig';
 import { HelpTooltip, MIN_CONTEXT_LENGTH, TokenLimitField } from './TokenLimitField';
-import { NUMBER_FIELD_CLASS, SWITCH_CLASS, clamp, toFinite } from '../AITab/shared';
+import { SWITCH_CLASS, clamp } from '../AITab/shared';
+import { SettingsNumberField } from '../SettingControls';
 
 const DEFAULT_CONTEXT_LENGTH = 262_144;
 const DEFAULT_CONCURRENT_PREDICTIONS = 4;
@@ -239,21 +240,14 @@ export function LocalModelConfigModal({
                       Experimental
                     </span>
                   </div>
-                  <input
+                  <SettingsNumberField
                     aria-label="Max Concurrent Predictions"
-                    type="number"
                     min={1}
                     step={1}
+                    integer
                     value={maxConcurrentPredictions}
-                    onChange={(event) =>
-                      setMaxConcurrentPredictions(
-                        Math.max(
-                          1,
-                          Math.round(toFinite(event.target.value, maxConcurrentPredictions)),
-                        ),
-                      )
-                    }
-                    className={NUMBER_FIELD_CLASS}
+                    onDraftChange={(next) => setMaxConcurrentPredictions(Math.max(1, Math.round(next)))}
+                    onCommit={(next) => setMaxConcurrentPredictions(Math.max(1, Math.round(next)))}
                   />
                 </div>
 
@@ -262,25 +256,21 @@ export function LocalModelConfigModal({
                   <div className="flex items-center gap-2 text-xs font-medium text-text-primary">
                     <span>Seed</span>
                     <HelpTooltip content="Fix the random number generator seed for reproducible sampling." />
-                    <input
+                    <Checkbox
                       aria-label="Use Fixed Seed"
-                      type="checkbox"
                       checked={useFixedSeed}
-                      onChange={(event) => setUseFixedSeed(event.target.checked)}
-                      className="h-3.5 w-3.5 rounded border-border-subtle"
+                      onCheckedChange={setUseFixedSeed}
                     />
                   </div>
                   {useFixedSeed ? (
-                    <input
+                    <SettingsNumberField
                       aria-label="Seed Value"
-                      type="number"
                       min={0}
                       step={1}
+                      integer
                       value={seed}
-                      onChange={(event) =>
-                        setSeed(Math.max(0, Math.round(toFinite(event.target.value, seed))))
-                      }
-                      className={NUMBER_FIELD_CLASS}
+                      onDraftChange={(next) => setSeed(Math.max(0, Math.round(next)))}
+                      onCommit={(next) => setSeed(Math.max(0, Math.round(next)))}
                     />
                   ) : (
                     <span className="text-xs text-text-muted">Random Seed</span>
@@ -311,18 +301,17 @@ export function LocalModelConfigModal({
           <div className="flex flex-wrap items-center justify-between gap-4 border-t border-border-subtle px-6 py-4">
             {!isEmbeddingModel ? (
               <div className="space-y-2">
-                <label className="flex items-center gap-2 text-xs text-text-secondary">
-                  <input
-                    type="checkbox"
+                <div className="flex items-center gap-2 text-xs text-text-secondary">
+                  <Checkbox
+                    aria-label={`Remember settings for ${model.model_id}`}
                     checked={rememberSettings}
-                    onChange={(event) => setRememberSettings(event.target.checked)}
-                    className="h-3.5 w-3.5 rounded border-border-subtle"
+                    onCheckedChange={setRememberSettings}
                   />
                   <span>Remember settings for</span>
                   <code className="rounded bg-surface px-1.5 py-0.5 font-mono text-[11px] text-text-primary">
                     {model.model_id}
                   </code>
-                </label>
+                </div>
 
                 <div className="flex items-center gap-2 text-xs text-text-secondary">
                   <Switch
@@ -338,30 +327,21 @@ export function LocalModelConfigModal({
 
             <div className="flex items-center gap-2">
               {isEmbeddingModel ? (
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-white shadow-xs transition-opacity hover:opacity-90"
-                >
+                <Button type="button" onClick={onClose}>
                   Done
-                </button>
+                </Button>
               ) : (
                 <>
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    className="rounded-lg border border-border-subtle bg-surface px-3.5 py-2 text-xs font-medium text-text-secondary transition-colors hover:bg-surface-raised hover:text-text-primary"
-                  >
+                  <Button type="button" variant="outline" onClick={onClose}>
                     Cancel
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
                     disabled={isSaving}
                     onClick={() => void handleSaveAndLoad()}
-                    className="rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-white shadow-xs transition-opacity hover:opacity-90 disabled:opacity-50"
                   >
                     {isSaving ? (onLoadModel ? 'Loading…' : 'Saving…') : (onLoadModel ? 'Load Model' : 'Save')}
-                  </button>
+                  </Button>
                 </>
               )}
             </div>

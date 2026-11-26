@@ -372,31 +372,103 @@ async fn the_writers_excerpts_are_shown_the_cited_first() {
 
 #[test]
 fn the_review_request_shows_what_it_must_and_nothing_internal() {
-    let mut marks = Marks::new();
-    let finding = ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "x");
-    let input = Input {
-        system: marks.told("Review the harbour notes with care.".to_owned()),
-        prompt: marks.told(json!({"task":"Review instructional quality at the quay","authoringContext":{"goal":"Learn the harbour tides"}})),
-        candidate: marks.told(json!({"blocks":[{"label":"Section 1","inReview":true,"bodyPassages":[{"text":"The harbour gate opens at first light."}]}]})),
-        passages: vec![Passage {
-            id: marks.reference("section-0-passage-0".to_owned()),
-            section: 0,
-            number: 0,
-        }],
-        sources: Packed::new(
-            vec![marks.told(json!({"text":"Tide tables are revised each spring."}))],
-            |_| 10,
-        ),
-        open: vec![OpenFinding {
-            id: marks.reference(finding.id()),
-            part: marks.told("Section 1".to_owned()),
-            passage: Some(marks.reference("section-0-passage-0".to_owned())),
-            note: marks.told("The kiln rota contradicts itself.".to_owned()),
-        }],
-        reported: marks.told(vec!["An earlier note about tide tables.".to_owned()]),
+    let input_with_sources = |marks: &mut Marks, include_sources: bool| {
+        let finding = ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "x");
+        Input {
+            system: marks.told("Review the harbour notes with care.".to_owned()),
+            prompt: marks.told(json!({"task":"Review instructional quality at the quay","authoringContext":{"goal":"Learn the harbour tides"}})),
+            candidate: marks.told(json!({"blocks":[{"label":"Section 1","inReview":true,"bodyPassages":[{"text":"The harbour gate opens at first light."}]}]})),
+            passages: vec![Passage {
+                id: marks.reference("section-0-passage-0".to_owned()),
+                section: 0,
+                number: 0,
+            }],
+            sources: Packed::new(
+                if include_sources {
+                    vec![marks.told(json!({"text":"Tide tables are revised each spring."}))]
+                } else {
+                    Vec::new()
+                },
+                |_| 10,
+            ),
+            open: vec![OpenFinding {
+                id: marks.reference(finding.id()),
+                part: marks.told("Section 1".to_owned()),
+                passage: Some(marks.reference("section-0-passage-0".to_owned())),
+                note: marks.told("The kiln rota contradicts itself.".to_owned()),
+            }],
+            reported: marks.told(vec!["An earlier note about tide tables.".to_owned()]),
+        }
     };
-    holds::<TeachingReview<Anything>>(&input, &marks);
-    holds::<TeachingReview<Concerns>>(&input, &marks);
+    let mut open_marks = Marks::new();
+    let open_input = input_with_sources(&mut open_marks, true);
+    holds::<TeachingReview<Anything>>(&open_input, &open_marks);
+
+    let mut lesson_marks = Marks::new();
+    let lesson_input = input_with_sources(&mut lesson_marks, false);
+    holds::<TeachingReview<Concerns>>(&lesson_input, &lesson_marks);
+}
+
+#[tokio::test]
+async fn lesson_review_omits_writer_excerpts_sources_while_open_review_keeps_them() {
+    let prompt = json!({"authoringContext":{
+        "goal":"Learn the harbour tides",
+        "sources":[
+            {"sourceIndex":0,"text":"Tide tables are revised each spring."},
+            {"sourceIndex":1,"text":"The harbour gate opens at first light."}
+        ]
+    }});
+    let cited = json!({"blocks":[{"body":"The gate opens early.","sourceIndex":1}]});
+
+    let lesson_model = reviewer::<Concerns>(|_, _| items(vec![]));
+    review(
+        &lesson_model,
+        "Review instructional quality.",
+        prompt.clone(),
+        &cited,
+        Scope::default(),
+        Remit::Lesson,
+    )
+    .await
+    .unwrap();
+    let lesson_task = lesson_model
+        .sent()
+        .iter()
+        .filter(|sent| sent.request.schema().is_some())
+        .map(|sent| task_of(&sent.request))
+        .next()
+        .unwrap();
+    assert!(lesson_task["authoringContext"].get("sources").is_none());
+    assert_eq!(
+        lesson_task["authoringContext"]["goal"],
+        "Learn the harbour tides"
+    );
+
+    let open_model = reviewer::<Anything>(|_, _| items(vec![]));
+    review(
+        &open_model,
+        "Review instructional quality.",
+        prompt,
+        &cited,
+        Scope::default(),
+        Remit::Open,
+    )
+    .await
+    .unwrap();
+    let open_task = open_model
+        .sent()
+        .iter()
+        .filter(|sent| sent.request.schema().is_some())
+        .map(|sent| task_of(&sent.request))
+        .next()
+        .unwrap();
+    assert_eq!(
+        open_task["authoringContext"]["sources"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
 }
 
 #[tokio::test]
@@ -438,7 +510,69 @@ fn shown_prompt() -> String {
             {"id":"f2","part":"Section 2","note":"Second."}
         ]
     });
-    format!("Review instructional quality.\n{ANSWER_FORM}\n\n{task}")
+    format!(
+        "Review instructional quality.\n{}\n\n{task}",
+        answer_form(true, true)
+    )
+}
+
+#[tokio::test]
+async fn a_review_with_no_open_findings_omits_resolved_from_schema_and_instructions() {
+    let model = reviewer::<Concerns>(|_, _| items(vec![]));
+    let scope = Scope {
+        sections: Some(&[0]),
+        asked: Some(&[]),
+    };
+    run(&model, scope, Remit::Lesson).await.unwrap();
+    let sent = model.sent();
+    let request = sent.iter().find(|s| s.request.schema().is_some()).unwrap();
+    let schema = request.request.schema().unwrap().as_json().to_string();
+    assert!(
+        !schema.contains("\"resolved\""),
+        "resolved branch must be omitted when openFindings is empty: {schema}"
+    );
+    assert!(schema.contains("\"issue\""));
+    assert!(schema.contains("\"sectionDefect\""));
+    let system = request
+        .request
+        .input()
+        .iter()
+        .find_map(|input| match input {
+            CompletionInput::Message { content, .. } => Some(content.as_str()),
+            _ => None,
+        })
+        .unwrap();
+    assert!(!system.contains("kind resolved"), "{system}");
+}
+
+#[tokio::test]
+async fn a_review_with_no_sections_in_review_omits_section_defect_from_schema_and_instructions() {
+    let model = reviewer::<Concerns>(|_, _| items(vec![]));
+    let scope = Scope {
+        sections: Some(&[]),
+        asked: Some(&[]),
+    };
+    run(&model, scope, Remit::Lesson).await.unwrap();
+    let sent = model.sent();
+    let request = sent.iter().find(|s| s.request.schema().is_some()).unwrap();
+    let schema = request.request.schema().unwrap().as_json().to_string();
+    assert!(
+        !schema.contains("\"sectionDefect\""),
+        "sectionDefect branch must be omitted when no passages are shown: {schema}"
+    );
+    assert!(!schema.contains("\"resolved\""), "{schema}");
+    assert!(schema.contains("\"issue\""));
+    let system = request
+        .request
+        .input()
+        .iter()
+        .find_map(|input| match input {
+            CompletionInput::Message { content, .. } => Some(content.as_str()),
+            _ => None,
+        })
+        .unwrap();
+    assert!(!system.contains("kind sectionDefect"), "{system}");
+    assert!(!system.contains("kind resolved"), "{system}");
 }
 
 fn translated(script: Value) -> Vec<Value> {

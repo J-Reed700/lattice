@@ -58,6 +58,13 @@ fn validate_quote(quote: &str, source: &LearningSourceDto) -> Result<()> {
 }
 
 pub(crate) fn validate_excerpt_quote(quote: &str, excerpt: &str) -> Result<()> {
+    let trimmed = quote.trim();
+    if same_text::long_enough_quote(trimmed)
+        && excerpt.contains(trimmed)
+        && !same_text::fold(trimmed).is_empty()
+    {
+        return Ok(());
+    }
     if same_text::quotation(excerpt, quote).is_none() {
         return Err(invalid("The generated quotation does not match a valid passage in the saved reference. No material was published."));
     }

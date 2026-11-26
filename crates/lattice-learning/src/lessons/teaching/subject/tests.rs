@@ -56,6 +56,27 @@ fn a_recheck_is_told_to_judge_the_correction_and_to_check_only_the_sections_that
 }
 
 #[test]
+fn a_recheck_with_no_open_findings_does_not_ask_about_open_findings() {
+    let before = lesson(3);
+    let mut after = before.clone();
+    after["blocks"][0]["body"] = json!("Part 0 states another fact.");
+    let mut standing = Standing::new(&Held::default());
+    let first = standing.round(&before).unwrap();
+    let fresh = standing.judged(&before, &first, Judged::default());
+    standing.admit(&before, fresh);
+    let round = standing.round(&after).unwrap();
+    assert!(!round.first);
+    assert!(round.asked.is_empty());
+    for texts in [ReviewTexts::GENERAL, ReviewTexts::lesson()] {
+        let text = review_instructions(&texts, &round, "A scope.");
+        assert!(text.starts_with(&*texts.recheck_no_open));
+        assert!(!text.contains("openFindings"), "{text}");
+        assert!(!text.contains("resolved entry"), "{text}");
+        assert!(!text.contains(CONTINUES), "{text}");
+    }
+}
+
+#[test]
 fn a_recheck_of_every_section_holds_the_shared_checks() {
     let before = lesson(2);
     let mut after = before.clone();

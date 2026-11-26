@@ -2,8 +2,8 @@ import { type ReactNode, useState } from 'react';
 
 import { PanelRightClose } from 'lucide-react';
 
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui';
 import { IconButton } from '@/components/ui/IconButton';
-import { cn } from '@/lib/utils';
 
 export type ContextTab = 'conversation' | 'highlights' | 'sources';
 
@@ -15,15 +15,15 @@ interface JournalContextRailProps {
   conversation: ReactNode;
   highlights: ReactNode;
   sources: ReactNode;
-  /** The synthesize control, pinned to the foot of the rail. */
-  footer: ReactNode;
+  /** Optional footer control pinned to the foot of the rail. */
+  footer?: ReactNode;
   onClose: () => void;
 }
 
 /**
- * What sits beside the page while you write: the conversation you picked, and
- * the lines you kept. It used to trail the page as collapsed rows, below the
- * fold — so picking an entry looked like it did nothing.
+ * Context inspector beside the page: the picked conversation, saved highlights,
+ * and sources & citations. Defaults closed so writing gets full measure, and
+ * toggles with ⌘.
  */
 export function JournalContextRail({
   selectedEntryId,
@@ -54,49 +54,64 @@ export function JournalContextRail({
   return (
     <aside
       aria-label="Beside this page"
-      className="flex h-full w-[320px] shrink-0 flex-col border-l border-border-subtle bg-bg max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:z-20 max-lg:shadow-xl 2xl:w-[360px]"
+      className="flex h-full w-[320px] shrink-0 flex-col border-l border-border-subtle bg-surface-sunken/60 max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:z-20 max-lg:bg-bg max-lg:shadow-xl 2xl:w-[360px]"
     >
-      <div className="flex h-12 shrink-0 items-center gap-2 px-3">
-        <div role="tablist" className="flex h-8 flex-1 items-center gap-0.5 rounded-lg bg-[hsl(var(--text-primary)/0.06)] p-[3px]">
-          {tabs.map((option) => {
-            const isActive = option.id === tab;
-            return (
-              <button
+      <Tabs
+        variant="pill"
+        value={tab}
+        onValueChange={(next) => setTab(next as ContextTab)}
+        className="flex min-h-0 flex-1 flex-col"
+      >
+        <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border-subtle px-3">
+          <TabsList className="flex-1">
+            {tabs.map((option) => (
+              <TabsTrigger
                 key={option.id}
-                type="button"
-                role="tab"
-                aria-selected={isActive}
+                value={option.id}
                 onClick={() => setTab(option.id)}
-                className={cn(
-                  'flex h-full flex-1 items-center justify-center gap-1.5 rounded-[5px] text-xs font-medium transition-[background-color,color,box-shadow] duration-fast',
-                  isActive
-                    ? 'bg-surface-overlay text-text-primary shadow-control'
-                    : 'text-text-tertiary hover:text-text-primary',
-                )}
+                className="flex-1 px-2 text-xs"
               >
-                {option.label}
-                {option.count ? <span className="tabular-nums text-text-muted">{option.count}</span> : null}
-              </button>
-            );
-          })}
+                <span>{option.label}</span>
+                {option.count ? (
+                  <span className="tabular-nums text-text-muted">{option.count}</span>
+                ) : null}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+          <IconButton label="Hide panel" shortcut="⌘." onClick={onClose}>
+            <PanelRightClose />
+          </IconButton>
         </div>
-        <IconButton label="Hide panel" shortcut="⌘." onClick={onClose}>
-          <PanelRightClose />
-        </IconButton>
-      </div>
 
-      {/* Both stay mounted: the highlights panel owns the selection toolbar. */}
-      <div role="tabpanel" className={cn('min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-2', tab !== 'conversation' && 'hidden')}>
-        {conversation}
-      </div>
-      <div role="tabpanel" className={cn('min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-2', tab !== 'highlights' && 'hidden')}>
-        {highlights}
-      </div>
-      <div role="tabpanel" aria-label="Sources and citations" className={cn('min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-2', tab !== 'sources' && 'hidden')}>
-        {sources}
-      </div>
+        {/* All panels stay mounted so the highlights panel retains selection handlers. */}
+        <TabsContent
+          value="conversation"
+          forceMount
+          className="mt-0 min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-3 data-[state=inactive]:hidden"
+        >
+          {conversation}
+        </TabsContent>
+        <TabsContent
+          value="highlights"
+          forceMount
+          className="mt-0 min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-3 data-[state=inactive]:hidden"
+        >
+          {highlights}
+        </TabsContent>
+        <TabsContent
+          value="sources"
+          forceMount
+          aria-labelledby={undefined}
+          aria-label="Sources and citations"
+          className="mt-0 min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-3 data-[state=inactive]:hidden"
+        >
+          {sources}
+        </TabsContent>
+      </Tabs>
 
-      <div className="shrink-0 border-t border-border-subtle px-3 py-2.5">{footer}</div>
+      {footer ? (
+        <div className="shrink-0 border-t border-border-subtle px-3 py-2.5">{footer}</div>
+      ) : null}
     </aside>
   );
 }

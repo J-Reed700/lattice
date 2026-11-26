@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { motion, useReducedMotion } from 'framer-motion';
 import {
   Archive,
   Check,
@@ -58,7 +57,7 @@ interface ConversationListProps {
   /** The two ways out of a conversation. Mounted once, by the sidebar. */
   exportActions: ConversationExportActions;
 }
-const MENU_ITEM_CLASS = 'flex w-full items-center gap-2.5 rounded-sm px-2.5 py-2 text-left text-sm text-text-primary transition-colors duration-fast hover:bg-surface focus-visible:bg-surface focus-visible:outline-hidden disabled:cursor-not-allowed disabled:opacity-50';
+const MENU_ITEM_CLASS = 'flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-text-primary transition-colors duration-fast hover:bg-surface-sunken focus-visible:bg-surface-sunken focus-visible:outline-hidden disabled:cursor-not-allowed disabled:opacity-50';
 
 const scrollElementOf = (element: HTMLElement | null) =>
   (element?.closest('.overflow-y-auto') as HTMLElement | null) ?? null;
@@ -69,7 +68,6 @@ function lastMessageText(messages: ConversationMessage[] | undefined): string | 
 }
 
 export function ConversationList({ isJournalScope, isSelectionMode, selectedConversationIds, toggleConversationSelection, synthesis, exportActions }: ConversationListProps) {
-  const prefersReducedMotion = useReducedMotion();
   const spaces = useConversationsStore((state) => state.spaces);
   const allConversations = useConversationsStore((state) => state.conversations);
   const activeConversationId = useConversationsStore((state) => state.activeConversationId);
@@ -363,25 +361,12 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
                     })}
                     aria-label={`Select conversation: ${conversation.title}`}
                     aria-current={isActive ? 'page' : undefined}
-                    className={`group relative mx-2 w-[calc(100%-16px)] cursor-pointer rounded-lg px-2.5 py-2 text-left ${isActive ? 'bg-[hsl(var(--text-primary)/0.07)]' : 'row-hover'
-                      }`}
+                    className={`group relative mx-2 my-0.5 w-[calc(100%-16px)] cursor-pointer rounded-lg px-2.5 py-2 text-left transition-[background-color,box-shadow,color] duration-fast ${
+                      isActive
+                        ? 'bg-surface font-medium text-text-primary shadow-sm ring-1 ring-border-subtle dark:bg-surface-overlay'
+                        : 'row-hover'
+                    }`}
                   >
-                    {isActive && (
-                      prefersReducedMotion ? (
-                        <span
-                          className="absolute inset-y-2 left-0 w-[2.5px] rounded-full bg-accent"
-                          aria-hidden="true"
-                        />
-                      ) : (
-                        <motion.span
-                          layoutId="sidebar-active-bar"
-                          className="absolute inset-y-2 left-0 w-[2.5px] rounded-full bg-accent"
-                          aria-hidden="true"
-                          transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-                        />
-                      )
-                    )}
-
                     <div className="flex items-center gap-2">
                       {isSelectionMode && (
                         <input
@@ -509,7 +494,7 @@ export function ConversationList({ isJournalScope, isSelectionMode, selectedConv
 
                     {!isSelectionMode && renamingConversationId !== conversation.id && (
                       <div
-                        className={`absolute right-2 top-1.5 rounded-sm bg-surface-raised transition-opacity duration-fast ${openActionsId === conversation.id ? 'opacity-100' : 'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100'}`}
+                        className={`absolute right-2 top-1.5 rounded-md bg-surface shadow-sm ring-1 ring-border-subtle transition-opacity duration-fast ${openActionsId === conversation.id ? 'opacity-100' : 'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100'}`}
                         onClick={(e) => e.stopPropagation()}
                       >
                         <Popover open={openActionsId === conversation.id} onOpenChange={(open) => setOpenActionsId(open ? conversation.id : null)}>

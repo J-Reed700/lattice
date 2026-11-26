@@ -24,7 +24,6 @@ CONDENSE_INSTRUCTION_START = "Your context window is nearly full."
 MIN_TOOL_RESULT_CHARS = 1500
 UNDER_FILL = 0.75
 MAX_TOOL_ROUNDS = 5
-OUTPUT_RESERVATION_CAP = 32768
 OUTPUT_RESERVATION_DIVISOR = 4
 SAFETY_MARGIN_SHARE = 0.05
 SAFETY_MARGIN_FLOOR = 256
@@ -54,8 +53,13 @@ def chars(message):
     return n
 
 
+def output_reservation(window_tokens):
+    """context_assembler/budget.rs `default_output_reservation`: a quarter of the window, with no fixed ceiling."""
+    return window_tokens // OUTPUT_RESERVATION_DIVISOR
+
+
 def input_budget(window_tokens):
-    reserved = min(window_tokens // OUTPUT_RESERVATION_DIVISOR, OUTPUT_RESERVATION_CAP)
+    reserved = output_reservation(window_tokens)
     margin = max(math.ceil(window_tokens * SAFETY_MARGIN_SHARE), SAFETY_MARGIN_FLOOR)
     return max(window_tokens - reserved - margin, 0)
 

@@ -256,7 +256,7 @@ const CanvasSurface = forwardRef<CanvasSurfaceHandle, Props>(({ sceneJson, theme
     if ([...event.dataTransfer.files].some((file) => file.type.startsWith('image/'))) { event.preventDefault(); event.stopPropagation(); onImageBlocked(); }
   }}>
     <style>{'.learning-canvas-surface .collab-button,.learning-canvas-surface .main-menu-trigger,.learning-canvas-surface .library-button,.learning-canvas-surface .ai-button{display:none!important}.learning-canvas-surface .excalidraw{--color-primary:var(--accent)}'}</style>
-    <Suspense fallback={<div role="status" className="grid h-full min-h-[460px] place-items-center bg-[#f5f1ea] text-sm text-text-muted dark:bg-[#20201f]">Opening your canvas…</div>}>
+    <Suspense fallback={<div role="status" className="grid h-full min-h-[460px] place-items-center bg-surface-sunken text-sm text-text-muted">Opening your canvas…</div>}>
       <LazyExcalidraw initialData={initialData} theme={theme} name="Learning Studio Canvas" excalidrawAPI={setExcalidrawApi} onChange={onChange} onPaste={handlePaste} validateEmbeddable={false} aiEnabled={false} UIOptions={uiOptions} renderTopRightUI={renderTopRightUI} />
     </Suspense>
   </div>;

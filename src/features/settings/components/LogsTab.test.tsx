@@ -6,6 +6,7 @@ import type { BackendLogEntry } from '@/lib/bindings';
 import { diagnostics } from '@/utils/diagnostics';
 
 import { LogsTab } from './LogsTab';
+import { chooseRadixOption } from './radixSelectTestUtils';
 
 const mockGetBackendLogs = vi.hoisted(() => vi.fn());
 const mockSaveTextFile = vi.hoisted(() => vi.fn());
@@ -36,7 +37,7 @@ it('updates live, filters, and requires confirmation to clear', async () => {
   await waitFor(() => expect(mockGetBackendLogs).toHaveBeenCalled());
   expect(screen.getByText('No events recorded')).toBeInTheDocument();
   act(() => { diagnostics.capture('Disk is full', 'API · save'); diagnostics.record('info', 'Started', 'Application'); });
-  fireEvent.change(screen.getByLabelText('Log severity'), { target: { value: 'error' } });
+  await chooseRadixOption(screen.getByLabelText('Log severity'), 'Errors');
   expect(screen.getByText('Disk is full')).toBeInTheDocument();
   expect(screen.queryByText('Started')).not.toBeInTheDocument();
   fireEvent.change(screen.getByLabelText('Search logs'), { target: { value: 'missing' } });
@@ -57,18 +58,18 @@ it('shows redacted backend lines beside app entries and filters by source', asyn
   expect(screen.getByText(/^App · Application/)).toBeInTheDocument();
   expect(document.body).not.toHaveTextContent(/josh|abc123/);
 
-  fireEvent.change(screen.getByLabelText('Log source'), { target: { value: 'backend' } });
+  await chooseRadixOption(screen.getByLabelText('Log source'), 'Backend');
   expect(screen.queryByText('Started')).not.toBeInTheDocument();
   expect(screen.getByText('retry with token=[REDACTED]')).toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText('Log source'), { target: { value: 'app' } });
+  await chooseRadixOption(screen.getByLabelText('Log source'), 'App');
   expect(screen.getByText('Started')).toBeInTheDocument();
   expect(screen.queryByText(/Index missing/)).not.toBeInTheDocument();
 
-  fireEvent.change(screen.getByLabelText('Log source'), { target: { value: 'all' } });
-  fireEvent.change(screen.getByLabelText('Log severity'), { target: { value: 'error' } });
+  await chooseRadixOption(screen.getByLabelText('Log source'), 'All sources');
+  await chooseRadixOption(screen.getByLabelText('Log severity'), 'Errors');
   expect(screen.getByText(/Index missing/)).toBeInTheDocument();
   expect(screen.queryByText('Started')).not.toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText('Log severity'), { target: { value: 'all' } });
+  await chooseRadixOption(screen.getByLabelText('Log severity'), 'All levels');
   fireEvent.change(screen.getByLabelText('Search logs'), { target: { value: 'retry' } });
   expect(screen.getByText('retry with token=[REDACTED]')).toBeInTheDocument();
   expect(screen.queryByText(/Index missing/)).not.toBeInTheDocument();

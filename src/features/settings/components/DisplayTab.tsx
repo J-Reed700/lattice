@@ -5,24 +5,19 @@
  * Query is the mirror; the Rust SettingsRepository is the SSOT) because
  * `useApplyTheme` applies it from there. Whether Iris shows is a UI-only
  * preference, kept in her store.
- *
- * Font size, compact mode and file previews used to live here. Nothing in
- * the app ever read them — they were deleted in the September 2026 overhaul
- * rather than restyled. A control that changes nothing is a lie.
  */
 
 import { useMemo } from 'react';
 
 import { Check, Monitor, Moon, RefreshCw, Sun } from 'lucide-react';
 
-import { PageHeader, SettingsRow, SettingsSection } from '@/components/ui';
-import { Switch } from '@/components/ui/switch';
+import { Button, PageHeader, SettingsRow, SettingsSection, Switch } from '@/components/ui';
 import { useIrisStore } from '@/features/iris/stores/irisStore';
 import { useRegisterPaletteCommands } from '@/features/palette/hooks/useRegisterPaletteCommands';
 import type { PaletteCommand } from '@/features/palette/stores/paletteCommandsStore';
 import { cn } from '@/lib/utils';
 
-import { SECONDARY_BUTTON_CLASS } from './settingsStyles';
+import { SWITCH_CLASS } from './settingsStyles';
 import { useSettingsQuery, useUpdateSettingsMutation } from '../hooks/useSettingsQuery';
 import {
   useCheckForUpdatesMutation,
@@ -79,11 +74,7 @@ export function DisplayTab() {
 
       <SettingsSection title="Appearance">
         <SettingsRow label="Theme" hint="Choose a look, or follow your system appearance." stacked>
-          <div
-            role="radiogroup"
-            aria-label="Theme"
-            className="grid w-full grid-cols-3 gap-3"
-          >
+          <div role="radiogroup" aria-label="Theme" className="grid w-full grid-cols-3 gap-3">
             {THEMES.map((theme) => {
               const isActive = activeTheme === theme.value;
               const Icon = theme.icon;
@@ -95,13 +86,19 @@ export function DisplayTab() {
                   aria-checked={isActive}
                   tabIndex={isActive ? 0 : -1}
                   onKeyDown={(event) => {
-                    const direction = ['ArrowRight', 'ArrowDown'].includes(event.key) ? 1
-                      : ['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 0;
+                    const direction = ['ArrowRight', 'ArrowDown'].includes(event.key)
+                      ? 1
+                      : ['ArrowLeft', 'ArrowUp'].includes(event.key)
+                        ? -1
+                        : 0;
                     if (!direction) return;
                     event.preventDefault();
                     const index = THEMES.findIndex((item) => item.value === theme.value);
                     const next = THEMES[(index + direction + THEMES.length) % THEMES.length];
-                    const buttons = event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="radio"]');
+                    const buttons =
+                      event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(
+                        '[role="radio"]',
+                      );
                     buttons?.[(index + direction + THEMES.length) % THEMES.length]?.focus();
                     updateSettings.mutate({ category: 'ui', updates: { theme: next.value } });
                   }}
@@ -110,22 +107,54 @@ export function DisplayTab() {
                     updateSettings.mutate({ category: 'ui', updates: { theme: theme.value } })
                   }
                   className={cn(
-                    'min-w-0 rounded-lg border p-2 text-sm transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50',
+                    'min-w-0 rounded-xl border p-2.5 text-sm shadow-sm transition-[border-color,background-color,box-shadow,color] duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50',
                     isActive
-                      ? 'border-accent bg-accent-muted text-accent'
-                      : 'border-border-default text-text-secondary hover:border-border-strong hover:text-text-primary',
+                      ? 'border-accent bg-surface text-accent ring-1 ring-accent/25'
+                      : 'border-border-subtle bg-surface text-text-secondary hover:border-border-default hover:text-text-primary',
                   )}
                 >
                   <span className="theme-preview" data-preview={theme.value} aria-hidden="true">
-                    {(theme.value === 'system' ? (['light', 'dark'] as const) : [theme.value]).map((scene) => (
-                      <span key={scene} className="theme-preview-scene" data-scene={scene}>
-                        <span className="theme-preview-sidebar"><span /><span /><span /></span>
-                        <span className="theme-preview-page"><span /><span /><span /></span>
-                      </span>
-                    ))}
+                    {(theme.value === 'system'
+                      ? (['light', 'dark'] as const)
+                      : [theme.value]
+                    ).map((scene) => {
+                      const isDark = scene === 'dark';
+                      return (
+                        <span
+                          key={scene}
+                          className="theme-preview-scene"
+                          data-scene={scene}
+                          style={{ backgroundColor: isDark ? '#1c1917' : '#faf7f2' }}
+                        >
+                          <span
+                            className="theme-preview-sidebar"
+                            style={{ backgroundColor: isDark ? '#141210' : '#efeae2' }}
+                          >
+                            <span
+                              style={{ backgroundColor: isDark ? '#24211e' : '#ffffff' }}
+                            />
+                            <span />
+                            <span />
+                          </span>
+                          <span className="theme-preview-page">
+                            <span
+                              className="theme-preview-card"
+                              style={{ backgroundColor: isDark ? '#24211e' : '#ffffff' }}
+                            >
+                              <span
+                                style={{ backgroundColor: isDark ? '#d98c6c' : '#9b4431' }}
+                              />
+                              <span />
+                              <span />
+                            </span>
+                          </span>
+                        </span>
+                      );
+                    })}
                   </span>
                   <span className="mt-2 flex flex-wrap items-center justify-center gap-1.5 py-1 text-xs font-medium">
-                    <Icon className="h-3.5 w-3.5" aria-hidden="true" />{theme.label}
+                    <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+                    {theme.label}
                     {isActive ? <Check className="h-3 w-3" aria-hidden="true" /> : null}
                   </span>
                 </button>
@@ -134,20 +163,29 @@ export function DisplayTab() {
           </div>
         </SettingsRow>
         {isError && (
-          <p role="alert" className="text-sm text-danger">
-            Couldn't load your appearance settings.{' '}
-            <button type="button" className="underline" onClick={() => void refetch()}>Try again</button>
+          <p role="alert" className="py-2 text-sm text-danger-fg">
+            Couldn&apos;t load your appearance settings.{' '}
+            <button type="button" className="underline" onClick={() => void refetch()}>
+              Try again
+            </button>
           </p>
         )}
         {updateSettings.isError && (
-          <p role="alert" className="text-sm text-danger">Couldn't save your theme. Try selecting it again.</p>
+          <p role="alert" className="py-2 text-sm text-danger-fg">
+            Couldn&apos;t save your theme. Try selecting it again.
+          </p>
         )}
         <SettingsRow
           label="Iris"
           hint="A small light in the sidebar that shows what Lattice is doing and mentions what needs a look. It never calls a model."
           htmlFor="display-iris"
         >
-          <Switch id="display-iris" checked={irisEnabled} onCheckedChange={setIrisEnabled} />
+          <Switch
+            id="display-iris"
+            className={SWITCH_CLASS}
+            checked={irisEnabled}
+            onCheckedChange={setIrisEnabled}
+          />
         </SettingsRow>
       </SettingsSection>
 
@@ -172,14 +210,14 @@ export function DisplayTab() {
                 Download
               </a>
             ) : null}
-            <button
+            <Button
               type="button"
+              variant="outline"
               onClick={() => checkMutate()}
               disabled={isChecking}
-              className={SECONDARY_BUTTON_CLASS}
             >
               {isChecking ? 'Checking…' : 'Check for updates'}
-            </button>
+            </Button>
           </div>
         </SettingsRow>
       </SettingsSection>

@@ -139,8 +139,8 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   const [resolvedLabel, setResolvedLabel] = useState<string | undefined>(undefined);
   const activeConversationId = useConversationsStore((state) => state.activeConversationId);
 
-  // File size limits (10MB backend limit)
-  const MAX_PREVIEW_SIZE = 10 * 1024 * 1024; // 10MB
+  // File size limits (matches 100MB backend IPC preview limit)
+  const MAX_PREVIEW_SIZE = 100 * 1024 * 1024; // 100MB
   const WARN_SIZE = 5 * 1024 * 1024; // 5MB
 
   const isFileTooLarge = source.fileSizeBytes > MAX_PREVIEW_SIZE;
@@ -496,7 +496,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
             below 1024px.
           */}
           {matchNotice && (
-            <p className="shrink-0 border-b border-subtle px-7 py-2 text-xs text-[hsl(var(--text-muted))]">
+            <p className="shrink-0 border-b border-border-subtle px-7 py-2 text-xs text-[hsl(var(--text-muted))]">
               {matchNotice}
             </p>
           )}

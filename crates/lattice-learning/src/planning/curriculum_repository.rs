@@ -33,6 +33,7 @@ mod diagnostics;
 mod jobs;
 mod preparation;
 mod programs;
+mod reset;
 pub(crate) use jobs::lesson_rank_in;
 pub use programs::ProgramVerifierAudit;
 

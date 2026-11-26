@@ -13,8 +13,7 @@ use std::path::PathBuf;
 const REGULAR: &str = "F1";
 const BOLD: &str = "F2";
 
-/// Ten megabytes: every fixture is a few hundred bytes.
-const NO_SIZE_LIMIT: u64 = 10 * 1024 * 1024;
+const NO_SIZE_LIMIT: Option<u64> = None;
 
 #[tokio::test]
 async fn timed_out_pdf_keeps_its_worker_slot_until_parser_returns() {
@@ -675,7 +674,7 @@ fn recognized_text_is_appended_to_whatever_the_page_did_have() {
 async fn real_pdf_keeps_its_structure_and_page_ranges() {
     let path = PathBuf::from(std::env::var("LATTICE_LAYOUT_PDF").unwrap());
 
-    let extracted = extract_pdf(&path, 200 * 1024 * 1024, None, &ExtractionWorkers::new())
+    let extracted = extract_pdf(&path, None, None, &ExtractionWorkers::new())
         .await
         .unwrap();
 
@@ -735,9 +734,7 @@ async fn compressed_pdf_page_cannot_exceed_decoded_stream_budget() {
     document.compress();
     document.save(&path).unwrap();
     assert!(std::fs::metadata(&path).unwrap().len() < 100_000);
-    assert!(
-        extract_pdf(&path, 50 * 1024 * 1024, None, &ExtractionWorkers::new())
-            .await
-            .is_err()
-    );
+    assert!(extract_pdf(&path, None, None, &ExtractionWorkers::new())
+        .await
+        .is_err());
 }

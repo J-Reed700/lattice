@@ -69,16 +69,33 @@ impl FileMetadataFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
-    use tempfile::NamedTempFile;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use tempfile::TempDir;
+
+    fn write_temp_file(dir: &TempDir, name: &str, content: &[u8]) -> PathBuf {
+        let path = dir.path().join(name);
+        std::fs::write(&path, content).unwrap();
+        path
+    }
+
+    fn write_unique_temp_file(
+        dir: &TempDir,
+        seq: &AtomicU64,
+        prefix: &str,
+        suffix: &str,
+        content: &[u8],
+    ) -> PathBuf {
+        let id = seq.fetch_add(1, Ordering::Relaxed);
+        write_temp_file(dir, &format!("{prefix}_{id}{suffix}"), content)
+    }
 
     #[test]
     fn test_from_path_creates_valid_metadata() {
-        let mut temp_file = NamedTempFile::new().unwrap();
-        write!(temp_file, "test content").unwrap();
-        temp_file.flush().unwrap();
+        let dir = TempDir::new().unwrap();
+        let path = write_temp_file(&dir, "sample.txt", b"test content");
 
-        let metadata = FileMetadataFactory::from_path(temp_file.path()).unwrap();
+        let metadata = FileMetadataFactory::from_path(&path).unwrap();
 
         assert!(!metadata.file_name().is_empty());
         assert_eq!(metadata.size_bytes(), 12); // "test content" is 12 bytes
@@ -141,22 +158,20 @@ mod tests {
 
     #[test]
     fn test_creates_metadata_with_correct_file_size() {
-        let mut temp_file = NamedTempFile::new().unwrap();
-        let content = "0123456789"; // 10 bytes
-        write!(temp_file, "{}", content).unwrap();
-        temp_file.flush().unwrap();
+        let dir = TempDir::new().unwrap();
+        let path = write_temp_file(&dir, "sized.txt", b"0123456789");
 
-        let metadata = FileMetadataFactory::from_path(temp_file.path()).unwrap();
+        let metadata = FileMetadataFactory::from_path(&path).unwrap();
 
         assert_eq!(metadata.size_bytes(), 10);
     }
 
     #[test]
     fn test_handles_empty_file() {
-        let temp_file = NamedTempFile::new().unwrap();
-        // Don't write anything - file is empty
+        let dir = TempDir::new().unwrap();
+        let path = write_temp_file(&dir, "empty.txt", b"");
 
-        let metadata = FileMetadataFactory::from_path(temp_file.path()).unwrap();
+        let metadata = FileMetadataFactory::from_path(&path).unwrap();
 
         assert_eq!(metadata.size_bytes(), 0);
         assert!(!metadata.file_name().is_empty());
@@ -171,165 +186,168 @@ mod tests {
             prop::sample::select(vec![".txt", ".md", ".pdf", ".json", ".rs", ".png"])
         }
 
-        proptest! {
-            #[test]
-            fn prop_file_name_non_empty(
-                _dummy in 0..10u32
-            ) {
-                let mut temp = NamedTempFile::new().unwrap();
-                temp.write_all(b"test").unwrap();
-                temp.flush().unwrap();
+        #[test]
+        fn prop_file_name_non_empty() {
+            let dir = TempDir::new().unwrap();
+            let seq = AtomicU64::new(0);
+            proptest!(|(_dummy in 0..10u32)| {
+                let path = write_unique_temp_file(&dir, &seq, "sample", ".tmp", b"test");
 
                 // GIVEN: FileMetadata created from path
-                let metadata = FileMetadataFactory::from_path(temp.path()).unwrap();
+                let metadata = FileMetadataFactory::from_path(&path).unwrap();
 
                 // THEN: File name must be non-empty
                 prop_assert!(!metadata.file_name().is_empty());
-            }
+            });
+        }
 
-            #[test]
-            fn prop_size_bytes_non_negative(size in 0i64..1000i64) {
-                let mut temp = NamedTempFile::new().unwrap();
+        #[test]
+        fn prop_size_bytes_non_negative() {
+            let dir = TempDir::new().unwrap();
+            let seq = AtomicU64::new(0);
+            proptest!(|(size in 0i64..1000i64)| {
                 let content = vec![0u8; size as usize];
-                temp.write_all(&content).unwrap();
-                temp.flush().unwrap();
+                let path = write_unique_temp_file(&dir, &seq, "sized", ".tmp", &content);
 
                 // GIVEN: FileMetadata from file
-                let metadata = FileMetadataFactory::from_path(temp.path()).unwrap();
+                let metadata = FileMetadataFactory::from_path(&path).unwrap();
 
                 // THEN: Size must be non-negative
                 prop_assert!(metadata.size_bytes() >= 0);
-            }
+            });
+        }
 
-            #[test]
-            fn prop_mime_type_detection_consistency(ext in valid_file_extension()) {
-                let mut temp1 = NamedTempFile::with_suffix(ext).unwrap();
-                let mut temp2 = NamedTempFile::with_suffix(ext).unwrap();
-                temp1.write_all(b"content").unwrap();
-                temp2.write_all(b"content").unwrap();
-                temp1.flush().unwrap();
-                temp2.flush().unwrap();
+        #[test]
+        fn prop_mime_type_detection_consistency() {
+            let dir = TempDir::new().unwrap();
+            let seq = AtomicU64::new(0);
+            proptest!(|(ext in valid_file_extension())| {
+                let path1 = write_unique_temp_file(&dir, &seq, "first", ext, b"content");
+                let path2 = write_unique_temp_file(&dir, &seq, "second", ext, b"content");
 
                 // GIVEN: Two files with same extension
-                let meta1 = FileMetadataFactory::from_path(temp1.path()).unwrap();
-                let meta2 = FileMetadataFactory::from_path(temp2.path()).unwrap();
+                let meta1 = FileMetadataFactory::from_path(&path1).unwrap();
+                let meta2 = FileMetadataFactory::from_path(&path2).unwrap();
 
                 // THEN: MIME types should be the same
                 prop_assert_eq!(meta1.mime_type(), meta2.mime_type());
-            }
+            });
+        }
 
-            #[test]
-            fn prop_modified_at_in_past(
-                _dummy in 0..10u32
-            ) {
+        #[test]
+        fn prop_modified_at_in_past() {
+            let dir = TempDir::new().unwrap();
+            let seq = AtomicU64::new(0);
+            proptest!(|(_dummy in 0..10u32)| {
                 // GIVEN: FileMetadata from real file
-                let mut temp = NamedTempFile::new().unwrap();
-                temp.write_all(b"test").unwrap();
-                temp.flush().unwrap();
-                let metadata = FileMetadataFactory::from_path(temp.path()).unwrap();
+                let path = write_unique_temp_file(&dir, &seq, "mtime", ".tmp", b"test");
+                let metadata = FileMetadataFactory::from_path(&path).unwrap();
 
                 // THEN: Modified timestamp should be in past (or very recent)
                 let now = Utc::now().timestamp();
                 prop_assert!(metadata.modified_at().timestamp() <= now + 1); // Allow 1s clock skew
-            }
+            });
+        }
 
-            #[test]
-            fn prop_from_path_creates_valid_instance(size in 0i64..1000i64) {
+        #[test]
+        fn prop_from_path_creates_valid_instance() {
+            let dir = TempDir::new().unwrap();
+            let seq = AtomicU64::new(0);
+            proptest!(|(size in 0i64..1000i64)| {
                 // GIVEN: Temp file with known properties
-                let mut temp = NamedTempFile::new().unwrap();
                 let content = vec![0u8; size as usize];
-                temp.write_all(&content).unwrap();
-                temp.flush().unwrap();
+                let path = write_unique_temp_file(&dir, &seq, "valid", ".tmp", &content);
 
                 // WHEN: Creating FileMetadata
-                let metadata = FileMetadataFactory::from_path(temp.path()).unwrap();
+                let metadata = FileMetadataFactory::from_path(&path).unwrap();
 
                 // THEN: All properties should be valid
                 prop_assert!(!metadata.file_name().is_empty());
                 prop_assert!(metadata.size_bytes() >= 0);
                 prop_assert!(!metadata.mime_type().is_empty());
                 prop_assert!(metadata.modified_at().timestamp() > 0);
-            }
+            });
         }
 
-        proptest! {
-            #[test]
-            fn prop_file_name_special_chars(
-                _dummy in 0..10u32
-            ) {
+        #[test]
+        fn prop_file_name_special_chars() {
+            let dir = TempDir::new().unwrap();
+            let seq = AtomicU64::new(0);
+            proptest!(|(_dummy in 0..10u32)| {
                 // GIVEN: File with special characters in name
-                let mut temp = NamedTempFile::with_prefix("test_file-name.").unwrap();
-                temp.write_all(b"test").unwrap();
-                temp.flush().unwrap();
+                let path = write_unique_temp_file(&dir, &seq, "test_file-name.", ".txt", b"test");
 
                 // WHEN: Creating metadata
-                let metadata = FileMetadataFactory::from_path(temp.path()).unwrap();
+                let metadata = FileMetadataFactory::from_path(&path).unwrap();
 
                 // THEN: Special chars should be preserved in name
                 prop_assert!(!metadata.file_name().is_empty());
-            }
+                prop_assert!(metadata.file_name().starts_with("test_file-name."));
+            });
+        }
 
-            #[test]
-            fn prop_size_bytes_boundary(size in prop::sample::select(vec![0i64, 100i64, 1000i64])) {
+        #[test]
+        fn prop_size_bytes_boundary() {
+            let dir = TempDir::new().unwrap();
+            let seq = AtomicU64::new(0);
+            proptest!(|(size in prop::sample::select(vec![0i64, 100i64, 1000i64]))| {
                 // GIVEN: File with boundary sizes
-                let mut temp = NamedTempFile::new().unwrap();
                 let content = vec![0u8; size as usize];
-                temp.write_all(&content).unwrap();
-                temp.flush().unwrap();
+                let path = write_unique_temp_file(&dir, &seq, "boundary", ".tmp", &content);
 
                 // WHEN: Creating metadata
-                let metadata = FileMetadataFactory::from_path(temp.path()).unwrap();
+                let metadata = FileMetadataFactory::from_path(&path).unwrap();
 
                 // THEN: Size should match (approximately, due to filesystem overhead)
                 prop_assert!(metadata.size_bytes() >= 0);
                 prop_assert!(metadata.size_bytes() <= size + 100); // Allow overhead
-            }
+            });
+        }
 
-            #[test]
-            fn prop_mime_type_for_all_extensions(ext in valid_file_extension()) {
+        #[test]
+        fn prop_mime_type_for_all_extensions() {
+            let dir = TempDir::new().unwrap();
+            let seq = AtomicU64::new(0);
+            proptest!(|(ext in valid_file_extension())| {
                 // GIVEN: File with known extension
-                let mut temp = NamedTempFile::with_suffix(ext).unwrap();
-                temp.write_all(b"test").unwrap();
-                temp.flush().unwrap();
+                let path = write_unique_temp_file(&dir, &seq, "mime", ext, b"test");
 
                 // WHEN: Creating metadata
-                let metadata = FileMetadataFactory::from_path(temp.path()).unwrap();
+                let metadata = FileMetadataFactory::from_path(&path).unwrap();
 
                 // THEN: MIME type should be detected
                 prop_assert!(!metadata.mime_type().is_empty());
                 prop_assert!(metadata.mime_type().starts_with("text/") ||
                             metadata.mime_type().starts_with("application/") ||
                             metadata.mime_type().starts_with("image/"));
-            }
+            });
         }
 
-        proptest! {
-            #[test]
-            fn prop_file_metadata_equality_by_value(
-                _dummy in 0..10u32
-            ) {
+        #[test]
+        fn prop_file_metadata_equality_by_value() {
+            let dir = TempDir::new().unwrap();
+            let seq = AtomicU64::new(0);
+            proptest!(|(_dummy in 0..10u32)| {
                 // GIVEN: Same file accessed twice
-                let mut temp = NamedTempFile::new().unwrap();
-                temp.write_all(b"test").unwrap();
-                temp.flush().unwrap();
+                let path = write_unique_temp_file(&dir, &seq, "eq", ".tmp", b"test");
 
                 // WHEN: Creating two metadata instances
-                let meta1 = FileMetadataFactory::from_path(temp.path()).unwrap();
-                let meta2 = FileMetadataFactory::from_path(temp.path()).unwrap();
+                let meta1 = FileMetadataFactory::from_path(&path).unwrap();
+                let meta2 = FileMetadataFactory::from_path(&path).unwrap();
 
                 // THEN: They should be equal (value equality)
                 prop_assert_eq!(meta1, meta2);
-            }
+            });
+        }
 
-            #[test]
-            fn prop_file_metadata_serde_roundtrip(
-                _dummy in 0..10u32
-            ) {
+        #[test]
+        fn prop_file_metadata_serde_roundtrip() {
+            let dir = TempDir::new().unwrap();
+            let seq = AtomicU64::new(0);
+            proptest!(|(_dummy in 0..10u32)| {
                 // GIVEN: FileMetadata instance
-                let mut temp = NamedTempFile::new().unwrap();
-                temp.write_all(b"test").unwrap();
-                temp.flush().unwrap();
-                let metadata = FileMetadataFactory::from_path(temp.path()).unwrap();
+                let path = write_unique_temp_file(&dir, &seq, "serde", ".tmp", b"test");
+                let metadata = FileMetadataFactory::from_path(&path).unwrap();
 
                 // WHEN: Serializing and deserializing
                 let json = serde_json::to_string(&metadata).unwrap();
@@ -337,22 +355,22 @@ mod tests {
 
                 // THEN: Should roundtrip successfully
                 prop_assert_eq!(metadata, deserialized);
-            }
+            });
+        }
 
-            #[test]
-            fn prop_file_metadata_hash_consistency(
-                _dummy in 0..10u32
-            ) {
-                use std::collections::hash_map::DefaultHasher;
-                use std::hash::{Hash, Hasher};
+        #[test]
+        fn prop_file_metadata_hash_consistency() {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
 
+            let dir = TempDir::new().unwrap();
+            let seq = AtomicU64::new(0);
+            proptest!(|(_dummy in 0..10u32)| {
                 // GIVEN: Same file accessed twice
-                let mut temp = NamedTempFile::new().unwrap();
-                temp.write_all(b"test").unwrap();
-                temp.flush().unwrap();
+                let path = write_unique_temp_file(&dir, &seq, "hash", ".tmp", b"test");
 
-                let meta1 = FileMetadataFactory::from_path(temp.path()).unwrap();
-                let meta2 = FileMetadataFactory::from_path(temp.path()).unwrap();
+                let meta1 = FileMetadataFactory::from_path(&path).unwrap();
+                let meta2 = FileMetadataFactory::from_path(&path).unwrap();
 
                 // WHEN: Computing hashes
                 let mut hasher1 = DefaultHasher::new();
@@ -364,7 +382,7 @@ mod tests {
                 if meta1 == meta2 {
                     prop_assert_eq!(hasher1.finish(), hasher2.finish());
                 }
-            }
+            });
         }
     }
 }

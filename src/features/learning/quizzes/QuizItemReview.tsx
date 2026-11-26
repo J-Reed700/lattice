@@ -15,7 +15,7 @@ import { Editable } from '@/shared/edits/Editable';
 import { useCorrectedSince } from '@/shared/edits/useCorrectedSince';
 
 const CONTESTABLE = new Set(['provisional', 'uncertain', 'needs_review']);
-const link = 'inline-flex min-h-11 items-center gap-1.5 rounded-full px-3 text-sm font-medium text-text-secondary hover:bg-background hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50';
+const link = 'inline-flex min-h-11 items-center gap-1.5 rounded-full px-3 text-sm font-medium text-text-secondary hover:bg-bg hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50';
 
 export type ItemActions = {
   addToRecall: (itemId: string) => void;
@@ -39,7 +39,7 @@ function ReportLink({ itemId, actions }: { itemId: string; actions: ItemActions 
   if (!open) return <button type="button" onClick={() => setOpen(true)} className={link}><Flag size={14} aria-hidden="true" /> Report this question</button>;
   return <form className="w-full rounded-xl border border-border bg-surface p-3" onSubmit={(event) => { event.preventDefault(); void actions.report(itemId, note.trim()).then((ok) => ok && setOpen(false)); }}>
     <label htmlFor={`report-${itemId}`} className="text-sm font-semibold text-text-primary">What is wrong with this question?</label>
-    <textarea id={`report-${itemId}`} rows={2} value={note} onChange={(event) => setNote(event.target.value)} className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary outline-hidden focus:border-accent" />
+    <textarea id={`report-${itemId}`} rows={2} value={note} onChange={(event) => setNote(event.target.value)} className="mt-2 w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-primary outline-hidden focus:border-accent" />
     <div className="mt-2 flex justify-end gap-2">
       <button type="button" onClick={() => setOpen(false)} className={link}>Cancel</button>
       <button type="submit" disabled={actions.reportPending} className="min-h-11 rounded-full bg-accent px-4 text-sm font-semibold text-accent-fg disabled:opacity-50">Report</button>

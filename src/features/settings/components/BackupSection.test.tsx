@@ -18,6 +18,7 @@ import type { IndexingSnapshot } from '@/types/api/indexing';
 
 
 import { BackupSection } from './BackupSection';
+import { chooseRadixOption } from './radixSelectTestUtils';
 
 const {
   mockListBackups,
@@ -604,7 +605,7 @@ describe('BackupSection', () => {
       renderSection();
       await user.click(await screen.findByRole('button', { name: 'Change' }));
       await waitFor(() => expect(toastTitles()).toContain("Couldn't change the folder"));
-      await user.selectOptions(screen.getByLabelText('Archives to keep'), '10');
+      await chooseRadixOption(screen.getByLabelText('Archives to keep'), '10', user);
       await waitFor(() => expect(mockSetArchiveKeepCount).toHaveBeenCalledWith(10));
       await waitFor(() => expect(toastTitles()).toContain("Couldn't change how many to keep"));
     });

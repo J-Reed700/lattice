@@ -21,11 +21,13 @@ export type CommandResult<C extends CommandName> = CommandResults[C];
  * A fixture value: it may leave out fields its flow never reads, but every
  * field it names must exist in the generated DTO, with the generated type.
  */
-export type Fixture<T> = T extends readonly (infer Item)[]
-  ? Fixture<Item>[]
-  : T extends object
-    ? { [Key in keyof T]?: Fixture<T[Key]> }
-    : T;
+export type Fixture<T> = T extends ArrayBuffer | ArrayBufferView
+  ? T
+  : T extends readonly (infer Item)[]
+    ? Fixture<Item>[]
+    : T extends object
+      ? { [Key in keyof T]?: Fixture<T[Key]> }
+      : T;
 
 /** Commands of Tauri's own plugins that the renderer calls. */
 type NativeResults = {
@@ -59,11 +61,13 @@ type UnknownFields<Actual, Expected, Path extends string = '', Depth extends unk
   ? never // deep enough for every fixture; recursive DTOs would never end
   : 0 extends 1 & Actual
     ? never // `any`, while a handler's parameters are still being inferred
-    : [Actual] extends [readonly (infer Item)[]]
-      ? UnknownFields<Item, ElementOf<Expected>, Path, Depth>
-      : [Actual] extends [object]
-        ? ObjectUnknownFields<Actual, Extract<Expected, object>, Path, Depth>
-        : never;
+    : [Actual] extends [ArrayBuffer | ArrayBufferView]
+      ? never
+      : [Actual] extends [readonly (infer Item)[]]
+        ? UnknownFields<Item, ElementOf<Expected>, Path, Depth>
+        : [Actual] extends [object]
+          ? ObjectUnknownFields<Actual, Extract<Expected, object>, Path, Depth>
+          : never;
 type ObjectUnknownFields<Actual, Expected, Path extends string, Depth extends unknown[]> = [Expected] extends [never]
   ? never
   : string extends KeysOf<Expected>

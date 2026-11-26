@@ -4,9 +4,7 @@
 
 use super::*;
 use proptest::prelude::*;
-use std::io::Write;
 use std::path::PathBuf;
-use tempfile::NamedTempFile;
 
 fn temp_path(file_name: &str) -> PathBuf {
     std::env::temp_dir().join(file_name)
@@ -80,11 +78,9 @@ fn arbitrary_document() -> impl Strategy<Value = Document> {
         non_empty_string(),
     )
         .prop_map(|(status, mime, content, filename)| {
-            let mut temp = NamedTempFile::new().unwrap();
-            temp.write_all(content.as_bytes()).unwrap();
-            let path = temp.path().to_path_buf();
+            let path = temp_path(&filename);
 
-            let validated_path = ValidatedFilePath::new(path.clone())
+            let validated_path = ValidatedFilePath::new(path)
                 .unwrap_or_else(|_| ValidatedFilePath::new(temp_path("test.txt")).unwrap());
 
             let checksum = Checksum::new("0".repeat(64)).expect("valid checksum");

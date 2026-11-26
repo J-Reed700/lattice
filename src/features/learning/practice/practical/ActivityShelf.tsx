@@ -30,7 +30,7 @@ export function ActivityShelf({
               {lesson?.title ?? "Choose a lesson"}
             </h3>
           </div>
-          <span className="rounded-full bg-background px-2.5 py-1 text-xs text-text-muted">
+          <span className="rounded-full bg-bg px-2.5 py-1 text-xs text-text-muted">
             {activities.length}
           </span>
         </div>
@@ -41,7 +41,7 @@ export function ActivityShelf({
           </div>
         ) : null}
         {activities.length === 0 ? (
-          <div className="mt-4 rounded-xl border border-dashed border-border bg-background p-5 text-center">
+          <div className="mt-4 rounded-xl border border-dashed border-border bg-bg p-5 text-center">
             <Code2 className="mx-auto h-6 w-6 text-text-muted" />
             <p className="mt-2 text-xs leading-5 text-text-muted">
               No activities for this lesson yet.
@@ -63,7 +63,7 @@ export function ActivityShelf({
                 key={activity.id}
                 aria-pressed={activeActivity?.id === activity.id}
                 onClick={handleAsyncEvent(() => onSelectActivity(activity))}
-                className={`w-full rounded-xl border p-3 text-left transition ${activeActivity?.id === activity.id ? "border-accent/50 bg-accent/5" : "border-border bg-background/40 hover:border-accent/30"}`}
+                className={`w-full rounded-xl border p-3 text-left transition ${activeActivity?.id === activity.id ? "border-accent/50 bg-accent/5" : "border-border bg-bg/40 hover:border-accent/30"}`}
               >
                 <span className="flex items-center justify-between gap-2">
                   <span className="truncate text-xs font-semibold uppercase tracking-[.12em] text-accent">

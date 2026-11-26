@@ -51,7 +51,7 @@ export function DeckTarget({ deck, now }: { deck: StudyDeckDto; now: number }) {
     </div>
     {editing && <form className="mt-4 flex flex-wrap items-end gap-2" onSubmit={event => { event.preventDefault(); if (Number.isFinite(parsed)) submit(parsed); }}>
       <label className="text-xs text-text-muted">When is it?
-        <input type="datetime-local" value={value} min={localInput(now)} onChange={event => setValue(event.target.value)} className="mt-1 block rounded-md border border-border-subtle bg-background px-3 py-2 text-sm text-text-primary" />
+        <input type="datetime-local" value={value} min={localInput(now)} onChange={event => setValue(event.target.value)} className="mt-1 block rounded-md border border-border-subtle bg-bg px-3 py-2 text-sm text-text-primary" />
       </label>
       <Button size="sm" type="submit" disabled={save.isPending || !Number.isFinite(parsed) || parsed <= now}>{save.isPending ? 'Saving…' : 'Save'}</Button>
       <Button size="sm" type="button" variant="ghost" disabled={save.isPending} onClick={() => setEditing(false)}>Cancel</Button>

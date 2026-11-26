@@ -144,12 +144,7 @@ Prepare a private interview answer standard BEFORE any learner response exists. 
   "reasoning_effort": "low",
   "tool_choice": null,
   "include_reasoning": false,
-  "sampling": {
-    "temperature": 0.0,
-    "top_p": 1.0,
-    "top_k": 1,
-    "presence_penalty": 0.0
-  },
+  "sampling": null,
   "thinking": "off",
   "max_output_tokens": 2200,
   "stop": [],

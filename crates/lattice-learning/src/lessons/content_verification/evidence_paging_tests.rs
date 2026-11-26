@@ -232,6 +232,38 @@ async fn a_list_ends_at_its_last_passage_on_the_claims_subject() -> Result<()> {
 }
 
 #[tokio::test]
+async fn a_large_window_includes_relevant_passages_past_six_thousand_tokens_and_stops_at_subject_cutoff(
+) -> Result<()> {
+    let mut sources: Vec<_> = (0..16).map(related).collect();
+    sources.extend((0..16).map(|index| {
+        reference(
+            format!("function-{index}"),
+            format!(
+                "Item {index} sits under the shelf. {}",
+                "Unrelated filler text. ".repeat(80)
+            ),
+        )
+    }));
+    let references = ReferenceCollection::lexical(&sources)?;
+    let list = references
+        .claim_list(CLAIM, &crate::reference_collection::Scope::All, &[])
+        .await?;
+    assert_eq!(list.passages.len(), 16);
+    assert!(list
+        .passages
+        .iter()
+        .all(|passage| passage.source_id.starts_with("related-")));
+    let model = PagingModel::new(32_000);
+    let (page, passed_over) = evidence_checks::page_of(&model, CLAIM, &list.passages, &[], None);
+    assert_eq!(passed_over, 0);
+    assert_eq!(page.len(), 16);
+    let tokens: usize = page.iter().map(|p| bank_tokens(&model, &p.text)).sum();
+    assert!(tokens > 6_000, "expected > 6_000 tokens, got {tokens}");
+    assert!(fits_window(&model, CLAIM, &page));
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_course_that_cannot_tell_its_passages_apart_is_read_whole() -> Result<()> {
     // Every passage holds every word of the claim: none is more on the
     // subject than another, so the whole ranking is on it.

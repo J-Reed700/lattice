@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use crate::model_call::ErrorClass;
 use crate::outline_progress::OutlineProgress;
 use crate::{lesson_drafts, lesson_progress, model_call};
-use lattice_core::application::ports::llm_port::{CompletionResponse, Finish};
+use lattice_core::application::ports::llm_port::{CompletionResponse, Finish, ThinkingMode};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::{
     self, GroundedOutput, GroundedRequest, Streaming,
@@ -223,12 +223,16 @@ pub(crate) async fn complete_checked_request<T>(
     accept: impl Fn(&str) -> Result<T> + Send + Sync,
 ) -> Result<T> {
     let one_step = || async {
+        let mut direct_request = request.clone();
+        if should_think_natively(llm, &direct_request, reasoning) {
+            direct_request.call.thinking = ThinkingMode::On;
+        }
         let direct = Learning {
             call,
             progress,
             step: Step::Direct,
         };
-        answer(llm, call, &direct, request.clone(), &accept).await
+        answer(llm, call, &direct, direct_request, &accept).await
     };
     let drafted = match drafted(llm, &request, progress, reasoning, DraftBy::Call(call)).await? {
         Some(drafted) => drafted,
@@ -243,8 +247,11 @@ pub(crate) async fn complete_checked_request<T>(
     let value = match answer(llm, call, &answering, drafted.answer_step, &accept).await {
         Ok(value) => value,
         Err(error) => {
-            // The answer step is deterministic, so a retry on this draft fails the same way.
-            if ErrorClass::of(&error) == ErrorClass::Unusable {
+            // An unusable or oversized answer may stem from a flawed draft, so retry from a fresh draft.
+            if matches!(
+                ErrorClass::of(&error),
+                ErrorClass::Unusable | ErrorClass::DoesNotFit
+            ) {
                 lesson_drafts::record_checkpoint(&drafted.key, Value::Null).await?;
             }
             return Err(error);
@@ -271,20 +278,34 @@ struct DraftPlan<'a> {
     key: String,
 }
 
+/// Whether `request` should skip the two-step prose draft and instead run as
+/// a single structured request with native on-demand thinking enabled.
+fn should_think_natively(
+    llm: &dyn LLMPort,
+    request: &GroundedRequest,
+    reasoning: Option<ReasonFirst<'_>>,
+) -> bool {
+    reasoning.is_some_and(|r| r.kind.reasons_first())
+        && request.evidence().is_empty()
+        && !llm.thinks_before_answering()
+        && llm.supports_native_thinking()
+}
+
 /// The plan to draft `request`, or `None` when it is answered in one step.
 fn draft_plan<'a>(
     llm: &dyn LLMPort,
     request: &GroundedRequest,
     reasoning: Option<ReasonFirst<'a>>,
 ) -> Option<DraftPlan<'a>> {
-    // A model that thinks before every answer reasons first already, and
-    // Claude's reasoning-extraction classifier refuses the prose draft as a
-    // request for its chain of thought: every draft came back empty, each
-    // billed for its whole prompt.
+    // A model that thinks before every answer or supports on-demand native
+    // thinking reasons first already, and Claude's reasoning-extraction
+    // classifier refuses the prose draft as a request for its chain of
+    // thought: every draft came back empty, each billed for its whole prompt.
     let reasoning = reasoning
         .filter(|reasoning| reasoning.kind.reasons_first())
         .filter(|_| request.evidence().is_empty())
-        .filter(|_| !llm.thinks_before_answering())?;
+        .filter(|_| !llm.thinks_before_answering())
+        .filter(|_| !llm.supports_native_thinking())?;
     let subject = reasoning.subject;
     let paragraph = format!("{TWO_STEPS} {} {DRAFT_CLOSE}", reasoning.brief);
     let draft_request = request.draft_step(&paragraph);
@@ -294,10 +315,14 @@ fn draft_plan<'a>(
         .collect::<Vec<_>>()
         .join("\n\n");
     // A draft cut to fit a small window helps less than it costs, so such a
-    // window gets the one-step call instead.
+    // window gets the one-step call instead. Otherwise, leave only the actual
+    // room Step 2 needs (its answer reservation plus framing overhead) so the
+    // draft is bounded solely by what Step 2 can physically carry.
     let room = model_call::source_room(llm, &draft_request, usize::MAX);
-    let output_tokens = request.output_tokens();
-    if room < output_tokens + ANSWER_STEP_OVERHEAD_TOKENS {
+    let output_tokens = grounded_generation::output_room(llm, &draft_request)
+        .unwrap_or_else(|_| request.output_tokens());
+    let answer_headroom = output_tokens.saturating_add(ANSWER_STEP_OVERHEAD_TOKENS);
+    if room < answer_headroom {
         tracing::info!(
             subject,
             room,
@@ -306,10 +331,13 @@ fn draft_plan<'a>(
         );
         return None;
     }
+    let mut draft_request = draft_request.leaving_room(answer_headroom);
     let key = DRAFT_CHECKPOINT_POLICY.key(sha256_hex(
         json!({"model":llm.model_name(),"system":draft_request.instructions(),"prompt":prompt})
             .to_string(),
     ));
+    // Route both Step 1 and Step 2 to the same slot via this call's own prefix key.
+    draft_request.call.cache_key = Some(key.clone());
     Some(DraftPlan {
         subject,
         paragraph,
@@ -367,8 +395,9 @@ async fn drafted<'a>(
     };
 
     let tokens = llm.count_tokens(&draft);
-    let answer_step =
+    let mut answer_step =
         request.answer_step(&plan.paragraph, &answer_step_task(), &plan.prompt, &draft);
+    answer_step.call.cache_key = Some(plan.key.clone());
     if !model_call::fits(llm, &answer_step).await {
         // The draft was capped in the model's own tokens, but it can still
         // measure over beside the task, by the backend's count or, where it
@@ -432,26 +461,27 @@ async fn write_draft(
     }
 }
 
-/// A draft sent as plain steps, once more with twice the room after a cut-off; blank unless it ended complete.
+/// A draft sent as plain steps, once more with twice the room after a cut-off
+/// when not already filling the Step-2-fitting window; keeps non-empty
+/// cut-off drafts so Step 2 can complete them from the task.
 async fn written_in_steps(
     llm: &dyn LLMPort,
     plan: &DraftPlan<'_>,
     progress: Option<&OutlineProgress>,
 ) -> Result<String> {
-    let request = plan
-        .request
-        .filling_window(fills_window(progress, Step::Draft));
+    let fills = fills_window(progress, &plan.request);
+    let request = plan.request.filling_window(fills);
     let mut output = send_step(llm, request.clone(), progress, Step::Draft).await?;
-    if matches!(output.finish(), Finish::CutOff) {
+    if matches!(output.finish(), Finish::CutOff) && !fills {
         let larger = request.larger(2);
         if model_call::fits(llm, &larger).await {
             output = send_step(llm, larger, progress, Step::Draft).await?;
         }
     }
-    Ok(if matches!(output.finish(), Finish::Complete) {
-        output.text
-    } else {
-        String::new()
+    Ok(match output.finish() {
+        Finish::Complete => output.text,
+        Finish::CutOff if !output.text.trim().is_empty() => output.text,
+        _ => String::new(),
     })
 }
 
@@ -485,7 +515,7 @@ impl Asking<'_> {
         request: GroundedRequest,
         step: Step,
     ) -> Result<ask::Sent> {
-        let request = request.filling_window(fills_window(self.progress, step));
+        let request = request.filling_window(fills_window(self.progress, &request));
         let output = send_step(llm, request.clone(), self.progress, step).await?;
         Ok(ask::Sent::of(request, output))
     }
@@ -493,14 +523,28 @@ impl Asking<'_> {
 
 #[async_trait::async_trait]
 impl ask::Transport for Asking<'_> {
-    async fn send(&self, llm: &dyn LLMPort, request: GroundedRequest) -> Result<ask::Sent> {
+    async fn send(&self, llm: &dyn LLMPort, mut request: GroundedRequest) -> Result<ask::Sent> {
         let Some(drafted) =
             drafted(llm, &request, self.progress, self.reasoning, DraftBy::Steps).await?
         else {
+            if should_think_natively(llm, &request, self.reasoning) {
+                request.call.thinking = ThinkingMode::On;
+            }
             return self.step(llm, request, Step::Direct).await;
         };
         lesson_progress::stage(structuring(drafted.subject, drafted.tokens));
-        let sent = self.step(llm, drafted.answer_step, Step::Answer).await?;
+        let sent = match self.step(llm, drafted.answer_step, Step::Answer).await {
+            Ok(sent) => sent,
+            Err(error) => {
+                if matches!(
+                    ErrorClass::of(&error),
+                    ErrorClass::Unusable | ErrorClass::DoesNotFit
+                ) {
+                    lesson_drafts::record_checkpoint(&drafted.key, Value::Null).await?;
+                }
+                return Err(error);
+            }
+        };
         two_step_completed(drafted.subject, drafted.reused, drafted.tokens);
         Ok(sent)
     }
@@ -580,7 +624,7 @@ impl Transport for Learning<'_> {
         llm: &dyn LLMPort,
         request: &GroundedRequest,
     ) -> Result<CompletionResponse> {
-        let request = request.filling_window(fills_window(self.progress, self.step));
+        let request = request.filling_window(fills_window(self.progress, request));
         let output = send_step(&tagged(llm, self.call), request, self.progress, self.step).await?;
         Ok(CompletionResponse {
             text: output.text,
@@ -627,7 +671,7 @@ impl Transport for Learning<'_> {
         llm: &dyn LLMPort,
         request: &GroundedRequest,
     ) -> CutOffRemedy<GroundedRequest> {
-        if fills_window(self.progress, self.step) {
+        if fills_window(self.progress, request) {
             return CutOffRemedy::Stop;
         }
         let larger = request.larger(2);
@@ -659,10 +703,10 @@ fn restate(request: GroundedRequest, reason: &str) -> GroundedRequest {
     request.restated(&format!("{RESTATE} {reason}"))
 }
 
-/// Whether a step's answer may take the whole window the prompt leaves: a
-/// streamed step under a lesson job or an outline run, other than the draft.
-fn fills_window(progress: Option<&OutlineProgress>, step: Step) -> bool {
-    (progress.is_some() || lesson_progress::active()) && !matches!(step, Step::Draft)
+/// Whether a step's answer may take the whole room the window leaves (minus any
+/// headroom reserved for a follow-up step, such as Step 2 after a draft).
+fn fills_window(progress: Option<&OutlineProgress>, request: &GroundedRequest) -> bool {
+    request.output_fills_window() || progress.is_some() || lesson_progress::active()
 }
 
 /// Send one learning request, streaming its text to whichever progress the
@@ -676,12 +720,14 @@ async fn send_step(
     // The output estimate reserves space when selecting sources; it is not a
     // generation ceiling for streamed work. Reasoning models spend output
     // tokens before emitting JSON, so those calls let the answer take the
-    // window the prompt leaves, still clamped to the user's configured output
-    // limit and its provider-specific budget. A draft keeps its reservation so
-    // that the answer step carrying it still fits.
+    // window the prompt leaves (for a draft, minus the headroom Step 2 needs
+    // to carry it), still clamped to the user's configured output limit and
+    // its provider-specific budget.
     let lesson_progress = lesson_progress::active();
-    let unbounded = progress.is_some() || lesson_progress;
-    request.call.cache_key = lesson_progress::cache_key();
+    let unbounded = progress.is_some() || lesson_progress || request.output_fills_window();
+    if request.call.cache_key.is_none() {
+        request.call.cache_key = lesson_progress::cache_key();
+    }
     let _model_call = lesson_progress.then(lesson_progress::request);
     let receive = |text: String| {
         if let Some(progress) = progress {

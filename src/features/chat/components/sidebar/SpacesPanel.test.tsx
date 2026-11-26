@@ -210,32 +210,35 @@ describe('SpacesPanel', () => {
       fireEvent.change(screen.getByPlaceholderText('Icon'), { target: { value: '🏛️' } });
       fireEvent.change(screen.getByPlaceholderText('Space name'), { target: { value: 'Antiquity' } });
       fireEvent.change(screen.getByPlaceholderText('#aa503d'), { target: { value: '#112233' } });
-      fireEvent.change(screen.getByTitle('Accent color'), { target: { value: '#445566' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Accent color Slate' }));
       fireEvent.change(screen.getByPlaceholderText('Description'), { target: { value: 'Rome and Persia' } });
       fireEvent.change(screen.getByPlaceholderText('System prompt for this space'), { target: { value: 'Cite primary sources' } });
       fireEvent.click(screen.getByRole('button', { name: 'Clear accent color' }));
       expect(editor.setSpaceIconDraft).toHaveBeenCalledWith('🏛️');
       expect(editor.setSpaceNameDraft).toHaveBeenCalledWith('Antiquity');
       expect(editor.setSpaceAccentDraft).toHaveBeenCalledWith('#112233');
-      expect(editor.setSpaceAccentDraft).toHaveBeenCalledWith('#445566');
+      expect(editor.setSpaceAccentDraft).toHaveBeenCalledWith('#4b6584');
       expect(editor.setSpaceAccentDraft).toHaveBeenLastCalledWith('');
       expect(editor.setSpaceDescriptionDraft).toHaveBeenCalledWith('Rome and Persia');
       expect(editor.setSpacePromptDraft).toHaveBeenCalledWith('Cite primary sources');
     });
 
-    it('falls back to the default accent swatch for an unreadable colour', () => {
+    it('handles an unreadable colour without marking any swatch selected', () => {
       renderPanel({ editor: { isSpaceEditorOpen: true, spaceAccentDraft: 'teal-ish' } });
-      expect(screen.getByTitle('Accent color')).toHaveValue('#aa503d');
+      const swatches = within(screen.getByRole('group', { name: 'Architectural color swatches' })).getAllByRole('button');
+      for (const swatch of swatches) {
+        expect(swatch).toHaveAttribute('aria-pressed', 'false');
+      }
     });
 
     it('toggles the research defaults', () => {
       const { editor } = renderPanel({ editor: { isSpaceEditorOpen: true } });
-      fireEvent.click(screen.getByRole('button', { name: 'Search documents by default' }));
-      const strictBtn = screen.getByRole('button', { name: 'Sources only' });
-      expect(strictBtn).toHaveAttribute('aria-pressed', 'false');
-      fireEvent.click(strictBtn);
-      fireEvent.click(screen.getByRole('button', { name: 'Web by default' }));
-      fireEvent.click(screen.getByRole('button', { name: 'Deep research by default' }));
+      fireEvent.click(screen.getByRole('switch', { name: 'Search documents by default' }));
+      const strictSwitch = screen.getByRole('switch', { name: 'Sources only' });
+      expect(strictSwitch).toHaveAttribute('aria-checked', 'false');
+      fireEvent.click(strictSwitch);
+      fireEvent.click(screen.getByRole('switch', { name: 'Web by default' }));
+      fireEvent.click(screen.getByRole('switch', { name: 'Deep research by default' }));
       expect(applyUpdate(editor.setSpaceKbDefault, true)).toBe(false);
       expect(applyUpdate(editor.setSpaceStrictSourcesDefault, false)).toBe(true);
       expect(applyUpdate(editor.setSpaceWebDefault, false)).toBe(true);

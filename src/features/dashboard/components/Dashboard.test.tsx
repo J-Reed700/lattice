@@ -4,6 +4,7 @@ import { MemoryRouter, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 
+import { conversationUiStore } from '@/features/chat/stores/conversationUiStore';
 import type { DashboardData } from '@/features/dashboard/hooks/useDashboardQuery';
 import { openDocumentFile } from '@/features/files/hooks/useLibraryDocumentActions';
 import { OPEN_PALETTE_EVENT } from '@/features/palette/hooks/useCommandPalette';
@@ -31,7 +32,7 @@ function data(overrides: Partial<DashboardData> = {}): DashboardData {
   return {
     stats: { documentCount: 1234, storageBytes: 2048, folderCount: 1, lastIndexedAt: null, fileTypes: [] },
     recentDocuments: [], recentConversations: [], todayJournalEntry: null, preferredJournalSpaceId: null,
-    recentReferences: [], journalSpaceIds: [], ...overrides,
+    recentReferences: [], journalSpaceIds: [], courses: [], spaces: [], ...overrides,
   };
 }
 
@@ -132,8 +133,11 @@ describe('Dashboard', () => {
   });
 
   it.each([
+    ['Search', '/search'],
     ['Ask', '/chat?new=1'],
+    ['Studio', '/studio'],
     ['Add', '/ingest'],
+    ['Open studio', '/studio'],
     ['All conversations', '/chat'],
     ['All references', '/references'],
     ['Open library', '/files'],
@@ -264,5 +268,133 @@ describe('Dashboard', () => {
     // A row with no id at all has nothing to open.
     await user.click(screen.getByRole('button', { name: /^Untitled/ }));
     expect(openDocumentFile).toHaveBeenCalledTimes(2);
+  });
+
+  it('surfaces active Learning Studio courses with current module, lesson progress, and 1-click resume', async () => {
+    const user = userEvent.setup();
+    renderHome({
+      data: data({
+        courses: [
+          {
+            id: 'prog-bio',
+            title: 'Cellular Energetics',
+            goal: 'Master ATP synthesis and respiration',
+            status: 'active',
+            moduleCount: 3,
+            lessonCount: 8,
+            completedLessons: 5,
+            currentLessonId: 'lesson-oxphos',
+            currentLessonTitle: 'Oxidative Phosphorylation',
+            currentModuleTitle: 'Module 2 · Mitochondria',
+            currentLessonMinutes: 15,
+            createdAt: 1700000000,
+          },
+          {
+            id: 'prog-hist',
+            title: 'Roman Infrastructure',
+            goal: 'Aqueducts and road networks',
+            status: 'active',
+            moduleCount: 2,
+            lessonCount: 4,
+            completedLessons: 1,
+            currentLessonId: 'lesson-viaducts',
+            currentLessonTitle: 'Gravity-fed Aqueducts',
+            currentModuleTitle: 'Module 1 · Water',
+            currentLessonMinutes: 20,
+            createdAt: 1699000000,
+          },
+        ],
+      }),
+    });
+
+    expect(screen.getByText('Cellular Energetics')).toBeInTheDocument();
+    expect(screen.getByText('Module 2 · Mitochondria')).toBeInTheDocument();
+    expect(screen.getByText('Oxidative Phosphorylation')).toBeInTheDocument();
+    expect(screen.getByText('5 of 8 lessons · 63%')).toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'Cellular Energetics progress' })).toHaveAttribute('aria-valuenow', '63');
+    expect(screen.getByText('Roman Infrastructure')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /Cellular Energetics/ }));
+    expect(location()).toBe('/studio?course=prog-bio&lesson=lesson-oxphos');
+  });
+
+  it('uses status-aware CTAs on secondary course cards and omits progress bar when lessonCount is 0', () => {
+    renderHome({
+      data: data({
+        courses: [
+          {
+            id: 'prog-ready',
+            title: 'Quantum Mechanics',
+            goal: 'Wavefunctions',
+            status: 'active',
+            moduleCount: 2,
+            lessonCount: 4,
+            completedLessons: 0,
+            currentLessonId: 'l1',
+            currentLessonTitle: 'Wave-Particle Duality',
+            currentModuleTitle: 'Module 1',
+            currentLessonMinutes: 12,
+            createdAt: 1700000300,
+          },
+          {
+            id: 'prog-done',
+            title: 'Linear Algebra',
+            goal: 'Eigenvalues',
+            status: 'active',
+            moduleCount: 2,
+            lessonCount: 4,
+            completedLessons: 4,
+            currentLessonId: 'l4',
+            currentLessonTitle: 'SVD',
+            currentModuleTitle: 'Module 2',
+            currentLessonMinutes: 10,
+            createdAt: 1700000200,
+          },
+          {
+            id: 'prog-draft',
+            title: 'Organic Synthesis',
+            goal: 'Drafting outline',
+            status: 'draft',
+            moduleCount: 0,
+            lessonCount: 0,
+            completedLessons: 0,
+            currentLessonId: null,
+            currentLessonTitle: null,
+            currentModuleTitle: null,
+            currentLessonMinutes: null,
+            createdAt: 1700000100,
+          },
+        ],
+      }),
+    });
+
+    expect(screen.getByRole('button', { name: /Quantum Mechanics/ })).toHaveTextContent('Start lesson');
+    expect(screen.getByRole('button', { name: /Linear Algebra/ })).toHaveTextContent('Review →');
+    expect(screen.getByRole('button', { name: /Organic Synthesis/ })).toHaveTextContent('Outline →');
+    expect(screen.queryByRole('progressbar', { name: 'Organic Synthesis progress' })).not.toBeInTheDocument();
+  });
+
+  it('offers a clean Studio invitation when no courses exist yet', async () => {
+    const user = userEvent.setup();
+    renderHome({ data: data({ courses: [] }) });
+    await user.click(screen.getByRole('button', { name: /Start a course in Studio/ }));
+    expect(location()).toBe('/studio?new=1');
+  });
+
+  it('surfaces active Spaces and jumps directly into a selected Space in Chat', async () => {
+    const user = userEvent.setup();
+    conversationUiStore.setState({ selectedSpaceId: null });
+    renderHome({
+      data: data({
+        spaces: [
+          { id: 'sp-bio', name: 'Cell Biology', description: null, icon: null, accentColor: '#0f766e' },
+          { id: 'sp-arch', name: 'Architecture', description: null, icon: null, accentColor: '#b45309' },
+        ],
+      }),
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Cell Biology' }));
+    expect(conversationUiStore.getState().selectedSpaceId).toBe('sp-bio');
+    expect(location()).toBe('/chat');
   });
 });

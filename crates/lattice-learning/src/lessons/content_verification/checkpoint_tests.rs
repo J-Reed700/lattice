@@ -51,11 +51,21 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
         .map(|i| {
             let mut block = candidate["blocks"][0].clone();
             block["title"] = json!(format!("Section {i}"));
+            block["body"] = json!(format!(
+                "{} Header spaces stay intact.",
+                format!("{GOOD} ").repeat(22)
+            ));
             block
         })
         .collect::<Vec<_>>());
     let model = Model {
         fail_coverage_at: Some(4),
+        wait_coverage_saved: Some((
+            JobStore::new(db.clone()),
+            job.id.clone(),
+            format!("{lesson_id}/coverage-unit-v2:"),
+            4,
+        )),
         ..Model::new()
     };
     lesson_drafts::run(&db, &repo, &job.id, lesson_id, async {
@@ -135,7 +145,7 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
     })
     .await?;
     // A later repair must not restart the four finished, unchanged sections.
-    candidate["blocks"][1]["body"] = json!(BAD);
+    candidate["blocks"][1]["body"] = json!(format!("{BAD} Header spaces are dropped."));
     let model = Model::new();
     lesson_drafts::run(&db, &repo, &job.id, lesson_id, async {
         let content = units(&candidate)?;
@@ -250,7 +260,7 @@ async fn interrupted_coverage_retains_omissions_without_reusing_them_after_corre
                 index,
                 claims: vec![Claim {
                     quote: GOOD.into(),
-                    statement: GOOD.into(),
+                    statement: FIXED.into(),
                 }],
                 non_factual_reason: String::new(),
             })
@@ -259,6 +269,12 @@ async fn interrupted_coverage_retains_omissions_without_reusing_them_after_corre
     let model = Model {
         coverage_gap_in: Some(1),
         fail_coverage_at: Some(4),
+        wait_coverage_saved: Some((
+            JobStore::new(db.clone()),
+            job.id.clone(),
+            format!("{lesson_id}/coverage-unit-v2:"),
+            4,
+        )),
         ..Model::new()
     };
     lesson_drafts::run(&db, &repo, &job.id, lesson_id, async {

@@ -1,7 +1,7 @@
 import { RouterProvider } from 'react-router/dom';
 
 import { ToastContainer } from './components/Toast';
-import { TooltipProvider } from './components/ui';
+import { TooltipProvider } from './components/ui/tooltip';
 import { FirstRunGate } from './features/model/components/FirstRun';
 import { useDownloadedModelsListener } from './features/model/hooks/useDownloadedModels';
 import { useDownloadsListener } from './features/model/hooks/useDownloads';

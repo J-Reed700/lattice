@@ -132,9 +132,14 @@ async fn a_missing_item_is_asked_for_again_alone() {
     let findings = review_of(&model, &[FIRST, SECOND], &[]).await;
 
     assert!(findings.iter().all(Findings::is_sound));
-    let asked = model.inputs::<QuizItemReview>();
+    let asked: Vec<_> = model
+        .sent()
+        .into_iter()
+        .filter(|sent| sent.call.id == QuizItemReview::ID && sent.request.schema().is_some())
+        .collect();
     assert_eq!(asked.len(), 2);
-    assert_eq!(asked[1].items.len(), 1);
+    let second: Input = serde_json::from_value(asked[1].call.input.clone()).unwrap();
+    assert_eq!(second.items.len(), 1);
 }
 
 #[tokio::test]
@@ -175,9 +180,14 @@ async fn an_item_that_could_not_be_solved_is_not_sent_to_the_judge() {
 
     assert!(findings[0].is_sound());
     assert!(findings[1].unreviewed);
-    let asked = model.inputs::<QuizItemReview>();
+    let asked: Vec<_> = model
+        .sent()
+        .into_iter()
+        .filter(|sent| sent.call.id == QuizItemReview::ID && sent.request.schema().is_some())
+        .collect();
     assert_eq!(asked.len(), 1);
-    assert_eq!(asked[0].items.len(), 1);
+    let first: Input = serde_json::from_value(asked[0].call.input.clone()).unwrap();
+    assert_eq!(first.items.len(), 1);
 }
 
 #[tokio::test]

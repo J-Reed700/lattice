@@ -20,6 +20,8 @@ interface EntryHeaderProps {
   isSaving: boolean;
   saveError: string | null;
   onRetrySave: () => void;
+  /** Inline editor formatting pill centered in the top bar. */
+  toolbar?: ReactNode;
   /** Controls that belong to the page as a whole, e.g. the side-panel toggle. */
   actions?: ReactNode;
 }
@@ -58,6 +60,7 @@ export function EntryHeader({
   isSaving,
   saveError,
   onRetrySave,
+  toolbar,
   actions,
 }: EntryHeaderProps) {
   const named = pageTitle?.trim() ?? '';
@@ -102,10 +105,11 @@ export function EntryHeader({
   };
 
   return (
-    <header className="journal-page-header mb-8">
-      {/* One quiet line of facts; the title gets the rest of the room. */}
-      <div className="mb-6 flex min-h-7 items-center justify-between gap-3 text-xs text-text-muted">
+    <header className="journal-page-header mb-7">
+      {/* Top workspace bar: date on the left, formatting pill centered, save & context on the right. */}
+      <div className="sticky top-0 z-10 flex min-h-12 flex-wrap items-center justify-between gap-3 border-b border-border-subtle bg-bg/95 px-6 py-2 text-xs text-text-muted backdrop-blur-xs lg:px-8">
         <span className="min-w-0 truncate" title={journalName}>{subline}</span>
+        {toolbar ? <div className="flex items-center justify-center">{toolbar}</div> : null}
         <div className="flex shrink-0 items-center gap-2" title={formatRelativeEdit(lastEditedAt)}>
           <span className="tabular-nums">
             {formattedWordCount} word{wordCount === 1 ? '' : 's'}
@@ -117,34 +121,36 @@ export function EntryHeader({
             saveError={saveError}
             onRetry={onRetrySave}
           />
-          {actions ? <span className="-mr-1.5 ml-1 flex items-center">{actions}</span> : null}
+          {actions ? <span className="ml-1 flex items-center">{actions}</span> : null}
         </div>
       </div>
-      <h1 className="m-0">
-        <textarea
-          ref={titleRef}
-          rows={1}
-          value={draft}
-          onChange={(event) => setDraft(event.target.value.replace(/\n/g, ' '))}
-          onBlur={commit}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') {
-              event.preventDefault();
-              event.currentTarget.blur();
-            } else if (event.key === 'Escape') {
-              event.preventDefault();
-              cancellingRename.current = true;
-              setDraft(named);
-              event.currentTarget.blur();
-              cancellingRename.current = false;
-            }
-          }}
-          placeholder="Untitled page"
-          aria-label="Page title"
-          spellCheck={false}
-          className="-mx-1.5 block w-[calc(100%+12px)] resize-none overflow-hidden rounded-md bg-transparent px-1.5 font-serif text-[clamp(30px,3vw,40px)] font-normal leading-[1.12] tracking-[-0.03em] text-[hsl(var(--text-primary))] outline-hidden transition-colors duration-fast placeholder:text-[hsl(var(--text-disabled))] hover:bg-[hsl(var(--text-primary)/0.035)] focus:bg-[hsl(var(--text-primary)/0.035)]"
-        />
-      </h1>
+      <div className="mx-auto w-full max-w-[740px] px-8 pt-9 lg:px-14">
+        <h1 className="m-0">
+          <textarea
+            ref={titleRef}
+            rows={1}
+            value={draft}
+            onChange={(event) => setDraft(event.target.value.replace(/\n/g, ' '))}
+            onBlur={commit}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                event.currentTarget.blur();
+              } else if (event.key === 'Escape') {
+                event.preventDefault();
+                cancellingRename.current = true;
+                setDraft(named);
+                event.currentTarget.blur();
+                cancellingRename.current = false;
+              }
+            }}
+            placeholder="Untitled page"
+            aria-label="Page title"
+            spellCheck={false}
+            className="-mx-1.5 block w-[calc(100%+12px)] resize-none overflow-hidden rounded-md bg-transparent px-1.5 font-serif text-[clamp(30px,3vw,40px)] font-normal leading-[1.12] tracking-[-0.03em] text-[hsl(var(--text-primary))] outline-hidden transition-colors duration-fast placeholder:text-[hsl(var(--text-disabled))] hover:bg-[hsl(var(--text-primary)/0.035)] focus:bg-[hsl(var(--text-primary)/0.035)]"
+          />
+        </h1>
+      </div>
     </header>
   );
 }

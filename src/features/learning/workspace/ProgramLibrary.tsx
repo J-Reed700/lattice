@@ -1,6 +1,6 @@
 import type { RefObject } from 'react';
 
-import { Archive, ArrowRight, BookOpenCheck, Layers3, LoaderCircle, Plus, Upload } from 'lucide-react';
+import { Archive, ArrowRight, Layers3, LoaderCircle, Plus, Upload } from 'lucide-react';
 
 import { PlainError } from '@/components/PlainError';
 import { Skeleton } from '@/components/Skeleton';
@@ -37,14 +37,14 @@ function OutlineGenerationBanner({ generation }: { generation: OutlineGeneration
   const stageInfo = describeOutlineStage(stage);
   const stopping = Boolean(generation.cancelling && stage !== 'saving' && stage !== 'completed');
 
-  return <section role="region" aria-label="Course generation in progress" className="mb-6 rounded-xl border border-accent/30 bg-accent/5 p-4 sm:p-5">
+  return <section role="region" aria-label="Course generation in progress" className="mb-5 rounded-xl border border-border-default bg-surface p-4 shadow-sm sm:p-5">
     <div className="flex flex-col items-start justify-between gap-3 sm:flex-row">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 text-sm font-semibold text-text-primary" role="status">
-          <LoaderCircle size={18} className="shrink-0 animate-spin text-accent" aria-hidden="true" />
+          <LoaderCircle size={16} className="shrink-0 animate-spin text-accent" aria-hidden="true" />
           {stopping ? 'Cancelling generation…' : stageInfo.title}
         </div>
-        <p className="mt-1.5 text-sm leading-6 text-text-secondary">
+        <p className="mt-1 text-sm leading-6 text-text-secondary">
           {stopping ? 'Stopping this request. Your inputs and completed draft corrections stay saved.' : stageInfo.detail}
         </p>
         {!stopping && generation.progress?.detail && (
@@ -58,12 +58,12 @@ function OutlineGenerationBanner({ generation }: { generation: OutlineGeneration
         Elapsed <span aria-label="Elapsed time">{formatOutlineDuration(elapsed)}</span>
       </span>
     </div>
-    <div className="mt-4 flex flex-wrap items-center gap-2">
-      <Button variant="outline" type="button" onClick={generation.onOpenBuilder} className="studio-button studio-button-primary">
+    <div className="mt-3.5 flex flex-wrap items-center gap-2">
+      <Button type="button" onClick={generation.onOpenBuilder}>
         View progress
       </Button>
       {generation.progress?.programId && generation.onOpenDraft && (
-        <Button variant="outline" type="button" onClick={generation.onOpenDraft} className="studio-button">
+        <Button variant="outline" type="button" onClick={generation.onOpenDraft}>
           Inspect saved draft
         </Button>
       )}
@@ -73,36 +73,69 @@ function OutlineGenerationBanner({ generation }: { generation: OutlineGeneration
           type="button"
           onClick={generation.onCancel}
           disabled={generation.cancelling || stage === 'saving' || stage === 'completed'}
-          className="studio-button"
         >
           {stopping ? 'Cancelling…' : 'Cancel generation'}
         </Button>
       )}
     </div>
-    {generation.cancelError && <p role="alert" className="mt-3 text-sm text-rose-700">Could not cancel: {generation.cancelError}</p>}
+    {generation.cancelError && <p role="alert" className="mt-3 text-sm text-danger-fg">Could not cancel: {generation.cancelError}</p>}
   </section>;
 }
 
-function Progress({ program }: { program: LearningProgramSummaryDto }) {
-  const percent = program.lessonCount ? Math.min(100, Math.round(program.completedLessons / program.lessonCount * 100)) : 0;
-  return <div className="studio-program-progress">
-    <span>{program.status === 'active' ? `${program.completedLessons} / ${program.lessonCount} complete` : 'Draft outline'}</span>
-    <div className="studio-progress-track" aria-hidden="true"><span style={{ width: `${program.status === 'active' ? percent : 0}%` }} /></div>
-  </div>;
+const PROGRESS_RING_SIZE = 44;
+const PROGRESS_RING_STROKE = 3.25;
+const PROGRESS_RING_RADIUS = (PROGRESS_RING_SIZE - PROGRESS_RING_STROKE) / 2;
+const PROGRESS_RING_CIRCUMFERENCE = 2 * Math.PI * PROGRESS_RING_RADIUS;
+
+function CourseProgressRing({ percent, active }: { percent: number; active: boolean }) {
+  const clamped = active ? Math.max(0, Math.min(100, percent)) : 0;
+  const dashOffset = PROGRESS_RING_CIRCUMFERENCE * (1 - clamped / 100);
+  const center = PROGRESS_RING_SIZE / 2;
+
+  return (
+    <span aria-hidden="true" className="relative inline-grid h-11 w-11 shrink-0 place-items-center">
+      <svg
+        width={PROGRESS_RING_SIZE}
+        height={PROGRESS_RING_SIZE}
+        viewBox={`0 0 ${PROGRESS_RING_SIZE} ${PROGRESS_RING_SIZE}`}
+        className="-rotate-90"
+      >
+        <circle
+          cx={center}
+          cy={center}
+          r={PROGRESS_RING_RADIUS}
+          fill="none"
+          strokeWidth={PROGRESS_RING_STROKE}
+          className="stroke-border-default"
+        />
+        {clamped > 0 && (
+          <circle
+            cx={center}
+            cy={center}
+            r={PROGRESS_RING_RADIUS}
+            fill="none"
+            strokeWidth={PROGRESS_RING_STROKE}
+            strokeLinecap="round"
+            strokeDasharray={PROGRESS_RING_CIRCUMFERENCE}
+            strokeDashoffset={dashOffset}
+            className="stroke-accent transition-[stroke-dashoffset] duration-300 ease-out motion-reduce:transition-none"
+          />
+        )}
+      </svg>
+      <span className="absolute font-sans text-[11px] font-semibold tabular-nums leading-none text-text-primary">
+        {active ? `${clamped}%` : '0%'}
+      </span>
+    </span>
+  );
 }
 
-/** A decorative course path; all progress labels come from the saved summary. */
-function CoursePath() {
-  return <svg className="studio-course-path" viewBox="0 0 280 190" fill="none" aria-hidden="true">
-    <path className="studio-path-grid" d="M0 35H280M0 95H280M0 155H280M40 0V190M140 0V190M240 0V190" />
-    <path className="studio-path-line" d="M40 135L108 55L174 125L240 45M40 135L174 125M108 55L240 45" />
-    <circle className="studio-path-orbit" cx="140" cy="95" r="81" />
-    <circle className="studio-path-node" cx="40" cy="135" r="8" />
-    <circle className="studio-path-node" cx="108" cy="55" r="8" />
-    <circle className="studio-path-node" cx="174" cy="125" r="8" />
-    <circle className="studio-path-node studio-path-current" cx="240" cy="45" r="9" />
-    <circle className="studio-path-halo" cx="240" cy="45" r="17" />
-  </svg>;
+function Progress({ program }: { program: LearningProgramSummaryDto }) {
+  const active = program.status === 'active';
+  const percent = program.lessonCount ? Math.min(100, Math.round((program.completedLessons / program.lessonCount) * 100)) : 0;
+  return <div className="studio-program-progress">
+    <span className="studio-program-progress-label">{active ? `${program.completedLessons} / ${program.lessonCount} complete` : 'Draft outline'}</span>
+    {program.lessonCount > 0 && <CourseProgressRing percent={percent} active={active} />}
+  </div>;
 }
 
 function PortabilityBanner({ onOpen, onImport, onExport }: {
@@ -123,18 +156,18 @@ function PortabilityBanner({ onOpen, onImport, onExport }: {
   const failedCount = exportAll.result?.failed.length ?? 0;
   const totalCount = exportedCount + failedCount;
 
-  return <div className="mb-6 space-y-3">
+  return <div className="mb-5 space-y-3">
     {showExport && (
-      <section role="region" aria-label="Course export status" className="rounded-xl border border-accent/30 bg-accent/5 p-4">
+      <section role="region" aria-label="Course export status" className="rounded-xl border border-border-default bg-surface p-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0 flex-1">
             {exportAll.pending ? (
               <p role="status" className="flex items-center gap-2 text-sm font-semibold text-text-primary">
-                <LoaderCircle size={16} className="shrink-0 animate-spin text-accent" aria-hidden="true" />
+                <LoaderCircle size={15} className="shrink-0 animate-spin text-accent" aria-hidden="true" />
                 Exporting all courses…
               </p>
             ) : exportAll.error ? (
-              <p role="alert" className="text-sm text-rose-700">
+              <p role="alert" className="text-sm text-danger-fg">
                 Course export failed: {exportAll.error}
               </p>
             ) : exportAll.result ? (
@@ -146,11 +179,11 @@ function PortabilityBanner({ onOpen, onImport, onExport }: {
             ) : null}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" type="button" onClick={onExport} className="studio-button studio-button-primary">
+            <Button type="button" onClick={onExport}>
               View export
             </Button>
             {!exportAll.pending && (
-              <Button variant="outline" type="button" onClick={dismissExportAll} className="studio-button">
+              <Button variant="outline" type="button" onClick={dismissExportAll}>
                 Dismiss
               </Button>
             )}
@@ -159,16 +192,16 @@ function PortabilityBanner({ onOpen, onImport, onExport }: {
       </section>
     )}
     {showImport && (
-      <section role="region" aria-label="Course import status" className="rounded-xl border border-accent/30 bg-accent/5 p-4">
+      <section role="region" aria-label="Course import status" className="rounded-xl border border-border-default bg-surface p-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0 flex-1">
             {importFlow.pendingAction === 'apply' ? (
               <p role="status" className="flex items-center gap-2 text-sm font-semibold text-text-primary">
-                <LoaderCircle size={16} className="shrink-0 animate-spin text-accent" aria-hidden="true" />
+                <LoaderCircle size={15} className="shrink-0 animate-spin text-accent" aria-hidden="true" />
                 Importing course…
               </p>
             ) : importFlow.failure ? (
-              <p role="alert" className="text-sm text-rose-700">
+              <p role="alert" className="text-sm text-danger-fg">
                 Course import failed: {importFlow.failure.message}
               </p>
             ) : importFlow.lastImported ? (
@@ -180,23 +213,21 @@ function PortabilityBanner({ onOpen, onImport, onExport }: {
           <div className="flex flex-wrap items-center gap-2">
             {importFlow.pendingAction !== 'apply' && importFlow.lastImported && !importFlow.failure && (
               <Button
-                variant="outline"
                 type="button"
                 onClick={() => {
                   const id = importFlow.lastImported!.programId;
                   dismissImport();
                   onOpen(id);
                 }}
-                className="studio-button studio-button-primary"
               >
                 Open course
               </Button>
             )}
-            <Button variant="outline" type="button" onClick={onImport} className="studio-button">
+            <Button variant="outline" type="button" onClick={onImport}>
               View import
             </Button>
             {importFlow.pendingAction !== 'apply' && (
-              <Button variant="outline" type="button" onClick={dismissImport} className="studio-button">
+              <Button variant="outline" type="button" onClick={dismissImport}>
                 Dismiss
               </Button>
             )}
@@ -222,28 +253,35 @@ export function ProgramLibrary({ programs, loading, error, onRetry, onOpen, onBu
   outlineGeneration?: OutlineGenerationLibraryState;
 }) {
   const continuing = programs?.find((program) => program.status === 'active' && program.completedLessons < program.lessonCount);
+  const orderedPrograms = programs && continuing
+    ? [continuing, ...programs.filter((program) => program.id !== continuing.id)]
+    : programs;
   const generatingOutline = Boolean(outlineGeneration?.isPending);
+
   return <div className="studio-library">
     <header className="studio-library-header">
-      <div><div className="studio-eyebrow"><BookOpenCheck size={14} /> Learning Studio</div><h1>Your programs</h1><p>A place for focused study, practice, and ideas that stay with you.</p></div>
+      <div>
+        <h1>Learning Studio</h1>
+        <p>Focused courses, practice, and recall that stay on this device.</p>
+      </div>
       <div className="studio-library-actions">
         <EditModeToggle />
-        <Button variant="outline" type="button" onClick={onImport} className="studio-button"><Upload size={14} /> Import a course…</Button>
-        <Button variant="outline" type="button" onClick={onExport} className="studio-button"><Archive size={14} /> Export all courses…</Button>
-        <Button variant="outline" type="button" onClick={onBuild} className="studio-button studio-button-primary"><Plus size={15} /> {generatingOutline ? 'View outline progress' : 'Build a program'}</Button>
+        <Button variant="outline" type="button" onClick={onImport}><Upload size={14} /> Import a course…</Button>
+        <Button variant="outline" type="button" onClick={onExport}><Archive size={14} /> Export all courses…</Button>
+        <Button type="button" onClick={onBuild}><Plus size={14} /> {generatingOutline ? 'View outline progress' : 'New course'}</Button>
       </div>
     </header>
     {outlineGeneration?.isPending && <OutlineGenerationBanner generation={outlineGeneration} />}
     <PortabilityBanner onOpen={onOpen} onImport={onImport} onExport={onExport} />
     {!outlineGeneration?.isPending && outlineGeneration?.error && (
-      <div className="mb-6 rounded-xl border border-rose-500/25 bg-rose-500/5 p-4">
-        <PlainError error={outlineGeneration.error} className="text-sm text-rose-700" />
+      <div className="mb-5 rounded-xl border border-danger/25 bg-danger-muted/30 p-4">
+        <PlainError error={outlineGeneration.error} className="text-sm text-danger-fg" />
         <div className="mt-3 flex flex-wrap gap-2">
-          <Button variant="outline" type="button" onClick={outlineGeneration.onOpenBuilder} className="studio-button studio-button-primary">
+          <Button type="button" onClick={outlineGeneration.onOpenBuilder}>
             Return to course builder
           </Button>
           {outlineGeneration.onDismissError && (
-            <Button variant="outline" type="button" onClick={outlineGeneration.onDismissError} className="studio-button">
+            <Button variant="outline" type="button" onClick={outlineGeneration.onDismissError}>
               Dismiss
             </Button>
           )}
@@ -251,30 +289,32 @@ export function ProgramLibrary({ programs, loading, error, onRetry, onOpen, onBu
       </div>
     )}
     <StudyHabitsBar className="studio-habits" onSelectFramework={onSelectFramework} />
-    {continuing && <section className="studio-resume" aria-label="Continue studying">
-      <div className="studio-resume-copy">
-        <div className="studio-eyebrow">Continue where you left off</div>
-        <h2>{continuing.title}</h2>
-        <p>{continuing.goal}</p>
-        <div className="studio-resume-footer"><Button variant="outline" type="button" className="studio-button studio-button-primary" onClick={() => onOpen(continuing.id)}>Resume program <ArrowRight size={15} /></Button><span>{continuing.completedLessons} of {continuing.lessonCount} {continuing.lessonCount === 1 ? 'lesson' : 'lessons'} complete</span></div>
-      </div>
-      <div className="studio-resume-visual"><CoursePath /><span className="studio-eyebrow">{continuing.moduleCount} {continuing.moduleCount === 1 ? 'module' : 'modules'} · {continuing.lessonCount} {continuing.lessonCount === 1 ? 'lesson' : 'lessons'}</span></div>
-    </section>}
     <CourseTangentsSection onOpenDestination={onOpenDestination} />
     <section className="studio-programs" aria-labelledby="studio-programs-title">
-      <div className="studio-collection-heading"><h2 id="studio-programs-title">Programs</h2><span>{programs?.length ?? 0} {programs?.length === 1 ? 'program' : 'programs'}</span></div>
+      <div className="studio-collection-heading">
+        <h2 id="studio-programs-title">Your programs</h2>
+        <span>{programs?.length ?? 0} {programs?.length === 1 ? 'course' : 'courses'}</span>
+      </div>
       {loading ? <div role="status" aria-label="Loading your programs" className="studio-library-skeleton"><span className="sr-only">Loading your programs…</span>{[0, 1, 2].map((row) => <div key={row} className="studio-library-skeleton-row"><Skeleton width={40} height={50} /><div><Skeleton width={`${65 - row * 12}%`} height={16} /><Skeleton width="85%" height={11} className="mt-3" /><Skeleton width="40%" height={10} className="mt-2" /></div></div>)}</div>
-        : error ? <div role="alert" className="studio-library-empty"><h3>Programs are unavailable</h3><p>{error}</p><Button variant="outline" type="button" onClick={onRetry} className="studio-button">Retry</Button></div>
-          : programs?.length ? <div className="studio-program-list">{programs.map((program, index) => {
+        : error ? <div role="alert" className="studio-library-empty"><h3>Programs are unavailable</h3><p>{error}</p><Button variant="outline" type="button" onClick={onRetry}>Retry</Button></div>
+          : orderedPrograms?.length ? <div className="studio-program-list">{orderedPrograms.map((program, index) => {
+            const isFeatured = program.id === continuing?.id;
             const created = new Date(program.createdAt);
             const createdLabel = Number.isNaN(created.getTime()) ? 'date unavailable' : created.toLocaleDateString();
-            return <button type="button" key={program.id} onClick={() => onOpen(program.id)} className="studio-program-row">
+            return <button type="button" key={program.id} onClick={() => onOpen(program.id)} className={`studio-program-row border border-border-subtle bg-surface shadow-sm ${isFeatured ? 'studio-program-row--featured' : ''}`}>
               <span className="studio-program-cover" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
-              <span className="studio-program-copy"><span className="studio-program-title">{program.title}</span><span className="studio-program-description">{program.goal}</span><span className="studio-program-meta">{program.moduleCount} {program.moduleCount === 1 ? 'module' : 'modules'} · {program.lessonCount} {program.lessonCount === 1 ? 'lesson' : 'lessons'} · {program.status === 'active' ? 'Active' : 'Review outline'}<span className="studio-program-created"> · created {createdLabel}</span></span></span>
+              <span className="studio-program-copy">
+                {isFeatured && <span className="studio-program-badge">Continue studying</span>}
+                <span className="studio-program-title font-sans font-semibold tracking-[-0.025em]">{program.title}</span>
+                <span className="studio-program-description">{program.goal}</span>
+                <span className="studio-program-meta">{program.moduleCount} {program.moduleCount === 1 ? 'module' : 'modules'} · {program.lessonCount} {program.lessonCount === 1 ? 'lesson' : 'lessons'} · {program.status === 'active' ? 'Active' : 'Review outline'}<span className="studio-program-created"> · created {createdLabel}</span></span>
+              </span>
               <Progress program={program} />
-              <ArrowRight size={17} className="studio-program-arrow" />
+              <span className={`studio-program-action ${isFeatured ? 'studio-program-action--resume' : ''}`}>
+                {isFeatured ? <><span>Resume</span><ArrowRight size={14} aria-hidden="true" /></> : <ArrowRight size={16} className="studio-program-arrow" aria-hidden="true" />}
+              </span>
             </button>;
-          })}</div> : <div className="studio-library-empty"><Layers3 size={28} className="text-accent" /><h3>What would you like to understand?</h3><p>Start with a goal and your experience. Add materials if you have them, then review the outline before preparing your first lesson.</p><div className="studio-library-actions"><Button variant="outline" type="button" onClick={onBuild} className="studio-button studio-button-primary">{generatingOutline ? 'View outline progress' : 'Build your first program'} <ArrowRight size={15} /></Button><Button variant="outline" type="button" onClick={onImport} className="studio-button"><Upload size={14} /> Import a course</Button></div></div>}
+          })}</div> : <div className="studio-library-empty"><Layers3 size={24} className="text-accent" /><h3>What would you like to understand?</h3><p>Start with a goal and your experience. Add materials if you have them, then review the outline before preparing your first lesson.</p><div className="studio-library-actions"><Button type="button" onClick={onBuild}>{generatingOutline ? 'View outline progress' : 'Build your first program'} <ArrowRight size={14} /></Button><Button variant="outline" type="button" onClick={onImport}><Upload size={14} /> Import a course</Button></div></div>}
       {Boolean(programs?.some((program) => program.status === 'active')) && <p className="studio-progress-caption">Lesson completion is self-reported. Quiz and assessment results are recorded inside each program.</p>}
     </section>
     <FlashcardsSection ref={flashcardsRef} />

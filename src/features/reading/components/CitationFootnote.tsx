@@ -80,7 +80,7 @@ export const CitationFootnote: FC<CitationFootnoteProps> = ({
             handedToReaderRef.current = false;
             event.preventDefault();
           }}
-          className="z-50 w-80 max-w-[calc(100vw-24px)] rounded-lg border border-subtle bg-surface-raised p-3.5 text-[hsl(var(--text-primary))] shadow-md outline-hidden data-[state=open]:animate-in data-[state=open]:duration-base data-[state=open]:ease-out data-[state=closed]:animate-out data-[state=closed]:duration-fast data-[state=closed]:ease-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
+          className="z-50 w-80 max-w-[calc(100vw-24px)] rounded-lg border border-border-subtle bg-surface-raised p-3.5 text-[hsl(var(--text-primary))] shadow-md outline-hidden data-[state=open]:animate-in data-[state=open]:duration-base data-[state=open]:ease-out data-[state=closed]:animate-out data-[state=closed]:duration-fast data-[state=closed]:ease-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95"
         >
           <CitationCard
             number={number}

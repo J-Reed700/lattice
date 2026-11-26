@@ -1,4 +1,6 @@
 //! Byte-safe SSE decoder; failed or truncated generations must not look successful.
+use super::repetition::{has_repetition_loop, LOOP_CHECK_STRIDE_BYTES};
+use crate::features::llm::fitting::ResponseBudget;
 use crate::features::llm::scheduler::rejection;
 use lattice_core::application::ports::llm_port::RequestSize;
 use lattice_core::application::ports::llm_port::ServedTiming;
@@ -322,16 +324,22 @@ impl ContentFilter {
 
 #[derive(Default)]
 pub(crate) struct Decoder {
+    budget: ResponseBudget,
     buffer: Vec<u8>,
     received_bytes: usize,
+    token_events: usize,
     done: bool,
     /// The failure the server reported inside the stream, when it did.
     server_failure: Option<ServerFailure>,
+    /// Whether the stream was aborted after detecting a degenerate repetition loop.
+    repetition_loop: bool,
     finish_reason: Option<String>,
     allow_tool_calls: bool,
     content: String,
+    content_loop_checked_at: usize,
     content_filter: ContentFilter,
     reasoning: BTreeMap<String, String>,
+    reasoning_loop_checked_at: usize,
     /// Reasoning received since the caller last drained it. The aggregate
     /// above becomes the response's displayable reasoning (it is not
     /// replayed); this buffer is only UI progress.
@@ -611,9 +619,14 @@ impl ServerFailure {
 }
 
 impl Decoder {
+    #[cfg(test)]
     pub fn for_completion() -> Self {
+        Self::with_budget(ResponseBudget::default())
+    }
+    pub fn with_budget(budget: ResponseBudget) -> Self {
         Self {
             allow_tool_calls: true,
+            budget,
             ..Self::default()
         }
     }
@@ -625,6 +638,10 @@ impl Decoder {
     pub fn take_server_failure(&mut self) -> Option<ServerFailure> {
         self.server_failure.take()
     }
+    /// Whether [`Self::push`] aborted the stream due to a confirmed repetition loop.
+    pub fn repetition_loop(&self) -> bool {
+        self.repetition_loop
+    }
     pub fn take_reasoning_delta(&mut self) -> String {
         std::mem::take(&mut self.reasoning_delta)
     }
@@ -633,19 +650,19 @@ impl Decoder {
     }
     pub fn push(&mut self, bytes: &[u8]) -> Result<Vec<String>> {
         self.received_bytes = self.received_bytes.saturating_add(bytes.len());
-        if self.received_bytes > 16 * 1024 * 1024 {
+        if self.received_bytes > self.budget.max_stream_bytes {
             return Err(AppError::InvalidState(
-                "llama.cpp response exceeds size limit".into(),
+                "llama.cpp response exceeds output budget size limit".into(),
             ));
         }
         self.buffer.extend_from_slice(bytes);
-        if self.buffer.len() > 4 * 1024 * 1024 {
-            return Err(AppError::Network(
-                "llama.cpp event exceeds size limit".into(),
-            ));
-        }
         let mut text = Vec::new();
         while let Some(end) = self.buffer.iter().position(|b| *b == b'\n') {
+            if end + 1 > self.budget.max_event_bytes {
+                return Err(AppError::Network(
+                    "llama.cpp event exceeds output budget size limit".into(),
+                ));
+            }
             let line: Vec<u8> = self.buffer.drain(..=end).collect();
             let line = std::str::from_utf8(&line)
                 .map_err(|_| AppError::Network("Invalid UTF-8 in llama.cpp stream".into()))?;
@@ -697,15 +714,35 @@ impl Decoder {
                     self.finish_reason = Some(reason.into());
                 }
                 let was_empty = self.content.is_empty();
+                let mut emitted_token = false;
                 if let Some(content) = choice
                     .pointer("/delta/content")
                     .and_then(Value::as_str)
                     .filter(|c| !c.is_empty())
                 {
+                    emitted_token = true;
                     let emitted = self.content_filter.push(content);
                     if !emitted.is_empty() {
                         self.content.push_str(&emitted);
                         text.push(emitted);
+                        if self.content.len()
+                            >= self
+                                .content_loop_checked_at
+                                .saturating_add(LOOP_CHECK_STRIDE_BYTES)
+                        {
+                            self.content_loop_checked_at = self.content.len();
+                            if has_repetition_loop(&self.content) {
+                                self.repetition_loop = true;
+                                tracing::warn!(
+                                    bytes = self.content.len(),
+                                    "Aborted llama.cpp stream after detecting a degenerate repetition loop"
+                                );
+                                return Err(AppError::ModelAnswerUnusable(
+                                    "The model entered a repetition loop before finishing its answer."
+                                        .into(),
+                                ));
+                            }
+                        }
                     }
                 }
                 if finish_reason.is_some() {
@@ -739,11 +776,30 @@ impl Decoder {
                         .and_then(|d| d.get(key))
                         .and_then(Value::as_str)
                     {
+                        if !value.is_empty() {
+                            emitted_token = true;
+                        }
                         self.reasoning_delta.push_str(value);
-                        self.reasoning
-                            .entry(key.into())
-                            .or_default()
-                            .push_str(value);
+                        let entry = self.reasoning.entry(key.into()).or_default();
+                        entry.push_str(value);
+                        if entry.len()
+                            >= self
+                                .reasoning_loop_checked_at
+                                .saturating_add(LOOP_CHECK_STRIDE_BYTES)
+                        {
+                            self.reasoning_loop_checked_at = entry.len();
+                            if has_repetition_loop(entry) {
+                                self.repetition_loop = true;
+                                tracing::warn!(
+                                    bytes = entry.len(),
+                                    "Aborted llama.cpp stream after detecting a degenerate repetition loop in reasoning"
+                                );
+                                return Err(AppError::ModelAnswerUnusable(
+                                    "The model entered a repetition loop before finishing its answer."
+                                        .into(),
+                                ));
+                            }
+                        }
                     }
                 }
                 if let Some(calls) = choice
@@ -771,9 +827,11 @@ impl Decoder {
                                     "llama.cpp returned a tool call without an index".into(),
                                 )
                             })?;
-                        if index >= 128 {
+                        if !self.tool_calls.contains_key(&index)
+                            && self.tool_calls.len() >= self.budget.max_tool_calls
+                        {
                             return Err(AppError::InvalidState(
-                                "llama.cpp tool index exceeds limit".into(),
+                                "llama.cpp tool call count exceeds output budget".into(),
                             ));
                         }
                         let call = self.tool_calls.entry(index).or_insert_with(|| {
@@ -797,6 +855,9 @@ impl Decoder {
                                 .and_then(|f| f.get(key))
                                 .and_then(Value::as_str)
                             {
+                                if !fragment.is_empty() {
+                                    emitted_token = true;
+                                }
                                 let function = call
                                     .get_mut("function")
                                     .and_then(Value::as_object_mut)
@@ -814,7 +875,20 @@ impl Decoder {
                         }
                     }
                 }
+                if emitted_token {
+                    self.token_events = self.token_events.saturating_add(1);
+                    if self.token_events > self.budget.max_token_events {
+                        return Err(AppError::InvalidState(
+                            "llama.cpp stream token events exceed output budget".into(),
+                        ));
+                    }
+                }
             }
+        }
+        if self.buffer.len() > self.budget.max_event_bytes {
+            return Err(AppError::Network(
+                "llama.cpp event exceeds output budget size limit".into(),
+            ));
         }
         Ok(text)
     }
@@ -828,8 +902,11 @@ impl Decoder {
         }
     }
     pub fn into_response(
-        self,
+        mut self,
     ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+        if !self.done && !self.buffer.is_empty() {
+            let _ = self.push(b"\n")?;
+        }
         self.finish()?;
         let timings = self.timings;
         let content = if self.content_filter.closed_unmatched_think() {
@@ -855,14 +932,17 @@ impl Decoder {
             .first_logprobs
             .as_ref()
             .and_then(lattice_core::application::ports::llm_port::first_token_logprobs);
-        let mut response = super::parse_completion(json!({
-            "choices": [{
-                "message": message,
-                "finish_reason": self.finish_reason.unwrap_or_else(|| if has_tools { "tool_calls" } else { "stop" }.into()),
-                "logprobs": self.first_logprobs,
-            }],
-            "usage": self.usage,
-        }))?;
+        let mut response = super::parse_completion_with_budget(
+            json!({
+                "choices": [{
+                    "message": message,
+                    "finish_reason": self.finish_reason.unwrap_or_else(|| if has_tools { "tool_calls" } else { "stop" }.into()),
+                    "logprobs": self.first_logprobs,
+                }],
+                "usage": self.usage,
+            }),
+            self.budget.max_tool_calls,
+        )?;
         response.first_token_logprobs = public_logprobs;
         response.timing = timings.map(|timings| timings.served());
         Ok(response)

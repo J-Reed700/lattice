@@ -82,7 +82,7 @@ function AIModelsTabContent() {
         <button type="button" onClick={browseCatalog} className={SECONDARY_BUTTON_CLASS}>Browse catalog <ArrowUpRight className="ml-2 h-4 w-4" aria-hidden="true" /></button>
       } />
 
-      <div className="mb-6 flex flex-wrap gap-x-5 gap-y-2 rounded-lg border border-accent/20 bg-accent-muted px-4 py-3 text-xs leading-relaxed text-text-secondary">
+      <div className="mb-6 flex flex-wrap gap-x-5 gap-y-2 rounded-xl border border-border-subtle bg-surface px-4 py-3 text-xs leading-relaxed text-text-secondary shadow-sm">
         <span><strong className="font-semibold text-accent">Chat</strong> · Conversations</span>
         <span><strong className="font-semibold text-accent">Utility</strong> · Background tasks</span>
         <span><strong className="font-semibold text-accent">Embedding</strong> · Library search</span>

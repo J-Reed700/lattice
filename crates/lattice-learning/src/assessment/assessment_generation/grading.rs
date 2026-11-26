@@ -318,8 +318,16 @@ impl Answered for GradeWritten {
         Ok(says)
     }
 
-    fn accept(input: &GradeInput, graded: &Graded) -> std::result::Result<(), Refusal> {
-        let noted = input.items.iter().any(|item| item.note.is_some());
+    fn accept_for(
+        input: &GradeInput,
+        of: &Picked<Written>,
+        graded: &Graded,
+    ) -> std::result::Result<(), Refusal> {
+        let noted = input
+            .items
+            .iter()
+            .find(|item| item.item_id == of.reference)
+            .is_some_and(|item| item.note.is_some());
         unanswered_note(noted, &graded.response_to_note)
     }
 }
@@ -417,8 +425,16 @@ impl Answered for JudgeShort {
         Ok(says)
     }
 
-    fn accept(input: &JudgeInput, judged: &Judged) -> std::result::Result<(), Refusal> {
-        let noted = input.items.iter().any(|item| item.note.is_some());
+    fn accept_for(
+        input: &JudgeInput,
+        of: &Picked<Short>,
+        judged: &Judged,
+    ) -> std::result::Result<(), Refusal> {
+        let noted = input
+            .items
+            .iter()
+            .find(|item| item.item_id == of.reference)
+            .is_some_and(|item| item.note.is_some());
         unanswered_note(noted, &judged.response_to_note)
     }
 }

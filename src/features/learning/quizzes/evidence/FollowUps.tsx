@@ -32,10 +32,10 @@ export function FollowUps({ programId, outcomes, followUps }: { programId: strin
     <div className="flex flex-wrap items-end justify-between gap-2">
       <div><div className="text-[10px] font-semibold uppercase tracking-[.15em] text-accent">Next steps</div>
         <h3 id="follow-ups-heading" className="mt-1 font-serif text-xl text-text-primary">From your evidence</h3></div>
-      <span className="rounded-full bg-background px-3 py-1 text-xs text-text-muted">{pending.length} waiting</span>
+      <span className="rounded-full bg-bg px-3 py-1 text-xs text-text-muted">{pending.length} waiting</span>
     </div>
-    {pending.length === 0 ? <p className="mt-4 rounded-xl bg-background px-4 py-4 text-sm text-text-muted">Nothing to follow up yet. New results may suggest a next step.</p>
-      : <ul className="mt-4 space-y-3">{pending.map((item) => <li key={item.id} className="rounded-xl border border-border bg-background/40 p-4">
+    {pending.length === 0 ? <p className="mt-4 rounded-xl bg-bg px-4 py-4 text-sm text-text-muted">Nothing to follow up yet. New results may suggest a next step.</p>
+      : <ul className="mt-4 space-y-3">{pending.map((item) => <li key={item.id} className="rounded-xl border border-border bg-bg/40 p-4">
         <div className="flex flex-wrap items-center gap-2">
           <span className="rounded-full bg-accent/10 px-2.5 py-1 text-[11px] font-semibold text-accent">{reasonText[item.reasonCode]}</span>
           {outcomes.find((outcome) => outcome.id === item.outcomeId) && <span className="text-xs text-text-muted">{outcomes.find((outcome) => outcome.id === item.outcomeId)?.title}</span>}

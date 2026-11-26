@@ -14,11 +14,11 @@ Answer in two steps. Step 1, now: work through the task in prose. Decide the fin
   "include_reasoning": false,
   "sampling": null,
   "thinking": "off",
-  "max_output_tokens": 4000,
+  "max_output_tokens": 116027,
   "stop": [],
   "want_logprobs": false,
   "priority": "background",
-  "cache_key": null
+  "cache_key": "reason-first-draft-v1:6449182d810af466e61ce7a46d38b51dc7fb61cf018961957d5a81ef45f6d8ae"
 }
 ######## request 2 of 2 ########
 === input 1: message (system) ===
@@ -203,5 +203,5 @@ Step 2: give the final answer from your draft. Keep its content, wording, number
   "stop": [],
   "want_logprobs": false,
   "priority": "background",
-  "cache_key": null
+  "cache_key": "reason-first-draft-v1:6449182d810af466e61ce7a46d38b51dc7fb61cf018961957d5a81ef45f6d8ae"
 }

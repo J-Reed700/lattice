@@ -43,6 +43,7 @@ impl LlamaCppLlm {
         // unset comes from the profile of the mode the model runs in.
         let profile = generation.profile(thinks);
         let sampling = fitted.effective_sampling().unwrap_or_default();
+        let temperature = sampling.temperature.unwrap_or(profile.temperature);
         let mut body = serde_json::Map::from_iter([
             ("model".into(), json!(self.config.model)),
             ("messages".into(), json!(messages)),
@@ -53,10 +54,7 @@ impl LlamaCppLlm {
             // stall detection rather than arming it, so a slow first batch is not
             // mistaken for a stalled server. Servers without support ignore the field.
             ("return_progress".into(), json!(true)),
-            (
-                "temperature".into(),
-                json!(sampling.temperature.unwrap_or(profile.temperature)),
-            ),
+            ("temperature".into(), json!(temperature)),
             (
                 "top_p".into(),
                 json!(sampling.top_p.unwrap_or(profile.top_p)),
@@ -73,6 +71,10 @@ impl LlamaCppLlm {
             ),
             ("repeat_penalty".into(), json!(profile.repeat_penalty)),
         ]);
+        // Do not send DRY sampling on initial attempts: llama.cpp scans prompt
+        // tokens too, so low-threshold DRY garbles verbatim quotes, URLs, code,
+        // and identifiers. DRY is activated only when retrying a confirmed
+        // repetition loop (in `retry.rs`) with a high allowed-length floor.
         if let Some(max_tokens) = fitted.ceiling() {
             body.insert("max_tokens".into(), json!(max_tokens));
         }

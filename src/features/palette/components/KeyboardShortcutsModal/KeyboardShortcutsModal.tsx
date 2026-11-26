@@ -78,11 +78,11 @@ export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsMod
         hideClose
         aria-describedby={undefined}
         overlayClassName="z-9998"
-        className="z-9999 block max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-lg border border-border-subtle bg-surface-raised p-0 shadow-md"
+        className="z-9999 block max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-surface-overlay p-0 shadow-lg"
       >
-        <div className="flex items-center justify-between border-b border-border-subtle px-5 py-3">
+        <div className="flex items-center justify-between border-b border-border-subtle px-5 py-3.5">
           <DialogTitle asChild>
-            <h2 className="font-serif text-base font-semibold text-text-primary">
+            <h2 className="font-sans text-base font-semibold tracking-[-0.02em] text-text-primary">
               Keyboard shortcuts
             </h2>
           </DialogTitle>
@@ -90,7 +90,7 @@ export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsMod
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="inline-flex h-7 w-7 items-center justify-center rounded-sm text-text-muted transition-colors duration-fast hover:bg-surface hover:text-text-primary"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors duration-fast hover:bg-surface-raised hover:text-text-primary"
           >
             <X className="h-4 w-4" strokeWidth={1.75} />
           </button>
@@ -99,7 +99,7 @@ export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsMod
         <div className="space-y-6 px-5 py-4">
           {groups.map((group) => (
             <section key={group.title}>
-              <h3 className="pb-1 text-xxs uppercase tracking-[0.08em] text-text-muted">{group.title}</h3>
+              <h3 className="pb-1 text-xxs font-semibold uppercase tracking-[0.08em] text-text-muted">{group.title}</h3>
               <div className="border-t border-border-subtle">
                 {group.shortcuts.map((shortcut) => (
                   <div
@@ -111,7 +111,7 @@ export function KeyboardShortcutsModal({ isOpen, onClose }: KeyboardShortcutsMod
                       {shortcut.keys.map((key) => (
                         <kbd
                           key={key}
-                          className="inline-flex min-w-[24px] items-center justify-center rounded-sm border border-border-default bg-surface px-1.5 py-0.5 font-mono text-xs text-text-secondary"
+                          className="inline-flex min-w-[24px] items-center justify-center rounded-md border border-border-default bg-surface px-1.5 py-0.5 font-sans text-xs font-medium text-text-secondary shadow-control"
                         >
                           {key}
                         </kbd>

@@ -5,21 +5,30 @@ use std::path::Path;
 use crate::features::llm::engine::gguf_metadata;
 use lattice_core::application::ports::llm_port::ThinkingPolicy;
 
-/// The thinking policy a local model file needs. Laguna XS 2.1 repeats one
-/// special token until the output limit when its template's thinking is off,
-/// so it thinks on every request.
-pub fn thinking_policy_for(model_path: &Path) -> ThinkingPolicy {
-    let architecture =
-        gguf_metadata::read_model_info(model_path).and_then(|info| info.architecture);
+/// The thinking policy a local model file needs, using an already-parsed GGUF
+/// header when available.
+pub fn thinking_policy_for_info(
+    model_path: &Path,
+    info: Option<&gguf_metadata::GgufModelInfo>,
+) -> ThinkingPolicy {
+    let architecture = info.and_then(|info| info.architecture.as_deref());
     let file_name = model_path
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or_default();
-    if requires_thinking(architecture.as_deref(), file_name) {
+    if requires_thinking(architecture, file_name) {
         ThinkingPolicy::AlwaysOn
     } else {
         ThinkingPolicy::PerRequest
     }
+}
+
+/// The thinking policy a local model file needs. Laguna XS 2.1 repeats one
+/// special token until the output limit when its template's thinking is off,
+/// so it thinks on every request.
+pub fn thinking_policy_for(model_path: &Path) -> ThinkingPolicy {
+    let info = gguf_metadata::read_model_info(model_path);
+    thinking_policy_for_info(model_path, info.as_ref())
 }
 
 /// The header's architecture decides when there is one; the file name is

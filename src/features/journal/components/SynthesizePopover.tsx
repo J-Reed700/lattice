@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 
 import { Combine, Loader2 } from 'lucide-react';
 
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Button, Popover, PopoverContent, PopoverTrigger } from '@/components/ui';
 import { useActiveSynthesis, useSynthesisPanel } from '@/features/journal/synthesis/synthesisPanel';
 
 export type SynthesisScope = 'current' | 'pinned' | 'deck' | 'week' | 'conversation';
@@ -161,28 +161,30 @@ export function SynthesizePopover({
       }}
     >
       <PopoverTrigger asChild>
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="sm"
           disabled={disabled && !isSynthesizing}
-          className="inline-flex items-center gap-1.5 rounded-sm px-2 py-1 text-sm text-[hsl(var(--text-secondary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))] transition-colors duration-fast disabled:cursor-not-allowed disabled:opacity-40"
+          className="h-7 gap-1.5 px-2 text-xs text-text-secondary hover:text-text-primary"
         >
           {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <Combine className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />}
           {busy ? 'Synthesizing…' : 'Synthesize…'}
-        </button>
+        </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-80 p-4">
-        <p className="text-sm font-medium text-[hsl(var(--text-primary))]">Synthesize</p>
-        <p className="mt-0.5 text-xs text-[hsl(var(--text-tertiary))]">
+      <PopoverContent align="start" className="w-80 rounded-xl p-4">
+        <p className="text-sm font-medium text-text-primary">Synthesize</p>
+        <p className="mt-0.5 text-xs text-text-tertiary">
           {conversationId
             ? 'Writes a summary onto a journal page.'
             : 'Writes a summary of the chosen entries onto this page.'}
         </p>
-        <fieldset disabled={busy} className="mt-3 border-t border-[hsl(var(--border-subtle))]">
+        <fieldset disabled={busy} className="mt-3 border-t border-border-subtle">
           <legend className="sr-only">Synthesis scope</legend>
           {availableScopes.map((option) => (
             <label
               key={option.id}
-              className={`flex cursor-pointer items-start gap-2.5 border-b border-[hsl(var(--border-subtle))] px-1 py-2.5 transition-colors duration-fast hover:bg-[hsl(var(--surface))] ${
+              className={`flex cursor-pointer items-start gap-2.5 border-b border-border-subtle px-1.5 py-2.5 transition-colors duration-fast hover:bg-surface ${
                 option.disabled ? 'pointer-events-none opacity-50' : ''
               }`}
             >
@@ -194,13 +196,13 @@ export function SynthesizePopover({
                   if (!option.disabled) setScope(option.id);
                 }}
                 disabled={option.disabled}
-                className="mt-1 accent-[hsl(var(--accent))]"
+                className="mt-1 accent-accent"
               />
               <span className="flex-1">
-                <span className={`block text-sm ${scope === option.id ? 'text-[hsl(var(--text-primary))]' : 'text-[hsl(var(--text-secondary))]'}`}>
+                <span className={`block text-ui ${scope === option.id ? 'font-medium text-text-primary' : 'text-text-secondary'}`}>
                   {option.label}
                 </span>
-                <span className="block text-xs text-[hsl(var(--text-tertiary))]">
+                <span className="block text-xs text-text-tertiary">
                   {option.helper}
                 </span>
               </span>
@@ -208,28 +210,29 @@ export function SynthesizePopover({
           ))}
         </fieldset>
         {error && (
-          <p role="alert" className="mt-2 text-xs text-[hsl(var(--danger-fg))]">{error}</p>
+          <p role="alert" className="mt-2 text-xs text-danger-fg">{error}</p>
         )}
         {busy && <p role="status" className="mt-3 text-xs text-text-secondary">Synthesis is running. This can take a few minutes.</p>}
         <div className="mt-4 flex items-center justify-end gap-2">
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
             onClick={() => setIsOpen(false)}
-            className="rounded-sm px-3 py-1.5 text-xs text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-primary))] transition-colors duration-fast"
           >
             {busy ? 'Close' : 'Cancel'}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            size="sm"
             onClick={() => void handleSubmit()}
             disabled={
               busy ||
               availableScopes.find((o) => o.id === scope)?.disabled
             }
-            className="inline-flex items-center gap-1.5 rounded-sm bg-[hsl(var(--accent))] px-3 py-1.5 text-xs font-medium text-[hsl(var(--accent-fg))] hover:bg-[hsl(var(--accent-hover))] transition-colors duration-fast disabled:cursor-not-allowed disabled:opacity-50"
           >
             {busy ? 'Synthesizing…' : 'Synthesize'}
-          </button>
+          </Button>
         </div>
       </PopoverContent>
     </Popover>

@@ -890,6 +890,7 @@ async fn a_streamed_answer_is_timed_from_its_first_output() {
     let response = streaming::drain(
         protocols(CloudProvider::Openai).completion,
         futures::stream::iter([Ok::<_, std::io::Error>(bytes)]),
+        crate::features::llm::fitting::ResponseBudget::default(),
         Duration::from_secs(1),
         sent,
         &|_| Ok(()),
@@ -940,6 +941,7 @@ async fn a_claude_answer_that_thinks_unseen_is_timed_from_its_thinking() {
     let response = streaming::drain(
         protocols(CloudProvider::Anthropic).completion,
         paused(first, second),
+        crate::features::llm::fitting::ResponseBudget::default(),
         Duration::from_secs(5),
         sent,
         &|_| Ok(()),
@@ -970,6 +972,7 @@ async fn an_openai_answer_that_reasons_unseen_is_timed_from_its_reasoning() {
     let response = streaming::drain(
         protocols(CloudProvider::Openai).completion,
         paused(first, second),
+        crate::features::llm::fitting::ResponseBudget::default(),
         Duration::from_secs(5),
         sent,
         &|_| Ok(()),
@@ -998,6 +1001,7 @@ async fn a_chat_answer_of_tool_calls_alone_is_timed_from_its_first_call() {
     let response = streaming::drain(
         protocols(CloudProvider::Google).completion,
         paused(first, second),
+        crate::features::llm::fitting::ResponseBudget::default(),
         Duration::from_secs(5),
         sent,
         &|_| Ok(()),
@@ -1027,6 +1031,7 @@ async fn a_streams_own_timings_win_over_the_clock() {
     let response = streaming::drain(
         protocols(CloudProvider::Google).completion,
         futures::stream::iter([Ok::<_, std::io::Error>(bytes)]),
+        crate::features::llm::fitting::ResponseBudget::default(),
         Duration::from_secs(1),
         sent,
         &|_| Ok(()),

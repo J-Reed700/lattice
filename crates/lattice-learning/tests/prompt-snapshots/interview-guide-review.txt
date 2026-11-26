@@ -12,18 +12,13 @@ Answer in two steps. Step 1, now: work through the task in prose. Compare the ac
   "reasoning_effort": "low",
   "tool_choice": null,
   "include_reasoning": false,
-  "sampling": {
-    "temperature": 0.0,
-    "top_p": 1.0,
-    "top_k": 1,
-    "presence_penalty": 0.0
-  },
+  "sampling": null,
   "thinking": "off",
   "max_output_tokens": 1800,
   "stop": [],
   "want_logprobs": false,
   "priority": "background",
-  "cache_key": null
+  "cache_key": "reason-first-draft-v1:38c14f84b1b294db0de309e4f723dd4fe7dd8522920c7f9c3e8da246e7ec6912"
 }
 ######## request 2 of 2 ########
 === input 1: message (system) ===
@@ -94,5 +89,5 @@ Step 2: give the final answer from your draft. Keep its content, wording, number
   "stop": [],
   "want_logprobs": false,
   "priority": "background",
-  "cache_key": null
+  "cache_key": "reason-first-draft-v1:38c14f84b1b294db0de309e4f723dd4fe7dd8522920c7f9c3e8da246e7ec6912"
 }

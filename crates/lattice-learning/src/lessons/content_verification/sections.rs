@@ -16,7 +16,7 @@ use crate::generation::{parse_json, split_check, teaching_sentences};
 use crate::lessons::copied_wording::Wording;
 use crate::lessons::rows::{self, words, Held, Left, Quotes, Rows};
 use crate::lessons::shape::{LessonShape, ShapePolicy};
-use crate::lessons::structured_call::Asking;
+use crate::lessons::structured_call::{Asking, CallKind, ReasonFirst};
 use crate::lessons::trace::{self, Cause, Stage};
 use crate::review_findings::{site_sha256, FindingSite};
 use lattice_core::application::services::model_contract::ask::{
@@ -471,8 +471,9 @@ impl Contract for FlowRepair {
 
 fn flow_system() -> String {
     format!(
-        "{FLOW} {} {} {}",
+        "{FLOW} {} {} {} {}",
         words::SENTENCES,
+        words::NO_KEYS,
         words::EDITING,
         words::NO_CITATIONS
     )
@@ -667,7 +668,11 @@ async fn mend_section(
         llm,
         &Asking {
             progress: None,
-            reasoning: None,
+            reasoning: Some(ReasonFirst {
+                kind: CallKind::Authoring,
+                subject: "the section flow repair",
+                brief: "Inspect each gap left after cuts, check which surrounding sentences need smoothing without altering protected statements, and write out the exact unit edits.",
+            }),
         },
         &mut Scope::for_question(),
         &places,

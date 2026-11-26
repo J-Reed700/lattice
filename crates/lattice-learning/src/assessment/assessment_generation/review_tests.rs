@@ -40,6 +40,9 @@ struct Script {
 #[async_trait::async_trait]
 impl LLMPort for Script {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        if request.schema().is_none() {
+            return Ok(CompletionResponse::from_text("Draft reasoning."));
+        }
         let (system, user) = crate::lessons::structured_call::task_messages(request);
         let kind = if system.starts_with("Write quiz questions") {
             "write"

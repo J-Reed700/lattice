@@ -45,8 +45,8 @@ export function ReferenceHeader({
   const friendlyDate = formatFriendly(bookmark.createdAt);
 
   return (
-    <header className="mb-8">
-      <h1 className="font-serif text-2xl font-semibold tracking-[-0.015em] text-[hsl(var(--text-primary))]">
+    <header className="mb-6">
+      <h1 className="font-sans text-2xl font-semibold tracking-[-0.02em] text-text-primary">
         {displayTitle}
       </h1>
       {(showConversationLink || friendlyDate) && (

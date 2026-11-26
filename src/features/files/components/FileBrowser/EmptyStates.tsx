@@ -8,10 +8,12 @@ interface CorpusEmptyStateProps {
 /** Nothing indexed at all. One line, one verb. */
 export function CorpusEmptyState({ onAddFolder }: CorpusEmptyStateProps) {
   return (
-    <EmptyState
-      title="Nothing indexed yet."
-      action={{ label: 'Add a folder', onClick: onAddFolder }}
-    />
+    <div className="rounded-xl border border-border-subtle bg-surface p-6 shadow-sm">
+      <EmptyState
+        title="Nothing indexed yet."
+        action={{ label: 'Add a folder', onClick: onAddFolder }}
+      />
+    </div>
   );
 }
 
@@ -20,10 +22,12 @@ export function FilterEmptyState() {
   const searchQuery = useFileBrowserStore((state) => state.searchQuery);
   const setSearchQuery = useFileBrowserStore((state) => state.setSearchQuery);
   return (
-    <EmptyState
-      title={searchQuery.trim() ? `No files match “${searchQuery.trim()}”.` : 'No files match.'}
-      action={searchQuery.trim() ? { label: 'Clear search', onClick: () => setSearchQuery('') } : undefined}
-    />
+    <div className="rounded-xl border border-border-subtle bg-surface p-6 shadow-sm">
+      <EmptyState
+        title={searchQuery.trim() ? `No files match “${searchQuery.trim()}”.` : 'No files match.'}
+        action={searchQuery.trim() ? { label: 'Clear search', onClick: () => setSearchQuery('') } : undefined}
+      />
+    </div>
   );
 }
 
@@ -33,8 +37,8 @@ interface ErrorStateProps {
 
 export function ErrorState({ message }: ErrorStateProps) {
   return (
-    <div className="px-6 py-16 text-center">
-      <p className="text-sm text-text-secondary">Couldn&rsquo;t load your files.</p>
+    <div className="rounded-xl border border-border-subtle bg-surface px-6 py-16 text-center shadow-sm">
+      <p className="text-sm font-medium text-text-secondary">Couldn&rsquo;t load your files.</p>
       <p className="mt-1 text-xs text-text-muted">{message}</p>
     </div>
   );

@@ -10,16 +10,24 @@ use serde_json::Value;
 
 use crate::dto::LearningSourceDto;
 use crate::review_findings::{
-    sentences_in, sentences_of, site_sha256, subject_of, FindingId, FindingSite, Held,
-    ReviewFinding,
+    part_at, sentences_in, sentences_of, subject_of, FindingId, FindingSite, Held, ReviewFinding,
 };
 use crate::teaching_review::{passages_of, Asked, Judged, Scope};
+use lattice_core::domain::learning::claim_review::text_sha256;
 use lattice_core::shared::hash::sha256_hex;
+
+/// Fields of a lesson block or question that carry only source citations;
+/// teaching review does not check citations, so editing them alone leaves a
+/// part's review digest unchanged.
+const CITATION_FIELDS: [&str; 3] = ["sourceIndex", "quote", "citations"];
 
 /// What the reviewer is asked in one pass.
 pub(super) struct Round {
     /// The sections whose text changed since the reviewer saw them.
     pub sections: Vec<usize>,
+    /// The questions whose text changed since the reviewer saw them.
+    #[cfg(test)]
+    pub questions: Vec<usize>,
     /// Whether those are every section.
     pub whole: bool,
     /// Whether no verdict stands, so this is a first review of the material
@@ -92,6 +100,45 @@ fn site_of(finding: &ReviewFinding) -> FindingSite {
     finding.site.unwrap_or(FindingSite::Lesson)
 }
 
+/// A copy of a block or question without its citation-only fields.
+fn without_part_citations(part: &Value) -> Value {
+    let Some(fields) = part.as_object() else {
+        return part.clone();
+    };
+    let mut stripped = fields.clone();
+    for field in CITATION_FIELDS {
+        stripped.shift_remove(field);
+    }
+    Value::Object(stripped)
+}
+
+/// A copy of `candidate` with citation-only fields removed from every block and
+/// question, so citation-only edits produce the same lesson digest.
+fn without_lesson_citations(candidate: &Value) -> Value {
+    let Some(fields) = candidate.as_object() else {
+        return candidate.clone();
+    };
+    let mut stripped = fields.clone();
+    for array_key in ["blocks", "questions"] {
+        if let Some(items) = stripped.get_mut(array_key).and_then(Value::as_array_mut) {
+            for item in items {
+                *item = without_part_citations(item);
+            }
+        }
+    }
+    Value::Object(stripped)
+}
+
+/// The review digest of the part at `site`, ignoring citation-only fields.
+fn part_digest(candidate: &Value, site: FindingSite) -> String {
+    match site {
+        FindingSite::Lesson => text_sha256(&without_lesson_citations(candidate).to_string()),
+        FindingSite::Section(_) | FindingSite::Question(_) => part_at(candidate, site)
+            .map(|part| text_sha256(&without_part_citations(part).to_string()))
+            .unwrap_or_default(),
+    }
+}
+
 /// The digest of every part of `candidate`: the whole, each section, each
 /// question.
 fn digests(candidate: &Value) -> BTreeMap<FindingSite, String> {
@@ -104,7 +151,7 @@ fn digests(candidate: &Value) -> BTreeMap<FindingSite, String> {
     std::iter::once(FindingSite::Lesson)
         .chain((0..count("blocks")).map(FindingSite::Section))
         .chain((0..count("questions")).map(FindingSite::Question))
-        .map(|site| (site, site_sha256(candidate, site)))
+        .map(|site| (site, part_digest(candidate, site)))
         .collect()
 }
 
@@ -213,7 +260,16 @@ impl Standing {
 
     /// Whether the part at `site` is not as the reviewer last saw it.
     fn changed(&self, candidate: &Value, site: FindingSite) -> bool {
-        self.reviewed.get(&site) != Some(&site_sha256(candidate, site))
+        self.reviewed.get(&site) != Some(&part_digest(candidate, site))
+    }
+
+    /// Whether any section or question that was previously reviewed was removed.
+    fn part_removed(&self, block_count: usize, question_count: usize) -> bool {
+        self.reviewed.keys().any(|site| match site {
+            FindingSite::Section(index) => *index >= block_count,
+            FindingSite::Question(index) => *index >= question_count,
+            FindingSite::Lesson => false,
+        })
     }
 
     /// The passage `finding` is about in `candidate` now: the first of its
@@ -244,28 +300,47 @@ impl Standing {
     }
 
     /// What the reviewer is asked of `candidate`; none when it has seen
-    /// exactly this material under what it is given, so its findings stand.
-    /// Otherwise it judges every open finding again: a change anywhere may
-    /// mend a defect elsewhere.
+    /// exactly this material (or only citation-only fields changed) under what
+    /// it is given, so its findings stand. Otherwise it judges every open
+    /// finding again: a change anywhere may mend a defect elsewhere.
     pub fn round(&self, candidate: &Value) -> Option<Round> {
         if !self.changed(candidate, FindingSite::Lesson) {
             return None;
         }
-        let count = candidate
-            .get("blocks")
-            .and_then(Value::as_array)
-            .map_or(0, Vec::len);
-        let sections: Vec<usize> = (0..count)
+        let array_len = |field: &str| {
+            candidate
+                .get(field)
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len)
+        };
+        let block_count = array_len("blocks");
+        let question_count = array_len("questions");
+        let sections: Vec<usize> = (0..block_count)
             .filter(|index| self.changed(candidate, FindingSite::Section(*index)))
             .collect();
-        let whole = sections.len() == count;
-        let asked = self
+        let questions: Vec<usize> = (0..question_count)
+            .filter(|index| self.changed(candidate, FindingSite::Question(*index)))
+            .collect();
+        let whole = sections.len() == block_count;
+        let asked: Vec<Asked> = self
             .open
             .iter()
             .map(|finding| self.shown(candidate, finding))
             .collect();
+        let is_lesson = candidate.get("blocks").is_some() || candidate.get("questions").is_some();
+        if is_lesson
+            && !self.reviewed.is_empty()
+            && sections.is_empty()
+            && questions.is_empty()
+            && asked.is_empty()
+            && !self.part_removed(block_count, question_count)
+        {
+            return None;
+        }
         Some(Round {
             sections,
+            #[cfg(test)]
+            questions,
             whole,
             first: self.reviewed.is_empty(),
             asked,

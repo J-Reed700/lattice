@@ -327,8 +327,15 @@ async fn questions_of_one_form_are_asked_together_and_forms_apart() {
 
     solve_items(&model, &pairs).await.unwrap();
 
-    assert_eq!(model.count::<SolvePicks>(), 1);
-    assert_eq!(model.count::<SolveText>(), 1);
+    let structured = |id| {
+        model
+            .sent()
+            .into_iter()
+            .filter(|sent| sent.call.id == id && sent.request.schema().is_some())
+            .count()
+    };
+    assert_eq!(structured(SolvePicks::ID), 1);
+    assert_eq!(structured(SolveText::ID), 1);
     assert_eq!(model.inputs::<SolvePicks>()[0].questions.len(), 2);
 }
 
@@ -377,7 +384,12 @@ async fn a_missing_entry_is_asked_for_again_alone() {
     let solutions = solve_items(&model, &pairs).await.unwrap();
 
     assert!(solutions.iter().all(Option::is_some));
-    let asked = model.inputs::<SolvePicks>();
+    let asked: Vec<Questions> = model
+        .sent()
+        .into_iter()
+        .filter(|sent| sent.call.id == SolvePicks::ID && sent.request.schema().is_some())
+        .map(|sent| serde_json::from_value(sent.call.input).unwrap())
+        .collect();
     assert_eq!(asked.len(), 2);
     assert_eq!(asked[1].questions.len(), 1);
     assert_eq!(asked[1].questions[0].prompt.0, second);

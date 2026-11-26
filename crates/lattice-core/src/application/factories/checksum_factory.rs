@@ -85,8 +85,15 @@ impl ChecksumFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
-    use tempfile::NamedTempFile;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use tempfile::TempDir;
+
+    fn write_temp_file(dir: &TempDir, name: &str, content: &[u8]) -> PathBuf {
+        let path = dir.path().join(name);
+        std::fs::write(&path, content).unwrap();
+        path
+    }
 
     #[test]
     fn test_from_bytes_creates_valid_checksum() {
@@ -103,11 +110,10 @@ mod tests {
 
     #[test]
     fn test_from_path_computes_correct_checksum() {
-        let mut temp_file = NamedTempFile::new().unwrap();
-        write!(temp_file, "hello world").unwrap();
-        temp_file.flush().unwrap();
+        let dir = TempDir::new().unwrap();
+        let path = write_temp_file(&dir, "hello.txt", b"hello world");
 
-        let checksum = ChecksumFactory::from_path(temp_file.path()).unwrap();
+        let checksum = ChecksumFactory::from_path(&path).unwrap();
 
         // SHA-256 of "hello world"
         let expected = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9";
@@ -138,29 +144,26 @@ mod tests {
 
     #[test]
     fn test_verify_file_with_matching_content() {
-        let mut temp_file = NamedTempFile::new().unwrap();
-        write!(temp_file, "file content").unwrap();
-        temp_file.flush().unwrap();
+        let dir = TempDir::new().unwrap();
+        let path = write_temp_file(&dir, "verify.txt", b"file content");
 
-        let checksum = ChecksumFactory::from_path(temp_file.path()).unwrap();
+        let checksum = ChecksumFactory::from_path(&path).unwrap();
 
-        let is_valid = ChecksumFactory::verify_file(&checksum, temp_file.path()).unwrap();
+        let is_valid = ChecksumFactory::verify_file(&checksum, &path).unwrap();
         assert!(is_valid);
     }
 
     #[test]
     fn test_verify_file_after_modification() {
-        let mut temp_file = NamedTempFile::new().unwrap();
-        write!(temp_file, "original").unwrap();
-        temp_file.flush().unwrap();
+        let dir = TempDir::new().unwrap();
+        let path = write_temp_file(&dir, "modified.txt", b"original");
 
-        let original_checksum = ChecksumFactory::from_path(temp_file.path()).unwrap();
+        let original_checksum = ChecksumFactory::from_path(&path).unwrap();
 
-        // Modify file
-        write!(temp_file, "modified").unwrap();
-        temp_file.flush().unwrap();
+        // Modify file after closing initial handle
+        std::fs::write(&path, b"originalmodified").unwrap();
 
-        let is_valid = ChecksumFactory::verify_file(&original_checksum, temp_file.path()).unwrap();
+        let is_valid = ChecksumFactory::verify_file(&original_checksum, &path).unwrap();
         assert!(!is_valid);
     }
 
@@ -248,21 +251,24 @@ mod tests {
                 // THEN: Should verify successfully
                 prop_assert!(result);
             }
+        }
 
-            #[test]
-            fn prop_from_path_matches_from_bytes(content in valid_file_content()) {
+        #[test]
+        fn prop_from_path_matches_from_bytes() {
+            let dir = TempDir::new().unwrap();
+            let seq = AtomicU64::new(0);
+            proptest!(|(content in valid_file_content())| {
                 // GIVEN: A file containing the content
-                let mut temp_file = NamedTempFile::new().unwrap();
-                temp_file.write_all(&content).unwrap();
-                temp_file.flush().unwrap();
+                let id = seq.fetch_add(1, Ordering::Relaxed);
+                let path = write_temp_file(&dir, &format!("checksum_{id}.bin"), &content);
 
                 // WHEN: Computing checksums from the path and from the bytes
-                let from_path = ChecksumFactory::from_path(temp_file.path()).unwrap();
+                let from_path = ChecksumFactory::from_path(&path).unwrap();
                 let from_bytes = ChecksumFactory::from_bytes(&content).unwrap();
 
                 // THEN: They should agree
                 prop_assert_eq!(from_path, from_bytes);
-            }
+            });
         }
     }
 }

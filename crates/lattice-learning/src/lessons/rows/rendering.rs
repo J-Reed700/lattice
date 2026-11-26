@@ -37,7 +37,11 @@ impl Rows {
             }
         }
         for (part_pointer, _) in part_pointers(&self.base) {
-            if self.only.as_ref().is_some_and(|only| *only != part_pointer) {
+            if self
+                .only
+                .as_deref()
+                .is_some_and(|only| part_pointer != only)
+            {
                 continue;
             }
             if let Some(Value::Object(map)) = out.pointer_mut(&part_pointer) {

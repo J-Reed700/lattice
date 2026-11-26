@@ -28,7 +28,7 @@ export const SourceReaderHeader = ({
   onMinimize,
   onClose,
 }: SourceReaderHeaderProps) => (
-  <div className="flex shrink-0 items-center justify-between gap-3 border-b border-subtle px-6 py-5">
+  <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border-subtle px-6 py-5">
     <div className="min-w-0 flex-1">
       <p className="mb-1 text-xs text-text-muted">Source reader</p>
       {isDocked ? (

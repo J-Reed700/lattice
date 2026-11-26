@@ -629,12 +629,15 @@ async fn run(
     let input = assemble(&request, &carried);
 
     // Room the input leaves unused goes to the answer only when asked: the
-    // margin stays reserved either way.
+    // margin stays reserved either way, and any headroom kept for a follow-up
+    // step (such as the structured answer carrying a prose draft) stays free.
     let output_tokens = if request.output_fills_window() {
-        allocation.output_reserved
+        (allocation.output_reserved
             + allocation
                 .input_budget
-                .saturating_sub(accounting.total_input)
+                .saturating_sub(accounting.total_input))
+        .saturating_sub(request.output_headroom())
+        .max(allocation.output_reserved)
     } else {
         allocation.output_reserved
     };

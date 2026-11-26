@@ -675,15 +675,27 @@ pub(crate) async fn run<T>(
                 interval.tick().await;
                 let snapshot = progress.snapshot();
                 if previous.as_ref() != Some(&snapshot) {
-                    if !context
-                        .progress(snapshot.0, &snapshot.1, Some(&activity_value(&snapshot.2)?))
-                        .await?
+                    let activity = match activity_value(&snapshot.2) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            tracing::warn!(%error, "Failed to serialize lesson progress activity");
+                            continue;
+                        }
+                    };
+                    match context
+                        .progress(snapshot.0, &snapshot.1, Some(&activity))
+                        .await
                     {
-                        return Err(AppError::InvalidState(
-                            "Lesson preparation is no longer running.".into(),
-                        ));
+                        Ok(true) => previous = Some(snapshot),
+                        Ok(false) => {
+                            return Err(AppError::InvalidState(
+                                "Lesson preparation is no longer running.".into(),
+                            ));
+                        }
+                        Err(error) => {
+                            tracing::warn!(%error, "Lesson progress heartbeat failed; continuing preparation");
+                        }
                     }
-                    previous = Some(snapshot);
                 }
             }
         };

@@ -231,6 +231,10 @@ impl LLMPort for Tagged<'_> {
         self.llm.thinks_before_answering()
     }
 
+    fn supports_native_thinking(&self) -> bool {
+        self.llm.supports_native_thinking()
+    }
+
     fn provider_name(&self) -> &str {
         self.llm.provider_name()
     }

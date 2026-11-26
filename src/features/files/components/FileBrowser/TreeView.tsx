@@ -233,15 +233,20 @@ export const TreeView = ({
   const selectionActive = selectedDocumentIds.size > 0;
 
   return (
-    <div ref={parentRef} className="h-full overflow-y-auto border-t border-border-subtle">
+    <div
+      ref={parentRef}
+      className="min-h-0 max-h-full overflow-y-auto rounded-xl border border-border-subtle bg-surface shadow-sm"
+    >
       <div style={{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }}>
         {virtualizer.getVirtualItems().map((virtualRow) => {
           const row = rows[virtualRow.index];
           if (!row) return null;
+          const isLast = virtualRow.index === rows.length - 1;
 
           return (
             <div
               key={virtualRow.key}
+              className={!isLast ? 'border-b border-border-subtle' : undefined}
               style={{
                 position: 'absolute',
                 top: 0,
@@ -255,7 +260,7 @@ export const TreeView = ({
                   type="button"
                   onClick={() => toggleFolder(row.node.path)}
                   aria-expanded={!collapsed.has(row.node.path)}
-                  className="row-hover flex w-full items-center gap-2 rounded-lg pr-3 text-left"
+                  className="row-hover flex w-full items-center gap-2 bg-surface-sunken/35 pr-3.5 text-left"
                   style={{
                     height: FOLDER_ROW_HEIGHT,
                     paddingLeft: 12 + row.depth * INDENT_PX,
@@ -266,8 +271,10 @@ export const TreeView = ({
                   ) : (
                     <ChevronDown className="h-3.5 w-3.5 shrink-0 text-text-muted" strokeWidth={1.75} />
                   )}
-                  <Folder className="h-4 w-4 shrink-0 text-text-muted" strokeWidth={1.75} />
-                  <span className="truncate text-sm text-text-primary">{row.node.name}</span>
+                  <Folder className="h-4 w-4 shrink-0 text-accent/80" strokeWidth={1.75} />
+                  <span className="truncate font-sans text-ui font-semibold tracking-[-0.01em] text-text-primary">
+                    {row.node.name}
+                  </span>
                   <span className="shrink-0 text-xs tabular-nums text-text-muted">
                     {row.node.count.toLocaleString()}
                   </span>

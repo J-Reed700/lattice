@@ -6,6 +6,7 @@ import { deferred } from '@/tests/deferred';
 import { render } from '@/tests/renderWithQueryClient';
 
 import { ChatTab } from './ChatTab';
+import { chooseRadixOption } from '../radixSelectTestUtils';
 
 const h = vi.hoisted(() => ({
   llm: { llmSettings: null as null | Record<string, any>, isLoading: false, authValueSet: { ollama: false, llamaCpp: false }, authValueStatus: 'ready' as 'loading' | 'error' | 'ready', saveLlmUpdates: vi.fn(), saveAuthHeaderValue: vi.fn(), reload: vi.fn() },
@@ -76,13 +77,13 @@ describe('ChatTab', () => {
 
   describe('provider', () => {
     it.each([
-      ['openai', { provider: 'openai', model: '' }],
-      ['anthropic', { provider: 'anthropic', model: '' }],
-      ['google', { provider: 'google', model: '' }],
-      ['local', { provider: 'local' }],
-    ])('switching to %s saves its defaults', (value, update) => {
+      ['OpenAI', { provider: 'openai', model: '' }],
+      ['Anthropic', { provider: 'anthropic', model: '' }],
+      ['Google', { provider: 'google', model: '' }],
+      ['Local only', { provider: 'local' }],
+    ])('switching to %s saves its defaults', async (label, update) => {
       render(<ChatTab />);
-      fireEvent.change(screen.getByLabelText('Chat provider'), { target: { value } });
+      await chooseRadixOption(screen.getByLabelText('Chat provider'), label);
       expect(h.llm.saveLlmUpdates).toHaveBeenCalledWith(update);
     });
 
@@ -97,7 +98,7 @@ describe('ChatTab', () => {
       second.unmount();
       h.llm.llmSettings = settings({ provider: undefined });
       render(<ChatTab />);
-      expect(screen.getByLabelText('Chat provider')).toHaveValue('auto');
+      expect(screen.getByLabelText('Chat provider')).toHaveTextContent('Auto — local, llama.cpp, then Ollama');
       expect(screen.getByRole('region', { name: 'llama.cpp connection' })).toBeInTheDocument();
       expect(screen.getByText('Ollama server')).toBeInTheDocument();
     });
@@ -204,20 +205,20 @@ describe('ChatTab', () => {
       await connected();
       expect(h.toast.success).toHaveBeenCalledWith('Connected. Loaded 2 model(s) from http://garden.local:11434/api/tags.');
       expect(screen.getByText('2 model(s) from http://garden.local:11434/api/tags')).toBeInTheDocument();
-      fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'phi' } });
+      await chooseRadixOption(screen.getByLabelText('Model'), 'phi');
       expect(h.llm.saveLlmUpdates).toHaveBeenCalledWith({ model: 'phi', ollamaConfigured: true });
-      fireEvent.change(screen.getByLabelText('Model'), { target: { value: '' } });
+      await chooseRadixOption(screen.getByLabelText('Model'), 'Select a model');
       expect(h.llm.saveLlmUpdates).toHaveBeenCalledTimes(1);
-      fireEvent.change(screen.getByLabelText('Utility model'), { target: { value: 'phi' } });
+      await chooseRadixOption(screen.getByLabelText('Utility model'), 'phi');
       expect(h.llm.saveLlmUpdates).toHaveBeenLastCalledWith({ ollamaUtilityModel: 'phi' });
-      fireEvent.change(screen.getByLabelText('Utility model'), { target: { value: '' } });
+      await chooseRadixOption(screen.getByLabelText('Utility model'), 'Falls back to the chat model');
       expect(h.llm.saveLlmUpdates).toHaveBeenCalledTimes(2);
     });
 
     it('drops the chosen model when the server does not have it', async () => {
       render(<ChatTab />);
       await connected(['llama3']);
-      expect(screen.getByLabelText('Model')).toHaveValue('');
+      expect(screen.getByLabelText('Model')).toHaveTextContent('Select a model');
       expect(screen.getByRole('button', { name: 'Save Ollama connection' })).toBeDisabled();
     });
 

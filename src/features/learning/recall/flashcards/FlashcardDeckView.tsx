@@ -85,7 +85,7 @@ export function FlashcardDeckView() {
     </>}
   </>;
 
-  return <main className="h-full overflow-y-auto bg-background"><div className="mx-auto w-full max-w-[800px] px-6 pb-16 pt-10">
+  return <main className="h-full overflow-y-auto bg-bg"><div className="mx-auto w-full max-w-[800px] px-6 pb-16 pt-10">
     {content}
     <Dialog open={confirmDelete} onOpenChange={open => { if (!remove.isPending) setConfirmDelete(open); }}><DialogContent><DialogTitle>Delete {current?.title}?</DialogTitle><DialogDescription>This removes the deck, its cards, and its review history. Your source documents stay in the library.</DialogDescription>{remove.isError && <p role="alert" className="text-sm text-danger-fg">{remove.error.message}</p>}<div className="flex justify-end gap-2"><Button variant="ghost" disabled={remove.isPending} onClick={() => setConfirmDelete(false)}>Cancel</Button><Button variant="destructive" disabled={remove.isPending} onClick={() => { if (id) remove.mutate(id, { onSuccess: () => { setConfirmDelete(false); back(); } }); }}>{remove.isPending ? 'Deleting…' : 'Delete deck'}</Button></div></DialogContent></Dialog>
   </div></main>;

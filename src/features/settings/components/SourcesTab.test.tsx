@@ -151,7 +151,7 @@ describe('SourcesTab', () => {
 
     const field = await screen.findByLabelText('Brave Search key');
     await user.type(field, SECRET);
-    const row = field.closest('div') as HTMLElement;
+    const row = field.closest('.settings-row') as HTMLElement;
     await user.click(within(row).getByRole('button', { name: 'Save' }));
 
     await waitFor(() => expect(VaultAPI.saveSourceKey).toHaveBeenCalledWith('brave', SECRET));
@@ -172,7 +172,7 @@ describe('SourcesTab', () => {
     expect(screen.getByText('Marginalia works without it; a key raises its limits.')).toBeInTheDocument();
 
     await user.type(screen.getByLabelText('OpenAlex key'), SECRET);
-    const row = screen.getByLabelText('OpenAlex key').closest('div') as HTMLElement;
+    const row = screen.getByLabelText('OpenAlex key').closest('.settings-row') as HTMLElement;
     await user.click(within(row).getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(VaultAPI.saveSourceKey).toHaveBeenCalledWith('openAlex', SECRET));
   });
@@ -183,7 +183,7 @@ describe('SourcesTab', () => {
     vi.mocked(VaultAPI.removeSourceKey).mockResolvedValue({ ok: true, data: status() });
     renderSourcesTab();
 
-    const row = (await screen.findByLabelText('Brave Search key')).closest('div') as HTMLElement;
+    const row = (await screen.findByLabelText('Brave Search key')).closest('.settings-row') as HTMLElement;
     expect(within(row).getByText('Key saved')).toBeInTheDocument();
     await user.click(within(row).getByRole('button', { name: 'Remove' }));
 
@@ -216,7 +216,7 @@ describe('SourcesTab', () => {
     renderSourcesTab();
 
     const field = await screen.findByLabelText('Server address');
-    const save = field.parentElement?.querySelector('button') as HTMLButtonElement;
+    const save = within(field.closest('.settings-row') as HTMLElement).getByRole('button', { name: /save|clear/i });
     await user.type(field, 'search.example.org');
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Enter an address that starts with http:// or https://'
@@ -247,7 +247,7 @@ describe('SourcesTab', () => {
     renderSourcesTab();
 
     const field = await screen.findByLabelText('Your email or web address');
-    const save = field.parentElement?.querySelector('button') as HTMLButtonElement;
+    const save = within(field.closest('.settings-row') as HTMLElement).getByRole('button', { name: /save|clear/i });
     await user.type(field, 'a/b@x.org');
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Enter an email address, or a web address that starts with http:// or https://'
@@ -281,7 +281,7 @@ describe('SourcesTab', () => {
     renderSourcesTab();
 
     const field = await screen.findByLabelText('Server address');
-    const save = field.parentElement?.querySelector('button') as HTMLButtonElement;
+    const save = within(field.closest('.settings-row') as HTMLElement).getByRole('button', { name: /save|clear/i });
     await user.click(field);
     await user.paste('https://search.example.org');
     await waitFor(() =>

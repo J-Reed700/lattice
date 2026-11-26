@@ -1,6 +1,6 @@
 //! Excel (XLSX) extraction.
 
-use super::archive_budget::{run_archive_work, ArchiveBudget, MAX_ARCHIVE_MEMBERS};
+use super::archive_budget::{run_archive_work, ArchiveBudget};
 use super::types::{ContentMetadata, ExtractedContent};
 use super::ExtractionWorkers;
 use crate::features::indexing::engine::error::{IndexingError, Result};
@@ -10,15 +10,19 @@ use std::fs::File;
 use std::path::Path;
 use zip::ZipArchive;
 
-const MAX_WORKSHEETS: usize = 256;
-const MAX_ROWS_PER_WORKSHEET: usize = 100_000;
+/// Excel's OOXML worksheet specification limits (2^20 rows, 2^14 columns = XFD).
+const EXCEL_MAX_ROWS: usize = 1_048_576;
 const MAX_COLUMNS: usize = 16_384;
+/// Sparse-grid OOM bomb guard: caps allocated dense row-cell slots so a tiny
+/// worksheet placing one cell in column `XFD` per row cannot allocate gigabytes.
 const MAX_GRID_CELLS: usize = 1_000_000;
-const MAX_EXPANDED_CELL_TEXT_BYTES: usize = 8 * 1024 * 1024;
-const MAX_SHARED_STRINGS: usize = 250_000;
-const MAX_SHARED_STRING_BYTES: usize = 8 * 1024 * 1024;
-const MAX_OUTPUT_TEXT_BYTES: usize = 16 * 1024 * 1024;
-const MAX_SHEET_NAME_BYTES: usize = 256;
+/// Shared-string amplification OOM guard: prevents a small worksheet that
+/// repeats one large shared string across thousands of cells from blowing up RAM.
+const MAX_EXPANDED_CELL_TEXT_BYTES: usize = 64 * 1024 * 1024;
+/// Header-repetition amplification OOM guard: `format_rows` repeats column
+/// headers on every row (`header: value`), so a huge shared-string header plus
+/// many tiny data rows can expand quadratically relative to the XML size.
+const MAX_OUTPUT_TEXT_BYTES: usize = 128 * 1024 * 1024;
 
 #[derive(Default)]
 struct XlsxBudget {
@@ -70,24 +74,10 @@ impl XlsxBudget {
 /// Extract content from XLSX files.
 pub async fn extract_xlsx(
     path: &Path,
-    max_file_size: u64,
+    max_file_size: Option<u64>,
     workers: &ExtractionWorkers,
 ) -> Result<ExtractedContent> {
-    let metadata = tokio::fs::metadata(path)
-        .await
-        .map_err(|e| IndexingError::Io {
-            message: e.to_string(),
-            kind: format!("{:?}", e.kind()),
-        })?;
-
-    let file_size = metadata.len();
-    if file_size > max_file_size {
-        return Err(IndexingError::FileTooLarge {
-            path: path.display().to_string(),
-            size_bytes: file_size,
-            max_size_bytes: max_file_size,
-        });
-    }
+    super::check_file_size(path, max_file_size).await?;
 
     let path_clone = path.to_path_buf();
     let text = run_archive_work(workers, path.to_path_buf(), move || {
@@ -127,7 +117,7 @@ fn extract_xlsx_sync(path: &Path) -> Result<String> {
 
     let shared = match read_optional_part(&mut archive, "xl/sharedStrings.xml", path, &mut budget)?
     {
-        Some(xml) => shared_strings(&xml, path)?,
+        Some(xml) => shared_strings(&xml),
         None => Vec::new(),
     };
 
@@ -210,24 +200,6 @@ fn sheet_parts(
             })
             .collect();
         if !sheets.is_empty() {
-            if sheets.len() > MAX_WORKSHEETS {
-                return Err(IndexingError::ContentExtraction {
-                    path: path.display().to_string(),
-                    reason: format!(
-                        "workbook has {} sheets; limit is {MAX_WORKSHEETS}",
-                        sheets.len()
-                    ),
-                });
-            }
-            if sheets
-                .iter()
-                .any(|(name, _)| name.len() > MAX_SHEET_NAME_BYTES)
-            {
-                return Err(IndexingError::ContentExtraction {
-                    path: path.display().to_string(),
-                    reason: format!("worksheet name exceeds {MAX_SHEET_NAME_BYTES} bytes"),
-                });
-            }
             return Ok(sheets);
         }
     }
@@ -245,15 +217,6 @@ fn sheet_parts(
         })
         .collect();
     numbered.sort();
-    if numbered.len() > MAX_WORKSHEETS || numbered.len() > MAX_ARCHIVE_MEMBERS {
-        return Err(IndexingError::ContentExtraction {
-            path: path.display().to_string(),
-            reason: format!(
-                "workbook has too many worksheets ({}); limit is {MAX_WORKSHEETS}",
-                numbered.len()
-            ),
-        });
-    }
     Ok(numbered
         .into_iter()
         .map(|(number, part)| (format!("Sheet{number}"), part))
@@ -263,31 +226,18 @@ fn sheet_parts(
 /// The shared string table, one entry per `<si>`. Rich text splits a string
 /// across several `<r><t>` runs, which join back into one value; `<rPh>`
 /// holds phonetic guides, not cell text.
-fn shared_strings(xml: &str, path: &Path) -> Result<Vec<String>> {
+///
+/// The raw XML part is already bounded by [`ArchiveBudget`] when read from the
+/// ZIP archive, and XML entity decoding never expands byte length.
+fn shared_strings(xml: &str) -> Vec<String> {
     let mut strings = Vec::new();
     let mut current = String::new();
-    let mut total_bytes = 0usize;
     let mut in_text = false;
     let mut in_phonetic = false;
     for event in MarkupCursor::new(xml) {
         match event {
             Markup::Open { name: "si", .. } => current.clear(),
             Markup::Close { name: "si" } => {
-                if strings.len() >= MAX_SHARED_STRINGS {
-                    return Err(IndexingError::ContentExtraction {
-                        path: path.display().to_string(),
-                        reason: format!("shared string table exceeds {MAX_SHARED_STRINGS} entries"),
-                    });
-                }
-                total_bytes = total_bytes.saturating_add(current.len());
-                if total_bytes > MAX_SHARED_STRING_BYTES {
-                    return Err(IndexingError::ContentExtraction {
-                        path: path.display().to_string(),
-                        reason: format!(
-                            "shared string text exceeds {MAX_SHARED_STRING_BYTES} bytes"
-                        ),
-                    });
-                }
                 strings.push(std::mem::take(&mut current));
             }
             Markup::Open {
@@ -304,7 +254,7 @@ fn shared_strings(xml: &str, path: &Path) -> Result<Vec<String>> {
             _ => {}
         }
     }
-    Ok(strings)
+    strings
 }
 
 /// Rows of cell values, each placed at its column from the `r="B7"` reference
@@ -327,7 +277,7 @@ fn sheet_rows(
             Markup::Open {
                 name: "row",
                 attrs,
-                empty,
+                empty: _,
             } => {
                 if let Some(reference) = attr(attrs, "r") {
                     let index = reference.parse::<usize>().map_err(|_| {
@@ -336,26 +286,29 @@ fn sheet_rows(
                             reason: format!("row reference {reference} is malformed"),
                         }
                     })?;
-                    if index == 0 || index > MAX_ROWS_PER_WORKSHEET {
+                    if index == 0 || index > EXCEL_MAX_ROWS {
                         return Err(IndexingError::ContentExtraction {
                             path: path.display().to_string(),
-                            reason: format!("row reference {reference} exceeds the {MAX_ROWS_PER_WORKSHEET}-row extraction limit"),
+                            reason: format!(
+                                "row reference {reference} exceeds Excel's {EXCEL_MAX_ROWS}-row limit"
+                            ),
                         });
                     }
                 }
-                if rows.len() >= MAX_ROWS_PER_WORKSHEET {
-                    return Err(IndexingError::ContentExtraction {
-                        path: path.display().to_string(),
-                        reason: format!("worksheet exceeds {MAX_ROWS_PER_WORKSHEET} rows"),
-                    });
-                }
                 row.clear();
                 column = 0;
-                if empty {
-                    rows.push(Vec::new());
+            }
+            Markup::Close { name: "row" } => {
+                if !row.is_empty() {
+                    if rows.len() >= EXCEL_MAX_ROWS {
+                        return Err(IndexingError::ContentExtraction {
+                            path: path.display().to_string(),
+                            reason: format!("worksheet exceeds Excel's {EXCEL_MAX_ROWS}-row limit"),
+                        });
+                    }
+                    rows.push(std::mem::take(&mut row));
                 }
             }
-            Markup::Close { name: "row" } => rows.push(std::mem::take(&mut row)),
             Markup::Open {
                 name: "c",
                 attrs,
@@ -574,7 +527,7 @@ mod tests {
         }
         zip.finish().unwrap();
 
-        let text = extract_xlsx(&path, 1 << 20, &ExtractionWorkers::new())
+        let text = extract_xlsx(&path, None, &ExtractionWorkers::new())
             .await
             .unwrap()
             .text;
@@ -593,7 +546,7 @@ mod tests {
     }
 
     #[test]
-    fn worksheet_rejects_columns_beyond_excel_dimensions_and_too_many_rows() {
+    fn worksheet_rejects_columns_and_rows_beyond_excel_dimensions() {
         let path = Path::new("oversized.xlsx");
         let mut budget = XlsxBudget::default();
         assert!(sheet_rows(
@@ -603,21 +556,27 @@ mod tests {
             &mut budget,
         )
         .is_err());
+
+        // Row references within Excel's 1,048,576-row specification are allowed.
+        let mut budget = XlsxBudget::default();
+        let high_row = sheet_rows(
+            r#"<worksheet><sheetData><row r="250000"><c r="A250000"><v>42</v></c></row></sheetData></worksheet>"#,
+            &[],
+            path,
+            &mut budget,
+        )
+        .unwrap();
+        assert_eq!(high_row, vec![vec!["42".to_string()]]);
+
+        // Row references past Excel's 1,048,576-row specification are rejected.
         let mut budget = XlsxBudget::default();
         assert!(sheet_rows(
-            r#"<worksheet><sheetData><row r="100001"><c r="A100001"><v>1</v></c></row></sheetData></worksheet>"#,
+            r#"<worksheet><sheetData><row r="1048577"><c r="A1048577"><v>1</v></c></row></sheetData></worksheet>"#,
             &[],
             path,
             &mut budget,
         )
         .is_err());
-
-        let mut xml = String::from("<worksheet><sheetData>");
-        for _ in 0..=MAX_ROWS_PER_WORKSHEET {
-            xml.push_str("<row></row>");
-        }
-        xml.push_str("</sheetData></worksheet>");
-        assert!(sheet_rows(&xml, &[], path, &mut XlsxBudget::default()).is_err());
     }
 
     #[test]

@@ -713,3 +713,126 @@ async fn the_catalogs_pinned_shapes_and_cpu_weights_are_what_the_runtime_reader_
         );
     }
 }
+
+#[test]
+fn chat_template_thinking_markers_are_detected_from_gguf_header() {
+    let enable_thinking = GgufBuilder::new(3)
+        .string("general.architecture", "llama")
+        .string(
+            "tokenizer.chat_template",
+            "{% if enable_thinking is defined and enable_thinking %}<think>{% endif %}",
+        )
+        .read();
+    assert!(enable_thinking.chat_template_supports_thinking);
+    assert!(enable_thinking.supports_thinking());
+
+    let think_tag = GgufBuilder::new(3)
+        .string("general.architecture", "llama")
+        .string(
+            "tokenizer.chat_template",
+            "{{ bos_token }}<think>\n{{ reasoning }}\n</think>",
+        )
+        .read();
+    assert!(think_tag.chat_template_supports_thinking);
+    assert!(think_tag.supports_thinking());
+
+    let close_think_tag = GgufBuilder::new(3)
+        .string("general.architecture", "llama")
+        .string("tokenizer.chat_template", "Answer after </think>.")
+        .read();
+    assert!(close_think_tag.chat_template_supports_thinking);
+    assert!(close_think_tag.supports_thinking());
+
+    let llama_plain = GgufBuilder::new(3)
+        .string("general.architecture", "llama")
+        .string(
+            "tokenizer.chat_template",
+            "{{ bos_token }}{% for message in messages %}{{ message['content'] }}{% endfor %}",
+        )
+        .read();
+    assert!(!llama_plain.chat_template_supports_thinking);
+    assert!(!llama_plain.supports_thinking());
+}
+
+#[test]
+fn chat_template_supports_thinking_detects_markers_and_rejects_plain_templates() {
+    assert!(chat_template_supports_thinking(
+        "{% if enable_thinking is defined and enable_thinking %}<think>{% endif %}"
+    ));
+    assert!(chat_template_supports_thinking("{{ bos_token }}<think>"));
+    assert!(chat_template_supports_thinking("Answer after </think>."));
+    assert!(!chat_template_supports_thinking(
+        "{{ bos_token }}{% for m in messages %}{{ m['content'] }}{% endfor %}"
+    ));
+    assert!(!chat_template_supports_thinking(""));
+}
+
+#[test]
+fn gguf_info_and_file_thinking_distinguish_thinking_models_from_non_thinking() {
+    for arch in [
+        "qwen3",
+        "qwen3moe",
+        "qwen35",
+        "qwen35moe",
+        "laguna",
+        "gpt-oss",
+    ] {
+        let info = GgufBuilder::new(3)
+            .string("general.architecture", arch)
+            .read();
+        assert!(info.supports_thinking(), "{arch} should support thinking");
+        assert!(file_supports_thinking(
+            Path::new("/models/unnamed.gguf"),
+            Some(&info),
+        ));
+    }
+
+    let deepseek_r1 = GgufBuilder::new(3)
+        .string("general.architecture", "deepseek2")
+        .string(
+            "tokenizer.chat_template",
+            "{% if add_generation_prompt %}<think>\n{% endif %}",
+        )
+        .read();
+    assert!(deepseek_r1.supports_thinking());
+
+    for arch in ["llama", "mistral", "gemma4", "deepseek2"] {
+        let info = GgufBuilder::new(3)
+            .string("general.architecture", arch)
+            .read();
+        assert!(
+            !info.supports_thinking(),
+            "{arch} should not support thinking"
+        );
+        assert!(!file_supports_thinking(
+            Path::new("/models/Qwen3.6-renamed-non-thinking.gguf"),
+            Some(&info),
+        ));
+    }
+
+    // Fallback when GGUF header is unreadable (info == None).
+    for thinking_file in [
+        "Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
+        "Qwen3.5-9B-Q4_K_M.gguf",
+        "Qwen3-8B-Q4_K_M.gguf",
+        "Laguna-XS-2.1-APEX-I-Compact.gguf",
+        "DeepSeek-R1-Distill-Qwen-7B-Q4_K_M.gguf",
+        "QwQ-32B-Q4_K_M.gguf",
+    ] {
+        assert!(
+            file_supports_thinking(Path::new(thinking_file), None),
+            "{thinking_file} fallback should be true"
+        );
+    }
+
+    for non_thinking_file in [
+        "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
+        "Mistral-7B-Instruct-v0.3-Q4_K_M.gguf",
+        "gemma-4-12b-it-Q4_K_M.gguf",
+    ] {
+        assert!(
+            !file_supports_thinking(Path::new(non_thinking_file), None),
+            "{non_thinking_file} fallback should be false"
+        );
+    }
+}

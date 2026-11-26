@@ -326,6 +326,22 @@ async retryLearningGenerationJob(request: LearningGenerationJobActionRequestDto)
     else return { status: "error", error: e  as any };
 }
 },
+async prioritizeLearningGenerationJob(request: LearningGenerationJobActionRequestDto) : Promise<Result<LearningGenerationJob, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|prioritize_learning_generation_job", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async resetLearningLessonPreparation(request: ResetLearningLessonPreparationRequestDto) : Promise<Result<ResetLearningLessonPreparationResultDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|reset_learning_lesson_preparation", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getLearningGenerationJob(id: string) : Promise<Result<LearningGenerationJob, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_generation_job", { id }) };
@@ -459,6 +475,14 @@ async prepareLearningLesson(request: PrepareLearningLessonRequestDto) : Promise<
 async prepareLearningModule(request: PrepareLearningModuleRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|prepare_learning_module", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async prepareLearningLessons(request: StartLearningLessonsJobsRequestDto) : Promise<Result<LearningGenerationJob[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|prepare_learning_lessons", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2552,9 +2576,9 @@ async readFileContent(path: string) : Promise<Result<string, AppError>> {
 }
 },
 /**
- * Legacy Tauri shim - Reads the content of a file as bytes for preview purposes
+ * Legacy Tauri shim - Reads the content of a file as raw binary bytes for preview purposes
  */
-async readFileBytes(path: string) : Promise<Result<number[], AppError>> {
+async readFileBytes(path: string) : Promise<Result<ArrayBuffer, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:file|read_file_bytes", { path }) };
 } catch (e) {
@@ -8617,7 +8641,11 @@ lessonIds?: string[];
 /**
  * The lessons the job finished by holding them for review.
  */
-heldLessonIds?: string[]; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
+heldLessonIds?: string[];
+/**
+ * Queue rank for ranked job kinds (lower runs first).
+ */
+rank?: number | null; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
 export type LearningGenerationJobActionRequestDto = { operationId: string; programId: string; jobId: string; expectedRevision: number }
 export type LearningGenerationJobKind = "program_outline" | "lesson_preparation" | "assessment_variant" | "adaptive_follow_up" | "practical_activity" |
 /**
@@ -10504,6 +10532,8 @@ stated: boolean;
  * The `pages_mentioning` versions, newest first.
  */
 relevant: SourceRefDto[] }
+export type ResetLearningLessonPreparationRequestDto = { operationId: string; programId: string; lessonIds: string[]; expectedRevision: number }
+export type ResetLearningLessonPreparationResultDto = { resetLessonIds: string[]; cancelledJobIds: string[]; programRevision: number }
 export type ResolveLearningClaimRequestDto = { programId: string; lessonId: string; claimId: string; action: ClaimActionRequestDto;
 /**
  * The review's revision the user acted on.
@@ -11580,6 +11610,7 @@ title: string;
 heading: string }
 export type StartLearningDiagnosticRequestDto = { operationId: string; programId: string; expectedRevision: number }
 export type StartLearningGenerationJobRequestDto = { operationId: string; programId: string; expectedRevision: number; kind: LearningGenerationJobKind; requestJson: string; progressTotal: number }
+export type StartLearningLessonsJobsRequestDto = { operationId: string; programId: string; lessonIds: string[]; expectedRevision: number }
 export type StartLearningPracticalRunRequestDto = { operationId: string; runId: string; programId: string; activityId: string; expectedActivityRevision: number; practiceSessionId: string | null; learnerFiles: LearningLabFile[] }
 export type StartLearningPracticeSessionRequestDto = { operationId: string; sessionId: string; programId: string; lessonId: string; expectedProgramRevision: number; mode: LearningPracticeMode; taskKind?: LearningPracticeTaskKind; revisesSessionId?: string | null }
 export type StartLearningQuizRequestDto = { operationId: string; formId: string; programId: string; scope: LearningQuizScopeDto; mode: LearningQuizMode; retakeOfFormId: string | null }
@@ -12984,12 +13015,14 @@ export type CommandArgs = {
 	practice_due: { request: PracticeDueRequestDto };
 	prepare_learning_ahead: { request: PrepareLearningAheadRequestDto };
 	prepare_learning_lesson: { request: PrepareLearningLessonRequestDto };
+	prepare_learning_lessons: { request: StartLearningLessonsJobsRequestDto };
 	prepare_learning_module: { request: PrepareLearningModuleRequestDto };
 	prepare_learning_quiz_bank: { request: PrepareLearningQuizBankRequestDto };
 	prepare_learning_runtime_preset: { request: PrepareLearningRuntimePresetRequestDto };
 	preview_content_edit: { request: ContentEditRequest };
 	preview_learning_curriculum_revision: { request: PreviewLearningCurriculumRevisionRequestDto };
 	preview_learning_pack_import: { request: PreviewLearningPackImportRequestDto };
+	prioritize_learning_generation_job: { request: LearningGenerationJobActionRequestDto };
 	promote_conversation_tangent: { request: GetConversationRequestDto };
 	quick_capture: { content: string; sources?: SourceDto[] | null; conversationIds?: string[] | null };
 	read_file_bytes: { path: string };
@@ -13030,6 +13063,7 @@ export type CommandArgs = {
 	request_learning_tutor_response: { request: RequestLearningTutorResponseRequestDto };
 	reranker_status: void;
 	rescan_vault: void;
+	reset_learning_lesson_preparation: { request: ResetLearningLessonPreparationRequestDto };
 	reset_settings: void;
 	resolve_learning_claim: { request: ResolveLearningClaimRequestDto };
 	resolve_learning_claims: { request: ResolveLearningClaimsRequestDto };
@@ -13460,15 +13494,17 @@ export type CommandResults = {
 	practice_due: PracticeDueDto;
 	prepare_learning_ahead: LearningProgramDto;
 	prepare_learning_lesson: LearningProgramDto;
+	prepare_learning_lessons: LearningGenerationJob[];
 	prepare_learning_module: LearningProgramDto;
 	prepare_learning_quiz_bank: LearningGenerationJob;
 	prepare_learning_runtime_preset: LearningPracticalWorkspaceDto;
 	preview_content_edit: ContentEditPreview;
 	preview_learning_curriculum_revision: LearningPlanDto;
 	preview_learning_pack_import: LearningPortabilityWorkspaceDto;
+	prioritize_learning_generation_job: LearningGenerationJob;
 	promote_conversation_tangent: ConversationDto;
 	quick_capture: QuickCaptureResultDto;
-	read_file_bytes: number[];
+	read_file_bytes: ArrayBuffer;
 	read_file_content: string;
 	read_model_fits: (FitVerdictDto | null)[];
 	read_web_page: WebPageDto;
@@ -13506,6 +13542,7 @@ export type CommandResults = {
 	request_learning_tutor_response: LearningPracticeWorkspaceDto;
 	reranker_status: RerankerStatusDto;
 	rescan_vault: RescanSummary;
+	reset_learning_lesson_preparation: ResetLearningLessonPreparationResultDto;
 	reset_settings: SettingsDto;
 	resolve_learning_claim: ResolveLearningClaimResultDto;
 	resolve_learning_claims: ResolveLearningClaimResultDto;

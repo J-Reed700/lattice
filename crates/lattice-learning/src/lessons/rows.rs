@@ -457,11 +457,12 @@ impl Rows {
             .into_iter()
             .filter_map(|pointer| {
                 let text = material.pointer(&pointer)?.as_str()?;
-                if only.is_some_and(|only| part_of(&pointer) != only) {
+                let part = part_of(&pointer);
+                if only.is_some_and(|only| part != only) {
                     return None;
                 }
                 Some(Field {
-                    part: part_of(&pointer),
+                    part,
                     units: Units::of_at(text, Grain::Sentence, &pointer),
                     pointer,
                 })
@@ -751,7 +752,25 @@ impl Rows {
             }
         }
 
-        let counts = repeats::said(&[&current]);
+        let mut counts = repeats::said(&[&current]);
+        for (at, units) in &trials {
+            let Some(field) = self
+                .fields
+                .get(*at)
+                .filter(|field| repeats::says_at(&field.pointer))
+            else {
+                continue;
+            };
+            for removed in repeats::added(&units.text(), &field.units.text()) {
+                let key = repeats::key(&removed);
+                if let Some(count) = counts.get_mut(&key) {
+                    *count = count.saturating_sub(1);
+                    if *count == 0 {
+                        counts.remove(&key);
+                    }
+                }
+            }
+        }
         let names = units_named(change);
         for (at, units) in &trials {
             let Some(field) = self.fields.get(*at) else {

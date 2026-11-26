@@ -4,11 +4,9 @@
 //! statements it found contradicting is put to the model once more as a single
 //! question about that one thing.
 use super::asks::{Mark, Verdict};
+use super::reading::{follows, hit_at, hits_of, Clash, Hit, Reading, Use};
 use super::sentence::{self, Lesson, Spot, Whose};
-use super::{
-    follows, hit_at, hits_of, shown_parts, Clash, Hit, Item, Part, Reading, Use, ANSWER_TOKENS,
-    POLICY,
-};
+use super::{shown_parts, Item, Part, ANSWER_TOKENS, POLICY};
 use crate::lessons::structured_call::{self, Asking, CallKind, ReasonFirst};
 use lattice_core::application::services::model_contract::ask::{
     self as layer, Alone, Answered, Refusal, Says, Settled as Answer,
@@ -78,7 +76,7 @@ macro_rules! answer_intro {
 #[cfg(test)]
 pub(crate) const INTRO: &str = answer_intro!();
 
-pub(crate) const CLASH_SYSTEM: &str = concat!(answer_intro!(), "Two statements contradict each other when there is a case in which one says something happens or holds and the other says it cannot; statements that can both be true, read with their conditions, do not.");
+pub(crate) const CLASH_SYSTEM: &str = concat!(answer_intro!(), "Two statements contradict each other when there is a case in which one says something happens or holds and the other says it cannot; statements that can both be true, read with their conditions, do not. A question's wrong options (indices other than correctIndex) are deliberate distractors rather than statements the lesson endorses, so a wrong option does not contradict the lesson.");
 
 /// The confirming read of a planned item.
 pub(crate) const PLANNED_SYSTEM: &str = concat!(answer_intro!(), "A planned item is taught when the lesson teaches it. ", taught!(), "\nCite in units the sentences that teach it, by the names they are shown under; units is empty when nothing teaches it.");

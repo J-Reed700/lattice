@@ -5,10 +5,18 @@
 
 import { useEffect, useState } from 'react';
 
-import { SettingsRow, SettingsSection, Switch } from '@/components/ui';
+import {
+  SettingsRow,
+  SettingsSection,
+  Switch,
+  Tabs,
+  TabsList,
+  TabsTrigger,
+} from '@/components/ui';
 import type { LLMSettings as ApiLLMSettings } from '@/types/api/settings';
 
-import { INPUT_CLASS, SWITCH_CLASS, NUMBER_FIELD_CLASS, toFinite, clamp } from './shared';
+import { SWITCH_CLASS, clamp } from './shared';
+import { RangeStepperControl, SettingsNumberField } from '../SettingControls';
 
 type Profile = ApiLLMSettings['thinkingSampling'];
 
@@ -18,6 +26,7 @@ const PROFILE_FIELDS: {
   id: string;
   min: number;
   max?: number;
+  sliderMax?: number;
   step: number;
   integer?: boolean;
 }[] = [
@@ -37,6 +46,7 @@ const PROFILE_FIELDS: {
     label: 'Thinking repeat penalty',
     id: 'thinking-repeat-penalty',
     min: 0.05,
+    sliderMax: 2,
     step: 0.05,
   },
 ];
@@ -53,7 +63,7 @@ export function ThinkingSection({ llmSettings, saveLlmUpdates }: Props) {
   const speculative = llmSettings.speculativeDecoding;
   const [profileDraft, setProfileDraft] = useState<Profile>(llmSettings.thinkingSampling);
   const [draftTokens, setDraftTokens] = useState(
-    speculative.mode === 'mtpDraft' ? speculative.nMax : MTP_DRAFT_DEFAULT
+    speculative.mode === 'mtpDraft' ? speculative.nMax : MTP_DRAFT_DEFAULT,
   );
 
   useEffect(() => {
@@ -63,12 +73,14 @@ export function ThinkingSection({ llmSettings, saveLlmUpdates }: Props) {
     if (speculative.mode === 'mtpDraft') setDraftTokens(speculative.nMax);
   }, [speculative]);
 
-  const saveProfileField = (field: (typeof PROFILE_FIELDS)[number]) => {
-    const raw = clamp(profileDraft[field.key], field.min, field.max ?? Infinity);
+  const saveProfileField = (field: (typeof PROFILE_FIELDS)[number], candidate: number) => {
+    const raw = clamp(candidate, field.min, field.max ?? Infinity);
     const value = field.integer ? Math.round(raw) : raw;
     setProfileDraft((previous) => ({ ...previous, [field.key]: value }));
     if (llmSettings.thinkingSampling[field.key] === value) return;
-    void saveLlmUpdates({ thinkingSampling: { ...llmSettings.thinkingSampling, [field.key]: value } });
+    void saveLlmUpdates({
+      thinkingSampling: { ...llmSettings.thinkingSampling, [field.key]: value },
+    });
   };
 
   return (
@@ -89,42 +101,55 @@ export function ThinkingSection({ llmSettings, saveLlmUpdates }: Props) {
         <SettingsRow
           label="Thinking for every request"
           hint="Auto follows the rule above, except for models that break without thinking (Laguna), which always think. On and Off apply to every request, tool rounds included."
-          htmlFor="thinking-override"
         >
-          <select
+          <Tabs
             id="thinking-override"
+            variant="pill"
             value={llmSettings.thinkingOverride}
-            onChange={(event) =>
+            onValueChange={(next) =>
               void saveLlmUpdates({
-                thinkingOverride: event.target.value as ApiLLMSettings['thinkingOverride'],
+                thinkingOverride: next as ApiLLMSettings['thinkingOverride'],
               })
             }
-            className={INPUT_CLASS}
           >
-            <option value="auto">Auto</option>
-            <option value="on">Always on</option>
-            <option value="off">Always off</option>
-          </select>
+            <TabsList aria-label="Thinking for every request">
+              <TabsTrigger value="auto">Auto</TabsTrigger>
+              <TabsTrigger value="on">Always on</TabsTrigger>
+              <TabsTrigger value="off">Always off</TabsTrigger>
+            </TabsList>
+          </Tabs>
         </SettingsRow>
 
         {PROFILE_FIELDS.map((field) => (
           <SettingsRow key={field.key} label={field.label} htmlFor={field.id}>
-            <input
-              id={field.id}
-              type="number"
-              min={field.min}
-              max={field.max}
-              step={field.step}
-              value={profileDraft[field.key]}
-              onChange={(event) =>
-                setProfileDraft((previous) => ({
-                  ...previous,
-                  [field.key]: toFinite(event.target.value, previous[field.key]),
-                }))
-              }
-              onBlur={() => saveProfileField(field)}
-              className={NUMBER_FIELD_CLASS}
-            />
+            {field.max !== undefined || field.sliderMax !== undefined ? (
+              <RangeStepperControl
+                id={field.id}
+                label={field.label}
+                min={field.min}
+                max={field.max ?? field.sliderMax ?? 2}
+                sliderMax={field.sliderMax}
+                step={field.step}
+                integer={field.integer}
+                value={profileDraft[field.key]}
+                onDraftChange={(next) =>
+                  setProfileDraft((previous) => ({ ...previous, [field.key]: next }))
+                }
+                onCommit={(next) => saveProfileField(field, next)}
+              />
+            ) : (
+              <SettingsNumberField
+                id={field.id}
+                min={field.min}
+                step={field.step}
+                integer={field.integer}
+                value={profileDraft[field.key]}
+                onDraftChange={(next) =>
+                  setProfileDraft((previous) => ({ ...previous, [field.key]: next }))
+                }
+                onCommit={(next) => saveProfileField(field, next)}
+              />
+            )}
           </SettingsRow>
         ))}
       </SettingsSection>
@@ -139,31 +164,34 @@ export function ThinkingSection({ llmSettings, saveLlmUpdates }: Props) {
             checked={speculative.mode === 'mtpDraft'}
             onCheckedChange={(checked) =>
               void saveLlmUpdates({
-                speculativeDecoding: checked ? { mode: 'mtpDraft', nMax: draftTokens } : { mode: 'off' },
+                speculativeDecoding: checked
+                  ? { mode: 'mtpDraft', nMax: draftTokens }
+                  : { mode: 'off' },
               })
             }
             aria-label="Draft with the model's MTP head"
           />
         </SettingsRow>
 
-        <SettingsRow label="Draft tokens" hint="Tokens drafted per step." htmlFor="speculative-draft-tokens">
-          <input
+        <SettingsRow
+          label="Draft tokens"
+          hint="Tokens drafted per step."
+          htmlFor="speculative-draft-tokens"
+        >
+          <SettingsNumberField
             id="speculative-draft-tokens"
-            type="number"
             min={1}
             step={1}
+            integer
             disabled={speculative.mode !== 'mtpDraft'}
             value={draftTokens}
-            onChange={(event) =>
-              setDraftTokens((previous) => Math.round(toFinite(event.target.value, previous)))
-            }
-            onBlur={() => {
-              const nMax = Math.max(1, Math.round(draftTokens));
+            onDraftChange={(next) => setDraftTokens(Math.max(1, Math.round(next)))}
+            onCommit={(next) => {
+              const nMax = Math.max(1, Math.round(next));
               setDraftTokens(nMax);
               if (speculative.mode !== 'mtpDraft' || speculative.nMax === nMax) return;
               void saveLlmUpdates({ speculativeDecoding: { mode: 'mtpDraft', nMax } });
             }}
-            className={NUMBER_FIELD_CLASS}
           />
         </SettingsRow>
       </SettingsSection>

@@ -26,7 +26,7 @@ function RunnerItem({ item, index, draft, practice, disabled, sources, onChange,
   return <article aria-labelledby={promptId}>
     <div className="flex flex-wrap items-center gap-2">
       <span className="text-[11px] font-semibold uppercase tracking-[.15em] text-text-muted">Question {index + 1} · {renderer.label}</span>
-      {item.previouslyExposed && <span className="rounded-full bg-background px-2.5 py-0.5 text-[11px] font-medium text-text-secondary">Seen before · a repeat from an earlier attempt</span>}
+      {item.previouslyExposed && <span className="rounded-full bg-bg px-2.5 py-0.5 text-[11px] font-medium text-text-secondary">Seen before · a repeat from an earlier attempt</span>}
       {item.format === 'explanation' && <span className="text-[11px] text-text-muted">· worth {points(item.points)} {item.points === 1 ? 'point' : 'points'}</span>}
     </div>
     {!renderer.ownsPrompt && <div id={promptId} className="mt-3 max-w-3xl font-serif text-[1.4rem] leading-snug text-text-primary"><TiptapViewer content={item.prompt} /></div>}
@@ -36,7 +36,7 @@ function RunnerItem({ item, index, draft, practice, disabled, sources, onChange,
       <div className="mt-3"><Review item={item} draft={draft} reveal={item.keyReveal} result={null} /></div>
     </section>}
     {practice && !item.keyReveal && isAnswered(item, draft) && item.format !== 'explanation' && <button type="button" onClick={onCheck} className={`${quietPill} mt-5`}><Eye size={15} aria-hidden="true" /> Check my answer</button>}
-    {practice && item.format === 'explanation' && <p className="mt-4 rounded-xl bg-background/70 px-4 py-2.5 text-xs leading-5 text-text-secondary">Written answers are graded when you finish the round, all together, so this one has no feedback until then.</p>}
+    {practice && item.format === 'explanation' && <p className="mt-4 rounded-xl bg-bg/70 px-4 py-2.5 text-xs leading-5 text-text-secondary">Written answers are graded when you finish the round, all together, so this one has no feedback until then.</p>}
     <QuizSourceLine citations={item.sourceCitations} sources={sources} />
   </article>;
 }

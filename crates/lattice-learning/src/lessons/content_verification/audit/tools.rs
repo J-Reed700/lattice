@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use lattice_core::application::ports::llm_port::{
-    CompletionInput, InferencePriority, SamplingOverride, ToolChoice, ToolDefinition,
+    CompletionInput, InferencePriority, ToolChoice, ToolDefinition,
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::context_assembler::budget::{
@@ -136,7 +136,6 @@ pub(super) async fn research(
                 ToolChoice::None
             }),
             max_output_tokens: Some(u32::try_from(reserve).unwrap_or(u32::MAX)),
-            sampling: Some(SamplingOverride::deterministic()),
             priority: InferencePriority::Verification,
             no_time_limit: true,
             ..Default::default()

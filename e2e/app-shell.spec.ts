@@ -170,9 +170,10 @@ for (const [width, entry] of [[1440, 'menu'], [620, 'selection'], [1440, 'reply'
     await composer.fill('Keep my main draft');
     const answer = page.locator('#message-source-answer .tiptap-viewer p');
     await expect(answer).toBeVisible();
-    const replyAction = page.locator('#message-source-answer').getByRole('button', { name: 'Start a tangent from this reply' });
-    await expect(replyAction).toBeVisible();
     if (entry === 'reply') {
+      await page.locator('#message-source-answer').getByRole('button', { name: 'More actions for this message' }).click();
+      const replyAction = page.getByRole('menu', { name: 'More actions' }).getByRole('menuitem', { name: 'Start a tangent from this reply' });
+      await expect(replyAction).toBeVisible();
       await replyAction.focus();
       await replyAction.press('Enter');
     } else {
@@ -366,8 +367,6 @@ for (const width of [1440, 620]) {
     await expect(page.getByText('Canopy shade helps the forest retain moisture.', { exact: true })).toBeVisible();
     // Journal scopes use the same progress and save to their original page,
     // even after their editor unmounts.
-    const showContext = page.getByRole('button', { name: 'Show conversation and highlights' });
-    if (await showContext.isVisible()) await showContext.click();
     await page.getByRole('button', { name: 'Synthesize…', exact: true }).click();
     await page.getByRole('radio', { name: /Recent entries/ }).check();
     await page.getByRole('button', { name: 'Synthesize', exact: true }).click();
@@ -422,7 +421,7 @@ test('opens imported PDF bytes in the library and renders pages after reopening'
       }],
       read_file_bytes: (args) => {
         if ((args as { path: string }).path !== filePath) throw new Error('Unexpected PDF path');
-        return bytes;
+        return new Uint8Array(bytes).buffer;
       },
       initialize_database: () => 'Database initialized',
       list_downloads: () => [],
@@ -608,7 +607,7 @@ test('production utilities preserve theme tokens in light and dark mode', async 
     const { shadow: actualShadow, ...actual } = styles.actual;
     const { shadow: expectedShadow, ...reference } = styles.reference;
     expect(actual, theme).toEqual(reference);
-    expect(styles.actual.radius).toBe('5px');
+    expect(styles.actual.radius).toBe('4px');
     // Tailwind composes transparent ring placeholders ahead of the theme shadow.
     expect(actualShadow).toContain(expectedShadow);
     expect(expectedShadow).not.toBe('none');
@@ -724,14 +723,14 @@ test('switches themes, remembers the choice on reload, and follows system change
   }, makeAppSettings());
   await page.emulateMedia({ colorScheme: 'light' });
   await page.goto('/settings');
-  await page.getByRole('button', { name: 'Display', exact: true }).click();
+  await openSettingsSection(page, 'General', 'Display');
   const dark = page.getByRole('radio', { name: 'Dark', exact: true });
   await dark.click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   expect(await page.evaluate(() => localStorage.getItem('lattice-theme'))).toBe('dark');
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-  await page.getByRole('button', { name: 'Display', exact: true }).click();
+  await openSettingsSection(page, 'General', 'Display');
   await page.getByRole('radio', { name: 'Light', exact: true }).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   await page.evaluate(() => localStorage.setItem('test:fail-save', 'true'));
@@ -1013,7 +1012,7 @@ test('creates a space in Settings and opens it in Chat', async ({ page }) => {
   page.on('pageerror', error => errors.push(error));
 
   await page.goto('/settings');
-  await page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'Spaces', exact: true }).click();
+  await openSettingsSection(page, 'General', 'Spaces');
   await expect(page.getByRole('heading', { level: 1, name: 'Spaces', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Open General in Chat', exact: true })).toBeVisible();
   const name = page.getByRole('textbox', { name: 'Space name', exact: true });
@@ -1044,6 +1043,16 @@ test('creates a space in Settings and opens it in Chat', async ({ page }) => {
   await expect(panel.getByText('Research', { exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+async function openSettingsSection(page: Page, domain: string, section: string) {
+  await page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: domain, exact: true }).click();
+  await page.getByRole('tablist', { name: `${domain} sections` }).getByRole('tab', { name: section, exact: true }).click();
+}
+
+async function chooseOption(page: Page, label: string, option: string) {
+  await page.getByLabel(label, { exact: true }).click();
+  await page.getByRole('option', { name: option, exact: true }).click();
+}
 
 /** A model row's role toggles live in its Configure dialog; the row shows
  *  only the roles it holds. Opens that dialog for `row`. */
@@ -1108,8 +1117,7 @@ test('Downloaded switches chat between llama.cpp and local while keeping the uti
   const errors: Error[] = [];
   page.on('pageerror', error => errors.push(error));
   await page.goto('/settings');
-  const navigation = page.getByRole('navigation', { name: 'Settings sections' });
-  await navigation.getByRole('button', { name: 'Downloaded', exact: true }).click();
+  await openSettingsSection(page, 'Models & AI', 'Downloaded');
   const local = page.getByText('Local model', { exact: true }).locator('../..');
   const remote = page.getByText('llama.cpp connection', { exact: true }).locator('../..');
   await expect(heldRole(remote, 'chat')).toHaveCount(1);
@@ -1123,13 +1131,13 @@ test('Downloaded switches chat between llama.cpp and local while keeping the uti
   await closeRoles(localRoles);
   await expect(heldRole(remote, 'chat')).toHaveCount(0);
   await remote.getByRole('button', { name: 'Edit connection' }).click();
-  await expect(page.getByLabel('Chat provider')).toHaveValue('local');
+  await expect(page.getByLabel('Chat provider')).toHaveText('Local only');
   await expect(page.getByLabel('llama.cpp URL')).toHaveValue('https://llama.example.com');
   await page.getByRole('button', { name: 'Save connection' }).click();
   await expect(page.getByText('llama.cpp settings saved')).toBeVisible();
-  await expect(page.getByLabel('Chat provider')).toHaveValue('local');
+  await expect(page.getByLabel('Chat provider')).toHaveText('Local only');
 
-  await navigation.getByRole('button', { name: 'Downloaded', exact: true }).click();
+  await openSettingsSection(page, 'Models & AI', 'Downloaded');
   const remoteRoles = await openRoles(page, remote);
   await remoteRoles.getByRole('button', { name: 'Chat', exact: true }).click();
   await expect(heldRole(remote, 'chat')).toHaveCount(1);
@@ -1184,7 +1192,7 @@ test('Downloaded assigns the Learning model in Settings without touching the cha
   const errors: Error[] = [];
   page.on('pageerror', error => errors.push(error));
   await page.goto('/settings');
-  await page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'Downloaded', exact: true }).click();
+  await openSettingsSection(page, 'Models & AI', 'Downloaded');
   await expect(page.getByText('Learning: not set — lessons, outlines and study decks will not run until you choose one')).toBeVisible();
 
   const local = page.getByText('Local model', { exact: true }).locator('../..');
@@ -1238,25 +1246,24 @@ test('Downloaded only lists configured connections and remembers a saved localho
   const errors: Error[] = [];
   page.on('pageerror', error => errors.push(error));
   await page.goto('/settings');
-  const navigation = page.getByRole('navigation', { name: 'Settings sections' });
-  await navigation.getByRole('button', { name: 'Downloaded', exact: true }).click();
+  await openSettingsSection(page, 'Models & AI', 'Downloaded');
   await expect(page.getByText('No models downloaded.')).toBeVisible();
   await expect(page.getByText('Ollama connection', { exact: true })).toHaveCount(0);
   await expect(page.getByText('llama.cpp connection', { exact: true })).toHaveCount(0);
 
-  await navigation.getByRole('button', { name: 'Chat', exact: true }).click();
+  await openSettingsSection(page, 'Models & AI', 'Chat');
   await page.getByRole('button', { name: 'Test connection', exact: true }).click();
   await expect(page.getByLabel('Model', { exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Save Ollama connection' }).click();
   await expect(page.getByText('Ollama settings saved')).toBeVisible();
-  await expect(page.getByLabel('Chat provider')).toHaveValue('auto');
-  await page.getByLabel('Chat provider').selectOption('local');
+  await expect(page.getByLabel('Chat provider')).toHaveText('Auto — local, llama.cpp, then Ollama');
+  await chooseOption(page, 'Chat provider', 'Local only');
   await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('test:settings')!).llm.provider)).toBe('local');
 
   // Reopen the settings surface from persisted settings, with a different
   // provider selected and the exact same URL/model as the untouched defaults.
   await page.reload();
-  await navigation.getByRole('button', { name: 'Downloaded', exact: true }).click();
+  await openSettingsSection(page, 'Models & AI', 'Downloaded');
   const remote = page.getByText('Ollama connection', { exact: true }).locator('../..');
   await expect(remote).toBeVisible();
   await expect(heldRole(remote, 'chat')).toHaveCount(0);
@@ -1287,17 +1294,17 @@ test('keeps Ollama and llama.cpp connections separate across provider changes', 
     };
   }, makeAppSettings());
   await page.goto('/settings');
-  await page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'Chat', exact: true }).click();
-  await page.getByLabel('Chat provider').selectOption('llamacpp');
+  await openSettingsSection(page, 'Models & AI', 'Chat');
+  await chooseOption(page, 'Chat provider', 'llama.cpp');
   await expect(page.getByRole('heading', { name: 'llama.cpp server' })).toBeVisible();
   await page.getByLabel('llama.cpp URL').fill('https://llama.example.com');
   await page.getByRole('button', { name: 'Test llama.cpp connection', exact: true }).click();
   await expect(page.getByLabel('llama.cpp model', { exact: true })).toHaveValue('test-model.gguf');
   await page.getByRole('button', { name: 'Save connection' }).click();
-  await page.getByLabel('Chat provider').selectOption('ollama');
+  await chooseOption(page, 'Chat provider', 'Ollama');
   await expect(page.getByRole('heading', { name: 'Ollama server' })).toBeVisible();
   await expect(page.getByLabel('Server URL')).toHaveValue('http://localhost:11434');
-  await page.getByLabel('Chat provider').selectOption('llamacpp');
+  await chooseOption(page, 'Chat provider', 'llama.cpp');
   await expect(page.getByLabel('llama.cpp URL')).toHaveValue('https://llama.example.com');
   await expect(page.getByLabel('llama.cpp model', { exact: true })).toHaveValue('test-model.gguf');
   await page.screenshot({ path: '/tmp/lattice-llamacpp-settings.png' });
@@ -1367,9 +1374,9 @@ test('catalog offers category previews, bounded pages, and honest search results
     };
   }, makeAppSettings());
   await page.goto('/settings');
-  await page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'Models', exact: true }).click();
+  await openSettingsSection(page, 'Models & AI', 'Models');
   await expect(page.getByRole('heading', { name: 'Explore by purpose' })).toBeVisible();
-  await expect(page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'Tools', exact: true })).toBeInViewport({ ratio: 1 });
+  await expect(page.getByRole('tablist', { name: 'Models & AI sections' }).getByRole('tab', { name: 'Tools', exact: true })).toBeInViewport({ ratio: 1 });
   const chat = page.getByRole('region', { name: 'Chat & writing' });
   await expect(chat.getByRole('button', { name: 'Download', exact: true })).toHaveCount(3);
   await expect(page.getByRole('button', { name: 'Download', exact: true })).toHaveCount(12);
@@ -1417,12 +1424,12 @@ test('catalog offers category previews, bounded pages, and honest search results
   await page.screenshot({ path: 'e2e-results/catalog-versions.png' });
   await page.getByRole('button', { name: 'Back', exact: true }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Showing' })).toHaveText('Showing 9–16 of 24 models');
-  await page.getByRole('combobox', { name: 'Sort models' }).selectOption('size_asc');
+  await chooseOption(page, 'Sort models', 'Smallest listed file');
   await expect(page.getByRole('status').filter({ hasText: 'Showing' })).toHaveText('Showing 1–8 of 24 models');
   await page.getByRole('button', { name: 'Filters', exact: true }).click();
-  await page.getByLabel('Listed quantization').selectOption('Q8_0');
+  await chooseOption(page, 'Listed quantization', 'Q8_0');
   await expect(page.getByRole('status').filter({ hasText: 'Showing' })).toHaveText('Showing 1–8 of 8 models');
-  await page.getByLabel('Listed quantization').selectOption('');
+  await chooseOption(page, 'Listed quantization', 'All precisions');
   await page.getByRole('heading', { name: 'Catalog', exact: true }).scrollIntoViewIfNeeded();
   await page.screenshot({ path: '/tmp/lattice-catalog-pages.png' });
 
@@ -1731,13 +1738,13 @@ test('keeps both remote connections in Auto settings after saving and reloading'
     };
   }, makeAppSettings());
   await page.goto('/settings');
-  await page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'Chat', exact: true }).click();
+  await openSettingsSection(page, 'Models & AI', 'Chat');
   await page.getByLabel('llama.cpp model', { exact: true }).fill('qwen.gguf');
   await page.getByRole('button', { name: 'Save connection' }).click();
-  await expect(page.getByLabel('Chat provider')).toHaveValue('auto');
+  await expect(page.getByLabel('Chat provider')).toHaveText('Auto — local, llama.cpp, then Ollama');
   await page.reload();
-  await page.getByRole('navigation', { name: 'Settings sections' }).getByRole('button', { name: 'Chat', exact: true }).click();
-  await expect(page.getByLabel('Chat provider')).toHaveValue('auto');
+  await openSettingsSection(page, 'Models & AI', 'Chat');
+  await expect(page.getByLabel('Chat provider')).toHaveText('Auto — local, llama.cpp, then Ollama');
   await expect(page.getByLabel('llama.cpp model', { exact: true })).toHaveValue('qwen.gguf');
   await expect(page.getByText('Ollama server', { exact: true })).toBeVisible();
   await page.screenshot({ path: '/tmp/lattice-auto-connections.png', fullPage: true });

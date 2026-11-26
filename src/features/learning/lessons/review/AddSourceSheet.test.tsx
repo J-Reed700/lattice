@@ -144,7 +144,7 @@ describe('Add a source', () => {
     const passage = await screen.findByRole('region', { name: 'closest passage in what you added' });
     expect(within(passage).getByText('Tagged monarchs flew about 2,500 miles on average.', { selector: 'mark' })).toBeVisible();
     expect(screen.getByText('Added Monarch Watch; it does not say this. The closest passage is shown: edit the sentence to match it, or add another source.')).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Edit the sentence' }).className).toMatch(/--action\)/);
+    expect(screen.getByRole('button', { name: 'Edit the sentence' }).className).toMatch(/\bbg-action\b/);
     expect(screen.getByRole('button', { name: 'Add another source' })).toBeVisible();
   });
 

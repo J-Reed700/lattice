@@ -1,12 +1,13 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { useLibraryDocumentsQuery } from '@/features/files/hooks/useLibraryDocumentsQuery';
+import { formatDisplayPath } from '@/features/files/model/documentMetadata';
 import { useFileBrowserStore } from '@/features/files/stores/fileBrowserStore';
 import type { DocumentMetadata } from '@/types/fileBrowser';
 
-import { GridView } from './GridView';
+import { computeGridColumns, GridView } from './GridView';
 
 vi.mock('@tanstack/react-virtual', () => ({
   useVirtualizer: ({ count }: { count: number }) => ({
@@ -460,5 +461,67 @@ describe('GridView', () => {
     const selectedCard = screen.getByText('document.pdf').closest('.group');
     expect(selectedCard).toHaveClass('border-border-default');
     expect(selectedCard).toHaveClass('bg-surface-raised');
+  });
+
+  describe('Responsive virtualized columns', () => {
+    const originalResizeObserver = globalThis.ResizeObserver;
+
+    afterEach(() => {
+      globalThis.ResizeObserver = originalResizeObserver;
+    });
+
+    it('computes responsive column counts across container breakpoints', () => {
+      expect(computeGridColumns(0)).toBe(3);
+      expect(computeGridColumns(400)).toBe(1);
+      expect(computeGridColumns(600)).toBe(2);
+      expect(computeGridColumns(900)).toBe(3);
+      expect(computeGridColumns(1200)).toBe(4);
+    });
+
+    it('synchronizes virtualizer row slicing and CSS grid columns via ResizeObserver', () => {
+      let observerCallback: ResizeObserverCallback | null = null;
+      const disconnect = vi.fn();
+
+      globalThis.ResizeObserver = class MockResizeObserver {
+        constructor(callback: ResizeObserverCallback) {
+          observerCallback = callback;
+        }
+        observe() {}
+        unobserve() {}
+        disconnect = disconnect;
+      } as unknown as typeof ResizeObserver;
+
+      const { container, unmount } = render(<GridView />);
+      const scroller = container.querySelector('[data-grid-columns]') as HTMLElement;
+      expect(scroller.dataset.gridColumns).toBe('3');
+
+      act(() => {
+        observerCallback?.(
+          [{ contentRect: { width: 600 } } as ResizeObserverEntry],
+          {} as ResizeObserver,
+        );
+      });
+
+      expect(scroller.dataset.gridColumns).toBe('2');
+      const gridRows = container.querySelectorAll<HTMLElement>('.grid');
+      // 3 documents across 2 columns -> 2 virtualized rows with matching CSS columns.
+      expect(gridRows).toHaveLength(2);
+      expect(gridRows[0].style.gridTemplateColumns).toBe('repeat(2, minmax(0, 1fr))');
+      expect(gridRows[0].children).toHaveLength(2);
+      expect(gridRows[1].children).toHaveLength(1);
+
+      unmount();
+      expect(disconnect).toHaveBeenCalled();
+    });
+
+    it('cleans internal .lattice/files paths into human-readable labels', () => {
+      expect(
+        formatDisplayPath('/Users/test/.lattice/files/ab12cd34/report.pdf'),
+      ).toBe('Imported');
+      expect(
+        formatDisplayPath('/Users/test/.lattice/web-archive/example.org/article/index.md'),
+      ).toBe('Web archive · example.org');
+      expect(formatDisplayPath('https://www.example.org/docs/guide')).toBe('example.org');
+    });
   });
 });

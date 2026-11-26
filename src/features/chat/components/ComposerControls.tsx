@@ -42,11 +42,11 @@ export function ComposerControls({
     <div className="space-y-4 text-sm">
       {/* Turn mode segmented control */}
       <section>
-        <p className="mb-2 text-xs font-medium text-[hsl(var(--text-secondary))]">
+        <p className="mb-2 text-xs font-medium text-text-secondary">
           Turn mode
         </p>
         <div
-          className="flex items-center gap-1 rounded-sm border border-subtle bg-surface p-0.5"
+          className="flex h-8 items-center gap-0.5 rounded-lg bg-[hsl(var(--text-primary)/0.06)] p-[3px]"
           role="tablist"
         >
           {([
@@ -63,10 +63,10 @@ export function ComposerControls({
                 aria-selected={active}
                 onClick={() => onTurnModeChange(opt.id)}
                 title={opt.description}
-                className={`flex-1 rounded-sm px-2 py-1 text-xs transition-colors duration-fast ${
+                className={`h-full flex-1 rounded-md px-2 text-xs font-medium transition-[background-color,color,box-shadow] duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring ${
                   active
-                    ? 'bg-surface-raised text-[hsl(var(--text-primary))]'
-                    : 'text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-secondary))]'
+                    ? 'bg-surface-overlay text-text-primary shadow-control'
+                    : 'text-text-tertiary hover:text-text-primary'
                 }`}
               >
                 {opt.label}
@@ -78,10 +78,10 @@ export function ComposerControls({
 
       {/* Tools checklist */}
       <section>
-        <p className="mb-2 text-xs font-medium text-[hsl(var(--text-secondary))]">
+        <p className="mb-2 text-xs font-medium text-text-secondary">
           Tools
         </p>
-        <div className="space-y-0.5">
+        <div className="space-y-1">
           <ToolRow
             icon={Database}
             label="Your documents"
@@ -157,19 +157,33 @@ function ToolRow({ icon: Icon, label, description, checked, onToggle }: ToolRowP
       role="checkbox"
       aria-checked={checked}
       onClick={onToggle}
-      className="flex w-full items-start gap-2.5 rounded-sm px-2 py-1.5 text-left transition-colors duration-fast hover:bg-surface"
+      className="flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors duration-fast hover:bg-surface focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
     >
-      <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-sm border border-border-default">
-        {checked && (
-          <span className="h-2 w-2 rounded-sm bg-[hsl(var(--accent))]" aria-hidden="true" />
-        )}
+      <span
+        className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border transition-colors duration-fast ${
+          checked
+            ? 'border-accent/30 bg-accent-muted text-accent'
+            : 'border-border-subtle bg-surface text-text-tertiary'
+        }`}
+        aria-hidden="true"
+      >
+        <Icon className="h-3.5 w-3.5" strokeWidth={1.75} />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="flex items-center gap-1.5 text-sm text-[hsl(var(--text-primary))]">
-          <Icon className="h-3 w-3 text-[hsl(var(--text-tertiary))]" />
-          {label}
-        </span>
-        <span className="block text-xs text-[hsl(var(--text-muted))]">{description}</span>
+        <span className="block text-ui font-medium text-text-primary">{label}</span>
+        <span className="block text-xs leading-snug text-text-muted">{description}</span>
+      </span>
+      <span
+        aria-hidden="true"
+        className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors duration-fast ${
+          checked ? 'bg-accent' : 'bg-border-default'
+        }`}
+      >
+        <span
+          className={`block h-3 w-3 rounded-full bg-surface shadow-sm transition-transform duration-fast ${
+            checked ? 'translate-x-3.5' : 'translate-x-0.5'
+          }`}
+        />
       </span>
     </button>
   );

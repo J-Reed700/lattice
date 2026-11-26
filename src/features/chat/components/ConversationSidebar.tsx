@@ -2,17 +2,21 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   AlertCircle,
+  Archive,
+  Bookmark,
+  Check,
   ChevronDown,
   ListChecks,
   Loader2,
   NotebookPen,
   PanelLeft,
   Plus,
+  SlidersHorizontal,
   X
 } from 'lucide-react';
 
-import { IconButton } from '@/components/ui/IconButton';
-import { SidebarHeader, SidebarSearch, SidebarTabs } from '@/components/ui/SidebarHeader';
+import { IconButton, Popover, PopoverContent, PopoverTrigger } from '@/components/ui';
+import { SidebarHeader, SidebarSearch } from '@/components/ui/SidebarHeader';
 import { ConversationList } from '@/features/chat/components/sidebar/ConversationList';
 import { SidebarReferences } from '@/features/chat/components/sidebar/SidebarReferences';
 import { SPACES_MODAL_LAYER_CLASSES } from '@/features/chat/components/sidebar/sidebarUtils';
@@ -51,6 +55,7 @@ export function ConversationSidebar({ onCollapse }: ConversationSidebarProps = {
 
   const [isCreating, setIsCreating] = useState(false);
   const [isSpacesOpen, setIsSpacesOpen] = useState(false);
+  const [isFilterOverflowOpen, setIsFilterOverflowOpen] = useState(false);
   const sidebarRef = useRef<HTMLDivElement | null>(null);
   const [localQuery, setLocalQuery] = useState(searchQuery);
   const debouncedQuery = useDebounce(localQuery, 250);
@@ -134,18 +139,24 @@ export function ConversationSidebar({ onCollapse }: ConversationSidebarProps = {
 
   type FilterId = 'all' | 'saved' | 'bookmarked' | 'pinned' | 'archived' | 'snippets';
 
-  const filterOptions: ReadonlyArray<{ id: FilterId; label: string }> = [
+  const primaryFilterOptions: ReadonlyArray<{ id: FilterId; label: string }> = [
     { id: 'all', label: 'All' },
     { id: 'saved', label: 'Starred' },
     { id: 'pinned', label: 'Pinned' },
-    { id: 'archived', label: 'Archived' },
-    { id: 'snippets', label: 'Referenced' },
   ];
+
+  const overflowFilterOptions: ReadonlyArray<{ id: 'archived' | 'snippets'; label: string; icon: typeof Archive }> = [
+    { id: 'archived', label: 'Archived', icon: Archive },
+    { id: 'snippets', label: 'Referenced', icon: Bookmark },
+  ];
+
+  const activeOverflowOption = overflowFilterOptions.find((option) => option.id === filterMode) ?? null;
+  const hasActivePrimaryFilter = primaryFilterOptions.some((option) => option.id === filterMode);
 
   return (
     <div
       ref={sidebarRef}
-      className={`relative flex h-full w-[280px] max-w-full shrink-0 flex-col overflow-hidden border-r border-border-subtle bg-bg ${isSpacesOpen ? SPACES_MODAL_LAYER_CLASSES.root : ''
+      className={`relative flex h-full w-[280px] max-w-full shrink-0 flex-col overflow-hidden border-r border-border-subtle bg-surface-sunken/70 ${isSpacesOpen ? SPACES_MODAL_LAYER_CLASSES.root : ''
         }`}
     >
       <SidebarHeader
@@ -200,18 +211,104 @@ export function ConversationSidebar({ onCollapse }: ConversationSidebarProps = {
         )}
       </div>
 
-      <div className="shrink-0 space-y-2.5 border-b border-border-subtle px-4 pb-0 pt-1.5">
+      <div className="shrink-0 space-y-2 border-b border-border-subtle px-4 pb-3 pt-1.5">
         <SidebarSearch
           value={localQuery}
           onChange={setLocalQuery}
           placeholder={isJournalScope ? 'Search entries' : 'Search conversations'}
         />
-        <SidebarTabs
-          value={filterMode as FilterId}
-          onChange={handleAsyncEvent((id: FilterId) => handleFilterSelect(id))}
-          options={filterOptions}
-          className="justify-between gap-2"
-        />
+        <div className="flex items-center gap-1.5">
+          <div
+            role="tablist"
+            aria-label="Conversation filters"
+            className="flex h-8 min-w-0 flex-1 items-center gap-0.5 rounded-lg bg-[hsl(var(--text-primary)/0.06)] p-[3px]"
+          >
+            {primaryFilterOptions.map((option) => {
+              const isActive = option.id === filterMode;
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  tabIndex={isActive || (!hasActivePrimaryFilter && option.id === 'all') ? 0 : -1}
+                  onClick={handleAsyncEvent(() => handleFilterSelect(option.id))}
+                  onKeyDown={(event) => {
+                    const index = primaryFilterOptions.findIndex((item) => item.id === option.id);
+                    const nextIndex = event.key === 'ArrowRight' ? (index + 1) % primaryFilterOptions.length
+                      : event.key === 'ArrowLeft' ? (index - 1 + primaryFilterOptions.length) % primaryFilterOptions.length
+                        : event.key === 'Home' ? 0 : event.key === 'End' ? primaryFilterOptions.length - 1 : null;
+                    if (nextIndex === null) return;
+                    event.preventDefault();
+                    void handleFilterSelect(primaryFilterOptions[nextIndex].id);
+                    event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[nextIndex]?.focus();
+                  }}
+                  className={`flex h-full min-w-0 flex-1 items-center justify-center whitespace-nowrap rounded-md px-2 text-xs font-medium transition-[background-color,color,box-shadow] duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring ${
+                    isActive
+                      ? 'bg-surface text-text-primary shadow-sm ring-1 ring-border-subtle dark:bg-surface-overlay'
+                      : 'text-text-tertiary hover:text-text-primary'
+                  }`}
+                >
+                  {option.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <Popover open={isFilterOverflowOpen} onOpenChange={setIsFilterOverflowOpen}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                aria-label={activeOverflowOption ? `More filters (${activeOverflowOption.label})` : 'More conversation filters'}
+                aria-haspopup="menu"
+                title="Archived & Referenced"
+                className={`inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-lg border px-2 text-xs font-medium transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring ${
+                  activeOverflowOption
+                    ? 'border-accent/35 bg-accent-muted text-accent shadow-xs'
+                    : 'border-border-subtle/70 bg-surface/60 text-text-tertiary hover:bg-surface hover:text-text-primary'
+                }`}
+              >
+                {activeOverflowOption ? (
+                  <>
+                    <span>{activeOverflowOption.label}</span>
+                    <ChevronDown className="h-3 w-3 shrink-0 opacity-75" aria-hidden="true" />
+                  </>
+                ) : (
+                  <SlidersHorizontal className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+                )}
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-44 rounded-xl p-1">
+              <div role="menu" aria-label="More conversation filters" className="flex flex-col">
+                {overflowFilterOptions.map((option) => {
+                  const Icon = option.icon;
+                  const isActive = filterMode === option.id;
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={isActive}
+                      onClick={() => {
+                        setIsFilterOverflowOpen(false);
+                        void handleFilterSelect(option.id);
+                      }}
+                      className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-ui transition-colors duration-fast hover:bg-surface-sunken ${
+                        isActive ? 'font-medium text-text-primary' : 'text-text-secondary'
+                      }`}
+                    >
+                      <span className="flex items-center gap-2">
+                        <Icon className="h-3.5 w-3.5 shrink-0 text-text-tertiary" strokeWidth={1.75} aria-hidden="true" />
+                        {option.label}
+                      </span>
+                      {isActive ? <Check className="h-3.5 w-3.5 shrink-0 text-accent" aria-hidden="true" /> : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </PopoverContent>
+          </Popover>
+        </div>
       </div>
 
       {isSelectionMode && filterMode !== 'snippets' && (

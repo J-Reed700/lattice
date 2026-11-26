@@ -321,19 +321,19 @@ export function ReferenceInbox() {
   void isResolvingSelected;
 
   return (
-    <div className="relative flex h-full overflow-hidden bg-[hsl(var(--bg))] text-[hsl(var(--text-primary))]">
+    <div className="relative flex h-full overflow-hidden bg-bg text-text-primary">
       {sidebarCollapsed ? (
-        <aside className="flex h-full w-14 shrink-0 flex-col items-center gap-2 border-r border-[hsl(var(--border-subtle))] bg-[hsl(var(--surface))] py-2">
+        <aside className="flex h-full w-14 shrink-0 flex-col items-center gap-2 border-r border-border-subtle bg-surface-sunken/70 py-2">
           <button
             type="button"
             onClick={() => setSidebarCollapsed(false)}
-            className="rounded-sm p-2 text-[hsl(var(--text-tertiary))] hover:bg-[hsl(var(--surface-raised))] hover:text-[hsl(var(--text-primary))] transition-colors duration-fast"
+            className="rounded-lg p-2 text-text-tertiary transition-colors duration-fast hover:bg-surface hover:text-text-primary"
             aria-label="Expand sidebar"
             title="Expand sidebar (⌘\\)"
           >
             <PanelLeft className="h-4 w-4" strokeWidth={1.75} />
           </button>
-          <div className="mt-1 flex flex-col items-center gap-1 text-[hsl(var(--text-tertiary))]">
+          <div className="mt-1 flex flex-col items-center gap-1 text-text-tertiary">
             <Bookmark className="h-4 w-4" strokeWidth={1.75} />
           </div>
         </aside>

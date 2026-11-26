@@ -28,11 +28,9 @@ describe('ThinkingSection', () => {
     expect(save).toHaveBeenCalledWith({ answerThinking: true });
   });
 
-  it('pins thinking for every request when the user overrides it', () => {
+  it('pins thinking for every request when the user overrides it', async () => {
     const save = renderSection();
-    fireEvent.change(screen.getByLabelText('Thinking for every request'), {
-      target: { value: 'on' },
-    });
+    await userEvent.setup().click(screen.getByRole('tab', { name: 'Always on' }));
     expect(save).toHaveBeenCalledWith({ thinkingOverride: 'on' });
   });
 

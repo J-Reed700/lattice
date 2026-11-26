@@ -1255,7 +1255,7 @@ impl lattice_core::application::ports::llm_port::LLMPort for DropsAfterRepair {
             return Err(AppError::Network("the connection dropped".into()));
         }
         let response = self.model.complete(request).await;
-        if asks_for_repair(request) {
+        if asks_for_repair(request) && request.schema().is_some() {
             self.repaired.store(true, Ordering::SeqCst);
         }
         response

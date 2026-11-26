@@ -6,6 +6,8 @@ pub(crate) const SENTENCES: &str = "candidate shows the material with a label in
 
 pub(crate) const KEYS: &str = "A question's answer key (correctIndex) names one of its options by position, and no edit writes a position. When a defect is that the key names the wrong option, give in edits.keys the label of a sentence of the option that is right (right) and, in wasWrong, why the option the key named until now is wrong: the application moves the key and keeps every wrong option's reason with its option. Correct the explanation and any other text in edits.sentences. Leave keys empty when no defect is about a key.";
 
+pub(crate) const NO_KEYS: &str = "This section has no answer key: leave edits.keys empty.";
+
 pub(crate) const NO_CITATIONS: &str =
     "This material takes no citations: leave cite, recite and uncite empty and give no from.";
 

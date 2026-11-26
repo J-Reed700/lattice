@@ -26,9 +26,9 @@ use tracing::{debug, info, warn};
 // while loading a document or decoding an individual page.
 pub(super) const MAX_PDF_WORKERS: usize = 2;
 const PDF_TIMEOUT: Duration = Duration::from_secs(30);
+/// Per-stream FlateDecode decompression-bomb guard for `lopdf`: prevents a
+/// tiny compressed PDF stream from expanding into gigabytes of RAM.
 pub(super) const MAX_PDF_STREAM_BYTES: usize = 8 * 1024 * 1024;
-const MAX_PDF_LAYOUT_BYTES: usize = 64 * 1024 * 1024;
-const MAX_PDF_PAGES: usize = 2000;
 
 async fn run_pdf_worker<T: Send + 'static>(
     workers: Arc<Semaphore>,
@@ -89,26 +89,11 @@ struct PageText {
 /// `needs_ocr` and the rest of the document is still indexed.
 pub async fn extract_pdf(
     path: &Path,
-    max_file_size: u64,
+    max_file_size: Option<u64>,
     ocr: Option<&Arc<dyn OcrPort>>,
     workers: &ExtractionWorkers,
 ) -> Result<ExtractedContent> {
-    let metadata = tokio::fs::metadata(path)
-        .await
-        .map_err(|e| IndexingError::Io {
-            message: e.to_string(),
-            kind: format!("{:?}", e.kind()),
-        })?;
-
-    let file_size = metadata.len();
-
-    if file_size > max_file_size {
-        return Err(IndexingError::FileTooLarge {
-            path: path.display().to_string(),
-            size_bytes: file_size,
-            max_size_bytes: max_file_size,
-        });
-    }
+    super::check_file_size(path, max_file_size).await?;
 
     let path_clone = path.to_path_buf();
 
@@ -182,18 +167,12 @@ fn extract_pdf_pages(path: &Path, cancel: &CancellationToken) -> Result<Vec<Page
 
     ensure_pdf_active(cancel)?;
     let page_ids = doc.get_pages();
-    if page_ids.len() > MAX_PDF_PAGES {
-        return Err(IndexingError::Other(format!(
-            "PDF exceeds {MAX_PDF_PAGES} pages"
-        )));
-    }
-    let mut retained_layout_bytes = 0usize;
     let layouts = collect_pdf_pages(path, page_ids.keys().copied(), |page| {
         ensure_pdf_active(cancel)?;
         let Some(page_id) = page_ids.get(&page).copied() else {
             return Err(IndexingError::Other(format!("Page {page} has no object")));
         };
-        let layout = pdf_layout::read_page(&doc, page, page_id, |reason| {
+        pdf_layout::read_page(&doc, page, page_id, |reason| {
             warn!(
                 path = %path.display(),
                 page,
@@ -204,14 +183,7 @@ fn extract_pdf_pages(path: &Path, cancel: &CancellationToken) -> Result<Vec<Page
         .map_err(|e| IndexingError::ContentExtraction {
             path: path.display().to_string(),
             reason: format!("Failed to read page {}: {}", page, e),
-        })?;
-        retained_layout_bytes = retained_layout_bytes.saturating_add(layout.retained_bytes());
-        if retained_layout_bytes > MAX_PDF_LAYOUT_BYTES {
-            return Err(IndexingError::Other(
-                "PDF extracted layout exceeds 64 MiB".into(),
-            ));
-        }
-        Ok(layout)
+        })
     })?;
 
     ensure_pdf_active(cancel)?;

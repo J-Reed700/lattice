@@ -10,7 +10,7 @@ use crate::{
 };
 use lattice_core::{
     application::{
-        ports::{llm_port::SamplingOverride, LLMPort},
+        ports::LLMPort,
         services::model_contract::{Contract, ContractCall, ContractId, PromptInput},
     },
     shared::error::Result,
@@ -329,13 +329,12 @@ async fn standard_for_question(
             2_200,
         )
         .await?;
-        let mut request = crate::model_call::structured(
+        let request = crate::model_call::structured(
             &author_system,
             prompt,
             standard_schema(&evidence.ids()),
             2_200,
         );
-        request.call.sampling = Some(SamplingOverride::deterministic());
         let call = ContractCall::of::<AnswerStandardAuthor>(&PromptInput {
             system: request.instructions().to_owned(),
             prompt: request.task().to_owned(),

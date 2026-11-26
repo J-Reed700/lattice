@@ -46,6 +46,42 @@ pub async fn retry_learning_generation_job(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn prioritize_learning_generation_job(
+    request: LearningGenerationJobActionRequestDto,
+    container: State<'_, Container>,
+) -> Result<LearningGenerationJob, ApiError> {
+    let repo = crate::features::learning::curriculum_repository::LearningCurriculumRepository::new(
+        container.database().clone(),
+    );
+    let job = repo
+        .prioritize_job(&request)
+        .await
+        .map_err(ApiError::from)?;
+    container.jobs().submitted(&job.id).await;
+    Ok(job)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn reset_learning_lesson_preparation(
+    request: ResetLearningLessonPreparationRequestDto,
+    container: State<'_, Container>,
+) -> Result<ResetLearningLessonPreparationResultDto, ApiError> {
+    let repo = crate::features::learning::curriculum_repository::LearningCurriculumRepository::new(
+        container.database().clone(),
+    );
+    let result = repo
+        .reset_lesson_preparation(&request)
+        .await
+        .map_err(ApiError::from)?;
+    for job_id in &result.cancelled_job_ids {
+        container.jobs().cancelled(job_id).await;
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn get_learning_generation_job(
     id: String,
     container: State<'_, Container>,

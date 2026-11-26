@@ -84,3 +84,23 @@ async fn a_retry_after_a_held_partial_call_marker_does_not_prepend_it_to_the_ret
         .collect();
     assert_eq!(shown, "Hello all it takes.");
 }
+
+#[test]
+fn reasoning_progress_streams_past_24k_chars_while_throttling_small_deltas() {
+    let mut progress = ReasoningProgress::new();
+    let chunk = "a".repeat(10_000);
+    let first = progress.push(&chunk).expect("first chunk emits");
+    assert_eq!(first.chars().count(), 10_000);
+
+    // Sub-threshold delta immediately after an emit is batched, not emitted.
+    assert!(progress.push("b").is_none());
+
+    let second = progress.push(&chunk).expect("second large chunk emits");
+    assert_eq!(second.chars().count(), 20_001);
+
+    let third = progress
+        .push(&chunk)
+        .expect("third large chunk emits past 24k");
+    assert_eq!(third.chars().count(), 30_001);
+    assert_eq!(progress.text().map(|t| t.chars().count()), Some(30_001));
+}

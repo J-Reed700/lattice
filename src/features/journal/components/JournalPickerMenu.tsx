@@ -1,17 +1,26 @@
 import { useState } from 'react';
 
-import { confirm as tauriConfirm } from '@tauri-apps/plugin-dialog';
 import { BookOpen, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react';
 
-import { IconButton } from '@/components/ui/IconButton';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  IconButton,
+  Input,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
+} from '@/components/ui';
 import type { ConversationJournalDto } from '@/types/api/conversation';
 
 interface JournalPickerMenuProps {
@@ -28,10 +37,9 @@ interface JournalPickerMenuProps {
 const NEW_JOURNAL_VALUE = '__new-journal__';
 
 /**
- * Sidebar journal picker: shadcn Select for switching + a More menu (Popover)
- * for rename/delete of the current journal. Replaces the bare native select
- * + new-journal button.
- * Spec §4.1.2.
+ * Sidebar journal picker: Radix Select for switching + a More menu (Popover)
+ * for rename/delete of the current journal, with a clean Radix Dialog
+ * confirmation before deletion.
  */
 export function JournalPickerMenu({
   journals,
@@ -45,6 +53,8 @@ export function JournalPickerMenu({
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState('');
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const handleValueChange = (value: string) => {
     if (value === NEW_JOURNAL_VALUE) {
@@ -71,15 +81,16 @@ export function JournalPickerMenu({
     setIsMoreOpen(false);
   };
 
-  const confirmDelete = async () => {
-    if (!currentJournal) return;
-    const confirmed = await tauriConfirm(
-      'This permanently deletes the journal and cannot be undone.',
-      { title: `Delete "${currentJournal.name}"?`, kind: 'warning' },
-    );
-    if (!confirmed) return;
-    await onDeleteCurrent();
-    setIsMoreOpen(false);
+  const handleConfirmDelete = async () => {
+    if (!currentJournal || isDeleting) return;
+    setIsDeleting(true);
+    try {
+      await onDeleteCurrent();
+      setIsDeleteDialogOpen(false);
+      setIsMoreOpen(false);
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   return (
@@ -97,16 +108,24 @@ export function JournalPickerMenu({
             <SelectValue placeholder="Select journal">
               {currentJournal && (
                 <span className="flex min-w-0 items-center gap-2.5 text-left">
-                  {/* The notebook, at the size of a thing you pick up. */}
                   <span
                     aria-hidden="true"
-                    className="notebook-swatch flex h-10 w-8 shrink-0 items-center justify-center rounded-[5px] text-[13px]"
-                    style={currentJournal.accentColor ? { backgroundColor: currentJournal.accentColor } : undefined}
+                    className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border-subtle bg-surface text-sm text-text-secondary shadow-sm"
                   >
-                    {currentJournal.icon || '📓'}
+                    {currentJournal.icon ? (
+                      <span>{currentJournal.icon}</span>
+                    ) : (
+                      <BookOpen className="h-4 w-4 text-text-secondary" strokeWidth={1.6} />
+                    )}
+                    {currentJournal.accentColor ? (
+                      <span
+                        className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-surface"
+                        style={{ backgroundColor: currentJournal.accentColor }}
+                      />
+                    ) : null}
                   </span>
                   <span className="min-w-0">
-                    <span className="block truncate font-serif text-[16px] font-medium leading-tight tracking-[-0.01em] text-text-primary">
+                    <span className="block truncate font-sans text-[14px] font-semibold leading-tight tracking-[-0.015em] text-text-primary">
                       {currentJournal.name}
                     </span>
                     {meta ? <span className="mt-0.5 block truncate text-[11px] text-text-muted">{meta}</span> : null}
@@ -119,13 +138,17 @@ export function JournalPickerMenu({
             {journals.map((journal) => (
               <SelectItem key={journal.id} value={journal.id}>
                 <span className="flex items-center gap-2">
-                  <span>{journal.icon || '📓'}</span>
+                  {journal.icon ? (
+                    <span>{journal.icon}</span>
+                  ) : (
+                    <BookOpen className="h-3.5 w-3.5 text-text-tertiary" strokeWidth={1.6} aria-hidden="true" />
+                  )}
                   <span>{journal.name}</span>
                 </span>
               </SelectItem>
             ))}
             <SelectItem value={NEW_JOURNAL_VALUE}>
-              <span className="flex items-center gap-2 text-[hsl(var(--accent))]">
+              <span className="flex items-center gap-2 text-accent">
                 <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
                 New journal…
               </span>
@@ -140,14 +163,16 @@ export function JournalPickerMenu({
             <MoreHorizontal />
           </IconButton>
         </PopoverTrigger>
-        <PopoverContent align="end" className="w-56 p-2">
+        <PopoverContent align="end" className="w-60 rounded-xl p-2">
           {isRenaming ? (
-            <div className="space-y-2">
-              <label className="block text-xxs uppercase tracking-[0.08em] text-[hsl(var(--text-muted))]">
+            <div className="space-y-2.5 p-1">
+              <label className="block text-xxs uppercase tracking-[0.08em] text-text-muted">
                 Rename journal
               </label>
-              <input
+              <Input
                 autoFocus
+                size="sm"
+                aria-label="Journal name"
                 value={renameDraft}
                 onChange={(e) => setRenameDraft(e.target.value)}
                 onKeyDown={(e) => {
@@ -159,23 +184,23 @@ export function JournalPickerMenu({
                     setIsRenaming(false);
                   }
                 }}
-                className="w-full rounded-sm border border-[hsl(var(--border-default))] bg-[hsl(var(--surface))] px-2 py-1.5 text-sm text-[hsl(var(--text-primary))] outline-hidden focus:border-[hsl(var(--accent))]"
               />
               <div className="flex items-center justify-end gap-1.5">
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="sm"
                   onClick={() => setIsRenaming(false)}
-                  className="rounded-sm px-2 py-1 text-xs text-[hsl(var(--text-tertiary))] hover:text-[hsl(var(--text-primary))] transition-colors duration-fast"
                 >
                   Cancel
-                </button>
-                <button
+                </Button>
+                <Button
                   type="button"
+                  size="sm"
                   onClick={() => void commitRename()}
-                  className="rounded-sm bg-[hsl(var(--accent))] px-2 py-1 text-xs font-medium text-[hsl(var(--accent-fg))] hover:bg-[hsl(var(--accent-hover))] transition-colors duration-fast"
                 >
                   Save
-                </button>
+                </Button>
               </div>
             </div>
           ) : (
@@ -184,9 +209,9 @@ export function JournalPickerMenu({
                 type="button"
                 onClick={startRename}
                 disabled={!currentJournal}
-                className="flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-[hsl(var(--text-primary))] hover:bg-[hsl(var(--surface))] transition-colors duration-fast disabled:opacity-40"
+                className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-ui text-text-primary transition-colors duration-fast hover:bg-surface-sunken disabled:opacity-40"
               >
-                <Pencil className="h-3.5 w-3.5" strokeWidth={1.75} />
+                <Pencil className="h-3.5 w-3.5 text-text-tertiary" strokeWidth={1.75} />
                 Rename journal
               </button>
               <button
@@ -195,17 +220,20 @@ export function JournalPickerMenu({
                   onCreate();
                   setIsMoreOpen(false);
                 }}
-                className="flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-[hsl(var(--text-primary))] hover:bg-[hsl(var(--surface))] transition-colors duration-fast"
+                className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-ui text-text-primary transition-colors duration-fast hover:bg-surface-sunken"
               >
-                <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
+                <Plus className="h-3.5 w-3.5 text-text-tertiary" strokeWidth={1.75} />
                 New journal…
               </button>
-              <div className="my-1 h-px bg-[hsl(var(--border-subtle))]" />
+              <div className="my-1 h-px bg-border-subtle" />
               <button
                 type="button"
-                onClick={() => void confirmDelete()}
+                onClick={() => {
+                  setIsMoreOpen(false);
+                  setIsDeleteDialogOpen(true);
+                }}
                 disabled={!currentJournal}
-                className="flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-[hsl(var(--danger-fg))] hover:bg-[hsl(var(--danger-muted))] transition-colors duration-fast disabled:opacity-40"
+                className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-ui text-danger-fg transition-colors duration-fast hover:bg-danger-muted disabled:opacity-40"
               >
                 <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
                 Delete journal…
@@ -214,6 +242,35 @@ export function JournalPickerMenu({
           )}
         </PopoverContent>
       </Popover>
+
+      <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete &ldquo;{currentJournal?.name}&rdquo;?</DialogTitle>
+            <DialogDescription>
+              This permanently deletes the journal and cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setIsDeleteDialogOpen(false)}
+              disabled={isDeleting}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void handleConfirmDelete()}
+              disabled={isDeleting}
+            >
+              {isDeleting ? 'Deleting…' : 'Delete journal'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

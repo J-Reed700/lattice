@@ -62,7 +62,7 @@ export function ClozeEditor({ item, draft, disabled, promptId, onChange }: Edito
 export function ClozeReview({ item, draft, reveal, result }: ReviewProps) {
   return <div>
     <div className="text-sm leading-7 text-text-secondary">{clozeSegments(item.prompt).map((segment, index) => ('blank' in segment
-      ? <span key={index} className="mx-0.5 rounded bg-background px-1.5 font-semibold text-text-primary">[{segment.blank + 1}]</span>
+      ? <span key={index} className="mx-0.5 rounded bg-bg px-1.5 font-semibold text-text-primary">[{segment.blank + 1}]</span>
       : <ClozeText key={index} text={segment.text} />))}</div>
     <ul className="mt-3 space-y-2">{reveal.blanks.map((key, index) => {
       const yours = draft.blankResponses[index]?.trim();

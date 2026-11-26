@@ -14,9 +14,8 @@ interface EntryActionRailProps {
 }
 
 /**
- * Foot of the context rail: Synthesize popover on the left, the highlight
- * hint on the right.
- * Spec §5.5.
+ * Calm editorial writing bar beneath the page: Synthesize popover on the left,
+ * subtle highlight hint on the right.
  */
 export function EntryActionRail({
   selectedEntryId,
@@ -27,7 +26,7 @@ export function EntryActionRail({
   weekCandidates,
 }: EntryActionRailProps) {
   return (
-    <div className="flex items-center justify-between gap-3">
+    <div className="flex items-center justify-between gap-4">
       <SynthesizePopover
         selectedEntryId={selectedEntryId}
         pinnedCount={pinnedCount}
@@ -36,7 +35,7 @@ export function EntryActionRail({
         disabled={disabled}
         weekCandidates={weekCandidates}
       />
-      <p className="text-[11px] text-[hsl(var(--text-muted))]">
+      <p className="text-xs text-text-muted">
         Select text to highlight
       </p>
     </div>

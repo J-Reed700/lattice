@@ -7,10 +7,7 @@ use crate::{
 };
 use lattice_core::{
     application::{
-        ports::{
-            llm_port::{SamplingOverride, ANSWER_EFFORT},
-            LLMPort,
-        },
+        ports::{llm_port::ANSWER_EFFORT, LLMPort},
         services::model_contract::{
             ask::{ask_new, Alone, Answered, Refusal, Says},
             legacy,
@@ -193,7 +190,6 @@ pub async fn independent_solution(
     let mut independent = legacy::grounded(INDEPENDENT_SOLUTION, context.to_string());
     *legacy::grounded_says(&mut independent).output_tokens = 1_800;
     independent.call.reasoning_effort = Some(ANSWER_EFFORT.into());
-    independent.call.sampling = Some(SamplingOverride::deterministic());
     let call = ContractCall::of::<IndependentSolution>(&PromptInput {
         system: independent.instructions().to_owned(),
         prompt: independent.task().to_owned(),
@@ -214,8 +210,7 @@ pub async fn review(
 ) -> Result<Review> {
     let guide = fields(standard);
     let input = input_of(question, solution, standard, &guide, sources);
-    let mut call = model_call::answer_options();
-    call.sampling = Some(SamplingOverride::deterministic());
+    let call = model_call::answer_options();
     let texts = texts_of(&input);
     let found = ask_new::<GuideReview>(
         llm,

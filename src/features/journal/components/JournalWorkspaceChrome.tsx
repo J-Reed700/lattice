@@ -1,16 +1,17 @@
 import { NotebookPen, PanelLeft, Plus } from 'lucide-react';
 
+import { Button } from '@/components/ui';
 import type { Notice } from '@/features/journal/hooks/useJournalNotice';
 
 /** Shown when the journal list could not be loaded or the first journal not created. */
 export function JournalLoadError({ error, onRetry }: { error: string; onRetry: () => void }) {
   return (
-    <div className="flex h-full items-center justify-center bg-[hsl(var(--bg))] p-6">
+    <div className="flex h-full items-center justify-center bg-bg p-6">
       <div className="max-w-sm text-center">
         <NotebookPen className="mx-auto mb-5 h-8 w-8 text-text-tertiary" strokeWidth={1.5} />
-        <h1 className="font-serif text-2xl text-text-primary">Your journal couldn’t load</h1>
+        <h1 className="font-sans text-2xl font-semibold tracking-[-0.02em] text-text-primary">Your journal couldn’t load</h1>
         <p className="mt-3 text-sm leading-relaxed text-text-tertiary">Try connecting again to return to your pages.</p>
-        <button type="button" onClick={onRetry} className="mt-6 rounded-lg bg-accent px-5 py-2.5 text-sm font-medium text-accent-fg transition-colors hover:bg-accent-hover">Try again</button>
+        <Button type="button" onClick={onRetry} className="mt-6">Try again</Button>
         <details className="mt-5 text-xs text-text-tertiary">
           <summary className="cursor-pointer">Error details</summary>
           <p className="mt-2 wrap-break-word text-left">{error}</p>
@@ -31,30 +32,30 @@ export function JournalEmptyState({
   notice: Notice | null;
 }) {
   return (
-    <div className="flex h-full items-center justify-center bg-[hsl(var(--bg))] p-6">
+    <div className="flex h-full items-center justify-center bg-bg p-6">
       <div className="flex max-w-md flex-col items-center gap-4 text-center">
         <NotebookPen
-          className="h-10 w-10 text-[hsl(var(--text-muted))]"
+          className="h-10 w-10 text-text-muted"
           strokeWidth={1.5}
         />
-        <h1 className="font-serif text-xl text-[hsl(var(--text-primary))]">
+        <h1 className="font-sans text-xl font-semibold tracking-[-0.02em] text-text-primary">
           Start a journal.
         </h1>
-        <p className="text-sm text-[hsl(var(--text-tertiary))]">
+        <p className="text-sm text-text-tertiary">
           A journal is a notebook of your own thinking. Conversations attached to it
           become entries you can return to.
         </p>
-        <button
+        <Button
           type="button"
           onClick={onCreateJournal}
           disabled={isCreatingJournal}
-          className="inline-flex h-9 items-center gap-1.5 rounded-md bg-[hsl(var(--accent))] px-4 text-sm font-medium text-[hsl(var(--accent-fg))] hover:bg-[hsl(var(--accent-hover))] transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] focus-visible:ring-offset-2 focus-visible:ring-offset-[hsl(var(--bg))]"
+          className="gap-1.5"
         >
           <Plus className="h-3.5 w-3.5" strokeWidth={1.75} />
           {isCreatingJournal ? 'Creating journal…' : 'New journal'}
-        </button>
+        </Button>
         {notice?.tone === 'error' && (
-          <p role="alert" className="max-w-sm text-sm text-[hsl(var(--danger-fg))]">
+          <p role="alert" className="max-w-sm text-sm text-danger-fg">
             {notice.message}
           </p>
         )}
@@ -72,7 +73,7 @@ export function CollapsedJournalSidebar({
   onNewPage: () => void;
 }) {
   return (
-    <aside className="flex h-full w-12 shrink-0 flex-col items-center gap-1 border-r border-[hsl(var(--border-subtle))] py-2.5">
+    <aside className="flex h-full w-12 shrink-0 flex-col items-center gap-1 border-r border-border-subtle bg-surface-sunken/70 py-2.5">
       <button
         type="button"
         onClick={onExpand}

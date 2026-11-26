@@ -15,8 +15,7 @@ import {
   type NumericFieldConfig,
   type NumericTuningKey,
 } from './retrievalTuningFields';
-import { toFinite } from './searchSettingsOptions';
-import { NUMBER_FIELD_CLASS } from './settingsStyles';
+import { RangeStepperControl, SettingsNumberField } from './SettingControls';
 
 /** The "Advanced retrieval tuning" disclosure and its grouped numeric knobs. */
 export function RetrievalTuningSection({
@@ -53,12 +52,12 @@ export function RetrievalTuningSection({
     const touched = Object.keys(normalizedTuning).filter(
       (candidate) =>
         normalizedTuning[candidate as keyof ApiRetrievalTuningSettings] !==
-        searchSettings.retrievalTuning[candidate as keyof ApiRetrievalTuningSettings]
+        searchSettings.retrievalTuning[candidate as keyof ApiRetrievalTuningSettings],
     );
 
     saveSearchUpdates(
       { retrievalTuning: normalizedTuning },
-      [key, ...touched].map((candidate) => `tuning.${String(candidate)}`)
+      [key, ...touched].map((candidate) => `tuning.${String(candidate)}`),
     );
   };
 
@@ -70,29 +69,42 @@ export function RetrievalTuningSection({
     const stored = searchSettings.retrievalTuning[field.key];
     const value = tuningValue(field.key, stored);
     const inputId = `search-tuning-${String(field.key)}`;
+    const integer = field.step >= 1;
+
+    const handleCommit = (candidate: number) => {
+      const normalized = normalizeFieldValue(field, candidate);
+      if (normalized === stored) {
+        clearDrafts([`tuning.${String(field.key)}`]);
+        return;
+      }
+      saveTuningField(field.key, normalized);
+    };
 
     return (
       <SettingsRow key={field.key} label={field.label} htmlFor={inputId}>
-        <input
-          id={inputId}
-          type="number"
-          min={field.min}
-          max={field.max}
-          step={field.step}
-          value={value}
-          onChange={(event) => {
-            setDraft(`tuning.${String(field.key)}`, toFinite(event.target.value, value));
-          }}
-          onBlur={(event) => {
-            const normalized = normalizeFieldValue(field, toFinite(event.target.value, value));
-            if (normalized === stored) {
-              clearDrafts([`tuning.${String(field.key)}`]);
-              return;
-            }
-            saveTuningField(field.key, normalized);
-          }}
-          className={NUMBER_FIELD_CLASS}
-        />
+        {field.max !== undefined ? (
+          <RangeStepperControl
+            id={inputId}
+            label={field.label}
+            min={field.min}
+            max={field.max}
+            step={field.step}
+            integer={integer}
+            value={value}
+            onDraftChange={(next) => setDraft(`tuning.${String(field.key)}`, next)}
+            onCommit={handleCommit}
+          />
+        ) : (
+          <SettingsNumberField
+            id={inputId}
+            min={field.min}
+            step={field.step}
+            integer={integer}
+            value={value}
+            onDraftChange={(next) => setDraft(`tuning.${String(field.key)}`, next)}
+            onCommit={handleCommit}
+          />
+        )}
       </SettingsRow>
     );
   };
@@ -104,12 +116,12 @@ export function RetrievalTuningSection({
           type="button"
           onClick={() => setShowAdvancedTuning((previous) => !previous)}
           aria-expanded={showAdvancedTuning}
-          className="flex w-full items-center gap-2 border-b border-border-subtle py-3 text-left text-sm text-text-primary transition-colors duration-fast hover:text-text-primary"
+          className="flex w-full items-center gap-2 border-b border-border-subtle py-3 text-left text-sm font-medium text-text-primary transition-colors duration-fast hover:text-accent focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
         >
           {showAdvancedTuning ? (
-            <ChevronDown className="h-4 w-4 shrink-0 text-text-muted" />
+            <ChevronDown className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
           ) : (
-            <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
+            <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
           )}
           Advanced retrieval tuning
         </button>

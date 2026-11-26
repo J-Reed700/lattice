@@ -37,11 +37,11 @@ export function CourseNavigator({ modules, moduleId, lessonId, disabled, onModul
   ];
   return <div className="studio-course-pickers">
     <div className="studio-course-picker">
-      <label htmlFor="module-select" className="shrink-0">Module</label>
+      <label htmlFor="module-select" className="sr-only">Module</label>
       <SearchableSelect id="module-select" label="Module" value={moduleId} disabled={disabled || !modules.length} searchPlaceholder="Find a module…" emptyMessage="No modules match your search." options={moduleOptions} onValueChange={(id) => { const next = modules.find((module) => module.id === id); if (next) onModuleChange(next); }} />
     </div>
     <div className="studio-course-picker">
-      <label htmlFor="lesson-select" className="shrink-0">Lesson</label>
+      <label htmlFor="lesson-select" className="sr-only">Lesson</label>
       <SearchableSelect id="lesson-select" label="Lesson context" value={lessonId} disabled={disabled || !current?.lessons.length} searchPlaceholder="Find a lesson…" emptyMessage="No lessons match your search." options={lessonOptions} onValueChange={onLessonChange} />
     </div>
     {children}

@@ -8,6 +8,7 @@ import type { ModelMetadata, ModelRecommendation } from '@/types/modelCatalog';
 import { modelMetaLine } from './catalogUtils';
 import { ModelFilterPanel } from './ModelFilterPanel';
 import { ModelRow } from './ModelRow';
+import { chooseRadixOption } from '../radixSelectTestUtils';
 
 
 const metadata = (overrides: Partial<ModelMetadata> = {}): ModelMetadata => ({
@@ -86,7 +87,7 @@ describe('ModelFilterPanel', () => {
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     await user.click(toggle);
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByLabelText('Maximum size')).toHaveValue('');
+    expect(screen.getByLabelText('Maximum size')).toHaveTextContent('Any download size');
     expect(screen.getByLabelText('Minimum downloads')).toBeInTheDocument();
     expect(screen.getByLabelText('Capability')).toBeInTheDocument();
     expect(screen.getByLabelText('Estimated fit')).toBeInTheDocument();
@@ -108,7 +109,7 @@ describe('ModelFilterPanel', () => {
     expect(screen.queryByRole('button', { name: 'Reset filters' })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Filters' }));
-    await user.selectOptions(screen.getByLabelText('Maximum size'), '4');
+    await chooseRadixOption(screen.getByLabelText('Maximum size'), 'Up to 4 GB', user);
     expect(useModelCatalogStore.getState().filters.max_size_gb).toBe(4);
 
     await user.click(screen.getByRole('button', { name: 'Reset filters' }));
@@ -120,8 +121,8 @@ describe('ModelFilterPanel', () => {
     const user = userEvent.setup();
     render(<ModelFilterPanel quantizations={['Q4_K_M', 'Q8_0']} />);
     await user.click(screen.getByRole('button', { name: 'Filters' }));
-    await user.selectOptions(screen.getByLabelText('Listed quantization'), 'Q8_0');
-    await user.selectOptions(screen.getByLabelText('Estimated fit'), 'fits');
+    await chooseRadixOption(screen.getByLabelText('Listed quantization'), 'Q8_0', user);
+    await chooseRadixOption(screen.getByLabelText('Estimated fit'), 'Fits comfortably', user);
     expect(useModelCatalogStore.getState().quantizationFilter).toBe('Q8_0');
     expect(useModelCatalogStore.getState().fitFilter).toBe('fits');
     await user.click(screen.getByRole('button', { name: 'Reset filters' }));
@@ -133,11 +134,11 @@ describe('ModelFilterPanel', () => {
     const user = userEvent.setup();
     render(<ModelFilterPanel quantizations={['Q4_K_M', 'Q8_0']} />);
     await user.click(screen.getByRole('button', { name: 'Filters' }));
-    await user.selectOptions(screen.getByLabelText('Listed quantization'), 'Q8_0');
+    await chooseRadixOption(screen.getByLabelText('Listed quantization'), 'Q8_0', user);
     await user.click(screen.getByRole('button', { name: 'Filters · 1' }));
     expect(screen.queryByLabelText('Listed quantization')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Filters · 1' }));
-    expect(screen.getByLabelText('Listed quantization')).toHaveValue('Q8_0');
+    expect(screen.getByLabelText('Listed quantization')).toHaveTextContent('Q8_0');
   });
 
   it('supports keyboard navigation between purpose tabs', async () => {

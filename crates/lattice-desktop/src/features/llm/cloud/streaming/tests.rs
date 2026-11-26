@@ -160,6 +160,7 @@ async fn reasoning_is_delivered_before_the_completion_arrives() {
     let completion = drain(
         protocols(CloudProvider::Openai).completion,
         tokio_stream::wrappers::UnboundedReceiverStream::new(receiver),
+        ResponseBudget::default(),
         Duration::from_secs(1),
         Instant::now(),
         &on_text,
@@ -201,6 +202,7 @@ async fn stalled_streams_and_oversized_events_fail() {
     let error = drain(
         protocols(CloudProvider::Openai).completion,
         pending,
+        ResponseBudget::default(),
         Duration::from_secs(2),
         Instant::now(),
         &|_| Ok(()),
@@ -209,14 +211,18 @@ async fn stalled_streams_and_oversized_events_fail() {
     .await
     .unwrap_err();
     assert!(error.to_string().contains("stalled"));
-    let mut decoder = Decoder::new(protocols(CloudProvider::Openai).completion);
-    assert!(decoder
+
+    let budget = ResponseBudget::for_tokens(16);
+    let mut decoder = Decoder::with_budget(protocols(CloudProvider::Openai).completion, budget);
+    let err = decoder
         .push(
-            &vec![b'x'; Decoder::MAX_EVENT_BYTES + 1],
+            &vec![b'x'; budget.max_event_bytes + 1],
             &|_| Ok(()),
-            &|_| Ok(())
+            &|_| Ok(()),
         )
-        .is_err());
+        .unwrap_err();
+    assert!(matches!(err, AppError::Network(_)), "{err:?}");
+    assert!(err.to_string().contains("output budget"), "{err}");
 }
 
 #[test]
@@ -292,6 +298,7 @@ async fn silence_before_the_first_delta_is_not_a_stall() {
     let response = drain(
         protocols(CloudProvider::Openai).completion,
         tokio_stream::wrappers::UnboundedReceiverStream::new(receiver),
+        ResponseBudget::default(),
         Duration::from_secs(2),
         Instant::now(),
         &|_| Ok(()),
@@ -392,4 +399,93 @@ fn a_chat_answer_begins_with_its_first_content_not_its_role() {
         std::slice::from_ref(&role)
     ));
     assert!(begun_after(CloudProvider::Google, &[role, content]));
+}
+
+#[test]
+fn cloud_stream_guards_reject_over_budget_events_bytes_tokens_and_tool_calls() {
+    // 1. Over-budget token events (max_tokens = 4).
+    let budget = ResponseBudget::for_tokens(4);
+    let mut ok_decoder = Decoder::with_budget(protocols(CloudProvider::Openai).completion, budget);
+    let ok_frames = frames(&[
+        json!({"type":"response.output_text.delta","delta":"a"}),
+        json!({"type":"response.output_text.delta","delta":"b"}),
+        json!({"type":"response.output_text.delta","delta":"c"}),
+        json!({"type":"response.output_text.delta","delta":"d"}),
+        json!({"type":"response.completed","response":{"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"abcd"}]}]}}),
+    ]);
+    ok_decoder
+        .push(&ok_frames, &|_| Ok(()), &|_| Ok(()))
+        .unwrap();
+    assert_eq!(
+        ok_decoder.finish(&|_| Ok(()), &|_| Ok(())).unwrap().text,
+        "abcd"
+    );
+
+    let mut over_tokens = Decoder::with_budget(protocols(CloudProvider::Openai).completion, budget);
+    let too_many = frames(&[
+        json!({"type":"response.output_text.delta","delta":"1"}),
+        json!({"type":"response.output_text.delta","delta":"2"}),
+        json!({"type":"response.output_text.delta","delta":"3"}),
+        json!({"type":"response.output_text.delta","delta":"4"}),
+        json!({"type":"response.output_text.delta","delta":"5"}),
+    ]);
+    let err = over_tokens
+        .push(&too_many, &|_| Ok(()), &|_| Ok(()))
+        .unwrap_err();
+    assert!(matches!(err, AppError::Network(_)), "{err:?}");
+    assert!(err.to_string().contains("token event count"), "{err}");
+
+    // 2. Over-budget total stream bytes via keepalive/ignored frames.
+    let small_budget = ResponseBudget::for_tokens(4);
+    let mut byte_decoder =
+        Decoder::with_budget(protocols(CloudProvider::Openai).completion, small_budget);
+    let line = format!(
+        "data: {}\r\n\r\n",
+        json!({"type":"response.reasoning_text.delta","delta":"x".repeat(256)})
+    )
+    .into_bytes();
+    let mut rejected = None;
+    for _ in 0..=(small_budget.max_stream_bytes / line.len() + 2) {
+        if let Err(err) = byte_decoder.push(&line, &|_| Ok(()), &|_| Ok(())) {
+            rejected = Some(err);
+            break;
+        }
+    }
+    let err = rejected.expect("oversized cloud stream must fail");
+    assert!(matches!(err, AppError::Network(_)), "{err:?}");
+    assert!(
+        err.to_string().contains("response exceeds output budget"),
+        "{err}"
+    );
+
+    // 3. Over-budget tool calls on Google stream (16 tokens -> max_tool_calls = 4).
+    let tool_budget = ResponseBudget::for_tokens(16);
+    let mut tool_decoder =
+        Decoder::with_budget(protocols(CloudProvider::Google).completion, tool_budget);
+    let mut tool_events = Vec::new();
+    for idx in 0..5 {
+        tool_events.push(json!({"choices":[{"index":0,"delta":{"tool_calls":[{"index":idx,"id":format!("c{idx}"),"type":"function","function":{"name":"search","arguments":"{}"}}]}}]}));
+    }
+    let err = tool_decoder
+        .push(&frames(&tool_events), &|_| Ok(()), &|_| Ok(()))
+        .unwrap_err();
+    assert!(matches!(err, AppError::Network(_)), "{err:?}");
+    assert!(err.to_string().contains("tool call count"), "{err}");
+
+    // 4. Over-budget Anthropic content blocks (max_tokens = 2 -> max_blocks = 4).
+    let block_budget = ResponseBudget::for_tokens(2);
+    let mut block_decoder =
+        Decoder::with_budget(protocols(CloudProvider::Anthropic).completion, block_budget);
+    let mut block_events = vec![
+        json!({"type":"message_start","message":{"id":"m1","content":[],"usage":{"input_tokens":5,"output_tokens":1},"stop_reason":null}}),
+    ];
+    for idx in 0..5 {
+        block_events.push(json!({"type":"content_block_start","index":idx,"content_block":{"type":"text","text":""}}));
+        block_events.push(json!({"type":"content_block_stop","index":idx}));
+    }
+    let err = block_decoder
+        .push(&frames(&block_events), &|_| Ok(()), &|_| Ok(()))
+        .unwrap_err();
+    assert!(matches!(err, AppError::Network(_)), "{err:?}");
+    assert!(err.to_string().contains("content block count"), "{err}");
 }

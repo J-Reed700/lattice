@@ -302,7 +302,7 @@ async fn fidelity_propagates_connection_loss_without_creating_a_factual_finding(
     let fixture = json!({"units":[{
         "index":0,"kind":"teaching",
         "passages":[{"id":"p0","field":"/body","text":"The measured value is 12."}],
-        "claims":[{"id":"c0","statement":"The measured value is 12."}]
+        "claims":[{"id":"c0","statement":"The measured value is roughly twelve."}]
     }],"judged":["p0"]});
     let result = crate::content_verification::live_mapping_fixture(&OfflineModel, &fixture).await;
     assert!(matches!(result, Err(AppError::Network(_))));

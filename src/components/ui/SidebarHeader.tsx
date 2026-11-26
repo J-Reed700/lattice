@@ -48,7 +48,7 @@ export function SidebarSearch({ value, onChange, placeholder, className }: Sideb
       placeholder={placeholder}
       aria-label={placeholder}
       className={cn(
-        'h-8 w-full rounded-md border border-transparent bg-[hsl(var(--text-primary)/0.055)] px-2.5 text-ui text-text-primary placeholder:text-text-muted outline-hidden transition-[background-color,border-color,box-shadow] duration-fast hover:bg-[hsl(var(--text-primary)/0.08)] focus:border-accent/60 focus:bg-surface focus:shadow-[0_0_0_3px_hsl(var(--accent)/0.14)]',
+        'h-8 w-full rounded-lg border border-transparent bg-[hsl(var(--text-primary)/0.055)] px-2.5 text-ui text-text-primary placeholder:text-text-muted outline-hidden transition-[background-color,border-color,box-shadow] duration-fast hover:bg-[hsl(var(--text-primary)/0.08)] focus:border-accent/60 focus:bg-surface focus-visible:ring-2 focus-visible:ring-ring',
         className,
       )}
     />
@@ -92,7 +92,7 @@ export function SidebarTabs<T extends string>({ value, onChange, options, classN
             }}
             className={cn(
               'font-medium transition-colors duration-fast focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring',
-              variant === 'segmented' ? cn('rounded-md px-3 py-1.5', isActive ? 'bg-surface text-accent shadow-sm' : 'text-text-tertiary hover:text-text-primary') : cn('-mb-px border-b-[1.5px] pb-1.5', isActive
+              variant === 'segmented' ? cn('rounded-md px-3 py-1.5', isActive ? 'bg-surface text-text-primary shadow-sm ring-1 ring-border-subtle' : 'text-text-tertiary hover:text-text-primary') : cn('-mb-px border-b-[1.5px] pb-1.5', isActive
                 ? 'border-accent text-text-primary'
                 : 'border-transparent text-text-tertiary hover:text-text-primary'),
             )}

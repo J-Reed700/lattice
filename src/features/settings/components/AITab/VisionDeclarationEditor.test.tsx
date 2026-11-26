@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { CONSERVATIVE_DEFAULT, presetGeometry, type VisionDeclaration, type VisionGeometry } from '@/utils/visionGeometry';
 
 import { VisionDeclarationEditor } from './VisionDeclarationEditor';
+import { chooseRadixOption } from '../radixSelectTestUtils';
 
 /** Saves what the editor reports, the way the settings round trip does. */
 function Harness({ initial, defaultGeometry = null, onChange }: {
@@ -25,19 +26,19 @@ function Harness({ initial, defaultGeometry = null, onChange }: {
 }
 
 const preview = () => screen.getByTestId('vision-cost-preview').textContent;
-const choice = () => screen.getByRole('combobox', { name: 'Vision' }) as HTMLSelectElement;
+const choice = () => screen.getByRole('combobox', { name: 'Vision' });
 
 describe('VisionDeclarationEditor', () => {
   it('starts off for an undeclared model with no default, and says pictures are not shown', () => {
     render(<Harness initial={null} onChange={vi.fn()} />);
-    expect(choice().value).toBe('off');
+    expect(choice()).toHaveTextContent('Off');
     expect(preview()).toBe('Pictures are not shown to this model.');
     expect(screen.queryByRole('button', { name: 'Advanced' })).toBeNull();
   });
 
   it('starts a cloud model on its provider default and prices the preview picture with it', () => {
     render(<Harness initial={null} defaultGeometry={presetGeometry('open_ai')} onChange={vi.fn()} />);
-    expect(choice().value).toBe('open_ai');
+    expect(choice()).toHaveTextContent(/OpenAI/i);
     // 85 + 6 tiles × 170, as the backend's tile arithmetic charges it.
     expect(preview()).toBe('A 1280×960 photo costs about 1,105 tokens on this model.');
   });
@@ -45,8 +46,7 @@ describe('VisionDeclarationEditor', () => {
   it('offers the conservative default for a geometry nobody knows', async () => {
     const onChange = vi.fn();
     render(<Harness initial={null} onChange={onChange} />);
-    const option = screen.getByRole('option', { name: 'Conservative default (up to 1,026 tokens per picture)' }) as HTMLOptionElement;
-    await userEvent.selectOptions(choice(), option);
+    await chooseRadixOption(choice(), 'Conservative default (up to 1,026 tokens per picture)');
     expect(onChange).toHaveBeenLastCalledWith({ enabled: true, geometry: CONSERVATIVE_DEFAULT });
     expect(preview()).toBe('A 1280×960 photo costs about 974 tokens on this model.');
   });
@@ -54,7 +54,7 @@ describe('VisionDeclarationEditor', () => {
   it('a preset fills the geometry fields', async () => {
     const onChange = vi.fn();
     render(<Harness initial={null} onChange={onChange} />);
-    await userEvent.selectOptions(choice(), 'qwen25_vl');
+    await chooseRadixOption(choice(), /Qwen 2\.5/i);
     expect(onChange).toHaveBeenLastCalledWith({ enabled: true, geometry: presetGeometry('qwen25_vl') });
     expect(preview()).toBe('A 1280×960 photo costs about 1,273 tokens on this model.');
 
@@ -67,20 +67,20 @@ describe('VisionDeclarationEditor', () => {
   it('turning vision off keeps the geometry for when it comes back on', async () => {
     const onChange = vi.fn();
     render(<Harness initial={{ enabled: true, geometry: presetGeometry('gemini') }} onChange={onChange} />);
-    await userEvent.selectOptions(choice(), 'off');
+    await chooseRadixOption(choice(), 'Off');
     expect(onChange).toHaveBeenLastCalledWith({ enabled: false, geometry: presetGeometry('gemini') });
   });
 
   it('Custom edits a field and saves the edited geometry', async () => {
     const onChange = vi.fn();
     render(<Harness initial={{ enabled: true, geometry: presetGeometry('gemma_siglip') }} onChange={onChange} />);
-    await userEvent.selectOptions(choice(), 'custom');
+    await chooseRadixOption(choice(), 'Custom');
     const tokens = screen.getByLabelText('Tokens');
     await userEvent.clear(tokens);
     await userEvent.type(tokens, '280');
     fireEvent.blur(tokens);
     expect(onChange).toHaveBeenLastCalledWith({ enabled: true, geometry: { kind: 'fixed', side: 896, tokens: 280 } });
-    expect(choice().value).toBe('custom');
+    expect(choice()).toHaveTextContent('Custom');
     expect(preview()).toBe('A 1280×960 photo costs about 280 tokens on this model.');
   });
 

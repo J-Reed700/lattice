@@ -223,14 +223,62 @@ fn content_terms(text: &str) -> std::collections::HashSet<String> {
 /// checked separately against independently retrieved passages before
 /// publication.
 fn nearest_passage_span(excerpt: &str, target: &str) -> Option<(f64, usize, String)> {
-    let wanted = content_terms(target);
-    if wanted.is_empty() {
+    let wanted_index: std::collections::HashMap<String, usize> = content_terms(target)
+        .into_iter()
+        .enumerate()
+        .map(|(idx, term)| (term, idx))
+        .collect();
+    let wanted_len = wanted_index.len();
+    if wanted_len == 0 {
         return None;
     }
     let spans = sentences(excerpt);
+    let sentence_hits: Vec<Vec<usize>> = spans
+        .iter()
+        .map(|&(start, end)| {
+            let mut hits = Vec::new();
+            if let Some(slice) = excerpt.get(start..end) {
+                for word in slice.split(|c: char| !c.is_alphanumeric()) {
+                    if word.chars().count() < 4 {
+                        continue;
+                    }
+                    if let Some(&idx) = wanted_index.get(&word.to_lowercase()) {
+                        if !hits.contains(&idx) {
+                            hits.push(idx);
+                        }
+                    }
+                }
+            }
+            hits
+        })
+        .collect();
+    let mut seen = vec![0usize; wanted_len];
+    let mut stamp = 0usize;
     let mut best: Option<(f64, usize, String)> = None;
     for first in 0..spans.len() {
-        for last in first..spans.len().min(first + 4) {
+        let end_limit = spans.len().min(first + 4);
+        let any_hit = sentence_hits
+            .get(first..end_limit)
+            .is_some_and(|window| window.iter().any(|hits| !hits.is_empty()));
+        if !any_hit {
+            continue;
+        }
+        stamp = stamp.saturating_add(1);
+        let mut shared = 0usize;
+        for last in first..end_limit {
+            if let Some(hits) = sentence_hits.get(last) {
+                for &idx in hits {
+                    if let Some(slot) = seen.get_mut(idx) {
+                        if *slot != stamp {
+                            *slot = stamp;
+                            shared += 1;
+                        }
+                    }
+                }
+            }
+            if shared == 0 {
+                continue;
+            }
             let (Some(&(start, _)), Some(&(_, end))) = (spans.get(first), spans.get(last)) else {
                 continue;
             };
@@ -240,16 +288,17 @@ fn nearest_passage_span(excerpt: &str, target: &str) -> Option<(f64, usize, Stri
             if text.chars().count() > crate::generation::MAX_QUOTE_CHARS {
                 break;
             }
+            let share = shared as f64 / wanted_len as f64;
+            let beats_best = best.as_ref().is_none_or(|(top, _, kept)| {
+                share > *top || (share == *top && text.len() < kept.len())
+            });
+            if !beats_best {
+                continue;
+            }
             if crate::generation::validate_excerpt_quote(text, excerpt).is_err() {
                 continue;
             }
-            let shared = content_terms(text).intersection(&wanted).count();
-            let share = shared as f64 / wanted.len() as f64;
-            if best.as_ref().is_none_or(|(top, _, kept)| {
-                share > *top || (share == *top && text.len() < kept.len())
-            }) {
-                best = Some((share, shared, text.to_owned()));
-            }
+            best = Some((share, shared, text.to_owned()));
         }
     }
     best

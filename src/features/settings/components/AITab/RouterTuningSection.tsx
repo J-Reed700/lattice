@@ -1,9 +1,10 @@
 import type { Dispatch, SetStateAction } from 'react';
 
-import { SettingsRow, SettingsSection, Switch } from '@/components/ui';
+import { Input, SettingsRow, SettingsSection, Switch, Textarea } from '@/components/ui';
 import type { LLMSettings as ApiLLMSettings } from '@/types/api/settings';
 
-import { SWITCH_CLASS, NUMBER_FIELD_CLASS, TEXTAREA_CLASS, toFinite, clamp } from './shared';
+import { SWITCH_CLASS, clamp } from './shared';
+import { RangeStepperControl, SettingsNumberField } from '../SettingControls';
 
 /** The router layer that decides how follow-up questions are answered. */
 export function RouterTuningSection({
@@ -19,7 +20,7 @@ export function RouterTuningSection({
 }) {
   const saveRouterField = async <K extends keyof ApiLLMSettings['router']>(
     key: K,
-    value: ApiLLMSettings['router'][K]
+    value: ApiLLMSettings['router'][K],
   ) => {
     if (!llmSettings) return;
     if (llmSettings.router[key] === value) return;
@@ -51,7 +52,7 @@ export function RouterTuningSection({
           checked={routerDraft.preferLastDocument}
           onCheckedChange={(checked) => {
             setRouterDraft((previous) =>
-              previous ? { ...previous, preferLastDocument: checked } : previous
+              previous ? { ...previous, preferLastDocument: checked } : previous,
             );
             void saveRouterField('preferLastDocument', checked);
           }}
@@ -60,150 +61,117 @@ export function RouterTuningSection({
       </SettingsRow>
 
       <SettingsRow label="Router model" htmlFor="router-model">
-        <input
-          id="router-model"
-          type="text"
-          value={routerDraft.model}
-          onChange={(event) =>
-            setRouterDraft((previous) =>
-              previous ? { ...previous, model: event.target.value } : previous
-            )
-          }
-          onBlur={() => void saveRouterField('model', routerDraft.model.trim())}
-          className="h-8 w-[220px] rounded-sm border border-border-default bg-bg px-2.5 text-sm text-text-primary outline-hidden transition-colors duration-fast placeholder:text-text-muted focus:border-accent"
-        />
+        <div className="w-full max-w-[240px]">
+          <Input
+            id="router-model"
+            type="text"
+            value={routerDraft.model}
+            onChange={(event) =>
+              setRouterDraft((previous) =>
+                previous ? { ...previous, model: event.target.value } : previous,
+              )
+            }
+            onBlur={() => void saveRouterField('model', routerDraft.model.trim())}
+          />
+        </div>
       </SettingsRow>
 
       <SettingsRow label="Timeout" hint="Milliseconds" htmlFor="router-timeout">
-        <input
+        <SettingsNumberField
           id="router-timeout"
-          type="number"
           min={1}
           step={10}
+          integer
+          suffix="ms"
           value={routerDraft.timeoutMs}
-          onChange={(event) =>
+          onDraftChange={(next) =>
             setRouterDraft((previous) =>
-              previous
-                ? {
-                    ...previous,
-                    timeoutMs: Math.round(toFinite(event.target.value, previous.timeoutMs)),
-                  }
-                : previous
+              previous ? { ...previous, timeoutMs: Math.round(next) } : previous,
             )
           }
-          onBlur={() =>
-            void saveRouterField('timeoutMs', Math.round(Math.max(1, routerDraft.timeoutMs)))
-          }
-          className={NUMBER_FIELD_CLASS}
+          onCommit={(next) => void saveRouterField('timeoutMs', Math.round(Math.max(1, next)))}
         />
       </SettingsRow>
 
       <SettingsRow label="Max tokens" htmlFor="router-max-tokens">
-        <input
+        <SettingsNumberField
           id="router-max-tokens"
-          type="number"
           min={1}
           step={1}
+          integer
           value={routerDraft.maxTokens}
-          onChange={(event) =>
+          onDraftChange={(next) =>
             setRouterDraft((previous) =>
-              previous
-                ? {
-                    ...previous,
-                    maxTokens: Math.round(toFinite(event.target.value, previous.maxTokens)),
-                  }
-                : previous
+              previous ? { ...previous, maxTokens: Math.round(next) } : previous,
             )
           }
-          onBlur={() =>
-            void saveRouterField('maxTokens', Math.round(Math.max(1, routerDraft.maxTokens)))
-          }
-          className={NUMBER_FIELD_CLASS}
+          onCommit={(next) => void saveRouterField('maxTokens', Math.round(Math.max(1, next)))}
         />
       </SettingsRow>
 
       <SettingsRow label="Temperature" htmlFor="router-temperature">
-        <input
+        <RangeStepperControl
           id="router-temperature"
-          type="number"
+          label="Router temperature"
           min={0}
           max={2}
           step={0.01}
           value={routerDraft.temperature}
-          onChange={(event) =>
+          onDraftChange={(next) =>
             setRouterDraft((previous) =>
-              previous
-                ? { ...previous, temperature: toFinite(event.target.value, previous.temperature) }
-                : previous
+              previous ? { ...previous, temperature: next } : previous,
             )
           }
-          onBlur={() =>
-            void saveRouterField('temperature', clamp(routerDraft.temperature, 0, 2))
-          }
-          className={NUMBER_FIELD_CLASS}
+          onCommit={(next) => void saveRouterField('temperature', clamp(next, 0, 2))}
         />
       </SettingsRow>
 
       <SettingsRow label="Ambiguity threshold" htmlFor="router-ambiguity">
-        <input
+        <RangeStepperControl
           id="router-ambiguity"
-          type="number"
+          label="Ambiguity threshold"
           min={0}
           max={1}
           step={0.01}
           value={routerDraft.ambiguityThreshold}
-          onChange={(event) =>
+          onDraftChange={(next) =>
             setRouterDraft((previous) =>
-              previous
-                ? {
-                    ...previous,
-                    ambiguityThreshold: toFinite(
-                      event.target.value,
-                      previous.ambiguityThreshold
-                    ),
-                  }
-                : previous
+              previous ? { ...previous, ambiguityThreshold: next } : previous,
             )
           }
-          onBlur={() =>
-            void saveRouterField(
-              'ambiguityThreshold',
-              clamp(routerDraft.ambiguityThreshold, 0, 1)
-            )
-          }
-          className={NUMBER_FIELD_CLASS}
+          onCommit={(next) => void saveRouterField('ambiguityThreshold', clamp(next, 0, 1))}
         />
       </SettingsRow>
 
       <SettingsRow label="Router prompt" htmlFor="router-prompt" stacked>
-        <textarea
+        <Textarea
           id="router-prompt"
           value={routerDraft.promptTemplate}
           onChange={(event) =>
             setRouterDraft((previous) =>
-              previous ? { ...previous, promptTemplate: event.target.value } : previous
+              previous ? { ...previous, promptTemplate: event.target.value } : previous,
             )
           }
           onBlur={() => void saveRouterField('promptTemplate', routerDraft.promptTemplate)}
           rows={6}
-          className={TEXTAREA_CLASS}
+          className="font-mono text-xs"
         />
       </SettingsRow>
 
       <SettingsRow label="Clarifying question prompt" htmlFor="router-clarify" stacked>
-        <textarea
+        <Textarea
           id="router-clarify"
           value={routerDraft.clarifyPromptTemplate}
           onChange={(event) =>
             setRouterDraft((previous) =>
-              previous ? { ...previous, clarifyPromptTemplate: event.target.value } : previous
+              previous ? { ...previous, clarifyPromptTemplate: event.target.value } : previous,
             )
           }
           onBlur={() =>
             void saveRouterField('clarifyPromptTemplate', routerDraft.clarifyPromptTemplate)
           }
           rows={3}
-          className={TEXTAREA_CLASS}
+          className="font-mono text-xs"
         />
       </SettingsRow>
     </SettingsSection>

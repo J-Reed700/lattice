@@ -1,6 +1,8 @@
 //! Native OpenAI Responses and Anthropic Messages adapters.
 //! Explicit selection only; Auto never sends local documents to a cloud provider.
-use crate::features::llm::backend::{ModelBackend, Progress, RetrySink, TextSink};
+use crate::features::llm::backend::{
+    read_bounded_json, ModelBackend, Progress, RetrySink, TextSink,
+};
 use crate::features::llm::engine::vision::not_set_up_to_see;
 use crate::features::llm::fitting::{Fitted, OutputLimits, Thinking};
 use crate::features::llm::resend::Resend;
@@ -273,6 +275,7 @@ impl CloudLlm {
 impl CloudLlm {
     /// The whole answer at once.
     async fn complete_whole(&self, fitted: &Fitted<'_>) -> Result<CompletionResponse> {
+        let budget = fitted.response_budget();
         let deadline = fitted
             .request()
             .wall_clock_budget()
@@ -287,14 +290,30 @@ impl CloudLlm {
             let (response, _) = self
                 .send_with_fallback(&body, deadline, true, &mut resend)
                 .await?;
-            match response.json::<Value>().await {
+            match read_bounded_json(
+                response,
+                budget.max_whole_bytes,
+                || AppError::Network("Cloud response exceeds output budget size limit".into()),
+                |e| self.exchange_failure(e, deadline, "Invalid cloud response"),
+                |e| AppError::Network(format!("Invalid cloud response: {e}")),
+            )
+            .await
+            {
                 // Without the server's own timings a whole answer at once has no
                 // edge between reading and writing, so it is not timed.
-                Ok(value) => return self.protocol.parse_reply(value),
-                Err(error) => {
-                    let error = self.exchange_failure(error, deadline, "Invalid cloud response");
+                Ok(value) => {
+                    let parsed = self.protocol.parse_reply(value)?;
+                    if parsed.tool_calls.len() > budget.max_tool_calls {
+                        return Err(AppError::InvalidState(
+                            "Cloud response tool call count exceeds output budget".into(),
+                        ));
+                    }
+                    return Ok(parsed);
+                }
+                Err(error @ AppError::Network(_)) if !is_output_budget_error(&error) => {
                     resend.after(error, None, false).await?;
                 }
+                Err(error) => return Err(error),
             }
         }
     }
@@ -307,6 +326,7 @@ impl CloudLlm {
         on_reasoning: Option<&TextSink<'_>>,
         on_retry: Option<&RetrySink<'_>>,
     ) -> Result<CompletionResponse> {
+        let budget = fitted.response_budget();
         let request = fitted.request();
         let deadline = request
             .wall_clock_budget()
@@ -338,6 +358,7 @@ impl CloudLlm {
                     match streaming::drain(
                         self.protocol,
                         response.bytes_stream(),
+                        budget,
                         self.stall_timeout,
                         sent,
                         &text,
@@ -345,7 +366,7 @@ impl CloudLlm {
                     )
                     .await
                     {
-                        Err(error @ AppError::Network(_)) => {
+                        Err(error @ AppError::Network(_)) if !is_output_budget_error(&error) => {
                             resend
                                 .after(error, None, delivered.load(Ordering::Relaxed))
                                 .await?
@@ -434,6 +455,12 @@ fn credit_balance_error(shown: &str) -> AppError {
         "{shown} refused the request because the account's credit balance is too low \
          (HTTP 400): add credits to the account, or choose another model in Settings → AI"
     ))
+}
+
+/// Whether `error` indicates a deterministic response-size or count budget rejection
+/// rather than a transient transport failure.
+fn is_output_budget_error(error: &AppError) -> bool {
+    matches!(error, AppError::Network(message) if message.contains("exceeds output budget"))
 }
 
 /// The error for a refused response; only a 429's body is read, as it alone
