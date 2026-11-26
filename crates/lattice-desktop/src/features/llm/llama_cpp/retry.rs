@@ -5,7 +5,7 @@
 //! second time is deterministic and ends as [`AppError::ModelRejected`], as
 //! does a server's refusal of the request itself.
 use super::*;
-use crate::features::llm::fitting::Fitted;
+use crate::features::llm::fitting::{Fitted, ResponseBudget};
 use crate::features::llm::scheduler::rejection;
 use lattice_core::application::ports::llm_port::RequestSize;
 
@@ -131,6 +131,7 @@ impl LlamaCppLlm {
         let deadline = request
             .wall_clock_budget()
             .map(|budget| tokio::time::Instant::now() + budget);
+        let budget = fitted.response_budget();
         let generation = async {
             // The last server failure's status and error type, to know the
             // same failure when it comes back.
@@ -138,7 +139,14 @@ impl LlamaCppLlm {
             for attempt in 1..=MAX_ATTEMPTS {
                 let mut emitted = false;
                 let outcome = self
-                    .attempt(&body, first_frame, on_text, on_reasoning, &mut emitted)
+                    .attempt(
+                        &body,
+                        budget,
+                        first_frame,
+                        on_text,
+                        on_reasoning,
+                        &mut emitted,
+                    )
                     .await;
                 let (error, retry_after) = match outcome {
                     Ok(response) => return Ok(response),
@@ -240,6 +248,7 @@ impl LlamaCppLlm {
     async fn attempt(
         &self,
         body: &Value,
+        budget: ResponseBudget,
         first_frame: Option<Duration>,
         on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
         on_reasoning: Option<&(dyn Fn(String) -> Result<()> + Send + Sync)>,
@@ -261,6 +270,7 @@ impl LlamaCppLlm {
         let response = server_status(response).await.map_err(Failure::Server)?;
         let (response, timings) = read_stream(
             response.bytes_stream(),
+            budget,
             Patience {
                 first_frame,
                 stall: self.config.stall_timeout,
@@ -355,6 +365,7 @@ fn silent(wait: Duration) -> Failure {
 /// a stall.
 pub(super) async fn read_stream<S, B, E>(
     mut bytes: S,
+    budget: ResponseBudget,
     patience: Patience,
     transport_error: fn(E) -> AppError,
     on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
@@ -365,7 +376,7 @@ where
     S: futures::Stream<Item = std::result::Result<B, E>> + Unpin,
     B: AsRef<[u8]>,
 {
-    let mut decoder = streaming::Decoder::for_completion();
+    let mut decoder = streaming::Decoder::with_budget(budget);
     let mut generating = false;
     let mut watch = ProgressWatch::default();
     loop {

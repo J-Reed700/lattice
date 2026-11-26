@@ -4,6 +4,7 @@
 use super::protocol::{CompletionProtocol, EventDecoder};
 use super::timing::StreamClock;
 use super::{field, CompletionResponse};
+use crate::features::llm::fitting::ResponseBudget;
 use futures::{Stream, StreamExt};
 use lattice_core::shared::error::WithCauses;
 use lattice_core::shared::error::{AppError, Result};
@@ -19,7 +20,8 @@ pub(super) type Callback<'a> = &'a (dyn Fn(String) -> Result<()> + Send + Sync);
 /// the answer.
 pub(super) async fn drain<S, B, E>(
     protocol: &'static dyn CompletionProtocol,
-    mut bytes: S,
+    bytes: S,
+    budget: ResponseBudget,
     stall_timeout: Duration,
     sent: Instant,
     on_text: Callback<'_>,
@@ -30,6 +32,7 @@ where
     B: AsRef<[u8]>,
     E: std::error::Error + 'static,
 {
+    let mut bytes = bytes;
     let clock = StreamClock::started(sent);
     let generating = AtomicBool::new(false);
     let timed_text = |text: String| {
@@ -41,7 +44,7 @@ where
         on_reasoning(text)
     };
     let (on_text, on_reasoning): (Callback<'_>, Callback<'_>) = (&timed_text, &timed_reasoning);
-    let mut decoder = Decoder::new(protocol);
+    let mut decoder = Decoder::with_budget(protocol, budget);
     loop {
         // Silence before the first displayed delta is the model reading the
         // prompt or thinking, which a reasoning model can do for minutes with
@@ -77,6 +80,9 @@ where
     let completed = decoder.into_completed(on_text, on_reasoning)?;
     let prompt_tokens = protocol.prompt_tokens_read(&completed);
     let mut response = protocol.parse_reply(completed)?;
+    if response.tool_calls.len() > budget.max_tool_calls {
+        return Err(invalid("tool call count exceeds output budget"));
+    }
     if response.timing.is_none() {
         response.timing = clock.timing(prompt_tokens, response.output_tokens);
     }
@@ -88,9 +94,11 @@ where
 struct Decoder {
     #[cfg(test)]
     protocol: &'static dyn CompletionProtocol,
+    budget: ResponseBudget,
     events: Box<dyn EventDecoder>,
     buffer: Vec<u8>,
     data: String,
+    received: usize,
 }
 
 /// Joins a reasoning summary's parts with a blank line between them.
@@ -119,13 +127,20 @@ pub(super) fn invalid(detail: &str) -> AppError {
 }
 
 impl Decoder {
+    #[cfg(test)]
     fn new(protocol: &'static dyn CompletionProtocol) -> Self {
+        Self::with_budget(protocol, ResponseBudget::default())
+    }
+
+    fn with_budget(protocol: &'static dyn CompletionProtocol, budget: ResponseBudget) -> Self {
         Self {
             #[cfg(test)]
             protocol,
+            budget,
             events: protocol.event_decoder(),
             buffer: Vec::new(),
             data: String::new(),
+            received: 0,
         }
     }
 
@@ -135,13 +150,23 @@ impl Decoder {
         on_text: Callback<'_>,
         on_reasoning: Callback<'_>,
     ) -> Result<()> {
+        self.received = self.received.saturating_add(bytes.len());
+        if self.received > self.budget.max_stream_bytes {
+            return Err(invalid("response exceeds output budget size limit"));
+        }
         self.buffer.extend_from_slice(bytes);
         while let Some(end) = self.buffer.iter().position(|byte| *byte == b'\n') {
+            if end + 1 > self.budget.max_event_bytes {
+                return Err(invalid("event exceeds output budget size limit"));
+            }
             let line: Vec<_> = self.buffer.drain(..=end).collect();
             self.line(&line, on_text, on_reasoning)?;
             if self.events.is_complete() {
                 break;
             }
+        }
+        if self.buffer.len().saturating_add(self.data.len()) > self.budget.max_event_bytes {
+            return Err(invalid("event exceeds output budget size limit"));
         }
         Ok(())
     }
@@ -163,6 +188,9 @@ impl Decoder {
                 self.data.push('\n');
             }
             self.data.push_str(data.strip_prefix(' ').unwrap_or(data));
+            if self.data.len() > self.budget.max_event_bytes {
+                return Err(invalid("event exceeds output budget size limit"));
+            }
         }
         Ok(())
     }
@@ -179,7 +207,17 @@ impl Decoder {
             // Provider error text may contain the user's prompt.
             return Err(AppError::Network(format!("Cloud stream failed ({kind})")));
         }
-        self.events.event(&event, kind, on_text, on_reasoning)
+        self.events.event(&event, kind, on_text, on_reasoning)?;
+        if self.events.token_events() > self.budget.max_token_events {
+            return Err(invalid("token event count exceeds output budget"));
+        }
+        if self.events.tool_call_count() > self.budget.max_tool_calls {
+            return Err(invalid("tool call count exceeds output budget"));
+        }
+        if self.events.block_count() > self.budget.max_token_events.saturating_add(2) {
+            return Err(invalid("content block count exceeds output budget"));
+        }
+        Ok(())
     }
 
     #[cfg(test)]

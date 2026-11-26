@@ -1,5 +1,6 @@
 //! Byte-safe SSE decoder; failed or truncated generations must not look successful.
 use super::repetition::{has_repetition_loop, LOOP_CHECK_STRIDE_BYTES};
+use crate::features::llm::fitting::ResponseBudget;
 use crate::features::llm::scheduler::rejection;
 use lattice_core::application::ports::llm_port::RequestSize;
 use lattice_core::application::ports::llm_port::ServedTiming;
@@ -323,7 +324,10 @@ impl ContentFilter {
 
 #[derive(Default)]
 pub(crate) struct Decoder {
+    budget: ResponseBudget,
     buffer: Vec<u8>,
+    received_bytes: usize,
+    token_events: usize,
     done: bool,
     /// The failure the server reported inside the stream, when it did.
     server_failure: Option<ServerFailure>,
@@ -616,8 +620,12 @@ impl ServerFailure {
 
 impl Decoder {
     pub fn for_completion() -> Self {
+        Self::with_budget(ResponseBudget::default())
+    }
+    pub fn with_budget(budget: ResponseBudget) -> Self {
         Self {
             allow_tool_calls: true,
+            budget,
             ..Self::default()
         }
     }
@@ -640,9 +648,20 @@ impl Decoder {
         self.timings
     }
     pub fn push(&mut self, bytes: &[u8]) -> Result<Vec<String>> {
+        self.received_bytes = self.received_bytes.saturating_add(bytes.len());
+        if self.received_bytes > self.budget.max_stream_bytes {
+            return Err(AppError::InvalidState(
+                "llama.cpp response exceeds output budget size limit".into(),
+            ));
+        }
         self.buffer.extend_from_slice(bytes);
         let mut text = Vec::new();
         while let Some(end) = self.buffer.iter().position(|b| *b == b'\n') {
+            if end + 1 > self.budget.max_event_bytes {
+                return Err(AppError::Network(
+                    "llama.cpp event exceeds output budget size limit".into(),
+                ));
+            }
             let line: Vec<u8> = self.buffer.drain(..=end).collect();
             let line = std::str::from_utf8(&line)
                 .map_err(|_| AppError::Network("Invalid UTF-8 in llama.cpp stream".into()))?;
@@ -694,11 +713,13 @@ impl Decoder {
                     self.finish_reason = Some(reason.into());
                 }
                 let was_empty = self.content.is_empty();
+                let mut emitted_token = false;
                 if let Some(content) = choice
                     .pointer("/delta/content")
                     .and_then(Value::as_str)
                     .filter(|c| !c.is_empty())
                 {
+                    emitted_token = true;
                     let emitted = self.content_filter.push(content);
                     if !emitted.is_empty() {
                         self.content.push_str(&emitted);
@@ -754,6 +775,9 @@ impl Decoder {
                         .and_then(|d| d.get(key))
                         .and_then(Value::as_str)
                     {
+                        if !value.is_empty() {
+                            emitted_token = true;
+                        }
                         self.reasoning_delta.push_str(value);
                         let entry = self.reasoning.entry(key.into()).or_default();
                         entry.push_str(value);
@@ -802,6 +826,13 @@ impl Decoder {
                                     "llama.cpp returned a tool call without an index".into(),
                                 )
                             })?;
+                        if !self.tool_calls.contains_key(&index)
+                            && self.tool_calls.len() >= self.budget.max_tool_calls
+                        {
+                            return Err(AppError::InvalidState(
+                                "llama.cpp tool call count exceeds output budget".into(),
+                            ));
+                        }
                         let call = self.tool_calls.entry(index).or_insert_with(|| {
                             json!({
                                 "type": "function", "function": {"name": "", "arguments": ""}
@@ -823,6 +854,9 @@ impl Decoder {
                                 .and_then(|f| f.get(key))
                                 .and_then(Value::as_str)
                             {
+                                if !fragment.is_empty() {
+                                    emitted_token = true;
+                                }
                                 let function = call
                                     .get_mut("function")
                                     .and_then(Value::as_object_mut)
@@ -840,7 +874,20 @@ impl Decoder {
                         }
                     }
                 }
+                if emitted_token {
+                    self.token_events = self.token_events.saturating_add(1);
+                    if self.token_events > self.budget.max_token_events {
+                        return Err(AppError::InvalidState(
+                            "llama.cpp stream token events exceed output budget".into(),
+                        ));
+                    }
+                }
             }
+        }
+        if self.buffer.len() > self.budget.max_event_bytes {
+            return Err(AppError::Network(
+                "llama.cpp event exceeds output budget size limit".into(),
+            ));
         }
         Ok(text)
     }
@@ -884,14 +931,17 @@ impl Decoder {
             .first_logprobs
             .as_ref()
             .and_then(lattice_core::application::ports::llm_port::first_token_logprobs);
-        let mut response = super::parse_completion(json!({
-            "choices": [{
-                "message": message,
-                "finish_reason": self.finish_reason.unwrap_or_else(|| if has_tools { "tool_calls" } else { "stop" }.into()),
-                "logprobs": self.first_logprobs,
-            }],
-            "usage": self.usage,
-        }))?;
+        let mut response = super::parse_completion_with_budget(
+            json!({
+                "choices": [{
+                    "message": message,
+                    "finish_reason": self.finish_reason.unwrap_or_else(|| if has_tools { "tool_calls" } else { "stop" }.into()),
+                    "logprobs": self.first_logprobs,
+                }],
+                "usage": self.usage,
+            }),
+            self.budget.max_tool_calls,
+        )?;
         response.first_token_logprobs = public_logprobs;
         response.timing = timings.map(|timings| timings.served());
         Ok(response)

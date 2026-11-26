@@ -335,3 +335,19 @@ fn a_refusal_is_the_errors_own_text() {
     assert_eq!(refusal(&AppError::ModelAnswerUnusable("why".into())), "why");
     assert_eq!(refusal(&AppError::AnswerCutOff("why".into())), "why");
 }
+
+#[test]
+fn answer_step_forces_deterministic_sampling_while_draft_step_preserves_caller_sampling() {
+    use crate::application::ports::llm_port::SamplingOverride;
+    let base = GroundedRequest::of("System".into(), "Task".into());
+    assert_eq!(base.call.sampling, None);
+    let draft = base.draft_step("Think first.");
+    assert_eq!(draft.call.sampling, None);
+    let answer = base.answer_step("Now answer.", "Extract.", "Think first.", "Draft prose.");
+    assert_eq!(
+        answer.call.sampling,
+        Some(SamplingOverride::deterministic())
+    );
+    let completion = answer.completion(Vec::new(), Some(512));
+    assert_eq!(completion.sampling, Some(SamplingOverride::deterministic()));
+}

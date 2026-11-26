@@ -1,6 +1,8 @@
 //! Native OpenAI Responses and Anthropic Messages adapters.
 //! Explicit selection only; Auto never sends local documents to a cloud provider.
-use crate::features::llm::backend::{ignore_text, ModelBackend, Progress, TextSink};
+use crate::features::llm::backend::{
+    ignore_text, read_bounded_json, ModelBackend, Progress, TextSink,
+};
 use crate::features::llm::engine::vision::not_set_up_to_see;
 use crate::features::llm::fitting::{Fitted, OutputLimits, Thinking};
 use crate::features::llm::scheduler::{InferenceScheduler, SchedulerRegistry};
@@ -253,6 +255,7 @@ impl CloudLlm {
 impl CloudLlm {
     /// The whole answer at once.
     async fn complete_whole(&self, fitted: &Fitted<'_>) -> Result<CompletionResponse> {
+        let budget = fitted.response_budget();
         let deadline = fitted
             .request()
             .wall_clock_budget()
@@ -260,12 +263,23 @@ impl CloudLlm {
         let (response, _) = self
             .send_with_fallback(self.body(fitted, false)?, deadline, true)
             .await?;
-        let value: Value = response.json().await.map_err(|e| {
-            AppError::Network(format!("Invalid cloud response: {}", WithCauses(&e)))
-        })?;
+        let value = read_bounded_json(
+            response,
+            budget.max_whole_bytes,
+            || AppError::Network("Cloud response exceeds output budget size limit".into()),
+            |e| AppError::Network(format!("Invalid cloud response: {}", WithCauses(&e))),
+            |e| AppError::Network(format!("Invalid cloud response: {e}")),
+        )
+        .await?;
         // Without the server's own timings a whole answer at once has no
         // edge between reading and writing, so it is not timed.
-        self.protocol.parse_reply(value)
+        let parsed = self.protocol.parse_reply(value)?;
+        if parsed.tool_calls.len() > budget.max_tool_calls {
+            return Err(AppError::InvalidState(
+                "Cloud response tool call count exceeds output budget".into(),
+            ));
+        }
+        Ok(parsed)
     }
 
     /// The answer as it is written, text and thinking handed on as they arrive.
@@ -275,6 +289,7 @@ impl CloudLlm {
         on_text: &TextSink<'_>,
         on_reasoning: &TextSink<'_>,
     ) -> Result<CompletionResponse> {
+        let budget = fitted.response_budget();
         let request = fitted.request();
         let deadline = request
             .wall_clock_budget()
@@ -287,6 +302,7 @@ impl CloudLlm {
                 streaming::drain(
                     self.protocol,
                     response.bytes_stream(),
+                    budget,
                     self.stall_timeout,
                     sent,
                     on_text,

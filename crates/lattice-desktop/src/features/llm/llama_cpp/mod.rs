@@ -5,10 +5,12 @@
 //! `/tokenize` and slot pinning. The two differ only in where the server is
 //! (the base URL), how it authenticates (default headers) and who owns its
 //! process: a sidecar's client holds the handle that keeps it running.
-use crate::features::llm::backend::{ignore_retry, ignore_text, ModelBackend, Progress};
+use crate::features::llm::backend::{
+    ignore_retry, ignore_text, read_bounded_json, ModelBackend, Progress,
+};
 use crate::features::llm::engine::sidecar_manager::SidecarHandle;
 use crate::features::llm::engine::GenerationConfig;
-use crate::features::llm::fitting::{Fitted, OutputLimits, Thinking};
+use crate::features::llm::fitting::{Fitted, OutputLimits, ResponseBudget, Thinking};
 use crate::features::llm::openai_chat::openai_content_parts;
 use crate::features::llm::scheduler::SchedulerRegistry;
 use async_trait::async_trait;
@@ -30,11 +32,15 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(test)]
+mod props_tests;
 mod repetition;
 mod request;
 #[cfg(test)]
 mod request_tests;
 mod retry;
+#[cfg(test)]
+mod stream_guard_tests;
 pub(crate) mod streaming;
 #[cfg(test)]
 mod tests;
@@ -102,10 +108,8 @@ impl LlamaCppLlm {
                 context_window: settings.context_window as usize,
                 stall_timeout: Duration::from_secs(u64::from(settings.timeout_seconds.max(1))),
                 supports_tools: true,
-                supports_thinking:
-                    crate::features::llm::engine::gguf_metadata::model_name_supports_thinking(
-                        &connection.model,
-                    ),
+                // Determined from `/props` `chat_template` in `schedule`; never guessed by model name.
+                supports_thinking: false,
                 // A server the user runs names no file to read a header from.
                 model_thinking: ThinkingPolicy::PerRequest,
                 prefill_guard: false,
@@ -227,7 +231,16 @@ impl LlamaCppLlm {
             .await
             .map_err(network_error)?;
         let response = check_status(response).await?;
-        parse_completion(response.json().await.map_err(network_error)?)?;
+        let probe_budget = ResponseBudget::for_tokens(2048);
+        let value = read_bounded_json(
+            response,
+            probe_budget.max_whole_bytes,
+            || AppError::InvalidState("llama.cpp response exceeds output budget size limit".into()),
+            network_error,
+            |_| AppError::Network("llama.cpp returned invalid JSON".into()),
+        )
+        .await?;
+        parse_completion_with_budget(value, probe_budget.max_tool_calls)?;
         Ok(models)
     }
 
@@ -290,9 +303,11 @@ impl LlamaCppLlm {
                 (scheduler, true)
             }
             None => {
-                schedulers
+                let (scheduler, is_llama_server, supports_thinking) = schedulers
                     .remote_llama_cpp(&self.client, self.server_root(), self.config.context_window)
-                    .await
+                    .await;
+                self.config.supports_thinking = supports_thinking;
+                (scheduler, is_llama_server)
             }
         };
         if let Some(window) = scheduler.capacity().shared_window {
@@ -584,6 +599,13 @@ async fn server_status(
 const UNNAMED_TOOL: &str = "unnamed_tool";
 
 pub(crate) fn parse_completion(value: Value) -> Result<CompletionResponse> {
+    parse_completion_with_budget(value, ResponseBudget::default().max_tool_calls)
+}
+
+pub(crate) fn parse_completion_with_budget(
+    value: Value,
+    max_tool_calls: usize,
+) -> Result<CompletionResponse> {
     let choice = value
         .get("choices")
         .and_then(Value::as_array)
@@ -603,6 +625,11 @@ pub(crate) fn parse_completion(value: Value) -> Result<CompletionResponse> {
         .into_iter()
         .flatten()
         .collect();
+    if raw_calls.len() > max_tool_calls {
+        return Err(AppError::InvalidState(
+            "llama.cpp tool call count exceeds output budget".into(),
+        ));
+    }
     let mut calls = Vec::new();
     let mut ids = std::collections::HashSet::new();
     let mut repaired = false;
@@ -837,27 +864,14 @@ mod native_thinking_tests {
 
     #[test]
     fn supports_native_thinking_distinguishes_thinking_and_non_thinking_models() -> Result<()> {
+        // Remote clients must never guess thinking support from model-name substrings;
+        // capability is learned from `/props` `chat_template` in `schedule()`.
         for model in [
             "Qwen3.6-35B-A3B-UD-Q4_K_XL",
             "Qwen3.5-9B-Q4_K_M",
             "Laguna-XS-2.1-APEX-I-Compact",
             "DeepSeek-R1-Distill-Qwen-7B",
             "QwQ-32B",
-        ] {
-            let auto = remote_client(model, ThinkingOverrideDto::Auto)?;
-            assert!(
-                auto.supports_native_thinking(),
-                "{model} should think natively"
-            );
-
-            let off = remote_client(model, ThinkingOverrideDto::Off)?;
-            assert!(
-                !off.supports_native_thinking(),
-                "{model} with AlwaysOff override must not think natively"
-            );
-        }
-
-        for model in [
             "Meta-Llama-3.1-8B-Instruct",
             "Mistral-7B-Instruct-v0.3",
             "gemma-4-12b-it",
@@ -865,7 +879,19 @@ mod native_thinking_tests {
             let auto = remote_client(model, ThinkingOverrideDto::Auto)?;
             assert!(
                 !auto.supports_native_thinking(),
-                "{model} must not claim native thinking"
+                "{model} must not guess native thinking from model name before /props"
+            );
+
+            let on = remote_client(model, ThinkingOverrideDto::On)?;
+            assert!(
+                on.supports_native_thinking(),
+                "{model} with AlwaysOn override must think natively"
+            );
+
+            let off = remote_client(model, ThinkingOverrideDto::Off)?;
+            assert!(
+                !off.supports_native_thinking(),
+                "{model} with AlwaysOff override must not think natively"
             );
         }
 

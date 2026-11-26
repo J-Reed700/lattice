@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::services::model_contract::shape::Schema;
 use lattice_core::domain::models::vision::VisionGeometry;
-use lattice_core::shared::error::Result;
+use lattice_core::shared::error::{AppError, Result};
 
 use super::fitting::{Fitted, OutputLimits, Thinking};
 
@@ -56,4 +56,30 @@ pub(crate) trait ModelBackend: Send + Sync {
     async fn is_ready(&self) -> Result<bool>;
     async fn send(&self, fitted: &Fitted<'_>, progress: Progress<'_>)
         -> Result<CompletionResponse>;
+}
+
+/// Read a non-streamed HTTP JSON response body up to `max_bytes`, failing
+/// before buffering unbounded bytes into memory.
+pub(crate) async fn read_bounded_json(
+    mut response: reqwest::Response,
+    max_bytes: usize,
+    on_oversize: impl FnOnce() -> AppError,
+    on_transport: impl FnOnce(reqwest::Error) -> AppError,
+    on_json: impl FnOnce(serde_json::Error) -> AppError,
+) -> Result<serde_json::Value> {
+    if response
+        .content_length()
+        .and_then(|len| usize::try_from(len).ok())
+        .is_some_and(|len| len > max_bytes)
+    {
+        return Err(on_oversize());
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(on_transport)? {
+        if bytes.len().saturating_add(chunk.len()) > max_bytes {
+            return Err(on_oversize());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&bytes).map_err(on_json)
 }

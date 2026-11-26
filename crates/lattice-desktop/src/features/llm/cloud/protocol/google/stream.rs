@@ -21,6 +21,7 @@ pub(super) struct Events {
     timings: Option<Value>,
     reasoning: ReasoningParts,
     begun: bool,
+    token_events: usize,
 }
 
 #[derive(Default)]
@@ -51,6 +52,7 @@ impl EventDecoder for Events {
             Some(choices) => choices,
             None => return Ok(()),
         };
+        let mut emitted_token = false;
         for choice in choices {
             if let Some(reason) = field(choice, "finish_reason").as_str() {
                 self.finish_reason = Some(reason.to_string());
@@ -61,6 +63,7 @@ impl EventDecoder for Events {
             }
             if let Some(text) = field(delta, "content").as_str().filter(|t| !t.is_empty()) {
                 self.begun = true;
+                emitted_token = true;
                 self.text.push_str(text);
                 on_text(text.to_owned())?;
             }
@@ -71,6 +74,7 @@ impl EventDecoder for Events {
                 .filter(|t| !t.is_empty())
             {
                 self.begun = true;
+                emitted_token = true;
                 self.reasoning_text.push_str(reasoning);
                 self.reasoning
                     .push((String::new(), 0), reasoning, on_reasoning)?;
@@ -85,9 +89,15 @@ impl EventDecoder for Events {
                     }
                     let function = field(call, "function");
                     if let Some(name) = field(function, "name").as_str() {
+                        if !name.is_empty() {
+                            emitted_token = true;
+                        }
                         draft.name.push_str(name);
                     }
                     if let Some(args) = field(function, "arguments").as_str() {
+                        if !args.is_empty() {
+                            emitted_token = true;
+                        }
                         draft.arguments.push_str(args);
                     }
                     if let Some(extra) = field(call, "extra_content").as_object() {
@@ -95,6 +105,9 @@ impl EventDecoder for Events {
                     }
                 }
             }
+        }
+        if emitted_token {
+            self.token_events = self.token_events.saturating_add(1);
         }
         Ok(())
     }
@@ -115,6 +128,14 @@ impl EventDecoder for Events {
 
     fn answer_begun(&self) -> bool {
         self.begun
+    }
+
+    fn token_events(&self) -> usize {
+        self.token_events
+    }
+
+    fn tool_call_count(&self) -> usize {
+        self.tool_calls.len()
     }
 
     fn finish(mut self: Box<Self>) -> Result<Option<Value>> {

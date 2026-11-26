@@ -1638,6 +1638,7 @@ async fn read(
 ) -> std::result::Result<CompletionResponse, retry::Failure> {
     retry::read_stream(
         scripted(frames),
+        crate::features::llm::fitting::ResponseBudget::default(),
         retry::Patience {
             first_frame,
             stall: Duration::from_secs(30),
