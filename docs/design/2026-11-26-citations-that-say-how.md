@@ -298,7 +298,7 @@ Everything without `anchoredBy` reads as it does now, until its phase.
 
 ### 6.4 Quoted text
 
-A `Quoted` piece is written into the marked text between `` and ``, the next two private-use characters after the reference marks. `ANY_MARK` widens to `[-]`, so `withoutMarks` drops them from selections and copies. `citationMarks` draws the pair as opening and closing quotation-mark widgets with class `cite-quote`. `writtenOf` gives the text in curly quotes, so copy and export keep the quotation.
+A `Quoted` piece is written into the marked text between U+E00E and U+E00F, the next two private-use characters after the reference marks. `ANY_MARK` widens to `[\uE000-\uE00F]`, so `withoutMarks` drops them from selections and copies. `citationMarks` draws the pair as opening and closing quotation-mark widgets with class `cite-quote`. `writtenOf` gives the text in curly quotes, so copy and export keep the quotation.
 
 ## 7. Phases
 
