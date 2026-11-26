@@ -49,7 +49,7 @@ export function RecallEvolutionPanel({ programId, active }: { programId: string;
   const data = query.data;
   const cards = data?.cards ?? [];
   const selectedCard = cards.find((card) => card.id === selectedId) ?? null;
-  const keepingFormat = Boolean(selectedCard && format === selectedCard.format);
+  const keepingFormat = selectedCard?.format === format;
   const sourceOptions = useMemo(() => (sourceQuery.data?.sources ?? []).flatMap((source) => source.versions.map((version) => ({ id: version.id, title: version.title, number: version.versionNumber, sourceId: source.id, removed: Boolean(source.deletedAt) }))), [sourceQuery.data?.sources]);
   const dueCards = cards.filter((card) => card.scheduler.dueAt <= Date.now());
   const authoredOptions = content.options.map((option) => option.trim()).filter(Boolean);
@@ -91,7 +91,7 @@ export function RecallEvolutionPanel({ programId, active }: { programId: string;
 
   const save = () => {
     let nextContent: LearningRecallContentDto;
-    if (selectedCard && format === selectedCard.format) {
+    if (selectedCard?.format === format) {
       nextContent = selectedCard.content;
     } else {
       const optionEntries = format === 'multiple_choice' ? content.options.map((value, originalIndex) => ({ value: value.trim(), originalIndex })).filter((entry) => entry.value) : [];

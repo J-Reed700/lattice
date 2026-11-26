@@ -92,7 +92,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
     published && finding.address?.content.kind === 'learning.section' ? () => openAt(finding.address!) : null;
   const takenOutEditor = (entry: TakenOutSentence) => {
     const claim = review?.claims.find((candidate) => candidate.claimId === entry.statements[0]?.claimId);
-    if (!published || !claim || claim.putBackUnit === null) return null;
+    if (!published || claim?.putBackUnit == null) return null;
     return () => openAt({ content: { kind: 'learning.section', key: `${lessonId}/${claim.putBackUnit}` }, path: '/body', fragment: null });
   };
   const selection = useReviewSelection(useMemo(() => ordered.map((claim) => claim.claimId), [ordered]));

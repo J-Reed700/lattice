@@ -1,10 +1,10 @@
+import type { ReactNode } from 'react';
+
 import { Pencil } from 'lucide-react';
 
 import { buttonVariants } from '@/components/ui/button';
 
 import { useEditMode } from './editMode';
-
-import type { ReactNode } from 'react';
 
 export function EditModeToggle(): ReactNode {
   const on = useEditMode((state) => state.on);

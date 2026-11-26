@@ -36,7 +36,6 @@ import { useStopSpeechOnChange } from '@/features/speech/hooks/useSpeech';
 import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { flushPendingSaves } from '@/lib/pendingSaves';
 import type { StudyDestination, StudyTab } from '@/lib/studyActivity';
-import { EditModeToggle } from '@/shared/edits/EditModeToggle';
 
 import './learningStudio.css';
 
@@ -78,7 +77,6 @@ export function LearningStudioPage() {
   }, [requestedCourse, requestedLesson, setSearchParams]);
   return <div className="learning-studio flex h-full min-h-0 flex-col">
     <StudyActivityPanel onOpen={next => void openTask(next)} />
-    <div className="mx-auto flex w-full max-w-[1400px] shrink-0 items-center justify-end px-5 pt-3 empty:hidden sm:px-8"><EditModeToggle /></div>
     {navigationError && <p role="alert" className="px-6 py-3 text-sm text-danger-fg">Could not save before opening this task: {navigationError}</p>}
     <div className="min-h-0 flex-1"><LearningStudioContent destination={destination} onOpenDestination={next => void openTask(next)} /></div>
   </div>;

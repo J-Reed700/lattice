@@ -32,8 +32,8 @@ import { MarkdownViewer } from '@/features/reading/components/viewers/MarkdownVi
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import { ListenButton } from '@/features/speech/components/ListenButton';
 import type { LearningBlockKind, LearningLessonDto, LearningOutlineEvidenceDto, LearningProgramDto } from '@/lib/bindings';
-import { Editable } from '@/shared/edits/Editable';
 import { jobErrorToError } from '@/lib/errorHandling';
+import { Editable } from '@/shared/edits/Editable';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
 const LISTEN_CLASS =

@@ -1171,7 +1171,7 @@ export async function installLearningStudioBackend(page: Page) {
       // No journey opens a tangent from a lesson, so every program lists none.
       list_learning_tangents: (): LearningTangentDto[] => [],
       set_conversation_course: (): null => null,
-      get_learning_program: () => program,
+      get_learning_program: () => structuredClone(program),
       prepare_learning_ahead: (args) => {
         const request = getRequest<{ programId: string; lessonId: string }>(args);
         if (request.programId !== program.summary.id) throw new Error("Learning program not found");
@@ -2659,7 +2659,7 @@ export async function installLearningStudioBackend(page: Page) {
         return state.practicalWorkspace;
       },
       get_learning_portability_workspace: () => state.portabilityWorkspace,
-      get_learning_recall_workspace: () => state.recallV2Workspace,
+      get_learning_recall_workspace: () => structuredClone(state.recallV2Workspace),
       save_learning_recall_card: (args) => {
         const request = getRequest<Record<string, unknown>>(args);
         const cards = state.recallV2Workspace.cards as Array<Record<string, unknown>>;
@@ -2675,7 +2675,7 @@ export async function installLearningStudioBackend(page: Page) {
           const timestamp = Date.now();
           cards.push({ id: request.cardId, programId: program.summary.id, format: request.format, content: JSON.parse(JSON.stringify(content)), contentRevision: 1, versions: [{ revision: 1, format: request.format, content: JSON.parse(JSON.stringify(content)), sourceVersionIds: request.sourceVersionIds, changeReason: request.changeReason, createdAt: timestamp }], sourceVersionIds: request.sourceVersionIds, scheduler: { stability: null, difficulty: null, lastReviewedAt: null, dueAt: 0, intervalDays: 0, reviewCount: 0 }, reviewHistory: [], createdAt: timestamp, updatedAt: timestamp });
         }
-        return state.recallV2Workspace;
+        return structuredClone(state.recallV2Workspace);
       },
       decide_learning_recall_duplicate: (args) => {
         const request = getRequest<Record<string, unknown>>(args);
@@ -2683,7 +2683,7 @@ export async function installLearningStudioBackend(page: Page) {
         if (!suggestion || suggestion.status !== "pending") throw new Error("Pending duplicate suggestion not found.");
         suggestion.status = request.accept ? "confirmed" : "dismissed";
         suggestion.decidedAt = Date.now();
-        return state.recallV2Workspace;
+        return structuredClone(state.recallV2Workspace);
       },
       review_learning_recall_card: (args) => {
         const request = getRequest<Record<string, unknown>>(args);
@@ -2696,7 +2696,7 @@ export async function installLearningStudioBackend(page: Page) {
         Object.assign(scheduler, { reviewCount: Number(scheduler.reviewCount) + 1, intervalDays, dueAt: timestamp + intervalDays * 86_400_000, lastReviewedAt: timestamp });
         (card.reviewHistory as Array<Record<string, unknown>>).push({ id: request.reviewId, rating: request.rating, createdAt: timestamp });
         state.recallV2Workspace.dueCount = (state.recallV2Workspace.cards as Array<Record<string, unknown>>).filter((entry) => ((entry.scheduler as Record<string, unknown>).dueAt as number) <= Date.now()).length;
-        return state.recallV2Workspace;
+        return structuredClone(state.recallV2Workspace);
       },
       preview_learning_pack_import: (args) => {
         const command = 'preview_learning_pack_import';

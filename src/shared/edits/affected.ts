@@ -1,6 +1,5 @@
-import type { QueryClient } from '@tanstack/react-query';
-
 import type { EditScope } from './types';
+import type { QueryClient } from '@tanstack/react-query';
 
 export type Refresh = (scope: EditScope, queryClient: QueryClient) => Promise<void> | void;
 
