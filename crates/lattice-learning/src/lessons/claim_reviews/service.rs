@@ -350,7 +350,8 @@ impl ClaimReviewService {
                 .await?
                 .into_iter()
                 .filter_map(|item| {
-                    keys::section_key(&item.content.key).map(|(_, unit)| (unit, item))
+                    let unit = keys::section_key(&item.content.key)?.1;
+                    Some((unit, item))
                 })
                 .collect();
             read.commit().await?;

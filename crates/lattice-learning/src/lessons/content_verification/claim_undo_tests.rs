@@ -14,7 +14,8 @@ use crate::lessons::claim_reviews::service::ClaimReviewService;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
     Actor, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation,
-    ClaimState, EventProvenance, Ledger, RepairOutcome, UnitKind, UnverifiedReason,
+    ClaimState, EventProvenance, EvidenceFingerprint, Ledger, RepairOutcome, UnitKind,
+    UnverifiedReason,
 };
 use lattice_core::shared::edits::{
     ContentEditOutcome, ContentEditRequest, ContentRef, EditOp, EditSource,
@@ -216,8 +217,9 @@ async fn a_revert_is_refused_when_an_ended_statement_was_acted_on_since() -> Res
                 kind: lattice_core::domain::learning::claim_review::VerdictKind::Unsupported,
             },
             reason: "Unsupported.".into(),
+            fingerprint: EvidenceFingerprint::of("strict", "fixture", &[]),
             evidence: Vec::new(),
-            supporting_quote: None,
+            window_tokens: 128_000,
         }),
         ClaimEvent::RepairAttempted {
             attempt: 1,
@@ -225,6 +227,7 @@ async fn a_revert_is_refused_when_an_ended_statement_was_acted_on_since() -> Res
             before: cut.into(),
             after: Some(rewrite.into()),
             outcome: RepairOutcome::Rewritten,
+            goal: None,
         },
         ClaimEvent::Superseded {
             successor: Some(ClaimId("rewrite".into())),

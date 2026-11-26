@@ -16,7 +16,7 @@ mod recall;
 mod submission;
 
 pub use bank::BankItem;
-pub(crate) use bank::{content_hash, insert_bank_items_in};
+pub(crate) use bank::{content_hash, insert_bank_items_in, quoted_questions_in};
 pub use contests::{ContestInput, Regrade};
 pub use submission::ItemGrade;
 
@@ -294,25 +294,39 @@ async fn candidate_outcomes_in(
 }
 
 /// One candidate of the program, whatever its review status (a form keeps
-/// the items it was drawn with).
-async fn candidate_in(
+/// the items it was drawn with), or `None` when absent.
+async fn find_candidate_in(
     connection: &mut SqliteConnection,
     program_id: &str,
     candidate_id: &str,
-) -> Result<StoredCandidate> {
-    let row = sqlx::query(sqlx::AssertSqlSafe(format!("SELECT {CANDIDATE_COLUMNS} FROM learning_assessment_candidates c JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id WHERE c.id=? AND c.program_id=?")))
+) -> Result<Option<StoredCandidate>> {
+    let Some(row) = sqlx::query(sqlx::AssertSqlSafe(format!("SELECT {CANDIDATE_COLUMNS} FROM learning_assessment_candidates c JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id WHERE c.id=? AND c.program_id=?")))
         .bind(candidate_id)
         .bind(program_id)
         .fetch_optional(&mut *connection)
         .await?
-        .ok_or_else(|| AppError::InvalidState("This quiz question is no longer available.".into()))?;
+    else {
+        return Ok(None);
+    };
     let outcomes = sqlx::query_scalar::<_, String>(
         "SELECT outcome_id FROM learning_assessment_candidate_outcomes WHERE candidate_id=? ORDER BY outcome_id",
     )
     .bind(candidate_id)
     .fetch_all(&mut *connection)
     .await?;
-    candidate_from_row(&row, outcomes)
+    candidate_from_row(&row, outcomes).map(Some)
+}
+
+/// One candidate of the program, whatever its review status (a form keeps
+/// the items it was drawn with).
+async fn candidate_in(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+    candidate_id: &str,
+) -> Result<StoredCandidate> {
+    find_candidate_in(connection, program_id, candidate_id)
+        .await?
+        .ok_or_else(|| AppError::InvalidState("This quiz question is no longer available.".into()))
 }
 
 /// The bank rows a form drew from, fetched together with their keys and
@@ -404,6 +418,15 @@ impl LearningAssessmentRepository {
         candidate_id: &str,
     ) -> Result<StoredCandidate> {
         candidate_in(connection, program_id, candidate_id).await
+    }
+
+    /// One bank item with its key, or `None` when absent.
+    pub(crate) async fn find_stored_candidate_in(
+        connection: &mut SqliteConnection,
+        program_id: &str,
+        candidate_id: &str,
+    ) -> Result<Option<StoredCandidate>> {
+        find_candidate_in(connection, program_id, candidate_id).await
     }
 }
 

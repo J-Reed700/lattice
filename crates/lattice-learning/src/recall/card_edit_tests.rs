@@ -10,6 +10,7 @@ use crate::{
     edits::{content_edits, keys::card_ref},
     portability_dto::{
         LearningRecallCardFormat, LearningRecallContentDto, LearningRecallDuplicateStatus,
+        ReviewLearningRecallCardRequestDto, SaveLearningRecallCardRequestDto,
     },
     repository::LearningRepository,
     source_library::{CapturedLearningSource, NewLearningSource},
@@ -82,26 +83,35 @@ fn edit_request(card_id: &str, expected_revision: String, ops: Vec<EditOp>) -> C
 
 async fn add_source_version(db: &Database, program_id: &str, marker: &str) -> Result<String> {
     let library = crate::source_library::LearningSourceLibraryRepository::new(db.clone());
-    let captured = library
-        .capture(&NewLearningSource {
-            program_id: program_id.into(),
-            kind: LearningSourceKind::Web,
-            policy: LearningSourcePolicy::Verified,
-            title: format!("Source {marker}"),
-            requested_url: Some(format!("https://example.com/{marker}")),
-            captured: CapturedLearningSource {
-                resolved_url: Some(format!("https://example.com/{marker}")),
-                content_type: Some("text/plain".into()),
-                content: format!("Passage {marker} explaining the topic."),
-                content_hash: None,
-                source_path: None,
-                metadata_json: None,
-                excerpt: format!("Passage {marker}."),
+    let (operation_id, source_id, version_id) = (id(), id(), id());
+    let url = format!("https://example.com/{marker}");
+    library
+        .add(
+            NewLearningSource {
+                operation_id: &operation_id,
+                source_id: &source_id,
+                version_id: &version_id,
+                program_id,
+                kind: LearningSourceKind::Web,
+                operation_kind: "add_web",
+                origin: &url,
+                requested_url: Some(&url),
+                freshness: LearningSourcePolicy::BeforeUse,
             },
-            captured_at: 10,
-        })
+            CapturedLearningSource {
+                title: format!("Source {marker}"),
+                publisher: None,
+                requested_url: Some(url.clone()),
+                resolved_url: Some(url),
+                text: format!("Passage {marker} explaining the topic."),
+                truncated: false,
+                extraction_version: "test_v1".into(),
+                signals: crate::references::trust::capture::not_extracted("test fixture"),
+            },
+            id(),
+        )
         .await?;
-    Ok(captured.version.id)
+    Ok(version_id)
 }
 
 #[tokio::test]

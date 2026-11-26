@@ -180,6 +180,7 @@ async fn a_resumed_quiz_job_inserts_its_saved_stage_output_once() -> Result<()> 
         }],
         dropped: vec![],
         author_model: Some("the-authoring-model".into()),
+        marks: Vec::new(),
     };
     let context = claimed(&db, &job_id).await?;
     assert!(
@@ -409,6 +410,7 @@ async fn lesson_stage_report_reads_a_completed_jobs_numbers() -> Result<()> {
         }],
         dropped: vec!["a key out of range".into(), "a duplicate question".into()],
         author_model: Some("the-authoring-model".into()),
+        marks: Vec::new(),
     };
     let context = claimed(&db, &job_id).await?;
     assert_eq!(lesson_stage_report(&db, &job_id).await?, None);

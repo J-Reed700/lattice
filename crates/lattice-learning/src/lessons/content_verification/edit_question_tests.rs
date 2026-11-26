@@ -1415,23 +1415,6 @@ async fn the_undo_of_a_statement_a_question_edit_ended_is_refused_with_the_quest
     Ok(())
 }
 
-async fn give_the_first_question_its_reasons(course: &Course) -> Result<()> {
-    sqlx::query(
-        "UPDATE learning_assessment_answer_keys SET distractor_rationales_json=? \
-         WHERE candidate_id IN (SELECT id FROM learning_assessment_candidates WHERE lesson_id=? AND prompt=?)",
-    )
-    .bind(serde_json::to_string(&R0)?)
-    .bind(&course.lesson_id)
-    .bind(P0)
-    .execute(&course.pool)
-    .await?;
-    Ok(())
-}
-
-async fn stored_reasons(course: &Course) -> Result<Vec<String>> {
-    Ok(serde_json::from_str(&rows(course).await?[0].4)?)
-}
-
 #[tokio::test]
 async fn a_questions_reasons_are_read_with_it_and_an_edit_of_one_is_written_in_its_slot(
 ) -> Result<()> {
@@ -1447,7 +1430,7 @@ async fn a_questions_reasons_are_read_with_it_and_an_edit_of_one_is_written_in_i
     let saved = edit(
         &course,
         0,
-        vec![replace("/choices/2/rationale", &rationales[2])],
+        vec![replace("/choices/2/rationale", rationales[2].as_str())],
     )
     .await?;
 

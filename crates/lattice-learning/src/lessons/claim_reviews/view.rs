@@ -230,7 +230,8 @@ impl ClaimReviewService {
                 .await?
                 .into_iter()
                 .filter_map(|entry| {
-                    keys::section_key(&entry.content.key).map(|(_, unit)| (unit, entry))
+                    let unit = keys::section_key(&entry.content.key)?.1;
+                    Some((unit, entry))
                 })
                 .collect()
         } else {
@@ -528,7 +529,6 @@ fn location_address(
                 fragment,
             })
         }
-        _ => None,
     }
 }
 

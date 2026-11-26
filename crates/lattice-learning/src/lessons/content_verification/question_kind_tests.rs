@@ -7,7 +7,7 @@
 //! The `learning.question` content kind and `learning.quiz_bank` reactor:
 //! candidate-ID identity, choice editing, key retention, validation,
 //! open-quiz gate, bank status revert, and section-quote consequences.
-use super::claim_ledger_tests::{figure, lesson, section, unreadable, Course};
+use super::claim_ledger_tests::{figure, lesson, unreadable, Course};
 use super::GOOD;
 use crate::assessment::assessment_tests::fill_bank;
 use crate::assessment_engine::{
@@ -25,7 +25,7 @@ use lattice_core::shared::edits::{
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Database;
-use serde_json::{json, Value};
+use serde_json::json;
 use uuid::Uuid;
 
 fn single_choice(outcome_id: &str, prompt: &str, options: &[&str], right: usize) -> BankItem {

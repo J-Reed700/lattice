@@ -15,7 +15,9 @@ use crate::edits::keys;
 use crate::lessons::claim_reviews::dto::ClaimActionRequestDto;
 use crate::lessons::claim_reviews::repository::ClaimReviewRepository;
 use crate::lessons::claim_reviews::service::ClaimReviewService;
-use crate::lessons::claim_reviews::teaching_findings::TeachingFindingsRepository;
+use crate::lessons::claim_reviews::teaching_findings::{
+    TeachingFindingSiteDto, TeachingFindingsRepository,
+};
 use crate::review_findings::{FindingKind, FindingSite, ReviewFinding, SetAside};
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{

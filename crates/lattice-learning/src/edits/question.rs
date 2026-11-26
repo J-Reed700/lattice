@@ -59,7 +59,7 @@ pub(crate) async fn ledger_unit(
     let Some(position) = lesson_items.iter().position(|item| item.id == candidate_id) else {
         return Ok(None);
     };
-    let Some(stored) = LearningAssessmentRepository::stored_candidate_in(
+    let Some(stored) = LearningAssessmentRepository::find_stored_candidate_in(
         &mut *unit,
         &home.program_id,
         candidate_id,
@@ -406,9 +406,12 @@ impl ContentKind for QuestionKind {
         let Some(home) = questions::question_home(&mut *unit, key).await? else {
             return Ok(None);
         };
-        let Some(stored) =
-            LearningAssessmentRepository::stored_candidate_in(&mut *unit, &home.program_id, key)
-                .await?
+        let Some(stored) = LearningAssessmentRepository::find_stored_candidate_in(
+            &mut *unit,
+            &home.program_id,
+            key,
+        )
+        .await?
         else {
             return Ok(None);
         };
@@ -458,9 +461,12 @@ impl ContentKind for QuestionKind {
         let Some(home) = questions::question_home(&mut *unit, key).await? else {
             return Ok(Vec::new());
         };
-        let Some(stored) =
-            LearningAssessmentRepository::stored_candidate_in(&mut *unit, &home.program_id, key)
-                .await?
+        let Some(stored) = LearningAssessmentRepository::find_stored_candidate_in(
+            &mut *unit,
+            &home.program_id,
+            key,
+        )
+        .await?
         else {
             return Ok(Vec::new());
         };
@@ -496,7 +502,7 @@ impl ContentKind for QuestionKind {
             .await?
             .ok_or_else(|| AppError::NotFound("Question not found.".into()))?;
         let stored =
-            LearningAssessmentRepository::stored_candidate_in(&mut *tx, &home.program_id, key)
+            LearningAssessmentRepository::find_stored_candidate_in(&mut *tx, &home.program_id, key)
                 .await?
                 .ok_or_else(|| AppError::NotFound("Question not found.".into()))?;
         let edited = composed(&stored, change.after).map_err(|problems| {

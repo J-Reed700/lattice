@@ -1030,7 +1030,7 @@ async fn the_undo_of_a_removal_is_refused_by_hand_when_the_section_changed_after
 
     let error = refused(&course, &claim, ClaimActionRequestDto::Undo).await;
 
-    assert!(error.to_string().contains(AFTER_IT), "{error}");
+    assert!(error.to_string().contains(UNDO_BLOCKED), "{error}");
     Ok(())
 }
 
