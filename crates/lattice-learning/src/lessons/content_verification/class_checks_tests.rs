@@ -728,7 +728,9 @@ impl LLMPort for Reads {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let (system, user) = fixture_messages(request);
         if system == BRIDGE_SYSTEM {
-            return Ok(CompletionResponse::from_text(self.parts()));
+            return Ok(CompletionResponse::from_text(
+                super::bridge_tests::resolved_parts(&self.parts(), user),
+            ));
         }
         let strict =
             user.starts_with("Source passages:") && !user.contains("\n\nExplanatory statement: ");

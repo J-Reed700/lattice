@@ -1,6 +1,7 @@
 use super::super::tests::readings_tests::{read_one, world_of};
 use super::*;
 use crate::lessons::course_generation_tests::ScriptedModel;
+use lattice_core::application::services::claim_verification::PartKind;
 use lattice_core::domain::learning::acceptance::{Outcome, Reading};
 use std::sync::Mutex;
 
@@ -182,4 +183,38 @@ fn two_quotations_settle_in_order() {
         finding.map(|found| found.verdict),
         Some(ClaimVerdict::Supported)
     );
+}
+
+#[test]
+fn a_settled_quotation_records_each_of_its_parts_with_the_span_it_was_found_at() {
+    let sources = sources();
+    let references = ReferenceCollection::lexical(&sources).unwrap();
+    let wording = [
+        "List all enum values explicitly",
+        "Prevents the model from inventing invalid values",
+    ];
+    let statement = format!(
+        "Source 0 states: \u{201c}{}\u{201d} and \u{201c}{}\u{201d}",
+        wording[0], wording[1]
+    );
+
+    let finding = quote_claims::settle(&references, &citations(&references), 0, &claim(&statement))
+        .unwrap()
+        .expect("both quotations are in the book");
+
+    let parts = &finding.two_pass.parts;
+    assert_eq!(parts.len(), 2);
+    for (part, words) in parts.iter().zip(wording) {
+        assert_eq!(part.part, words);
+        assert_eq!(part.kind, PartKind::Stated);
+        assert_eq!(part.source_id, None);
+        let [anchor] = part.anchors.as_slice() else {
+            panic!("{part:?}");
+        };
+        assert_eq!(anchor.source_version_id, "book");
+        assert_eq!(
+            sources[0].excerpt.get(anchor.start_byte..anchor.end_byte),
+            Some(words)
+        );
+    }
 }

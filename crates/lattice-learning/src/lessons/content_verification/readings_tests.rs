@@ -12,7 +12,7 @@ use super::evidence_paging_tests::{
 };
 use super::*;
 use crate::lesson_drafts;
-use lattice_core::application::services::claim_verification::PartKind;
+use lattice_core::application::services::claim_verification::{PartKind, ShownPassage};
 use lattice_core::domain::learning::acceptance::{
     start, Outcome, Position, Reading, StandardPolicy,
 };
@@ -325,14 +325,17 @@ async fn a_statement_its_citation_states_in_part_stands_with_the_rest_as_common_
         kinds(&finding.two_pass.parts),
         vec![PartKind::Stated, PartKind::Common]
     );
-    assert_eq!(
-        finding.two_pass.parts[0].source_id.as_deref(),
-        Some("quillet")
-    );
+    assert_eq!(finding.two_pass.parts[0].source_id, None);
+    let anchors = &finding.two_pass.parts[0].anchors;
+    assert!(!anchors.is_empty());
+    assert!(anchors
+        .iter()
+        .all(|anchor| anchor.source_version_id == "quillet"));
     assert_eq!(finding.two_pass.parts[1].source_id, None);
+    assert!(finding.two_pass.parts[1].anchors.is_empty());
     assert!(finding
         .reason
-        .contains("Common knowledge, not in the passages: a lexer turns characters into tokens."));
+        .contains("Common knowledge, not in the passages: turns characters into tokens."));
     assert_eq!(finding.class, Some(classed()));
     assert_eq!(model.requests(), (1, 0));
     Ok(())
@@ -345,8 +348,8 @@ async fn a_statement_whose_every_part_is_common_reads_all_common() -> Result<()>
     let world = world_of(&references, citing(&references)?);
     let model = ScriptedBridge::new(vec![parts_reply(
         json!([
-            {"part": "a lexer turns characters into tokens", "kind": "common", "passage": null},
-            {"part": "a token is the smallest unit a parser reads", "kind": "common", "passage": null},
+            {"part": "turns characters into tokens", "kind": "common", "passage": null},
+            {"part": "Quillet is a lexer", "kind": "common", "passage": null},
         ]),
         "supported_with_common",
     )]);
@@ -370,7 +373,7 @@ async fn a_specific_the_citation_lacks_leaves_the_statement_unproven() -> Result
     let model = ScriptedBridge::new(vec![parts_reply(
         json!([
             {"part": "Quillet is a lexer", "kind": "stated", "passage": "passage-0"},
-            {"part": "it was written in 2004", "kind": "specific_missing", "passage": null},
+            {"part": "turns characters into tokens", "kind": "specific_missing", "passage": null},
         ]),
         "supported",
     )]);
@@ -382,7 +385,7 @@ async fn a_specific_the_citation_lacks_leaves_the_statement_unproven() -> Result
     assert!(read
         .finding()
         .reason
-        .contains("Not given by the passages: it was written in 2004."));
+        .contains("Not given by the passages: turns characters into tokens."));
     Ok(())
 }
 
@@ -932,10 +935,15 @@ fn texts_of(passages: &[EvidencePassage]) -> Vec<String> {
         .collect()
 }
 
+/// `passages` as the part-wise judge is shown them, with no labels.
+fn shown_of(passages: &[EvidencePassage]) -> Vec<ShownPassage> {
+    evidence_checks::shown_passages(passages, &evidence_checks::Labels::new())
+}
+
 /// The smallest window in which the part-wise judge holds `passages` beside
 /// `FEEDS`.
 fn window_for_part_wise(passages: &[EvidencePassage]) -> usize {
-    let texts = texts_of(passages);
+    let texts = shown_of(passages);
     (1..)
         .find(|&window| {
             evidence_checks::bridge_checker(&Windowed::new(window, Vec::new()))
@@ -1014,7 +1022,7 @@ fn a_citations_page_is_still_fitted_to_the_strict_judge() {
     assert_eq!(sources_of(&shown), vec!["source-0", "source-1"]);
     // The part-wise judge holds all three in that window: its room is not the
     // strict judge's, which is why a reader fits its page to its own.
-    assert!(evidence_checks::bridge_checker(&model).bridge_fits(FEEDS, &texts_of(&three)));
+    assert!(evidence_checks::bridge_checker(&model).bridge_fits(FEEDS, &shown_of(&three)));
 }
 
 /// Unit 0 cites a related passage that does not state the claim, as source 0.
