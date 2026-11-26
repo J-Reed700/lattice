@@ -155,9 +155,10 @@ for (const [width, entry] of [[1440, 'menu'], [620, 'selection'], [1440, 'reply'
     await composer.fill('Keep my main draft');
     const answer = page.locator('#message-source-answer .tiptap-viewer p');
     await expect(answer).toBeVisible();
-    const replyAction = page.locator('#message-source-answer').getByRole('button', { name: 'Start a tangent from this reply' });
-    await expect(replyAction).toBeVisible();
     if (entry === 'reply') {
+      await page.locator('#message-source-answer').getByRole('button', { name: 'More actions for this message' }).click();
+      const replyAction = page.getByRole('menu', { name: 'More actions' }).getByRole('menuitem', { name: 'Start a tangent from this reply' });
+      await expect(replyAction).toBeVisible();
       await replyAction.focus();
       await replyAction.press('Enter');
     } else {
