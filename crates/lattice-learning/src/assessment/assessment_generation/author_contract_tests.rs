@@ -550,3 +550,100 @@ async fn a_cloze_asks_for_at_least_one_blank_and_one_accepted_answer_in_each() {
     assert_eq!(blanks, vec![Some(1)], "{schema}");
     assert_eq!(accepted, vec![Some(1)], "{schema}");
 }
+
+#[test]
+fn authored_content_faults_rejects_meta_talk_and_phantom_versions_but_allows_stated_or_standard_versions(
+) {
+    let mut meta = candidate_with(
+        LearningItemFormat::SingleChoice,
+        "Under the versioning rules of this course, which increment applies?",
+        "Minor increments apply for backward compatible additions.",
+        vec![],
+    );
+    meta.prompt = "Under the versioning rules of this course, which increment applies?".into();
+    let faults = engine::checks::authored_content_faults(&meta, "");
+    assert!(faults.iter().any(|f| f.contains("meta-talk")), "{faults:?}");
+
+    let phantom = candidate_with(
+        LearningItemFormat::Matching,
+        "Match each connector term to the meaning that fits it.",
+        "The pinned route version records which connector build owns a delivery, so a request for the 4.0.1 build keeps that number.",
+        vec![],
+    );
+    let phantom_faults = engine::checks::authored_content_faults(&phantom, "");
+    assert!(
+        phantom_faults.iter().any(|f| f.contains("4.0.1")),
+        "{phantom_faults:?}"
+    );
+
+    let valid = candidate_with(
+        LearningItemFormat::ShortAnswer,
+        "Connector 6.2.3 adds an optional field. What version should it carry?",
+        "Adding an optional field raises minor from 2 to 3, giving 6.3.0 under SemVer 2.0.0.",
+        vec![],
+    );
+    let valid_faults = engine::checks::authored_content_faults(&valid, "");
+    assert!(valid_faults.is_empty(), "{valid_faults:?}");
+}
+
+#[test]
+fn author_and_review_prompts_forbid_meta_talk_phantom_details_and_version_digit_mismatches() {
+    let author = system();
+    assert!(author.contains("meta-talk"), "{author}");
+    assert!(author.contains("digit by digit"), "{author}");
+    assert!(
+        author.contains("Never attribute invented routes"),
+        "{author}"
+    );
+
+    let review = crate::assessment::item_review::ITEM_REVIEW_SYSTEM;
+    assert!(
+        !review.contains("mention of the lesson is not a mention of a source"),
+        "{review}"
+    );
+    assert!(
+        review.contains("disagrees with the question's prompt or key"),
+        "{review}"
+    );
+    assert!(
+        review.contains("build or version number absent"),
+        "{review}"
+    );
+    assert!(review.contains("meta-talk"), "{review}");
+}
+
+fn candidate_with(
+    format: LearningItemFormat,
+    prompt: &str,
+    explanation: &str,
+    rationales: Vec<String>,
+) -> LearningAssessmentCandidate {
+    LearningAssessmentCandidate {
+        id: "id".into(),
+        outcome_ids: vec!["o".into()],
+        format,
+        difficulty: 2,
+        prompt: prompt.into(),
+        options: vec![
+            "Alpha".into(),
+            "Beta".into(),
+            "Gamma".into(),
+            "Delta".into(),
+        ],
+        left: vec![],
+        source_version_ids: vec![],
+        rubric: vec![],
+        key: match format {
+            LearningItemFormat::ShortAnswer => {
+                LearningAssessmentKey::Text(crate::assessment_engine::LearningTextKey {
+                    variants: vec!["6.3.0".into()],
+                    numeric: None,
+                })
+            }
+            LearningItemFormat::Matching => LearningAssessmentKey::Matching(vec![0, 1]),
+            _ => LearningAssessmentKey::Choice(0),
+        },
+        explanation: explanation.into(),
+        distractor_rationales: rationales,
+    }
+}

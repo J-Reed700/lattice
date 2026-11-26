@@ -30,7 +30,9 @@ pub(crate) mod tests;
 
 const RESEARCH_KEYS: Protocol = lattice_core::protocol!("research", 1);
 
+mod gaps;
 mod saving;
+use gaps::{claim_gap as claim_gap_value, select_need_candidates, topic_gap};
 use saving::Saving;
 
 #[derive(Clone)]
@@ -454,7 +456,7 @@ pub(super) async fn expand<'a>(
             } else {
                 HINTED
             };
-            json!({"claim":f.statement,"missingEvidence":missing})
+            claim_gap_value(f, missing, &references.sources)
         })
         .collect();
     if gaps.is_empty() {
@@ -511,14 +513,14 @@ const HINTED: &str = "The user asked for a source that states it.";
 pub(crate) async fn research_topics<'a>(
     llm: &dyn LLMPort,
     references: &ReferenceCollection<'a>,
-    topics: &[String],
+    topics: &[(&str, &[String])],
 ) -> Result<Option<ReferenceCollection<'a>>> {
     let Ok(context) = CURRENT.try_with(Clone::clone) else {
         return Ok(None);
     };
     let gaps: Vec<_> = topics
         .iter()
-        .map(|topic| json!({"topic":topic,"missingEvidence":"No saved reference covers this lesson topic"}))
+        .map(|(topic, queries)| topic_gap(topic, queries))
         .collect();
     if gaps.is_empty() {
         return Ok(None);
@@ -750,88 +752,30 @@ async fn research<'a>(
     };
     crate::lesson_progress::stage(looking.clone());
     for (need, gap) in needs {
-        let line = need.line();
-        if !context
-            .searched
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(line.clone())
-        {
+        let selection = select_need_candidates(
+            llm,
+            &context,
+            gaps,
+            &urls,
+            &mut searched,
+            &need,
+            gap,
+            &looking,
+            pages.allows(gap, false) || pages.allows(gap, true),
+        )
+        .await?;
+        if selection.failed {
+            failed = true;
+        }
+        if selection.reached {
+            reached = true;
+        }
+        if !selection.reached {
             continue;
         }
-        searched.queries.push(line.clone());
-        crate::lesson_progress::stage(looking.clone());
-        let cost = selection_cost(llm, gaps);
-        let room = web_research::Room {
-            tokens: selection_room(llm, &context.topic, &need.query, gaps),
-            cost: &cost,
-        };
-        let results = match web_research::search_need(context.web.as_ref(), &need, room).await {
-            Ok(results) => results,
-            Err(error) => {
-                tracing::warn!(%error, "Lesson reference search unavailable");
-                trace::decided(
-                    Stage::Research,
-                    &format!("search {line}"),
-                    "search unavailable",
-                    &error.to_string(),
-                );
-                // Not searched: a later round may send it again, and the
-                // planner is not told it was tried.
-                context
-                    .searched
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .remove(&line);
-                searched.queries.pop();
-                failed = true;
-                continue;
-            }
-        };
-        reached = true;
-        trace::decided(
-            Stage::Research,
-            &format!("search {line}"),
-            "searched",
-            &format!("{} results", results.len()),
-        );
         let mut capture_failed = false;
-        let (candidates, held): (Vec<web_research::Candidate>, Vec<web_research::Candidate>) =
-            results
-                .into_iter()
-                .partition(|candidate| !urls.contains(&identity(&candidate.result.url)));
-        for candidate in &held {
-            trace::decided(
-                Stage::Research,
-                &format!("page {}", candidate.result.url),
-                "dropped",
-                "the course already holds this page",
-            );
-        }
-        let offered: Vec<String> = candidates
-            .iter()
-            .map(|candidate| candidate.result.url.clone())
-            .collect();
-        // The subject's owner, when the search resolved one: a result on its
-        // site is the statement's owner-site page.
-        let owner: Vec<String> = candidates
-            .iter()
-            .filter_map(|candidate| candidate.owner.as_ref())
-            .map(|owner| owner.domain.clone())
-            .collect();
-        let selected = select_noted(llm, &context.topic, &need.query, gaps, candidates).await?;
-        for url in offered
-            .iter()
-            .filter(|url| !selected.iter().any(|(result, _)| &result.url == *url))
-        {
-            trace::decided(
-                Stage::Research,
-                &format!("page {url}"),
-                "dropped",
-                "the selector did not choose it for the gap",
-            );
-        }
-        for (result, note) in selected {
+        let owner = selection.owner;
+        for (result, note) in selection.selected {
             let owned =
                 need.site.is_some() || super::provenance_gate::owner_hinted(&result.url, &owner);
             if !pages.allows(gap, owned) {
@@ -918,8 +862,8 @@ async fn research<'a>(
         }
         // Never checkpoint an in-flight search or a transient fetch failure as
         // completed. Captured references are already durable and deduplicated.
-        if !capture_failed {
-            completed_queries.insert(line);
+        if !capture_failed && !selection.completed_lines.is_empty() {
+            completed_queries.extend(selection.completed_lines);
             crate::lesson_drafts::record_checkpoint(
                 &search_key,
                 serde_json::to_value(&completed_queries)?,

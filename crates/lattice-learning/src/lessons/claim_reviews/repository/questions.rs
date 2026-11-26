@@ -76,7 +76,7 @@ pub(in crate::lessons::claim_reviews) async fn write_question(
     token: &str,
 ) -> Result<()> {
     sqlx::query(
-        "UPDATE learning_assessment_candidates SET prompt=?, options_json=COALESCE(?, options_json), content_sha256=?, review_status=CASE WHEN review_status='dropped' THEN 'agreed' ELSE review_status END WHERE id=?",
+        "UPDATE learning_assessment_candidates SET prompt=?, options_json=COALESCE(?, options_json), content_sha256=?, review_status=CASE WHEN review_status IN ('dropped','disputed') THEN 'agreed' ELSE review_status END WHERE id=?",
     )
     .bind(prompt)
     .bind(options_json)

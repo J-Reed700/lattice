@@ -575,6 +575,9 @@ impl ClaimReviewService {
             let kinds = self.settle_in(&mut tx, review, lesson_id, item).await?;
             add_kinds(&mut moved, kinds);
         }
+        if published {
+            crate::assessment_repository::sync_disputed_questions_in(&mut tx, lesson_id).await?;
+        }
         tx.commit().await?;
         Ok((written, moved))
     }

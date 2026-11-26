@@ -375,3 +375,179 @@ pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()>
         None => Ok(()),
     }
 }
+
+/// Checks freshly authored quiz items and lesson questions for course/lesson
+/// meta-talk and phantom build/version numbers absent from the item and `quote`.
+pub(crate) fn authored_content_faults(
+    candidate: &LearningAssessmentCandidate,
+    quote: &str,
+) -> Vec<String> {
+    let mut faults = Vec::new();
+    let has_meta_talk = std::iter::once(candidate.prompt.as_str())
+        .chain(candidate.options.iter().map(String::as_str))
+        .chain(candidate.left.iter().map(String::as_str))
+        .chain(std::iter::once(candidate.explanation.as_str()))
+        .chain(candidate.distractor_rationales.iter().map(String::as_str))
+        .any(contains_course_meta_talk);
+    if has_meta_talk {
+        faults.push(
+            "The question or its feedback uses course or lesson meta-talk instead of domain terms."
+                .into(),
+        );
+    }
+    if let Some(phantom) = find_phantom_version(candidate, quote) {
+        faults.push(format!(
+            "The explanation or rationale introduces version {phantom}, which does not appear in the question or its answer."
+        ));
+    }
+    faults
+}
+
+fn contains_course_meta_talk(text: &str) -> bool {
+    let normalized = text.replace('\u{2019}', "'").to_ascii_lowercase();
+    const PHRASES: &[&str] = &[
+        "of this course",
+        "in this course",
+        "for this course",
+        "rules of this course",
+        "rules of the course",
+        "this lesson's",
+        "in this lesson",
+        "of this lesson",
+        "for this lesson",
+        "from this lesson",
+        "nothing in this lesson",
+        "taught in this lesson",
+    ];
+    PHRASES.iter().any(|phrase| normalized.contains(phrase))
+}
+
+fn find_phantom_version(candidate: &LearningAssessmentCandidate, quote: &str) -> Option<String> {
+    let mut allowed = String::new();
+    allowed.push_str(&candidate.prompt);
+    for text in candidate.options.iter().chain(candidate.left.iter()) {
+        allowed.push(' ');
+        allowed.push_str(text);
+    }
+    for criterion in &candidate.rubric {
+        allowed.push(' ');
+        allowed.push_str(&criterion.title);
+        allowed.push(' ');
+        allowed.push_str(&criterion.description);
+    }
+    match &candidate.key {
+        LearningAssessmentKey::Text(key) => {
+            for variant in &key.variants {
+                allowed.push(' ');
+                allowed.push_str(variant);
+            }
+        }
+        LearningAssessmentKey::Cloze(blanks) => {
+            for blank in blanks {
+                for variant in &blank.variants {
+                    allowed.push(' ');
+                    allowed.push_str(variant);
+                }
+            }
+        }
+        LearningAssessmentKey::Ordering(values) => {
+            for value in values {
+                allowed.push(' ');
+                allowed.push_str(value);
+            }
+        }
+        _ => {}
+    }
+    allowed.push(' ');
+    allowed.push_str(quote);
+    let allowed_versions = extract_three_part_versions(&allowed);
+
+    std::iter::once(candidate.explanation.as_str())
+        .chain(candidate.distractor_rationales.iter().map(String::as_str))
+        .find_map(|text| {
+            let lower = text.to_ascii_lowercase();
+            extract_three_part_versions(text).into_iter().find(|ver| {
+                !allowed_versions.contains(ver) && !is_named_standard_version(&lower, ver)
+            })
+        })
+}
+
+fn is_named_standard_version(lower_text: &str, ver: &str) -> bool {
+    const STANDARDS: &[&str] = &[
+        "semver",
+        "semantic versioning",
+        "openapi",
+        "fhir",
+        "oauth",
+        "rfc",
+        "ecma",
+    ];
+    let mut start = 0;
+    while let Some(pos) = lower_text.get(start..).and_then(|s| s.find(ver)) {
+        let abs = start + pos;
+        let prefix = lower_text
+            .get(..abs)
+            .unwrap_or_default()
+            .trim_end_matches(|c: char| c == 'v' || c.is_whitespace());
+        if STANDARDS.iter().any(|std_name| prefix.ends_with(std_name)) {
+            return true;
+        }
+        start = abs + ver.len();
+    }
+    false
+}
+
+fn extract_three_part_versions(text: &str) -> Vec<String> {
+    let bytes = text.as_bytes();
+    let mut versions = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        let Some(&ch) = bytes.get(i) else { break };
+        if ch.is_ascii_digit() {
+            let start = i;
+            let prev = start.checked_sub(1).and_then(|idx| bytes.get(idx)).copied();
+            if prev
+                .is_some_and(|p| (p.is_ascii_alphanumeric() && p != b'v' && p != b'V') || p == b'.')
+            {
+                while bytes
+                    .get(i)
+                    .is_some_and(|b| b.is_ascii_digit() || *b == b'.')
+                {
+                    i += 1;
+                }
+                continue;
+            }
+            let mut end = start;
+            let mut dots = 0usize;
+            let mut ok = true;
+            let mut seg_len = 0usize;
+            while let Some(&b) = bytes.get(end) {
+                if b.is_ascii_digit() {
+                    seg_len += 1;
+                    end += 1;
+                } else if b == b'.' && seg_len > 0 {
+                    dots += 1;
+                    seg_len = 0;
+                    end += 1;
+                } else if b == b'.' {
+                    ok = false;
+                    break;
+                } else {
+                    break;
+                }
+            }
+            let trailing_dot_or_digit = bytes
+                .get(end)
+                .is_some_and(|b| b.is_ascii_digit() || *b == b'.');
+            if ok && dots == 2 && seg_len > 0 && !trailing_dot_or_digit {
+                if let Some(slice) = text.get(start..end) {
+                    versions.push(slice.to_owned());
+                }
+            }
+            i = end.max(start + 1);
+        } else {
+            i += 1;
+        }
+    }
+    versions
+}

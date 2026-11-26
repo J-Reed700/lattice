@@ -481,16 +481,16 @@ pub(super) async fn gather<'a>(
     let mut covering: Vec<Vec<usize>> = judged.into_iter().map(Option::unwrap_or_default).collect();
     let mut expanded: Option<ReferenceCollection<'a>> = None;
     loop {
-        let names: Vec<String> = topics
+        let missing: Vec<(&str, &[String])> = topics
             .iter()
             .zip(&covering)
             .zip(&unjudged)
             .filter(|((_, covered), unjudged)| covered.is_empty() && !**unjudged)
-            .map(|((topic, _), _)| topic.topic.clone())
+            .map(|((topic, _), _)| (topic.topic.as_str(), topic.queries.as_slice()))
             .collect();
         tracing::info!(
             topics = topics.len(),
-            uncovered = names.len(),
+            uncovered = missing.len(),
             passages = passages.len(),
             depth,
             "Lesson topics checked against saved references"
@@ -519,11 +519,11 @@ pub(super) async fn gather<'a>(
                 &format!("passages {covering_passages:?}"),
             );
         }
-        if names.is_empty() {
+        if missing.is_empty() {
             break;
         }
         let Some(next) =
-            research_topics(llm, expanded.as_ref().unwrap_or(references), &names).await?
+            research_topics(llm, expanded.as_ref().unwrap_or(references), &missing).await?
         else {
             break;
         };

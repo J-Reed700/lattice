@@ -204,11 +204,16 @@ pub(crate) async fn check(
         .zip(&verdicts)
         .filter_map(|((index, question), verdict)| {
             let verdict = verdict.as_ref()?;
+            let mut defects = verdict.defects.clone();
+            defects.extend(crate::assessment_engine::checks::authored_content_faults(
+                &question.item(*index),
+                question.quote.as_deref().unwrap_or_default(),
+            ));
             finding(
                 *index,
                 &question.prompt,
                 verdict.dispute.as_deref(),
-                &verdict.defects,
+                &defects,
                 &verdict.repeats,
             )
         })

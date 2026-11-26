@@ -217,7 +217,7 @@ impl LearningAssessmentRepository {
                 .await?;
         }
         let settings = quiz_blueprints::settings_in(&mut tx, program_id).await?;
-        let bank = Self::bank_in(&mut tx, program_id).await?;
+        let bank = Box::pin(Self::bank_in(&mut tx, program_id)).await?;
         let exposed = Self::exposed_in(&mut tx, program_id).await?;
         let facts = quiz_blueprints::course_facts_in(&mut tx, program_id).await?;
         let mut modules = Vec::new();
@@ -226,7 +226,7 @@ impl LearningAssessmentRepository {
         for module in &facts.modules {
             let mut lessons = Vec::new();
             for lesson in facts.lessons.iter().filter(|l| l.module_id == module.id) {
-                let quiz = Self::quiz_status_in(
+                let quiz = Box::pin(Self::quiz_status_in(
                     &mut tx,
                     program_id,
                     LearningQuizScopeDto {
@@ -237,7 +237,7 @@ impl LearningAssessmentRepository {
                     (&facts, &settings),
                     &bank,
                     &exposed,
-                )
+                ))
                 .await?;
                 quizzes_total += 1;
                 if quiz.verdict == LearningQuizVerdict::Passed {
@@ -248,7 +248,7 @@ impl LearningAssessmentRepository {
                     quiz,
                 });
             }
-            let test = Self::quiz_status_in(
+            let test = Box::pin(Self::quiz_status_in(
                 &mut tx,
                 program_id,
                 LearningQuizScopeDto {
@@ -259,7 +259,7 @@ impl LearningAssessmentRepository {
                 (&facts, &settings),
                 &bank,
                 &exposed,
-            )
+            ))
             .await?;
             modules.push(LearningModuleQuizzesDto {
                 module_id: module.id.clone(),
@@ -267,7 +267,7 @@ impl LearningAssessmentRepository {
                 lessons,
             });
         }
-        let exam = Self::quiz_status_in(
+        let exam = Box::pin(Self::quiz_status_in(
             &mut tx,
             program_id,
             LearningQuizScopeDto {
@@ -278,7 +278,7 @@ impl LearningAssessmentRepository {
             (&facts, &settings),
             &bank,
             &exposed,
-        )
+        ))
         .await?;
         let outcomes = Self::outcomes_in(&mut tx, program_id).await?;
         let evidence = Self::evidence_in(&mut tx, program_id).await?;

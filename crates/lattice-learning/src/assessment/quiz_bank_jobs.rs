@@ -228,16 +228,20 @@ impl JobHandler for QuizBankWorker {
             .get("topUp")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
-        let needs =
-            LearningAssessmentRepository::bank_needs(&self.database, &program_id, &scope, top_up)
-                .await?;
+        let needs = Box::pin(LearningAssessmentRepository::bank_needs(
+            &self.database,
+            &program_id,
+            &scope,
+            top_up,
+        ))
+        .await?;
         let lesson_stage = job
             .requested
             .get("lessonStage")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
         if lesson_stage && !needs.is_empty() {
-            return self.run_lesson_stage(context, &program_id, &scope).await;
+            return Box::pin(self.run_lesson_stage(context, &program_id, &scope)).await;
         }
         if needs.is_empty() {
             return Ok(JobOutcome::Completed {
@@ -266,7 +270,7 @@ impl JobHandler for QuizBankWorker {
                 .await?;
             taken += 1;
             let Some(authored) = context
-                .until_cancelled(generation::author_items(llm, &need))
+                .until_cancelled(Box::pin(generation::author_items(llm, &need)))
                 .await
             else {
                 return Ok(JobOutcome::Stopped);
@@ -336,7 +340,7 @@ impl QuizBankWorker {
                 let pin = pin?;
                 let Some(bank) = context
                     .until_cancelled(
-                        lesson_bank_stage(
+                        Box::pin(lesson_bank_stage(
                             pin.llm.as_ref(),
                             &self.database,
                             program_id,
@@ -345,7 +349,7 @@ impl QuizBankWorker {
                             &inputs.objective,
                             inputs.material,
                             inputs.seeds,
-                        )
+                        ))
                         .instrument(trace::lesson_span(lesson_id)),
                     )
                     .await
@@ -419,5 +423,6 @@ pub(crate) use repository::{queue_grading_in, queue_lesson_bank_in};
 
 pub use grading::{grade_written_answer, judge_short_answer, QuizGradingWorker};
 pub(crate) use lesson_stage::{
-    lesson_bank_stage, lesson_question_item, lesson_seed_items, LessonBank,
+    lesson_bank_stage, lesson_question_item, lesson_seed_items, lesson_seed_items_verified,
+    LessonBank,
 };

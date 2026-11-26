@@ -566,6 +566,7 @@ pub(super) fn to_candidate(
         }
     };
     faults.extend(engine::checks::item_faults(&candidate));
+    faults.extend(engine::checks::authored_content_faults(&candidate, &quote));
     if let (true, Err(error)) = (faults.is_empty(), engine::validate_candidate(&candidate)) {
         faults.push(error.to_string());
     }

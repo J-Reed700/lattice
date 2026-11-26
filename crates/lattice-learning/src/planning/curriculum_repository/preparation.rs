@@ -94,8 +94,7 @@ impl LearningCurriculumRepository {
         expected_revision: i64,
         lessons: &[(String, crate::dto::PreparedLearningLesson)],
     ) -> Result<()> {
-        self.publish_prepared(id, expected_revision, lessons, &[], None)
-            .await
+        Box::pin(self.publish_prepared(id, expected_revision, lessons, &[], None)).await
     }
 
     /// Publishes the job's prepared lessons and completes it. The `held`
@@ -155,7 +154,7 @@ impl LearningCurriculumRepository {
             ));
         }
         let named: Vec<String> = lessons.iter().map(|(id, _)| id.clone()).collect();
-        let preparable = preparable_in(&mut tx, &program_id, &named).await?;
+        let preparable = Box::pin(preparable_in(&mut tx, &program_id, &named)).await?;
         if named.iter().any(|id| !preparable.contains(id)) {
             return Err(AppError::InvalidState(
                 "Only unfinished outline lessons can be published by this job.".into(),
@@ -168,8 +167,13 @@ impl LearningCurriculumRepository {
                     "A preparation job cannot repeat lesson IDs.".into(),
                 ));
             }
-            crate::content_verification::persist_report(&mut tx, &program_id, lesson_id, prepared)
-                .await?;
+            Box::pin(crate::content_verification::persist_report(
+                &mut tx,
+                &program_id,
+                lesson_id,
+                prepared,
+            ))
+            .await?;
             for (ordinal, b) in prepared.blocks.iter().enumerate() {
                 sqlx::query("INSERT INTO learning_blocks(lesson_id,ordinal,kind,title,body,source_ids_json,rubric_json) VALUES(?,?,?,?,?,?,?)").bind(lesson_id).bind(ordinal as i64).bind(b.kind.as_str()).bind(&b.title).bind(&b.body).bind(encode(&b.source_ids)?).bind(encode(&b.rubric)?).execute(&mut *tx).await?;
             }
@@ -183,12 +187,8 @@ impl LearningCurriculumRepository {
                 None,
             )
             .await?;
-            let items = crate::quiz_bank_jobs::lesson_seed_items(
-                lesson_id,
-                &outcome_id,
-                &prepared.questions,
-                &prepared.keys,
-            );
+            let items =
+                crate::quiz_bank_jobs::lesson_seed_items_verified(lesson_id, &outcome_id, prepared);
             crate::assessment_repository::insert_bank_items_in(
                 &mut tx,
                 &program_id,

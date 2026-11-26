@@ -59,12 +59,8 @@ impl LearningRepository {
         let outcome_id =
             crate::quiz_blueprints::ensure_lesson_outcome_in(&mut tx, program_id, lesson_id, None)
                 .await?;
-        let seeds = crate::quiz_bank_jobs::lesson_seed_items(
-            lesson_id,
-            &outcome_id,
-            &prepared.questions,
-            &prepared.keys,
-        );
+        let seeds =
+            crate::quiz_bank_jobs::lesson_seed_items_verified(lesson_id, &outcome_id, prepared);
         crate::assessment_repository::insert_bank_items_in(&mut tx, program_id, &seeds, None)
             .await?;
         crate::quiz_blueprints::ensure_blueprint_in(
