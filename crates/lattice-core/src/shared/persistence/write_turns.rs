@@ -24,6 +24,7 @@ const STILL_WAITING: Duration = Duration::from_secs(10);
 
 #[derive(Debug)]
 pub(super) struct WriteTurns {
+    lane: Arc<Semaphore>,
     queue: Arc<Semaphore>,
     holder: Mutex<Option<Holder>>,
 }
@@ -38,7 +39,10 @@ struct Holder {
 /// or is dropped. Dropping it lets the next writer in.
 #[derive(Debug)]
 pub(super) struct WriteTurn {
+    // `_permit` must drop before `_lane_permit` so waiting urgent callers on
+    // `queue` receive the next turn ahead of standard callers waiting on `lane`.
     _permit: OwnedSemaphorePermit,
+    _lane_permit: Option<OwnedSemaphorePermit>,
     turns: Arc<WriteTurns>,
     holder: Holder,
 }
@@ -46,8 +50,24 @@ pub(super) struct WriteTurn {
 impl WriteTurns {
     pub(super) fn new() -> Self {
         Self {
+            lane: Arc::new(Semaphore::new(1)),
             queue: Arc::new(Semaphore::new(1)),
             holder: Mutex::new(None),
+        }
+    }
+
+    async fn acquire_with_report(
+        &self,
+        semaphore: &Arc<Semaphore>,
+        at: &'static Location<'static>,
+        asked: Instant,
+    ) -> Result<OwnedSemaphorePermit, PersistenceError> {
+        let mut acquire = std::pin::pin!(Arc::clone(semaphore).acquire_owned());
+        loop {
+            match tokio::time::timeout(STILL_WAITING, acquire.as_mut()).await {
+                Ok(permit) => return Ok(permit.map_err(|_closed| PersistenceError::closed())?),
+                Err(_still_waiting) => self.report_wait(at, asked),
+            }
         }
     }
 
@@ -58,20 +78,37 @@ impl WriteTurns {
         at: &'static Location<'static>,
     ) -> Result<WriteTurn, PersistenceError> {
         let asked = Instant::now();
-        let mut acquire = std::pin::pin!(Arc::clone(&self.queue).acquire_owned());
-        let permit = loop {
-            match tokio::time::timeout(STILL_WAITING, acquire.as_mut()).await {
-                Ok(permit) => break permit.map_err(|_closed| PersistenceError::closed())?,
-                Err(_still_waiting) => self.report_wait(at, asked),
-            }
-        };
+        let lane_permit = self.acquire_with_report(&self.lane, at, asked).await?;
+        let queue_permit = self.acquire_with_report(&self.queue, at, asked).await?;
         let holder = Holder {
             at,
             since: Instant::now(),
         };
         *self.holder.lock().unwrap_or_else(PoisonError::into_inner) = Some(holder);
         Ok(WriteTurn {
-            _permit: permit,
+            _permit: queue_permit,
+            _lane_permit: Some(lane_permit),
+            turns: Arc::clone(self),
+            holder,
+        })
+    }
+
+    /// Skips the standard lane queue so an interactive user edit waits only for
+    /// at most one active standard unit and any earlier urgent units.
+    pub(super) async fn take_urgent(
+        self: &Arc<Self>,
+        at: &'static Location<'static>,
+    ) -> Result<WriteTurn, PersistenceError> {
+        let asked = Instant::now();
+        let queue_permit = self.acquire_with_report(&self.queue, at, asked).await?;
+        let holder = Holder {
+            at,
+            since: Instant::now(),
+        };
+        *self.holder.lock().unwrap_or_else(PoisonError::into_inner) = Some(holder);
+        Ok(WriteTurn {
+            _permit: queue_permit,
+            _lane_permit: None,
             turns: Arc::clone(self),
             holder,
         })
@@ -80,6 +117,7 @@ impl WriteTurns {
     /// Ends every writer still waiting with `Closed`. The unit holding the
     /// turn carries on until it commits or is dropped.
     pub(super) fn close(&self) {
+        self.lane.close();
         self.queue.close();
     }
 

@@ -1,31 +1,23 @@
-//! `ContentEdits` service facade (P0 contract stubs; P1 provides pipeline & store).
+//! `ContentEdits` service facade managing units of work and post-commit reactor follow-ups.
 
 use std::sync::Arc;
 
 use serde_json::Value;
 
+use super::pipeline;
 use super::registry::EditRegistry;
 use super::types::{
     ContentEditHistory, ContentEditOutcome, ContentEditPreview, ContentEditQuery,
     ContentEditRequest, ContentEditSummary, ContentRef, EditableContent, NewestEdit, ReadMark,
     RevertContentEditRequest, Uncommitted,
 };
-use crate::shared::error::{AppError, Result};
+use crate::shared::error::Result;
 use crate::shared::persistence::{Database, Reading, WriteTx};
-
-const NOT_BUILT: &str = "Content edits are not built yet.";
-
-fn stub<T>() -> Result<T> {
-    Err(AppError::InvalidState(NOT_BUILT.into()))
-}
 
 #[derive(Clone)]
 pub struct ContentEdits {
-    #[allow(dead_code)]
     database: Database,
-    #[allow(dead_code)]
     registry: Arc<EditRegistry>,
-    #[allow(dead_code)]
     app_version: String,
 }
 
@@ -38,89 +30,118 @@ impl ContentEdits {
         }
     }
 
-    pub async fn open(&self, _content: &ContentRef) -> Result<EditableContent> {
-        stub()
+    pub async fn open(&self, content: &ContentRef) -> Result<EditableContent> {
+        let mut read = self.database.begin_read().await?;
+        let opened = self.open_in(&mut read.reading(), content).await?;
+        read.commit().await?;
+        Ok(opened)
     }
 
     pub async fn open_in(
         &self,
-        _unit: &mut Reading<'_>,
-        _content: &ContentRef,
+        unit: &mut Reading<'_>,
+        content: &ContentRef,
     ) -> Result<EditableContent> {
-        stub()
+        pipeline::open_in(unit, &self.registry, content).await
     }
 
-    pub async fn preview(&self, _request: &ContentEditRequest) -> Result<ContentEditPreview> {
-        stub()
+    pub async fn preview(&self, request: &ContentEditRequest) -> Result<ContentEditPreview> {
+        let mut read = self.database.begin_read().await?;
+        let outcome = pipeline::preview(&mut read.reading(), &self.registry, request).await?;
+        read.commit().await?;
+        Ok(outcome)
     }
 
-    pub async fn apply(&self, _request: &ContentEditRequest) -> Result<ContentEditOutcome> {
-        stub()
+    async fn apply_tx(&self, request: &ContentEditRequest) -> Result<Uncommitted> {
+        let mut tx = self.database.urgent().begin_write().await?;
+        let pending = self.apply_in(&mut tx, request, None).await?;
+        tx.commit().await?;
+        Ok(pending)
+    }
+
+    pub async fn apply(&self, request: &ContentEditRequest) -> Result<ContentEditOutcome> {
+        let pending = self.apply_tx(request).await?;
+        Ok(self.committed(pending).await)
     }
 
     pub async fn apply_in(
         &self,
-        _tx: &mut WriteTx,
-        _request: &ContentEditRequest,
-        _context: Option<&Value>,
+        tx: &mut WriteTx,
+        request: &ContentEditRequest,
+        context: Option<&Value>,
     ) -> Result<Uncommitted> {
-        stub()
+        pipeline::apply_in(tx, &self.registry, &self.app_version, request, context).await
     }
 
-    pub async fn revert(&self, _request: &RevertContentEditRequest) -> Result<ContentEditOutcome> {
-        stub()
+    async fn revert_tx(&self, request: &RevertContentEditRequest) -> Result<Uncommitted> {
+        let mut tx = self.database.urgent().begin_write().await?;
+        let pending = self.revert_in(&mut tx, request).await?;
+        tx.commit().await?;
+        Ok(pending)
+    }
+
+    pub async fn revert(&self, request: &RevertContentEditRequest) -> Result<ContentEditOutcome> {
+        let pending = self.revert_tx(request).await?;
+        Ok(self.committed(pending).await)
     }
 
     pub async fn revert_in(
         &self,
-        _tx: &mut WriteTx,
-        _request: &RevertContentEditRequest,
+        tx: &mut WriteTx,
+        request: &RevertContentEditRequest,
     ) -> Result<Uncommitted> {
-        stub()
+        pipeline::revert_in(tx, &self.registry, &self.app_version, request).await
     }
 
     pub async fn committed(&self, pending: Uncommitted) -> ContentEditOutcome {
+        pipeline::run_after_commit(&self.registry, &pending.follow_ups).await;
         pending.outcome
     }
 
-    pub async fn history(&self, _content: &ContentRef) -> Result<ContentEditHistory> {
-        stub()
+    pub async fn history(&self, content: &ContentRef) -> Result<ContentEditHistory> {
+        let mut read = self.database.begin_read().await?;
+        let history = pipeline::history(&mut read.reading(), &self.registry, content).await?;
+        read.commit().await?;
+        Ok(history)
     }
 
-    pub async fn list(&self, _query: &ContentEditQuery) -> Result<Vec<ContentEditSummary>> {
-        stub()
+    pub async fn list(&self, query: &ContentEditQuery) -> Result<Vec<ContentEditSummary>> {
+        let mut read = self.database.begin_read().await?;
+        let summaries = pipeline::list(&mut read.reading(), query).await?;
+        read.commit().await?;
+        Ok(summaries)
     }
 
     pub async fn newest(
         &self,
-        _unit: &mut Reading<'_>,
-        _contents: &[ContentRef],
-        _reactor: &str,
+        unit: &mut Reading<'_>,
+        contents: &[ContentRef],
+        reactor: &str,
     ) -> Result<Vec<NewestEdit>> {
-        stub()
+        pipeline::newest(unit, &self.registry, contents, reactor).await
     }
 
     pub async fn edited_paths(
         &self,
-        _unit: &mut Reading<'_>,
-        _content: &ContentRef,
+        unit: &mut Reading<'_>,
+        content: &ContentRef,
     ) -> Result<Vec<String>> {
-        stub()
+        pipeline::edited_paths(unit, &self.registry, content).await
     }
 
     pub async fn marks(
         &self,
-        _unit: &mut Reading<'_>,
-        _contents: &[ContentRef],
+        unit: &mut Reading<'_>,
+        contents: &[ContentRef],
     ) -> Result<Vec<ReadMark>> {
-        stub()
+        pipeline::marks(unit, &self.registry, contents).await
     }
 
     pub async fn moved(
         &self,
-        _unit: &mut Reading<'_>,
-        _marks: &[ReadMark],
+        unit: &mut Reading<'_>,
+        marks: &[ReadMark],
     ) -> Result<Vec<ContentRef>> {
-        stub()
+        pipeline::moved(unit, &self.registry, marks).await
     }
 }
