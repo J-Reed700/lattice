@@ -254,6 +254,7 @@ pub fn wire(reference: &Reference) -> ReplyReferenceDto {
             .lines
             .map(|Lines { first, last }| LinesDto { first, last }),
         name,
+        support: None,
     }
 }
 

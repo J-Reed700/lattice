@@ -158,7 +158,7 @@ fn a_sentence_too_short_to_quote_is_no_sentence_the_lesson_repeats() {
 
 #[test]
 fn a_sentence_just_at_the_quote_floor_is_still_a_repeat() {
-    use crate::generation::{MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
+    use lattice_core::shared::text::same_text::{MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
     const SHARED: &str = "Show the folder name now.";
     assert_eq!(SHARED.chars().count(), MIN_QUOTE_CHARS);
     assert_eq!(SHARED.split_whitespace().count(), MIN_QUOTE_WORDS);

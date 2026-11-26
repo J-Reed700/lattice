@@ -402,7 +402,7 @@ pub(crate) fn quoted_wording(text: &str) -> impl Iterator<Item = &str> {
     quotations(text)
         .into_iter()
         .filter_map(move |span| inner(text, span))
-        .filter(|wording| crate::generation::long_enough_quote(wording))
+        .filter(|wording| lattice_core::shared::text::same_text::long_enough_quote(wording))
 }
 
 /// A class for every statement, in order: the rule layer's where it decides,

@@ -18,7 +18,6 @@ use crate::assessment_engine::{
     LearningTextKey,
 };
 use crate::dto::LearningSourceDto;
-use crate::generation::{MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
 use crate::grade_rationale::{GraderCriterion, GraderItem, GraderVerdict};
 use crate::lessons::structured_call::Asking;
 use crate::model_call::{self, ErrorClass};
@@ -31,6 +30,7 @@ use lattice_core::application::services::model_contract::shape::{New, Value as W
 use lattice_core::application::services::model_contract::shown::{Scope, Showing, Told};
 use lattice_core::application::services::model_contract::units::{Grain, Units};
 use lattice_core::application::services::model_contract::{Contract, ContractId};
+use lattice_core::shared::text::same_text::{MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{smaller_parts_may_succeed, AppError, Result},

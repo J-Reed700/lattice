@@ -4611,6 +4611,10 @@ export type AddLearningTextSourceRequestDto = { operationId: string; sourceId: s
 export type AddLearningWebSourceRequestDto = { operationId: string; sourceId: string; versionId: string; programId: string; url: string; freshnessPolicy: LearningSourcePolicy }
 export type AdoptLearningSourceVersionRequestDto = { operationId: string; programId: string; sourceId: string; versionId: string; expectedRevision: number }
 /**
+ * The words a citation rests on, with where they stand when that is known.
+ */
+export type AnchorDto = { exact: string; span?: ByteSpanDto | null }
+/**
  * Structured error information for API responses.
  *
  * Contains an error code for programmatic handling, a human-readable message,
@@ -5205,6 +5209,10 @@ failedItems: number;
  */
 createdAt: string }
 export type BookmarkConversationMessageRequestDto = { conversationId: string; messageId: string; title: string | null; note: string | null }
+/**
+ * A span of a source version's saved text, in UTF-8 bytes.
+ */
+export type ByteSpanDto = { start: number; end: number }
 export type CacheMetrics = { hits: number; misses: number; totalTimeSavedMs: number; hitRate: number }
 /**
  * The query cache's statistics, reported with each search response.
@@ -8307,7 +8315,11 @@ claimId?: string | null;
  * The numbers, in the lesson's `citations`, of the passages this
  * statement stands on; empty when it cites none.
  */
-cites?: number[] }
+cites?: number[];
+/**
+ * How the statement uses the sources its chips open; none when it cites none.
+ */
+relation?: RelationDto | null }
 /**
  * One part of a statement as the part-wise check read it.
  */
@@ -8315,7 +8327,11 @@ export type LearningClaimPartDto = { part: string; kind: LearningClaimPartKindDt
 /**
  * The saved source version that states the part; none for another.
  */
-sourceVersionId: string | null }
+sourceVersionId: string | null;
+/**
+ * The source sentences the part rests on.
+ */
+anchors?: AnchorDto[] }
 /**
  * What the part-wise check found of one part of a statement (§3.3).
  */
@@ -8324,6 +8340,10 @@ export type LearningClaimPartKindDto =
  * A passage states it.
  */
 "stated" |
+/**
+ * No passage states it, but what the passages state directly entails it.
+ */
+"follows" |
 /**
  * No passage states it, and it is standard knowledge of the field.
  */
@@ -10324,6 +10344,10 @@ total_functions: number;
 call_counts: { [key in string]: number } }
 export type ReimportLearningSourceRequestDto = { operationId: string; programId: string; sourceId: string; versionId: string; expectedRevision: number; replacementText: string | null }
 /**
+ * How a sentence uses a source, as the frontend names it.
+ */
+export type RelationDto = "quotes" | "restates" | "summarizes" | "infers" | "agrees" | "backs" | "cites" | "contradicts"
+/**
  * Whether each remote server has an authentication header value stored.
  * The values themselves never leave the keyring.
  */
@@ -10420,7 +10444,11 @@ export type RepairOutcomeDto = { outcome: "rewritten" } | { outcome: "removed" }
 /**
  * One piece of a reply, in order.
  */
-export type ReplyPieceDto = { type: "text"; text: string } | { type: "reference"; reference: ReplyReferenceDto }
+export type ReplyPieceDto = { type: "text"; text: string } | { type: "reference"; reference: ReplyReferenceDto } |
+/**
+ * Words drawn as a quotation.
+ */
+{ type: "quoted"; text: string }
 /**
  * A marker of a reply that resolved, as the frontend draws it.
  */
@@ -10440,7 +10468,11 @@ number: number; lines?: LinesDto | null;
 /**
  * What a kind drawn by name shows: a file's path.
  */
-name?: string | null }
+name?: string | null;
+/**
+ * How the marked sentence uses its source; none when nothing says.
+ */
+support?: SupportDto | null }
 export type ReportLearningQuizItemRequestDto = { operationId: string; programId: string; formId: string; itemId: string; note: string }
 export type ReprofileLearningClaimRequestDto = { programId: string;
 /**
@@ -11633,6 +11665,10 @@ export type SuiteVerdict =
  * The suite proved nothing: the drill has none, no runtime was there to run it, or the run did not finish.
  */
 { status: "not_run"; why: string }
+/**
+ * How a marker uses its source, and the words it rests on.
+ */
+export type SupportDto = { relation: RelationDto; anchors: AnchorDto[] }
 /**
  * Sync settings.
  */
