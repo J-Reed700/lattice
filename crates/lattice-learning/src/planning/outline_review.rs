@@ -777,3 +777,65 @@ mod apply_tests {
         assert_eq!(paths, vec!["/modules/0/lessons/0", "/modules/0/summary"]);
     }
 }
+
+#[cfg(test)]
+mod module_claim_tests {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+    use super::*;
+    use crate::lessons::course_generation_tests::request;
+
+    fn candidate() -> Value {
+        json!({"modules":[{
+            "title":"Connector foundations",
+            "summary":{"text":"Why connectors share one contract."},
+            "outcomes":[{"text":"Explain the connector contract."}],
+            "project":{
+                "title":"Connector contract draft",
+                "brief":"Write the first version of the shared connector interface.",
+                "deliverables":["An interface definition.","A list of failure modes."],
+                "successCriteria":["Every connector operation has a typed result."]
+            },
+            "lessons":[{"title":"Contracts","objective":"Describe a connector contract."}]
+        }]})
+    }
+
+    #[test]
+    fn a_module_claim_reads_as_text_not_json() {
+        let claim = claim_of(&candidate(), "/modules/0").unwrap();
+        for part in [
+            "Connector foundations",
+            "Connector contract draft",
+            "Write the first version of the shared connector interface.",
+            "An interface definition.",
+            "A list of failure modes.",
+            "Every connector operation has a typed result.",
+        ] {
+            assert!(claim.contains(part), "{part} missing from {claim}");
+        }
+        for json_mark in ["{", "}", "\"title\"", "successCriteria"] {
+            assert!(!claim.contains(json_mark), "{json_mark} in {claim}");
+        }
+    }
+
+    #[test]
+    fn a_supported_module_claim_stays_verified_until_the_module_changes() {
+        let mut draft = OutlineDraft::new(request(LearningCourseDepth::Course), candidate(), &[]);
+        let claim = claim_of(&draft.candidate, "/modules/0").unwrap();
+        draft.claim_receipts.insert(
+            "module".into(),
+            OutlineClaimReceipt {
+                verdict: ClaimVerdict::Supported,
+                reason: "The page says so.".into(),
+                supporting_quote: None,
+                checked_at: 1,
+                claim: claim.clone(),
+                path: "/modules/0".into(),
+                source_id: None,
+                shown: None,
+            },
+        );
+        assert_eq!(verified_assertions(&draft, &[]), vec![claim]);
+        draft.candidate["modules"][0]["project"]["brief"] = json!("Write a different interface.");
+        assert!(verified_assertions(&draft, &[]).is_empty());
+    }
+}
