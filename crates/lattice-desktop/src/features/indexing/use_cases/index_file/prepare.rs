@@ -6,6 +6,7 @@ use tracing::instrument;
 
 use crate::features::indexing::dto::IndexFileRequestDto;
 use crate::features::indexing::mapper::IndexingMapper;
+use crate::infrastructure::services::memory_admission::{check_indexing_admission, format_bytes};
 use crate::infrastructure::services::metadata_extraction::MetadataExtractor;
 use lattice_core::application::factories::FileMetadataFactory;
 use lattice_core::application::ports::ImportedBlob;
@@ -64,6 +65,22 @@ impl IndexFileUseCase {
                     document_id: existing.id().to_string(),
                 });
             }
+        }
+
+        let source_metadata = self.file_storage.metadata(source_path.as_path()).await?;
+        let admission = check_indexing_admission(
+            source_path.as_path(),
+            source_metadata.size,
+            self.memory_probe.available_memory_bytes(),
+        );
+        if !admission.admitted {
+            return Err(AppError::ServiceNotAvailable(format!(
+                "Insufficient available memory to index {} (file is {}, estimated indexing footprint is {}, available memory headroom is {})",
+                source_path.as_path().display(),
+                format_bytes(source_metadata.size),
+                format_bytes(admission.estimated_bytes),
+                format_bytes(admission.headroom_bytes.unwrap_or(0)),
+            )));
         }
 
         let already_in_library = self.content_storage.exists_by_hash(&content_hash).await?;

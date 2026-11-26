@@ -14,6 +14,7 @@ use std::sync::Arc;
 use crate::features::indexing::dto::{IndexFileRequestDto, IndexFileResponseDto};
 use crate::features::indexing::LibraryGc;
 use crate::infrastructure::persistence::repositories::{document, embedding};
+use crate::infrastructure::services::memory_admission::{MemoryProbe, SysinfoMemoryProbe};
 use lattice_core::application::ports::{
     BlobLease, ContentAddressedStoragePort, ContentExtractionPort, DocumentIndexObserver,
     DocumentRepositoryPort, EmbeddingPort, EmbeddingRepositoryPort, FileStoragePort,
@@ -96,6 +97,8 @@ pub struct IndexFileUseCase {
     /// write, so a startup sweep may collect it if the import never commits.
     /// Without one, an import records nothing and gives no blob back.
     library_gc: Option<Arc<LibraryGc>>,
+    /// Probes available system memory before extracting and chunking a file.
+    memory_probe: Arc<dyn MemoryProbe>,
 }
 
 impl IndexFileUseCase {
@@ -121,7 +124,15 @@ impl IndexFileUseCase {
             query_cache: None,
             index_observer: None,
             library_gc: None,
+            memory_probe: Arc::new(SysinfoMemoryProbe),
         }
+    }
+
+    /// Override the memory probe (primarily for deterministic testing).
+    #[must_use]
+    pub fn with_memory_probe(mut self, memory_probe: Arc<dyn MemoryProbe>) -> Self {
+        self.memory_probe = memory_probe;
+        self
     }
 
     /// Record, and give back, the blobs imports write through `gc`, the

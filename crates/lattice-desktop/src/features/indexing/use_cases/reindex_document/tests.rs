@@ -517,3 +517,34 @@ async fn reindex_does_not_resurrect_a_document_deleted_meanwhile() {
     assert_eq!(count(&pool, "documents").await, 0);
     assert_eq!(count(&pool, "text_embeddings").await, 0);
 }
+
+#[tokio::test]
+async fn reindex_refuses_when_estimated_footprint_exceeds_available_memory() {
+    use crate::infrastructure::services::memory_admission::FixedMemoryProbe;
+
+    let repo = Arc::new(MockDocumentRepo::new());
+    let (aggregate, _temp_dir) = create_test_aggregate();
+    let doc_id = aggregate.id().to_string();
+    let (_, db) = pool_with(Some(&aggregate)).await;
+    repo.set_document(aggregate);
+    let vector_search = Arc::new(MockVectorSearch::default());
+
+    // MockFileStorage::updated reports size = 1000 -> estimated footprint = 4000 bytes.
+    // With 6000 bytes available (3000 bytes headroom), reindex refuses and preserves vectors.
+    let use_case = ReindexDocumentUseCase::new(
+        Arc::new(MockFileStorage::updated()),
+        Arc::new(MockEmbedder),
+        repo,
+        db,
+        vector_search.clone(),
+    )
+    .with_memory_probe(Arc::new(FixedMemoryProbe(Some(6000))));
+
+    let error = use_case.execute(doc_id).await.unwrap_err();
+    assert!(
+        matches!(&error, AppError::ServiceNotAvailable(msg) if msg.contains("Insufficient available memory")),
+        "expected ServiceNotAvailable, got {error:?}"
+    );
+    assert!(vector_search.removed.lock().unwrap().is_empty());
+    assert!(vector_search.added.lock().unwrap().is_empty());
+}
