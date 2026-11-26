@@ -87,9 +87,18 @@ impl GgufModelInfo {
     }
 }
 
-/// Whether a model or file name belongs to a known thinking-capable model family.
-/// Used when no local GGUF header is available (e.g. external llama-server endpoints
-/// or an unreadable local GGUF header).
+/// Whether a Jinja `chat_template` declares native thinking markers
+/// (`enable_thinking`, `<think>`, or `</think>`). Used for both local GGUF
+/// headers (`tokenizer.chat_template`) and remote llama-server `/props`.
+pub fn chat_template_supports_thinking(template: &str) -> bool {
+    template.contains("enable_thinking")
+        || template.contains("<think>")
+        || template.contains("</think>")
+}
+
+/// Whether a local model file name belongs to a known thinking-capable model
+/// family. Used only when a local GGUF header is unreadable; remote
+/// llama-server endpoints detect thinking from `/props` `chat_template`.
 pub fn model_name_supports_thinking(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     [
@@ -186,9 +195,7 @@ pub fn read_model_info_from<R: Read + Seek>(reader: R, file_len: u64) -> Option<
             info.chat_template_supports_tools = template.contains("tools")
                 || template.contains("tool_call")
                 || template.contains("tool_calls");
-            info.chat_template_supports_thinking = template.contains("enable_thinking")
-                || template.contains("<think>")
-                || template.contains("</think>");
+            info.chat_template_supports_thinking = chat_template_supports_thinking(&template);
             continue;
         }
 

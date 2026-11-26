@@ -755,6 +755,19 @@ fn chat_template_thinking_markers_are_detected_from_gguf_header() {
 }
 
 #[test]
+fn chat_template_supports_thinking_detects_markers_and_rejects_plain_templates() {
+    assert!(chat_template_supports_thinking(
+        "{% if enable_thinking is defined and enable_thinking %}<think>{% endif %}"
+    ));
+    assert!(chat_template_supports_thinking("{{ bos_token }}<think>"));
+    assert!(chat_template_supports_thinking("Answer after </think>."));
+    assert!(!chat_template_supports_thinking(
+        "{{ bos_token }}{% for m in messages %}{{ m['content'] }}{% endfor %}"
+    ));
+    assert!(!chat_template_supports_thinking(""));
+}
+
+#[test]
 fn gguf_info_and_file_thinking_distinguish_thinking_models_from_non_thinking() {
     for arch in [
         "qwen3",

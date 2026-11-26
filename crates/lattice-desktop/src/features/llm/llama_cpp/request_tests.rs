@@ -608,3 +608,39 @@ fn initial_requests_omit_dry_sampling_so_verbatim_quotes_stay_intact() {
     .unwrap();
     assert!(deterministic.get("dry_multiplier").is_none());
 }
+
+#[test]
+fn answer_step_samples_deterministically_when_thinking_is_off_and_yields_when_thinking_is_on() {
+    let base = legacy::grounded("You are careful.", "Check the claim.");
+    let answer = base.answer_step(
+        "Answer now.",
+        "Return JSON.",
+        "Draft prompt.",
+        "Draft prose.",
+    );
+    assert_eq!(
+        answer.call.sampling,
+        Some(SamplingOverride::deterministic())
+    );
+
+    let request = legacy::completion(legacy::Completion {
+        input: user("Return JSON."),
+        sampling: answer.call.sampling,
+        thinking: answer.call.thinking,
+        ..Default::default()
+    });
+
+    let non_thinking = local_client(ThinkingPolicy::PerRequest, ThinkingOverrideDto::Auto);
+    let non_thinking_body = body_of(&non_thinking, &request).unwrap();
+    assert!(
+        close(sampling(&non_thinking_body), (0.0, 1.0, 1, 0.0, 1.0)),
+        "{non_thinking_body}"
+    );
+
+    let thinking = local_client(ThinkingPolicy::AlwaysOn, ThinkingOverrideDto::Auto);
+    let thinking_body = body_of(&thinking, &request).unwrap();
+    assert!(
+        close(sampling(&thinking_body), (1.0, 0.95, 20, 1.5, 1.0)),
+        "{thinking_body}"
+    );
+}

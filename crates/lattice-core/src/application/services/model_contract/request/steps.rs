@@ -2,6 +2,7 @@
 //! answer step, a correction turn, a larger send.
 
 use super::GroundedRequest;
+use crate::application::ports::llm_port::SamplingOverride;
 use crate::application::services::grounded_generation::HistoryItem;
 
 impl GroundedRequest {
@@ -29,6 +30,7 @@ impl GroundedRequest {
                 content: draft.to_owned(),
             },
         ]);
+        answer.call.sampling = Some(SamplingOverride::deterministic());
         answer
     }
 

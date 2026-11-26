@@ -809,3 +809,54 @@ fn non_thinking_sampling_applies_only_when_ollama_turns_thinking_off() {
     assert_eq!(non_thinking["options"]["top_k"], 1);
     assert_eq!(non_thinking["options"]["presence_penalty"], 0.0);
 }
+
+#[test]
+fn ollama_answer_enforces_output_budget_token_and_tool_limits() {
+    let budget = ResponseBudget::for_tokens(4);
+    let mut answer = Answer::with_budget(budget);
+    for i in 0..4 {
+        let line = serde_json::json!({
+            "model": "qwen3.5",
+            "message": {"role": "assistant", "content": format!("t{i}")},
+            "done": false
+        });
+        answer
+            .push_line(line.to_string().as_bytes(), &ignore_text, &ignore_text)
+            .unwrap();
+    }
+    let fifth = serde_json::json!({
+        "model": "qwen3.5",
+        "message": {"role": "assistant", "content": "t4"},
+        "done": false
+    });
+    let err = answer
+        .push_line(fifth.to_string().as_bytes(), &ignore_text, &ignore_text)
+        .unwrap_err();
+    assert!(matches!(err, AppError::InvalidState(_)), "{err:?}");
+    assert!(err.to_string().contains("token events"), "{err}");
+
+    let tool_budget = ResponseBudget::for_tokens(8); // max_tool_calls = 2
+    let mut tool_answer = Answer::with_budget(tool_budget);
+    let too_many_tools = serde_json::json!({
+        "model": "qwen3.5",
+        "message": {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"function": {"index": 0, "name": "a", "arguments": {}}},
+                {"function": {"index": 1, "name": "b", "arguments": {}}},
+                {"function": {"index": 2, "name": "c", "arguments": {}}}
+            ]
+        },
+        "done": true
+    });
+    let err = tool_answer
+        .push_line(
+            too_many_tools.to_string().as_bytes(),
+            &ignore_text,
+            &ignore_text,
+        )
+        .unwrap_err();
+    assert!(matches!(err, AppError::InvalidState(_)), "{err:?}");
+    assert!(err.to_string().contains("tool call count"), "{err}");
+}

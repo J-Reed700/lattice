@@ -26,6 +26,72 @@ use super::backend::ModelBackend;
 const ESTIMATE_MARGIN: usize = 3;
 const ESTIMATE_MARGIN_DIVISOR: usize = 2;
 
+/// Worst-case wire bytes per generated token for a single SSE event/line
+/// (covers multi-byte or JSON-escaped token text plus its SSE JSON envelope, or
+/// a terminal full-response event such as OpenAI's `response.completed`).
+const STREAM_EVENT_BYTES_PER_TOKEN: usize = 256;
+
+/// Worst-case wire bytes per generated token across an entire response stream
+/// (covers per-token SSE framing plus terminal summary or signature echoes).
+const STREAM_RESPONSE_BYTES_PER_TOKEN: usize = 512;
+
+/// Worst-case JSON bytes per generated token in a single non-streamed response.
+const WHOLE_RESPONSE_BYTES_PER_TOKEN: usize = 256;
+
+/// Fixed per-response protocol envelope bytes (usage, timings, `message_start`,
+/// first-token `top_logprobs`, prompt-progress frames, and base reasoning
+/// signatures or encrypted state) independent of small `max_tokens`.
+const BASE_RESPONSE_ENVELOPE_BYTES: usize = 32 * 1024;
+
+/// Minimum output tokens consumed by one tool call in model output
+/// (call wrapper/marker + tool name + `{}` argument braces).
+const MIN_TOKENS_PER_TOOL_CALL: usize = 4;
+
+/// Default token budget when a stream decoder is constructed without a
+/// [`Fitted`] request (matches `LLMSettingsDto::default().max_tokens`).
+const DEFAULT_RESPONSE_BUDGET_TOKENS: u32 = 128_000;
+
+/// Stream and response bounds derived from a request's output token budget so
+/// malformed or runaway responses cannot grow memory without bound while valid
+/// large-budget generations are never clipped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ResponseBudget {
+    /// Maximum token-bearing delta events (`content`, `reasoning`, or tool
+    /// call `name`/`arguments`): each such event carries at least one token.
+    pub(crate) max_token_events: usize,
+    /// Maximum bytes for a single SSE line/event buffer before `\n` or dispatch.
+    pub(crate) max_event_bytes: usize,
+    /// Maximum total wire bytes accepted across a streamed response.
+    pub(crate) max_stream_bytes: usize,
+    /// Maximum bytes accepted for a non-streamed JSON completion body.
+    pub(crate) max_whole_bytes: usize,
+    /// Maximum distinct tool calls accepted in one completion round.
+    pub(crate) max_tool_calls: usize,
+}
+
+impl ResponseBudget {
+    /// Derive stream and response bounds from an `output_tokens` budget.
+    pub(crate) fn for_tokens(output_tokens: u32) -> Self {
+        let tokens = usize::try_from(output_tokens.max(1)).unwrap_or(usize::MAX);
+        Self {
+            max_token_events: tokens,
+            max_event_bytes: BASE_RESPONSE_ENVELOPE_BYTES
+                .saturating_add(tokens.saturating_mul(STREAM_EVENT_BYTES_PER_TOKEN)),
+            max_stream_bytes: BASE_RESPONSE_ENVELOPE_BYTES
+                .saturating_add(tokens.saturating_mul(STREAM_RESPONSE_BYTES_PER_TOKEN)),
+            max_whole_bytes: BASE_RESPONSE_ENVELOPE_BYTES
+                .saturating_add(tokens.saturating_mul(WHOLE_RESPONSE_BYTES_PER_TOKEN)),
+            max_tool_calls: (tokens / MIN_TOKENS_PER_TOOL_CALL).max(1),
+        }
+    }
+}
+
+impl Default for ResponseBudget {
+    fn default() -> Self {
+        Self::for_tokens(DEFAULT_RESPONSE_BUDGET_TOKENS)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Thinking {
     Off,
@@ -106,6 +172,7 @@ pub(crate) struct Fitted<'r> {
     ceiling: Option<u32>,
     prompt: PromptMeasure,
     room: u32,
+    window: u32,
     opaque_tokens: usize,
     slot: Option<u32>,
 }
@@ -137,6 +204,20 @@ impl<'r> Fitted<'r> {
     /// The reply ceiling to send, cut to the room.
     pub(crate) fn ceiling(&self) -> Option<u32> {
         self.ceiling
+    }
+
+    /// Output token budget governing stream and response bounds: the sent
+    /// ceiling when known, otherwise the remaining room within the window.
+    pub(crate) fn output_budget_tokens(&self) -> u32 {
+        self.ceiling
+            .unwrap_or_else(|| self.room.min(self.window))
+            .max(1)
+    }
+
+    /// Stream and non-streamed response bounds derived from
+    /// [`Self::output_budget_tokens`].
+    pub(crate) fn response_budget(&self) -> ResponseBudget {
+        ResponseBudget::for_tokens(self.output_budget_tokens())
     }
 
     /// The llama-server slot the scheduler admitted the request to.
@@ -243,6 +324,7 @@ pub(crate) async fn fit<'r>(
         ceiling: cut(wanted, room),
         prompt,
         room,
+        window: u32::try_from(window).unwrap_or(u32::MAX),
         opaque_tokens,
         slot: None,
     })
@@ -339,6 +421,7 @@ mod support {
                     counted_exactly: false,
                 },
                 room: u32::MAX,
+                window: u32::try_from(backend.window()).unwrap_or(u32::MAX),
                 opaque_tokens: 0,
                 slot: None,
             }
@@ -359,6 +442,7 @@ mod support {
                 ceiling: cut(wanted, room),
                 prompt,
                 room,
+                window: u32::try_from(backend.window()).unwrap_or(u32::MAX),
                 opaque_tokens: 0,
                 slot: None,
             }

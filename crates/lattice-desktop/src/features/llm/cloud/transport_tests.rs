@@ -703,3 +703,106 @@ async fn a_streamed_answer_resent_after_a_server_error_is_timed_from_the_resend(
     let timing = response.timing.unwrap();
     assert!(timing.prompt_seconds < 0.5, "{timing:?}");
 }
+
+#[tokio::test]
+async fn answer_step_deterministic_sampling_stays_valid_on_anthropic_adaptive_thinking() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "msg_1",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "{\"ok\":true}"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 10, "output_tokens": 5}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let settings = LLMSettingsDto {
+        provider: LLMProvider::Anthropic,
+        model: "claude-opus-5-5".into(),
+        ..Default::default()
+    };
+    let mut client =
+        CloudLlm::new(&settings, "test-secret".into(), Some(settings.max_tokens)).unwrap();
+    client.endpoint = format!("{}/messages", server.uri());
+    let port = client.into_port();
+
+    let base = legacy::grounded("You are careful.", "Check the claim.");
+    let answer = base.answer_step(
+        "Answer now.",
+        "Return JSON.",
+        "Draft prompt.",
+        "Draft prose.",
+    );
+    assert_eq!(
+        answer.call.sampling,
+        Some(lattice_core::application::ports::llm_port::SamplingOverride::deterministic())
+    );
+
+    let output = lattice_core::application::services::grounded_generation::generate(&*port, answer)
+        .await
+        .unwrap();
+    assert_eq!(output.text, "{\"ok\":true}");
+
+    let requests = server.received_requests().await.unwrap();
+    let body: Value = serde_json::from_slice(&requests[0].body).unwrap();
+    assert_eq!(body["thinking"], json!({"type": "adaptive"}));
+    for knob in ["temperature", "top_p", "top_k", "presence_penalty"] {
+        assert!(body.get(knob).is_none(), "{knob} sent: {body}");
+    }
+}
+
+#[tokio::test]
+async fn complete_whole_rejects_oversized_body_and_over_budget_tool_calls() {
+    use crate::features::llm::fitting::ResponseBudget;
+
+    let server = MockServer::start().await;
+    let budget = ResponseBudget::for_tokens(16);
+    let oversized_text = "x".repeat(budget.max_whole_bytes + 512);
+    Mock::given(method("POST"))
+        .and(path("/responses"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "status": "completed",
+            "output": [{"type": "message", "content": [{"type": "output_text", "text": oversized_text}]}]
+        })))
+        .mount(&server)
+        .await;
+
+    let client = client(&server).await;
+    let request = legacy::completion(legacy::Completion {
+        max_output_tokens: Some(16),
+        ..Default::default()
+    });
+    let err = client.complete(&request).await.unwrap_err();
+    assert!(matches!(err, AppError::Network(_)), "{err:?}");
+    assert!(err.to_string().contains("output budget"), "{err}");
+
+    // Now test over-budget tool calls (16 tokens -> max_tool_calls = 4).
+    server.reset().await;
+    let calls: Vec<Value> = (0..5)
+        .map(|i| {
+            json!({
+                "type": "function_call",
+                "id": format!("fc_{i}"),
+                "call_id": format!("call_{i}"),
+                "name": "search",
+                "arguments": "{}"
+            })
+        })
+        .collect();
+    Mock::given(method("POST"))
+        .and(path("/responses"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "status": "completed",
+            "output": calls
+        })))
+        .mount(&server)
+        .await;
+    let err = client.complete(&request).await.unwrap_err();
+    assert!(matches!(err, AppError::InvalidState(_)), "{err:?}");
+    assert!(err.to_string().contains("tool call count"), "{err}");
+}

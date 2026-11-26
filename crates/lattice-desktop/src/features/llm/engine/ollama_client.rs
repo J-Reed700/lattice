@@ -30,7 +30,7 @@ use crate::features::llm::engine::types::{
 };
 use crate::features::llm::engine::vision::{not_set_up_to_see, user_parts};
 use crate::features::llm::engine::GenerationConfig;
-use crate::features::llm::fitting::{Fitted, OutputLimits, Thinking};
+use crate::features::llm::fitting::{Fitted, OutputLimits, ResponseBudget, Thinking};
 use crate::features::llm::scheduler::{ScheduledLlm, SchedulerRegistry};
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse, ContentPart, RemoteHeader,
@@ -476,21 +476,39 @@ impl OllamaClient {
                     CircuitBreakerError::CallFailed(error) => error,
                 })?;
 
+            let budget = fitted.response_budget();
             let mut bytes = response.bytes_stream();
-            let mut answer = Answer::default();
+            let mut answer = Answer::with_budget(budget);
             let mut buffer = Vec::new();
+            let mut received = 0usize;
             while !answer.done {
                 let next = tokio::time::timeout(self.stream_timeout, bytes.next())
                     .await
                     .map_err(|_| self.silent())?;
                 let Some(chunk) = next else { break };
                 let chunk = chunk.map_err(network_error)?;
+                received = received.saturating_add(chunk.len());
+                if received > budget.max_stream_bytes {
+                    return Err(AppError::InvalidState(
+                        "Ollama response exceeds output budget size limit".into(),
+                    ));
+                }
                 buffer.extend_from_slice(&chunk);
                 // Lines are split at the byte level, so a character divided
                 // between two network chunks is decoded whole.
                 while let Some(newline) = buffer.iter().position(|byte| *byte == b'\n') {
+                    if newline + 1 > budget.max_event_bytes {
+                        return Err(AppError::InvalidState(
+                            "Ollama event exceeds output budget size limit".into(),
+                        ));
+                    }
                     let line: Vec<u8> = buffer.drain(..=newline).collect();
                     answer.push_line(&line, on_text, on_reasoning)?;
+                }
+                if buffer.len() > budget.max_event_bytes {
+                    return Err(AppError::InvalidState(
+                        "Ollama event exceeds output budget size limit".into(),
+                    ));
                 }
             }
             if !answer.done {
@@ -581,9 +599,11 @@ fn network_error(error: reqwest::Error) -> AppError {
 /// One streamed reply as it accumulates.
 #[derive(Default)]
 struct Answer {
+    budget: ResponseBudget,
     content: String,
     reasoning: String,
     tool_calls: BTreeMap<usize, OllamaToolCall>,
+    token_events: usize,
     done: bool,
     done_reason: Option<String>,
     prompt_eval_count: Option<u32>,
@@ -593,6 +613,13 @@ struct Answer {
 }
 
 impl Answer {
+    fn with_budget(budget: ResponseBudget) -> Self {
+        Self {
+            budget,
+            ..Self::default()
+        }
+    }
+
     fn push_line(
         &mut self,
         line: &[u8],
@@ -617,17 +644,36 @@ impl Answer {
         let chunk = serde_json::from_value::<OllamaChatStreamResponse>(value).map_err(|_| {
             AppError::InvalidState("Ollama returned an invalid typed stream chunk".into())
         })?;
+        let mut emitted_token = false;
         if !chunk.message.content.is_empty() {
+            emitted_token = true;
             self.content.push_str(&chunk.message.content);
             on_text(chunk.message.content)?;
         }
         if let Some(thinking) = chunk.message.thinking.filter(|text| !text.is_empty()) {
+            emitted_token = true;
             self.reasoning.push_str(&thinking);
             on_reasoning(thinking)?;
         }
         for (position, call) in chunk.message.tool_calls.into_iter().flatten().enumerate() {
-            self.tool_calls
-                .insert(call.function.index.unwrap_or(position), call);
+            emitted_token = true;
+            let index = call.function.index.unwrap_or(position);
+            if !self.tool_calls.contains_key(&index)
+                && self.tool_calls.len() >= self.budget.max_tool_calls
+            {
+                return Err(AppError::InvalidState(
+                    "Ollama tool call count exceeds output budget".into(),
+                ));
+            }
+            self.tool_calls.insert(index, call);
+        }
+        if emitted_token {
+            self.token_events = self.token_events.saturating_add(1);
+            if self.token_events > self.budget.max_token_events {
+                return Err(AppError::InvalidState(
+                    "Ollama stream token events exceed output budget".into(),
+                ));
+            }
         }
         if chunk.done {
             self.done = true;

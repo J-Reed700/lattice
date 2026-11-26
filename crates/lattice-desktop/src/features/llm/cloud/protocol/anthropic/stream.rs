@@ -18,6 +18,8 @@ pub(super) struct Events {
     open_blocks: BTreeSet<u64>,
     input_json: BTreeMap<u64, String>,
     reasoning: ReasoningParts,
+    token_events: usize,
+    tool_calls: usize,
 }
 
 impl EventDecoder for Events {
@@ -48,6 +50,7 @@ impl EventDecoder for Events {
                             .as_str()
                             .filter(|text| !text.is_empty())
                         {
+                            self.token_events = self.token_events.saturating_add(1);
                             on_text(text.to_owned())?;
                         }
                     }
@@ -56,9 +59,13 @@ impl EventDecoder for Events {
                             .as_str()
                             .filter(|text| !text.is_empty())
                         {
+                            self.token_events = self.token_events.saturating_add(1);
                             self.reasoning
                                 .push((String::new(), index), text, on_reasoning)?;
                         }
+                    }
+                    Some("tool_use") => {
+                        self.tool_calls = self.tool_calls.saturating_add(1);
                     }
                     _ => {}
                 }
@@ -79,12 +86,14 @@ impl EventDecoder for Events {
                     Some("text_delta") => {
                         let text = append(block, delta, "text")?;
                         if !text.is_empty() {
+                            self.token_events = self.token_events.saturating_add(1);
                             on_text(text)?;
                         }
                     }
                     Some("thinking_delta") => {
                         let text = append(block, delta, "thinking")?;
                         if !text.is_empty() {
+                            self.token_events = self.token_events.saturating_add(1);
                             self.reasoning
                                 .push((String::new(), index), &text, on_reasoning)?;
                         }
@@ -96,6 +105,9 @@ impl EventDecoder for Events {
                         let partial = field(delta, "partial_json")
                             .as_str()
                             .ok_or_else(|| invalid("missing tool argument delta"))?;
+                        if !partial.is_empty() {
+                            self.token_events = self.token_events.saturating_add(1);
+                        }
                         self.input_json.entry(index).or_default().push_str(partial);
                     }
                     Some("citations_delta") => {
@@ -188,6 +200,18 @@ impl EventDecoder for Events {
 
     fn answer_begun(&self) -> bool {
         !self.blocks.is_empty()
+    }
+
+    fn token_events(&self) -> usize {
+        self.token_events
+    }
+
+    fn tool_call_count(&self) -> usize {
+        self.tool_calls
+    }
+
+    fn block_count(&self) -> usize {
+        self.blocks.len()
     }
 
     fn finish(self: Box<Self>) -> Result<Option<Value>> {
