@@ -197,6 +197,70 @@ describe('lesson evidence', () => {
       expect(screen.getAllByText(/Common knowledge, not in the source/)).toHaveLength(1);
     });
 
+    it('says beside the verdict how a statement uses its source', async () => {
+      mocks.evidence.mockResolvedValue({ ok: true, data: {
+        ...data,
+        teachingClaims: [
+          claim({ claim: 'Quillet is a lexer.', passages: [manual], cites: [1], relation: 'restates' }),
+          claim({ claim: 'Tokens are small pieces of text.', class: 'common', relation: null }),
+        ],
+      } });
+      show();
+      await userEvent.click(screen.getByRole('button', { name: 'View lesson evidence' }));
+
+      expect(await screen.findByText('Paraphrased from')).toBeVisible();
+      expect(screen.getAllByText(/Paraphrased from|Quoted from|Summarized from|Inferred from|Supported by/)).toHaveLength(1);
+    });
+
+    it('lists a part that follows from the source beside the common and own ones', async () => {
+      mocks.evidence.mockResolvedValue({ ok: true, data: {
+        ...data,
+        teachingClaims: [claim({
+          claim: 'Quillet is a lexer, so it needs a path.', passages: [manual], cites: [1], relation: 'infers',
+          parts: [{ part: 'so it needs a path', kind: 'follows', sourceVersionId: 'version-5', anchors: [] }],
+        })],
+      } });
+      show();
+      await userEvent.click(screen.getByRole('button', { name: 'View lesson evidence' }));
+
+      expect(await screen.findByText(/Follows from the source/)).toBeVisible();
+      expect(screen.getByText('so it needs a path')).toBeVisible();
+    });
+
+    it('opens the reader on the sentences a part rests on, as that statement’s relation', async () => {
+      const sentence = { exact: 'Quillet is a lexer written in Rust.', span: { start: 0, end: 35 } };
+      mocks.evidence.mockResolvedValue({ ok: true, data: {
+        ...data,
+        teachingClaims: [claim({
+          claim: 'Quillet is a lexer.', passages: [manual], cites: [1], relation: 'restates',
+          parts: [{ part: 'Quillet is a lexer', kind: 'stated', sourceVersionId: null, anchors: [sentence] }],
+        })],
+      } });
+      show();
+      await userEvent.click(screen.getByRole('button', { name: 'View lesson evidence' }));
+      await userEvent.click(await screen.findByRole('button', { name: 'Show in the source: Quillet is a lexer' }));
+
+      const session = useReaderStore.getState().session;
+      expect(session?.index).toBe(0);
+      expect(session?.citations[0]?.anchoredBy).toEqual([{ occurrence: 0, relation: 'restates', anchors: [sentence] }]);
+      expect(session?.citations[1]?.anchoredBy).toBeUndefined();
+    });
+
+    it('offers no way into the source for a part that names no sentence', async () => {
+      mocks.evidence.mockResolvedValue({ ok: true, data: {
+        ...data,
+        teachingClaims: [claim({
+          claim: 'Quillet is a lexer.', passages: [manual], cites: [1],
+          parts: [{ part: 'Quillet is a lexer', kind: 'stated', sourceVersionId: 'version-5' }],
+        })],
+      } });
+      show();
+      await userEvent.click(screen.getByRole('button', { name: 'View lesson evidence' }));
+
+      await screen.findByText('Quillet is a lexer.');
+      expect(screen.queryByRole('button', { name: /Show in the source/ })).not.toBeInTheDocument();
+    });
+
     it('does not count a statement the user settled as having passed its class’s check', async () => {
       const confirmed = { ...data, claimCount: 3, confirmedCount: 1, teachingClaims: [...data.teachingClaims.slice(0, 2), claim({ claim: 'Tokens are small pieces of text.', class: 'common', resolution: 'confirmed_by_you', note: 'Fine.' })] };
       mocks.evidence.mockResolvedValue({ ok: true, data: confirmed });
