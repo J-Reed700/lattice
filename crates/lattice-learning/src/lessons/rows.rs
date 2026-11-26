@@ -3,7 +3,6 @@
 use super::copied_wording::{self, Wording, SAY_IT_YOURSELF};
 use super::repeats;
 use super::text_edits::{citation_entry, cited_sentence, taught_at};
-use crate::generation::long_enough_quote;
 use lattice_core::application::services::model_contract::edit::{Anchor, Change, Consistent, Made};
 use lattice_core::application::services::model_contract::shape::{
     Authored, Fields, Form, Settled, Why,
@@ -121,7 +120,7 @@ impl Quotes {
                 units
                     .quoted()
                     .into_iter()
-                    .filter(|sentence| long_enough_quote(sentence.text())),
+                    .filter(|sentence| same_text::long_enough_quote(sentence.text())),
             );
         }
     }

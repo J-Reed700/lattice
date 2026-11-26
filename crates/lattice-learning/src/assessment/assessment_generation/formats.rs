@@ -2,12 +2,12 @@
 //! checked bank item (section 5.2).
 use super::*;
 use crate::dto::LearningPracticeEvidenceDimension;
-use crate::generation::{long_enough_quote, MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
 use lattice_core::application::services::model_contract::shape::{
     Authored, Count, Fields, Form, Vocabulary,
 };
 use lattice_core::application::services::model_contract::shown::Picked;
 use lattice_core::application::services::model_contract::units::{Grain, Unit, Units};
+use lattice_core::shared::text::same_text::{long_enough_quote, MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
 use std::marker::PhantomData;
 use std::ops::RangeInclusive;
 

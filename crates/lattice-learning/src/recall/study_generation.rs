@@ -1,6 +1,5 @@
 //! Generate questions from bounded passages and require an attributable excerpt.
 use super::study_dto::*;
-use crate::generation::{long_enough_quote, MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
 use crate::lessons::structured_call::Asking;
 use crate::model_call;
 use lattice_core::application::ports::LLMPort;
@@ -18,6 +17,7 @@ use lattice_core::application::services::model_contract::units::{Grain, Unit, Un
 use lattice_core::application::services::model_contract::{Contract, ContractId};
 use lattice_core::shared::error::{AppError, ErrorClass, Result};
 use lattice_core::shared::text::same_text::fold;
+use lattice_core::shared::text::same_text::{long_enough_quote, MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashSet;

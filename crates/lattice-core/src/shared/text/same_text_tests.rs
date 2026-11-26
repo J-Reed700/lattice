@@ -105,3 +105,34 @@ fn a_span_is_whole_sentences_only_from_a_start_to_an_end() {
     assert!(!whole_sentences(text, (0, 20)));
     assert!(!whole_sentences("", (0, 0)));
 }
+
+#[test]
+fn a_quotation_needs_twenty_five_characters() {
+    let text = "Say: Show the folder name no. Then: Show the folder name now. Done.";
+    assert_eq!(quotation(text, "Show the folder name no."), None);
+    let (start, end) = quotation(text, "Show the folder name now.").unwrap();
+    assert_eq!(&text[start..end], "Show the folder name now.");
+}
+
+#[test]
+fn a_quotation_needs_five_words() {
+    let text = "Then Extraordinarily long words only, and more words follow.";
+    assert_eq!(quotation(text, "Extraordinarily long words only"), None);
+    let (start, end) = quotation(text, "Extraordinarily long words only, and").unwrap();
+    assert_eq!(&text[start..end], "Extraordinarily long words only, and");
+}
+
+#[test]
+fn a_quotation_is_found_apart_from_case_and_curly_quotes() {
+    let text = "He said, \u{201C}Show the **Folder** name now.\u{201D} and left.";
+    let (start, end) = quotation(text, "  show the folder name now.  ").unwrap();
+    assert_eq!(&text[start..end], "Show the **Folder** name now.");
+    let curly = "It is the writer\u{2019}s own long sentence here.";
+    assert!(quotation(curly, "the writer's own long sentence here").is_some());
+}
+
+#[test]
+fn a_long_enough_quote_that_is_not_there_is_not_found() {
+    let text = "Show the folder name now, then leave.";
+    assert_eq!(quotation(text, "Open the folder name now please."), None);
+}

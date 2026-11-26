@@ -38,6 +38,7 @@ fn source(number: u32) -> ReplyPieceDto {
             number,
             lines: None,
             name: None,
+            support: None,
         },
     }
 }

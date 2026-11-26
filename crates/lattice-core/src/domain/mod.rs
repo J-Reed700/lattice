@@ -6,6 +6,7 @@
 //! primitives. Repository traits and external-access ports define boundaries;
 //! implementations belong to infrastructure or the owning feature.
 
+pub mod citation;
 pub mod conversation;
 pub mod download;
 pub mod entities;
