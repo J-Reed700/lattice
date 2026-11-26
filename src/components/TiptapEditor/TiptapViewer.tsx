@@ -14,6 +14,7 @@ import { ClaimMarks, claimMarksKey, type ClaimMark } from './extensions/claimMar
 import { Diagrams, diagramsKey } from './extensions/codeBlockView';
 import { CodeRefMarks, codeRefMarksKey } from './extensions/codeRefMarks';
 import { ViewerMath } from './extensions/math';
+import { SourceLines } from './extensions/sourceLines';
 
 import './tiptap.css';
 
@@ -37,6 +38,8 @@ export interface TiptapViewerProps {
   streaming?: boolean;
   /** Draw ```mermaid fences as diagrams (default on). Read when the viewer is created. */
   diagrams?: boolean;
+  /** Attach `data-source-lines` to rendered markdown blocks (default false). Read when the viewer is created. */
+  sourceLines?: boolean;
   /**
    * A chat answer's pictures, for its `![caption](img-N)` refs. Given (even
    * empty), no other image address is loaded; absent, images render plainly.
@@ -67,6 +70,7 @@ export function TiptapViewer({
   files,
   streaming = false,
   diagrams = true,
+  sourceLines = false,
   images,
 }: TiptapViewerProps) {
   // Read through a ref so sources that arrive after the text still light up.
@@ -109,6 +113,7 @@ export function TiptapViewer({
       }),
       ClaimMarks.configure({ getClaims: () => claimsRef.current }),
       CodeRefMarks.configure({ isEnabled: () => codeRefsRef.current, getFiles: () => filesRef.current }),
+      ...(sourceLines ? [SourceLines] : []),
       Markdown.configure({
         html: false,
         transformPastedText: false,

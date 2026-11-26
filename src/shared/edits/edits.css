@@ -1,0 +1,9 @@
+.editable-piece {
+  outline: 2px dashed hsl(var(--ring));
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.editable-piece [data-source-lines] {
+  cursor: pointer;
+}
