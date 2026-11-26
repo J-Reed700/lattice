@@ -135,7 +135,7 @@ pub(crate) async fn check(
         .iter()
         .map(|(_, question)| {
             format!(
-                "question-review-v5:{}",
+                "question-review-v6:{}",
                 sha256_hex(
                     json!({
                         "model": llm.model_name(),

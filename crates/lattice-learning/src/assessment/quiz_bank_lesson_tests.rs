@@ -776,3 +776,281 @@ async fn unverified_claims_are_stripped_from_material_and_exclude_seed_and_bank_
     assert!(bank_after.iter().any(|b| b.candidate.id == seed0_id));
     Ok(())
 }
+
+#[tokio::test]
+async fn unverified_material_checks_span_quotes_unlinked_bank_items_and_partial_repairs(
+) -> Result<()> {
+    use lattice_core::domain::learning::claim_review::{
+        Actor, ClaimEvent, ClaimId, ClaimLocation, EventProvenance, HumanBinding, ReopenCause,
+        UnitKind, UnverifiedReason, UserAction,
+    };
+
+    let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
+    let (published, job_id) = published(&db).await?;
+    let outcome_id = lesson_outcome(&pool, &published.lesson_id).await;
+    let mut tx = db.begin_write().await?;
+    let now = 1_700_000_100i64;
+    let prov = EventProvenance {
+        actor: Actor::Machine,
+        at: now,
+        job_id: None,
+        app_version: "test".into(),
+        checker_model: None,
+    };
+    let lesson_id = &published.lesson_id;
+    let program_id = &published.program_id;
+    let block_count = usize::try_from(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM learning_blocks WHERE lesson_id=?")
+            .bind(lesson_id)
+            .fetch_one(&mut *tx)
+            .await?,
+    )
+    .unwrap();
+    let verified_first = "Verified systems rotate client keys using explicit kid headers.";
+    let unverified_later = "The default token expiry in this profile is 420 seconds.";
+    let new_body = format!("{verified_first} {unverified_later}");
+    sqlx::query("UPDATE learning_blocks SET body=? WHERE lesson_id=? AND ordinal=0")
+        .bind(&new_body)
+        .bind(lesson_id)
+        .execute(&mut *tx)
+        .await?;
+
+    sqlx::query(
+        "INSERT OR REPLACE INTO learning_lesson_reviews(lesson_id,program_id,job_id,state,revision,draft_sha256,checker_model,opened_at,updated_at) VALUES(?,?,?,'ready',1,'sha','m',?,?)",
+    )
+    .bind(lesson_id)
+    .bind(program_id)
+    .bind(&job_id)
+    .bind(now)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
+
+    // Stale byte span points inside `verified_first`, while `quote` names `unverified_later`.
+    let shifted_claim = ClaimId("c-shifted-span".into());
+    crate::lessons::claim_reviews::repository::append_for_test_in(
+        &mut tx,
+        lesson_id,
+        &shifted_claim,
+        prov.clone(),
+        ClaimEvent::Extracted {
+            location: ClaimLocation {
+                unit_index: 0,
+                unit_kind: UnitKind::Block,
+                field: "body".into(),
+                quote: unverified_later.into(),
+                span: Some((0, verified_first.len())),
+            },
+            statement: unverified_later.into(),
+        },
+    )
+    .await?;
+    crate::lessons::claim_reviews::repository::append_for_test_in(
+        &mut tx,
+        lesson_id,
+        &shifted_claim,
+        prov.clone(),
+        ClaimEvent::PublishedUnverified {
+            reason: UnverifiedReason::Unsupported,
+        },
+    )
+    .await?;
+
+    // Short (<20-char) unverified quote must not taint unrelated longer bank source_quotes.
+    let short_claim = ClaimId("c-short-quote".into());
+    crate::lessons::claim_reviews::repository::append_for_test_in(
+        &mut tx,
+        lesson_id,
+        &short_claim,
+        prov.clone(),
+        ClaimEvent::Extracted {
+            location: ClaimLocation {
+                unit_index: 0,
+                unit_kind: UnitKind::Block,
+                field: "body".into(),
+                quote: "exp".into(),
+                span: None,
+            },
+            statement: "exp field".into(),
+        },
+    )
+    .await?;
+    crate::lessons::claim_reviews::repository::append_for_test_in(
+        &mut tx,
+        lesson_id,
+        &short_claim,
+        prov.clone(),
+        ClaimEvent::PublishedUnverified {
+            reason: UnverifiedReason::Unsupported,
+        },
+    )
+    .await?;
+
+    // Two unverified claims on seed question 0.
+    for (cid, kind, field) in [
+        ("c-q-prompt", UnitKind::Question, "prompt"),
+        ("c-q-expl", UnitKind::AnswerKey, "explanation"),
+    ] {
+        let claim_id = ClaimId(cid.into());
+        crate::lessons::claim_reviews::repository::append_for_test_in(
+            &mut tx,
+            lesson_id,
+            &claim_id,
+            prov.clone(),
+            ClaimEvent::Extracted {
+                location: ClaimLocation::locate(
+                    block_count,
+                    kind,
+                    field,
+                    unverified_later,
+                    unverified_later,
+                ),
+                statement: unverified_later.into(),
+            },
+        )
+        .await?;
+        crate::lessons::claim_reviews::repository::append_for_test_in(
+            &mut tx,
+            lesson_id,
+            &claim_id,
+            prov.clone(),
+            ClaimEvent::PublishedUnverified {
+                reason: UnverifiedReason::Unsupported,
+            },
+        )
+        .await?;
+    }
+
+    // Module/course bank item (`lesson_id: None`) referencing `unverified_later`, plus a safe item
+    // whose quote happens to contain the short `"exp"` token.
+    let unlinked_tainted_id = uuid::Uuid::new_v4().to_string();
+    let safe_short_match_id = uuid::Uuid::new_v4().to_string();
+    insert_bank_items_in(
+        &mut tx,
+        program_id,
+        &[
+            BankItem {
+                item: stored(
+                    &unlinked_tainted_id,
+                    &outcome_id,
+                    LearningItemFormat::SingleChoice,
+                    2,
+                ),
+                source_quote: unverified_later.into(),
+                lesson_id: None,
+                origin: "bank",
+                review_status: "agreed",
+            },
+            BankItem {
+                item: stored(
+                    &safe_short_match_id,
+                    &outcome_id,
+                    LearningItemFormat::SingleChoice,
+                    2,
+                ),
+                source_quote: "Validate client_assertion expiration claims strictly.".into(),
+                lesson_id: None,
+                origin: "bank",
+                review_status: "agreed",
+            },
+        ],
+        None,
+    )
+    .await?;
+    crate::assessment_repository::sync_disputed_questions_in(&mut tx, lesson_id).await?;
+    tx.commit().await?;
+
+    let mut read = db.begin_read().await?;
+    let material = LearningAssessmentRepository::lesson_material_in(&mut read, lesson_id).await?;
+    assert!(
+        material[0].text.contains(verified_first),
+        "{}",
+        material[0].text
+    );
+    assert!(
+        !material[0].text.contains("420 seconds"),
+        "{}",
+        material[0].text
+    );
+
+    let bank = LearningAssessmentRepository::bank_in(&mut read, program_id).await?;
+    assert!(bank.iter().all(|b| b.candidate.id != unlinked_tainted_id));
+    assert!(bank.iter().any(|b| b.candidate.id == safe_short_match_id));
+    let seed0_id: String = sqlx::query_scalar(
+        "SELECT id FROM learning_assessment_candidates WHERE lesson_id=? AND origin='lesson' ORDER BY rowid LIMIT 1",
+    )
+    .bind(lesson_id)
+    .fetch_one(&mut *read)
+    .await?;
+    read.commit().await?;
+
+    // Confirming only `c-q-prompt` leaves seed 0 `disputed` because `c-q-expl` is still unverified.
+    let mut tx2 = db.begin_write().await?;
+    let user_prov = EventProvenance {
+        actor: Actor::User,
+        ..prov
+    };
+    crate::lessons::claim_reviews::repository::append_for_test_in(
+        &mut tx2,
+        lesson_id,
+        &ClaimId("c-q-prompt".into()),
+        user_prov.clone(),
+        ClaimEvent::UserAction {
+            action: UserAction::Confirm {
+                bound: HumanBinding::new(unverified_later, Vec::new()),
+            },
+            note: None,
+        },
+    )
+    .await?;
+    crate::assessment_repository::sync_disputed_questions_in(&mut tx2, lesson_id).await?;
+    let status_partial: String =
+        sqlx::query_scalar("SELECT review_status FROM learning_assessment_candidates WHERE id=?")
+            .bind(&seed0_id)
+            .fetch_one(&mut *tx2)
+            .await?;
+    assert_eq!(status_partial, "disputed");
+
+    // Confirming `c-q-expl` restores `'agreed'`, and reopening flips back to `'disputed'`.
+    crate::lessons::claim_reviews::repository::append_for_test_in(
+        &mut tx2,
+        lesson_id,
+        &ClaimId("c-q-expl".into()),
+        user_prov,
+        ClaimEvent::UserAction {
+            action: UserAction::Confirm {
+                bound: HumanBinding::new(unverified_later, vec!["v-src".into()]),
+            },
+            note: None,
+        },
+    )
+    .await?;
+    crate::assessment_repository::sync_disputed_questions_in(&mut tx2, lesson_id).await?;
+    let status_agreed: String =
+        sqlx::query_scalar("SELECT review_status FROM learning_assessment_candidates WHERE id=?")
+            .bind(&seed0_id)
+            .fetch_one(&mut *tx2)
+            .await?;
+    assert_eq!(status_agreed, "agreed");
+
+    crate::lessons::claim_reviews::repository::append_for_test_in(
+        &mut tx2,
+        lesson_id,
+        &ClaimId("c-q-expl".into()),
+        prov,
+        ClaimEvent::Reopened {
+            cause: ReopenCause::SourceDeleted("v-src".into()),
+        },
+    )
+    .await?;
+    crate::assessment_repository::sync_disputed_questions_in(&mut tx2, lesson_id).await?;
+    let status_reopened: String =
+        sqlx::query_scalar("SELECT review_status FROM learning_assessment_candidates WHERE id=?")
+            .bind(&seed0_id)
+            .fetch_one(&mut *tx2)
+            .await?;
+    assert_eq!(status_reopened, "disputed");
+    tx2.commit().await?;
+    Ok(())
+}

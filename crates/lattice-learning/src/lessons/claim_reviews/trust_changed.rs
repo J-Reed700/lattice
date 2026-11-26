@@ -313,24 +313,26 @@ async fn redecide_lesson(
                 Err(error) => return Err(error),
             }
         }
-        if report.reopened > 0 {
+        if report.reopened > 0 || report.verified > 0 {
             hold_if_published(database, lesson_id).await?;
         }
         return Ok(report);
     }
 }
 
-/// A published lesson with a claim reopened needs the user's review again,
-/// as a Verifier dispute on demand does; the lesson stays published.
+/// Syncs quiz question dispute status on a published lesson when trust
+/// decisions change, and holds the lesson for review if any claim reopened.
 async fn hold_if_published(database: &Database, lesson_id: &str) -> Result<()> {
     let mut tx = database.begin_write().await?;
     let ledger = load_in(&mut tx, lesson_id).await?;
     if ledger
         .review
         .is_some_and(|review| review.state == LessonReviewState::Ready)
-        && end_state(&ledger.claims) == LessonReviewState::NeedsReview
     {
-        hold_in(&mut tx, lesson_id, None).await?;
+        crate::assessment_repository::sync_disputed_questions_in(&mut tx, lesson_id).await?;
+        if end_state(&ledger.claims) == LessonReviewState::NeedsReview {
+            hold_in(&mut tx, lesson_id, None).await?;
+        }
     }
     tx.commit().await?;
     Ok(())

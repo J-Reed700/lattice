@@ -536,6 +536,7 @@ impl ClaimReviewService {
         let moved = self
             .settle_planned_in(&mut tx, ledger, lesson_id, &planned)
             .await?;
+        crate::assessment_repository::sync_disputed_questions_in(&mut tx, lesson_id).await?;
         tx.commit().await?;
         Ok((moved, bumped))
     }

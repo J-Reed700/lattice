@@ -685,7 +685,7 @@ async fn research<'a>(
     for web_research::GapNeed { gap, need } in planned {
         if !needs
             .iter()
-            .any(|(existing, _)| existing.line() == need.line())
+            .any(|(existing, _)| existing.kind == need.kind && existing.line() == need.line())
         {
             needs.push((need, Some(gap)));
         }

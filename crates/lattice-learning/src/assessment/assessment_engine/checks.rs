@@ -477,7 +477,11 @@ fn is_named_standard_version(lower_text: &str, ver: &str) -> bool {
         "semver",
         "semantic versioning",
         "openapi",
+        "fhir r4b",
+        "fhir r4",
+        "fhir r5",
         "fhir",
+        "hl7",
         "oauth",
         "rfc",
         "ecma",
@@ -488,8 +492,12 @@ fn is_named_standard_version(lower_text: &str, ver: &str) -> bool {
         let prefix = lower_text
             .get(..abs)
             .unwrap_or_default()
-            .trim_end_matches(|c: char| c == 'v' || c.is_whitespace());
-        if STANDARDS.iter().any(|std_name| prefix.ends_with(std_name)) {
+            .trim_end_matches(|c: char| c == 'v' || c == '(' || c.is_whitespace());
+        if STANDARDS.iter().any(|std_name| {
+            prefix.strip_suffix(std_name).is_some_and(|before| {
+                before.is_empty() || !before.ends_with(|c: char| c.is_ascii_alphanumeric())
+            })
+        }) {
             return true;
         }
         start = abs + ver.len();
@@ -525,21 +533,27 @@ fn extract_three_part_versions(text: &str) -> Vec<String> {
                 if b.is_ascii_digit() {
                     seg_len += 1;
                     end += 1;
-                } else if b == b'.' && seg_len > 0 {
-                    dots += 1;
-                    seg_len = 0;
-                    end += 1;
                 } else if b == b'.' {
-                    ok = false;
-                    break;
+                    let next_digit = bytes.get(end + 1).is_some_and(u8::is_ascii_digit);
+                    if seg_len > 0 && next_digit {
+                        dots += 1;
+                        seg_len = 0;
+                        end += 1;
+                    } else if seg_len == 0 {
+                        ok = false;
+                        break;
+                    } else {
+                        break;
+                    }
                 } else {
                     break;
                 }
             }
-            let trailing_dot_or_digit = bytes
-                .get(end)
-                .is_some_and(|b| b.is_ascii_digit() || *b == b'.');
-            if ok && dots == 2 && seg_len > 0 && !trailing_dot_or_digit {
+            let trailing_part = bytes.get(end).is_some_and(|b| {
+                b.is_ascii_digit()
+                    || (*b == b'.' && bytes.get(end + 1).is_some_and(u8::is_ascii_digit))
+            });
+            if ok && dots == 2 && seg_len > 0 && !trailing_part {
                 if let Some(slice) = text.get(start..end) {
                     versions.push(slice.to_owned());
                 }

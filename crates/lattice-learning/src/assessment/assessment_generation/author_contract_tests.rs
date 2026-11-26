@@ -576,10 +576,22 @@ fn authored_content_faults_rejects_meta_talk_and_phantom_versions_but_allows_sta
         "{phantom_faults:?}"
     );
 
+    let trailing_dot_phantom = candidate_with(
+        LearningItemFormat::SingleChoice,
+        "Which header pins the route version?",
+        "Routes pin directly to 4.0.1.",
+        vec![],
+    );
+    let dot_faults = engine::checks::authored_content_faults(&trailing_dot_phantom, "");
+    assert!(
+        dot_faults.iter().any(|f| f.contains("4.0.1")),
+        "{dot_faults:?}"
+    );
+
     let valid = candidate_with(
         LearningItemFormat::ShortAnswer,
-        "Connector 6.2.3 adds an optional field. What version should it carry?",
-        "Adding an optional field raises minor from 2 to 3, giving 6.3.0 under SemVer 2.0.0.",
+        "Connector 6.2.3. adds an optional field. What version should it carry?",
+        "Adding an optional field raises minor from 2 to 3, giving 6.3.0 under SemVer 2.0.0, aligning with HL7 v2.5.1, FHIR R4 (4.0.1), and FHIR R4 4.0.1.",
         vec![],
     );
     let valid_faults = engine::checks::authored_content_faults(&valid, "");

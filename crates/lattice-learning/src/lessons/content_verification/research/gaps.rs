@@ -232,7 +232,7 @@ pub(super) async fn select_need_candidates(
         SearchOutcome::Unavailable => failed = true,
         SearchOutcome::Found(results) => {
             reached = true;
-            completed_lines.push(need.line());
+            completed_lines.push(search_dedup_key(need));
             (owner, selected) =
                 filter_and_select(llm, context, gaps, urls, gap, &need.query, results).await?;
         }
@@ -253,6 +253,8 @@ pub(super) async fn select_need_candidates(
                 let mut web_alt = need.clone();
                 web_alt.query = alt.clone();
                 web_alt.kind = lattice_core::domain::sourcing::NeedKind::Web;
+                web_alt.identifier = None;
+                web_alt.ecosystem = None;
                 web_alt.alternatives = Vec::new();
                 variants.push(web_alt);
             }
@@ -265,8 +267,7 @@ pub(super) async fn select_need_candidates(
                     }
                     SearchOutcome::Found(results) => {
                         reached = true;
-                        completed_lines.push(variant.line());
-                        let was_empty = results.is_empty();
+                        completed_lines.push(search_dedup_key(&variant));
                         let (ov, sel) = filter_and_select(
                             llm,
                             context,
@@ -281,9 +282,6 @@ pub(super) async fn select_need_candidates(
                             owner = ov;
                             selected = sel;
                             break 'alts;
-                        }
-                        if !was_empty {
-                            break;
                         }
                     }
                 }
@@ -300,6 +298,14 @@ pub(super) async fn select_need_candidates(
     })
 }
 
+fn search_dedup_key(need: &web_research::PlannedNeed) -> String {
+    if need.kind == lattice_core::domain::sourcing::NeedKind::Web {
+        need.line()
+    } else {
+        format!("[{}] {}", need.kind.as_str(), need.line())
+    }
+}
+
 async fn search_once(
     llm: &dyn LLMPort,
     context: &Context,
@@ -309,11 +315,12 @@ async fn search_once(
     looking: &str,
 ) -> SearchOutcome {
     let line = need.line();
+    let key = search_dedup_key(need);
     if !context
         .searched
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .insert(line.clone())
+        .insert(key.clone())
     {
         return SearchOutcome::AlreadySearched;
     }
@@ -338,7 +345,7 @@ async fn search_once(
                 .searched
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .remove(&line);
+                .remove(&key);
             searched.queries.pop();
             return SearchOutcome::Unavailable;
         }

@@ -46,14 +46,22 @@ fn strip_unverified_sentences(body: &str, claims: &[UnverifiedClaim<'_>]) -> Str
                 return None;
             }
             let blocked = claims.iter().any(|claim| {
+                let quote = claim.quote.trim();
                 let valid_span = claim.span.filter(|&(cs, ce)| {
                     cs < ce
                         && ce <= body.len()
                         && body.is_char_boundary(cs)
                         && body.is_char_boundary(ce)
+                        && !quote.is_empty()
+                        && body.get(cs..ce).is_some_and(|slice| {
+                            let st = slice.trim();
+                            !st.is_empty()
+                                && (st == quote
+                                    || st.contains(quote)
+                                    || (st.len() >= 20 && quote.contains(st)))
+                        })
                 });
                 let span_hit = valid_span.is_some_and(|span| overlaps((start, end), span));
-                let quote = claim.quote.trim();
                 let quote_hit = !quote.is_empty()
                     && (trimmed == quote
                         || trimmed.contains(quote)
@@ -200,7 +208,7 @@ async fn unverified_candidates_inner(
     .collect();
 
     let lesson_ids: Vec<String> = sqlx::query_scalar(
-        "SELECT DISTINCT lesson_id FROM learning_assessment_candidates WHERE program_id=? AND lesson_id IS NOT NULL",
+        "SELECT id FROM learning_lessons WHERE program_id=?",
     )
     .bind(program_id)
     .fetch_all(&mut *connection)
@@ -265,22 +273,28 @@ async fn unverified_candidates_inner(
 
     if !unverified_quotes.is_empty() {
         let bank_rows = sqlx::query(
-            "SELECT id, lesson_id, source_quote FROM learning_assessment_candidates WHERE program_id=? AND origin='bank' AND lesson_id IS NOT NULL AND source_quote <> ''",
+            "SELECT id, lesson_id, source_quote FROM learning_assessment_candidates WHERE program_id=? AND origin='bank' AND source_quote <> ''",
         )
         .bind(program_id)
         .fetch_all(&mut *connection)
         .await?;
         for row in bank_rows {
-            let lesson_id: String = row.get("lesson_id");
-            let Some(quotes) = unverified_quotes.get(&lesson_id) else {
-                continue;
-            };
+            let lesson_id: Option<String> = row.get("lesson_id");
             let source_quote: String = row.get("source_quote");
             let sq = source_quote.trim();
-            let tainted = quotes.iter().any(|quote| {
+            let quote_matches = |quote: &String| {
                 let uq = quote.trim();
-                !uq.is_empty() && (sq.contains(uq) || uq.contains(sq))
-            });
+                !uq.is_empty()
+                    && (sq == uq
+                        || (uq.len() >= 20 && sq.contains(uq))
+                        || (sq.len() >= 20 && uq.contains(sq)))
+            };
+            let tainted = match lesson_id.as_deref() {
+                Some(lid) => unverified_quotes
+                    .get(lid)
+                    .is_some_and(|quotes| quotes.iter().any(quote_matches)),
+                None => unverified_quotes.values().flatten().any(quote_matches),
+            };
             if tainted {
                 held_back.insert(row.get("id"));
             }
