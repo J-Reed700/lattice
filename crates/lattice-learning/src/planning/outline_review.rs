@@ -86,15 +86,40 @@ fn path_text(candidate: &Value, path: &str) -> Option<String> {
     if path.ends_with("/summary") || path.contains("/outcomes/") {
         return item.get("text").and_then(Value::as_str).map(str::to_owned);
     }
-    Some(format!(
-        "{} {}",
-        item.get("title")
-            .and_then(Value::as_str)
-            .unwrap_or_default(),
-        item.get("project")
-            .map(Value::to_string)
-            .unwrap_or_default()
-    ))
+    Some(module_text(item))
+}
+
+fn module_text(module: &Value) -> String {
+    let text = |value: &Value| value.as_str().unwrap_or_default().trim().to_owned();
+    let list = |value: &Value| {
+        value
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(text)
+            .filter(|item| !item.is_empty())
+            .collect::<Vec<_>>()
+            .join("; ")
+    };
+    let labelled = |label: &str, value: String| {
+        if value.is_empty() {
+            value
+        } else {
+            format!("{label}: {value}")
+        }
+    };
+    let project = &module["project"];
+    [
+        text(&module["title"]),
+        labelled("Project", text(&project["title"])),
+        text(&project["brief"]),
+        labelled("Deliverables", list(&project["deliverables"])),
+        labelled("Success criteria", list(&project["successCriteria"])),
+    ]
+    .into_iter()
+    .filter(|line| !line.is_empty())
+    .collect::<Vec<_>>()
+    .join("\n")
 }
 
 /// The phrases a reason quotes: text between matching double, single or
@@ -227,15 +252,6 @@ fn normalized(text: &str) -> String {
         .join(" ")
 }
 
-fn contains_text(value: &Value, needle: &str) -> bool {
-    match value {
-        Value::String(text) => text.contains(needle),
-        Value::Array(items) => items.iter().any(|item| contains_text(item, needle)),
-        Value::Object(object) => object.values().any(|item| contains_text(item, needle)),
-        _ => false,
-    }
-}
-
 /// Assertions a strict judge found supported whose text, and attached
 /// evidence, are still in the candidate. The reviewer is told about them and
 /// code drops a factual finding that names one again.
@@ -264,10 +280,9 @@ pub(crate) fn verified_assertions(
                         }
                     }
             }
-            None => draft
-                .candidate
-                .pointer(&receipt.path)
-                .is_some_and(|module| contains_text(module, &receipt.claim)),
+            None => {
+                claim_of(&draft.candidate, &receipt.path).as_deref() == Some(receipt.claim.as_str())
+            }
         })
         .map(|receipt| receipt.claim.clone())
         .collect();
