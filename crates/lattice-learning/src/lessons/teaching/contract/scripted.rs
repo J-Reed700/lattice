@@ -248,8 +248,11 @@ fn found(rows: &[(String, String)], old: &Value) -> String {
             first(rows, quote_of(&clash["otherQuote"])),
         );
         if let (Some(one), Some(other)) = (one.first(), other.first()) {
-            items
-                .push(json!({"finding": {"kind": "contradiction", "first": one, "second": other}}));
+            items.push(json!({"finding": {
+                "kind": "contradiction",
+                "statement": one,
+                "otherStatement": other
+            }}));
         }
     }
     for unseen in old["unseen"].as_array().into_iter().flatten() {
