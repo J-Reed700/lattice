@@ -3,9 +3,10 @@ import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PlanPanel } from '@/features/learning/curriculum/PlanPanel';
+import { closeEditor, useEditorStore } from '@/shared/edits/editorStore';
 
 const mocks = vi.hoisted(() => ({ getPlan: vi.fn(), preview: vi.fn(), accept: vi.fn(), discard: vi.fn(), startDiagnostic: vi.fn(), submitDiagnostic: vi.fn(), skipDiagnostic: vi.fn(), cancelJob: vi.fn(), retryJob: vi.fn() }));
 vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: {
@@ -41,6 +42,7 @@ function renderPlan() {
 describe('Learning Studio Plan editor', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    closeEditor();
     mocks.getPlan.mockResolvedValue(ok(plan()));
     mocks.preview.mockImplementation(async () => ok(plan({ draftRevision: { ...acceptedRevision, id: 'revision-2', revisionNumber: 5, parentRevisionId: acceptedRevision.id, reason: 'Clarify transfer practice.', modules: [{ ...module, lessons: [...module.lessons, { ...lesson, id: 'lesson-2', title: 'Compare a second case' }] }] }, previewChanges: [{ kind: 'added', lessonId: 'lesson-2', fromModuleId: null, toModuleId: module.id, description: 'Add “Compare a second case” after the current lesson.' }], requiredLessonCountBefore: 1, requiredLessonCountAfter: 2 })));
     mocks.accept.mockResolvedValue(ok(plan({ acceptedRevision: { ...acceptedRevision, revisionNumber: 5 }, draftRevision: null, requiredLessonCountBefore: 2, requiredLessonCountAfter: 2 })));
@@ -50,6 +52,10 @@ describe('Learning Studio Plan editor', () => {
     mocks.skipDiagnostic.mockResolvedValue(ok({ ...diagnostic, status: 'skipped' }));
     mocks.cancelJob.mockResolvedValue(ok({ id: 'job-1' }));
     mocks.retryJob.mockResolvedValue(ok({ id: 'job-2' }));
+  });
+
+  afterEach(() => {
+    closeEditor();
   });
 
   it('shows revision denominator, stable resume, and real job progress/actions', async () => {
@@ -197,7 +203,7 @@ describe('Learning Studio Plan editor', () => {
     expect(completedArticle).not.toBeNull();
     expect(assessedArticle).not.toBeNull();
     for (const article of [completedArticle, assessedArticle] as HTMLElement[]) {
-      expect(within(article).getByRole('button', { name: 'Edit' })).toBeDisabled();
+      expect(within(article).getByRole('button', { name: 'Edit' })).toBeEnabled();
       expect(within(article).getByRole('button', { name: /Move/ })).toBeDisabled();
       expect(within(article).getByRole('button', { name: 'Skip' })).toBeDisabled();
       expect(within(article).getByRole('button', { name: 'Replace' })).toBeDisabled();
@@ -220,12 +226,34 @@ describe('Learning Studio Plan editor', () => {
     expect(screen.getByText('Challenge the prerequisite for Assessment started lesson.')).toBeVisible();
   });
 
-  it('edits and moves a lesson through the revision editor before previewing both changes', async () => {
+  it('opens the shared editor for any lesson row from Edit without adding a proposed operation', async () => {
+    const completed = { ...lesson, id: 'lesson-done', title: 'Completed lesson', state: 'completed' };
+    mocks.getPlan.mockResolvedValue(ok(plan({
+      acceptedRevision: { ...acceptedRevision, modules: [{ ...module, lessons: [completed, lesson] }] },
+    })));
+    const user = userEvent.setup();
+    renderPlan();
+
+    const completedArticle = (await screen.findByText('Completed lesson')).closest('article') as HTMLElement;
+    const completedEdit = within(completedArticle).getByRole('button', { name: 'Edit' });
+    await user.click(completedEdit);
+    expect(useEditorStore.getState().current?.address).toEqual({
+      content: { kind: 'learning.lesson', key: completed.id },
+      path: null,
+      fragment: null,
+    });
+    expect(useEditorStore.getState().current?.options.returnFocusTo).toBe(completedEdit);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Proposed operations' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Edit lesson/)).not.toBeInTheDocument();
+  });
+
+  it('moves a lesson through the revision editor before previewing without edit_lesson', async () => {
     const secondModule = { ...module, id: 'module-2', title: 'Transfer practice', lessons: [] };
     mocks.getPlan.mockResolvedValue(ok(plan({ acceptedRevision: { ...acceptedRevision, modules: [module, secondModule] } })));
     mocks.preview.mockResolvedValue(ok(plan({
       draftRevision: { ...acceptedRevision, id: 'revision-2', revisionNumber: 5, parentRevisionId: acceptedRevision.id },
-      previewChanges: [{ kind: 'updated', lessonId: lesson.id, fromModuleId: module.id, toModuleId: secondModule.id, description: 'Update and move the lesson.' }],
+      previewChanges: [{ kind: 'moved', lessonId: lesson.id, fromModuleId: module.id, toModuleId: secondModule.id, description: 'Move the lesson.' }],
     })));
 
     const user = userEvent.setup();
@@ -233,27 +261,16 @@ describe('Learning Studio Plan editor', () => {
     await screen.findByText(lesson.title);
     const lessonArticle = screen.getByText(lesson.title).closest('article') as HTMLElement;
 
-    await user.click(within(lessonArticle).getByRole('button', { name: 'Edit' }));
-    const titleInput = screen.getByRole('textbox', { name: 'Title' });
-    expect(titleInput).toHaveFocus();
-    await user.clear(titleInput);
-    await user.type(titleInput, 'Read two bodies of evidence');
-    await user.clear(screen.getByRole('textbox', { name: 'Objective' }));
-    await user.type(screen.getByRole('textbox', { name: 'Objective' }), 'Compare how the evidence supports each claim.');
-    await user.click(screen.getByRole('button', { name: 'Add to preview' }));
-
     await user.click(within(lessonArticle).getByRole('button', { name: `Move ${lesson.title}` }));
     await user.selectOptions(screen.getByRole('combobox', { name: 'Module' }), 'module-2');
     await user.click(screen.getByRole('button', { name: 'Add to preview' }));
     const proposedOperations = screen.getByRole('heading', { name: 'Proposed operations' }).parentElement?.parentElement as HTMLElement;
-    expect(proposedOperations).toHaveTextContent(/Edit lesson.*Build a source-backed explanation/);
     expect(proposedOperations).toHaveTextContent(/Move lesson.*Build a source-backed explanation/);
 
     await user.click(screen.getByRole('button', { name: 'Preview changes' }));
     await waitFor(() => expect(mocks.preview).toHaveBeenCalledWith(expect.objectContaining({
       expectedRevision: 9,
       operations: [
-        { kind: 'edit_lesson', lesson_id: lesson.id, title: 'Read two bodies of evidence', objective: 'Compare how the evidence supports each claim.', estimated_minutes: lesson.estimatedMinutes },
         { kind: 'move_lesson', lesson_id: lesson.id, target_module_id: 'module-2', after_lesson_id: null },
       ],
     })));
