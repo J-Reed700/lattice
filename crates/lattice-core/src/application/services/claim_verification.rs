@@ -51,7 +51,8 @@ mod judgment_tests;
 
 pub use batch::{BatchClaim, BatchInput, BatchPassage, ClaimBatch, CountedPast, LocatedClaim};
 pub use bridge::{
-    BridgeOutcome, BridgePart, BridgePassage, ClaimParts, PartKind, PartsInput, BRIDGE_SYSTEM,
+    BridgeOutcome, BridgePart, BridgePassage, BridgeSentence, ClaimParts, PartKind, PartsInput,
+    SentenceAt, ShownPassage, BRIDGE_SYSTEM,
 };
 pub use classes::{
     ClassJudgment, Consistency, ConsistencyInput, ConsistencyOutcome, ConsistencyVerdict,

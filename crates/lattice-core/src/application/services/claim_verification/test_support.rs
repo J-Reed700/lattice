@@ -1,6 +1,7 @@
 //! What a scripted model that knows exactly some facts answers every judge.
 use super::*;
 use crate::application::services::model_contract::test_support::{Reply, ScriptedModel, Sent};
+use crate::shared::text::segmentation::flowed_sentences;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -72,11 +73,11 @@ impl Fact {
     /// The parts a judge shown `shown` finds in `statement`: a fact is stated
     /// or contradicted only by a shown passage that holds its quote.
     fn read(&self, statement: &str, shown: &[String]) -> Vec<BridgePart> {
-        let part = |kind, passage| {
+        let part = |kind, sentences| {
             vec![BridgePart {
                 part: statement.to_owned(),
                 kind,
-                passage,
+                sentences,
             }]
         };
         let found = |quote: &str| {
@@ -84,17 +85,35 @@ impl Fact {
                 .iter()
                 .position(|passage| quote_in(passage, quote).is_some())
         };
+        let sentence_of = |passage: usize, quote: &str| -> Vec<SentenceAt> {
+            let Some(text) = shown.get(passage) else {
+                return Vec::new();
+            };
+            let from = same_text::find(text, quote).map_or(0, |(start, _)| start);
+            let sentences = flowed_sentences(text);
+            sentences
+                .iter()
+                .find(|(_, end)| *end > from)
+                .or(sentences.first())
+                .map(|&(start, end)| SentenceAt {
+                    passage,
+                    start,
+                    end,
+                })
+                .into_iter()
+                .collect()
+        };
         match self {
             Self::Stated { quote } => found(quote).map_or_else(
-                || part(PartKind::SpecificMissing, None),
-                |at| part(PartKind::Stated, Some(at)),
+                || part(PartKind::SpecificMissing, Vec::new()),
+                |at| part(PartKind::Stated, sentence_of(at, quote)),
             ),
             Self::Contradicted { quote } => found(quote).map_or_else(
-                || part(PartKind::SpecificMissing, None),
-                |at| part(PartKind::Contradicted, Some(at)),
+                || part(PartKind::SpecificMissing, Vec::new()),
+                |at| part(PartKind::Contradicted, sentence_of(at, quote)),
             ),
-            Self::Unsupported => part(PartKind::SpecificMissing, None),
-            Self::Common => part(PartKind::Common, None),
+            Self::Unsupported => part(PartKind::SpecificMissing, Vec::new()),
+            Self::Common => part(PartKind::Common, Vec::new()),
             Self::Parts(parts) => parts.clone(),
         }
     }
@@ -142,16 +161,14 @@ fn why(parts: &[BridgePart]) -> &'static str {
 
 /// A page judge's verdict on the parts, and the passage it cites.
 fn page(parts: &[BridgePart]) -> (ClaimVerdict, Option<usize>) {
+    let passage_of = |part: &BridgePart| part.sentences.first().map(|at| at.passage);
     if let Some(part) = parts
         .iter()
         .find(|part| part.kind == PartKind::Contradicted)
     {
-        (ClaimVerdict::Contradicted, part.passage)
+        (ClaimVerdict::Contradicted, passage_of(part))
     } else if !parts.is_empty() && parts.iter().all(|part| part.kind == PartKind::Stated) {
-        (
-            ClaimVerdict::Supported,
-            parts.first().and_then(|part| part.passage),
-        )
+        (ClaimVerdict::Supported, parts.first().and_then(passage_of))
     } else {
         (ClaimVerdict::Unsupported, None)
     }
@@ -197,7 +214,8 @@ fn answer_batch(truth: &Truth, sent: &Sent) -> Result<CompletionResponse> {
     ))
 }
 
-fn answer_parts(truth: &Truth, input: &PartsInput) -> Reply<BridgeOutcome> {
+/// The reply a judge shown `input` writes for what the truth holds: the sentence at index `i` of the input is `s{i+1}`.
+fn answer_parts(truth: &Truth, input: &PartsInput) -> Reply<serde_json::Value> {
     let statement = &input.statement.0;
     match truth.fact(statement) {
         Ok(fact) => {
@@ -207,10 +225,32 @@ fn answer_parts(truth: &Truth, input: &PartsInput) -> Reply<BridgeOutcome> {
                 .map(|passage| passage.text.0.clone())
                 .collect();
             let parts = fact.read(statement, &shown);
-            Reply::Answer(BridgeOutcome {
-                reason: why(&parts).to_owned(),
-                parts,
-            })
+            let handle = |at: &SentenceAt| {
+                input
+                    .sentences
+                    .value()
+                    .iter()
+                    .position(|sentence| sentence.at == *at)
+                    .map(|index| format!("s{}", index + 1))
+            };
+            let written: Vec<serde_json::Value> = parts
+                .iter()
+                .map(|part| {
+                    serde_json::json!({
+                        "words": part.part,
+                        "kind": part.kind,
+                        "from": part
+                            .sentences
+                            .iter()
+                            .filter_map(&handle)
+                            .collect::<Vec<_>>(),
+                    })
+                })
+                .collect();
+            Reply::Answer(serde_json::json!({
+                "parts": written,
+                "reason": why(&parts),
+            }))
         }
         Err(what) => Reply::Miss(what),
     }
@@ -302,12 +342,16 @@ mod tests {
                     BridgePart {
                         part: "Quillet is a lexer".into(),
                         kind: PartKind::Stated,
-                        passage: Some(0),
+                        sentences: vec![SentenceAt {
+                            passage: 0,
+                            start: 0,
+                            end: LEXER.len(),
+                        }],
                     },
                     BridgePart {
-                        part: "it tokenizes".into(),
+                        part: "tokenizes".into(),
                         kind: PartKind::Common,
-                        passage: None,
+                        sentences: Vec::new(),
                     },
                 ],
             )
@@ -315,6 +359,26 @@ mod tests {
 
     fn shown() -> Vec<String> {
         vec![LEXER.into(), NEVER_PARSES.into()]
+    }
+
+    fn passage(text: &str) -> ShownPassage {
+        ShownPassage {
+            label: String::new(),
+            text: text.into(),
+        }
+    }
+
+    fn shown_passages() -> Vec<ShownPassage> {
+        vec![
+            ShownPassage {
+                label: "From \"The Quillet Guide\"".into(),
+                text: LEXER.into(),
+            },
+            ShownPassage {
+                label: "From \"Quillet notes\"".into(),
+                text: NEVER_PARSES.into(),
+            },
+        ]
     }
 
     fn checker(model: &ScriptedModel, policy: CheckPolicy) -> ClaimChecker<'_> {
@@ -328,7 +392,11 @@ mod tests {
         }
     }
 
-    async fn bridged(model: &ScriptedModel, statement: &str, shown: &[String]) -> Vec<BridgePart> {
+    async fn bridged(
+        model: &ScriptedModel,
+        statement: &str,
+        shown: &[ShownPassage],
+    ) -> Vec<BridgePart> {
         let answered = checker(model, CheckPolicy::Bridge)
             .check_bridge(statement, shown)
             .await;
@@ -338,7 +406,7 @@ mod tests {
     #[tokio::test]
     async fn an_enforcing_backend_is_asked_for_at_least_one_part() {
         let model = ScriptedModel::judging(truth()).enforcing();
-        bridged(&model, PARTS, &shown()).await;
+        bridged(&model, PARTS, &shown_passages()).await;
 
         let sent = model.sent();
         let schema = sent[0].request.schema().unwrap().as_json();
@@ -349,7 +417,10 @@ mod tests {
     async fn the_part_wise_judge_reads_every_kind_of_fact() {
         let model = ScriptedModel::judging(truth());
         let kinds = |parts: Vec<BridgePart>| -> Vec<(PartKind, Option<usize>)> {
-            parts.iter().map(|part| (part.kind, part.passage)).collect()
+            parts
+                .iter()
+                .map(|part| (part.kind, part.sentences.first().map(|at| at.passage)))
+                .collect()
         };
         let cases = [
             (STATED, vec![(PartKind::Stated, Some(0))]),
@@ -362,10 +433,10 @@ mod tests {
             ),
         ];
         for (statement, expected) in cases {
-            let parts = bridged(&model, statement, &shown()).await;
+            let parts = bridged(&model, statement, &shown_passages()).await;
             assert_eq!(kinds(parts), expected, "{statement}");
         }
-        let unshown = bridged(&model, STATED, &[NEVER_PARSES.into()]).await;
+        let unshown = bridged(&model, STATED, &[passage(NEVER_PARSES)]).await;
         assert_eq!(kinds(unshown), [(PartKind::SpecificMissing, None)]);
     }
 
@@ -546,7 +617,7 @@ mod tests {
     #[tokio::test]
     async fn prompt_snapshot_claim_parts() {
         let model = ScriptedModel::judging(truth());
-        let parts = bridged(&model, PARTS, &shown()).await;
+        let parts = bridged(&model, PARTS, &shown_passages()).await;
         assert_eq!(parts.len(), 2);
         assert_snapshot::<ClaimParts>(&model, "claim-parts");
     }
@@ -576,7 +647,7 @@ mod tests {
     async fn a_statement_outside_the_truth_fails_the_test() {
         let model = ScriptedModel::judging(truth());
         let answered = checker(&model, CheckPolicy::Bridge)
-            .check_bridge("Nobody said this.", &shown())
+            .check_bridge("Nobody said this.", &shown_passages())
             .await;
         assert!(matches!(answered.judgments, Judgment::Failed(_)));
     }
