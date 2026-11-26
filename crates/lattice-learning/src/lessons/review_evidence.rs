@@ -532,6 +532,25 @@ fn rulers_of(beside: Beside<'_>) -> Vec<Ruler> {
     checks.chain(recorded).collect()
 }
 
+/// Strips structural site-label prefixes and pure function words before lexical
+/// search so bounded FTS queries keep domain terms over boilerplate.
+fn issue_query(issue: &ReviewFinding) -> String {
+    let text = if !issue.summary.trim().is_empty() {
+        issue.summary.trim()
+    } else if let Some(site) = issue.site {
+        let prefix = format!("{}: ", site.note_label());
+        issue.note.strip_prefix(&prefix).unwrap_or(&issue.note)
+    } else {
+        &issue.note
+    };
+    let compact = crate::reference_collection::content_query(text);
+    if compact.is_empty() {
+        issue.note.clone()
+    } else {
+        compact
+    }
+}
+
 pub async fn check(
     llm: &dyn LLMPort,
     issues: &[ReviewFinding],
@@ -599,8 +618,9 @@ pub async fn check(
     let mut pool: Vec<Reference> = Vec::new();
     let mut found_for: Vec<Vec<usize>> = Vec::new();
     for issue in issues {
+        let query = issue_query(issue);
         let found = references
-            .retrieve_relevant_within(&issue.note, |passages| {
+            .retrieve_relevant_within(&query, |passages| {
                 passages
                     .iter()
                     .map(|passage| cost_of(&shown_as(0, passage)))

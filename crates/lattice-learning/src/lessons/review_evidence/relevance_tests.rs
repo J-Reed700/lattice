@@ -185,3 +185,71 @@ async fn relevant_passages_still_respect_the_models_context_window_room() -> Res
     assert!(shown.len() >= 4 && shown.len() < 8, "{}", shown.len());
     Ok(())
 }
+
+#[tokio::test]
+async fn long_reviewer_note_keeps_domain_passages_and_cuts_single_word_boilerplate_tail(
+) -> Result<()> {
+    let mut sources: Vec<LearningSourceDto> = (0..6)
+        .map(|i| {
+            source(
+                &format!("fhir-bin-{i}"),
+                format!(
+                    "FHIR DocumentReference Binary payload creation route {i} requires write access for Binary and DocumentReference scopes. {}",
+                    "Validate Patient identifiers before storing the Binary resource. ".repeat(6)
+                ),
+            )
+        })
+        .collect();
+    // Many domain documents mention DocumentReference/FHIR without Binary/write so
+    // generic reviewer prose words (section, wrong, answer, check, step) have lower
+    // corpus frequency than the core FHIR domain terms.
+    for i in 0..12 {
+        sources.push(source(
+            &format!("fhir-profile-{i}"),
+            format!(
+                "FHIR DocumentReference Patient profile specification section {i}. {}",
+                "Unrelated conformance metadata fields. ".repeat(8)
+            ),
+        ));
+    }
+    // Many large off-topic manuals share generic reviewer words ("step", "check", "answer", "write").
+    for i in 0..30 {
+        sources.push(source(
+            &format!("linux-noise-{i}"),
+            format!(
+                "Linux kernel step {i}: check wrong block partition answer and write filesystem table. {}",
+                "Disk geometry cylinders sectors. ".repeat(12)
+            ),
+        ));
+    }
+    let references = ReferenceCollection::lexical(&sources)?;
+    let model = withheld_model(128_000);
+    let site = Some(FindingSite::Section(6));
+    let note = "Section 7 (candidate blocks-6): In Section 7 the check answer says to request only write access to DocumentReference records. The case states that the FHIR route sends a Binary payload, and the route creates the Binary before the DocumentReference. A token limited to DocumentReference write would leave out the Binary create step, so the answer token scope is wrong for this route.";
+    let issues = vec![ReviewFinding::reviewer(1, site, note)];
+    let candidate =
+        json!({"blocks":[{"title":"Part","body":"Read the instructions."}],"questions":[]});
+    let requirements = json!({"deliverable":"Record the resulting state."});
+    check(
+        &model,
+        &issues,
+        Beside::NONE,
+        &requirements,
+        &candidate,
+        &references,
+        None,
+    )
+    .await?;
+    let shown = passages_of(&asks(&model)[0]);
+    assert!(
+        shown.iter().any(|text| text.contains("FHIR DocumentReference Binary payload")),
+        "expected FHIR DocumentReference Binary passages to be kept, got {:?}",
+        shown
+    );
+    assert!(
+        shown.iter().all(|text| !text.contains("Linux kernel step")),
+        "single-word generic overlap in off-topic tail must be cut off, got {:?}",
+        shown
+    );
+    Ok(())
+}

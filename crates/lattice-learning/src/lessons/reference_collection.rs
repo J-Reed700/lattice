@@ -378,22 +378,47 @@ impl<'a> ReferenceCollection<'a> {
     }
 
     /// Passages for `query`, best first, stopping at the query's relevance
-    /// cutoff (`subject_of`) while `fits` accepts them: the caller's window
-    /// bounds how much fits, and the relevance cutoff stops retrieval before
-    /// off-subject passages fill a large window.
+    /// cutoff (`relevance_of` + rank score decay) while `fits` accepts them:
+    /// the caller's window bounds how much fits, and the relevance cutoff stops
+    /// retrieval before off-subject tail passages fill a large window.
     pub(crate) async fn retrieve_relevant_within(
         &self,
         query: &str,
         fits: impl Fn(&[ReferencePassage]) -> bool,
     ) -> Result<Vec<ReferencePassage>> {
-        let subject = self.subject_of(query).await?;
-        self.retrieve_filtered_in(
-            query,
-            &Scope::All,
-            |passage| subject.undivided() || subject.mentioned_in(&passage.text),
-            fits,
-        )
-        .await
+        const TOP_SCORE_RATIO: f64 = 0.50;
+        const ANCHOR_SCORE_RATIO: f64 = 0.70;
+        const ANCHOR_INDEX: usize = 2;
+
+        let relevance = self.relevance_of(query).await?;
+        let mut depth = FIRST_PAGE;
+        loop {
+            let ranked = self.rank(&[query], &Scope::All, depth).await?;
+            let exhausted = ranked.len() < depth;
+            let floor = ranked.first().map_or(0.0, |top| {
+                let top_score = f64::from(top.passage.score);
+                let anchor_score = ranked
+                    .get(ANCHOR_INDEX)
+                    .or_else(|| ranked.last())
+                    .map_or(top_score, |hit| f64::from(hit.passage.score));
+                (top_score * TOP_SCORE_RATIO).max(anchor_score * ANCHOR_SCORE_RATIO)
+            });
+            let below_floor = ranked
+                .last()
+                .is_some_and(|hit| f64::from(hit.passage.score) < floor);
+            let mut passages: Vec<ReferencePassage> = ranked
+                .into_iter()
+                .take_while(|hit| f64::from(hit.passage.score) >= floor)
+                .filter(|hit| hit.dense.is_some() || relevance.matches(&hit.passage.text))
+                .map(|hit| hit.passage)
+                .collect();
+            let fitting = longest_fitting_prefix(&passages, &fits);
+            if fitting < passages.len() || exhausted || below_floor {
+                passages.truncate(fitting);
+                return Ok(passages);
+            }
+            depth = depth.saturating_mul(2);
+        }
     }
 
     /// The next page of verification evidence for `query`: ranked passages,
@@ -654,7 +679,7 @@ mod subject;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 pub(crate) use snapshots::{snapshot_passages, snapshot_room};
-pub(crate) use subject::shared_terms;
+pub(crate) use subject::{content_query, shared_terms};
 
 #[cfg(test)]
 pub(crate) mod tests;
