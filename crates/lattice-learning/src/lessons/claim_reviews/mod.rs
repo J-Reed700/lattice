@@ -30,6 +30,7 @@ mod published_restore;
 mod published_rewrite;
 #[cfg(test)]
 mod published_rewrite_tests;
+mod published_undo;
 mod put_back;
 #[cfg(test)]
 mod put_back_tests;

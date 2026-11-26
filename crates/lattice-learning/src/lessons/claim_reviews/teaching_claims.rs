@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use lattice_core::domain::learning::claim_review::{
     span_of, Actor, ClaimLedgerEntry, ClaimState, Ledger,
 };
+use lattice_core::shared::edits::NewestEdit;
 
 use super::actions::in_section_body;
 use super::published_edit::placed;
@@ -40,6 +41,7 @@ pub(super) fn removable_span(finding: &TeachingFindingDto, body: &str) -> Option
 pub(super) fn name_claims(
     ledger: &Ledger,
     bodies: &HashMap<usize, String>,
+    newest: &HashMap<usize, NewestEdit>,
     findings: &mut [TeachingFindingDto],
 ) {
     for finding in findings {
@@ -97,7 +99,7 @@ pub(super) fn name_claims(
                 } if narrowed(entry).trim() == sentence => Some((
                     entry.claim_id().0.clone(),
                     *at,
-                    undoable_in_published(entry),
+                    undoable_in_published(entry, newest.get(&unit)),
                 )),
                 _ => None,
             })
@@ -118,12 +120,15 @@ pub(super) fn name_claims(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::edits::keys;
+    use crate::lessons::claim_reviews::edit_reactor::ClaimsReceipt;
     use crate::lessons::claim_reviews::teaching_findings::{
         TeachingFindingKindDto, TeachingPassageRoleDto,
     };
     use lattice_core::domain::learning::claim_review::{
         ClaimEvent, ClaimId, ClaimLocation, EventProvenance, Revision, UnitKind, UserAction,
     };
+    use lattice_core::shared::edits::EditOrigin;
 
     const SENTENCE: &str = "The reader keeps every field name exactly as written.";
     const NEIGHBOUR: &str = "A second sentence stays in the section.";
@@ -281,6 +286,31 @@ mod tests {
             .collect()
     }
 
+    fn newest_for(unit: usize, acted: Vec<(&str, u32)>) -> HashMap<usize, NewestEdit> {
+        let receipt = ClaimsReceipt {
+            acted: acted
+                .into_iter()
+                .map(|(id, ord)| (id.to_owned(), ord))
+                .collect(),
+            created: Vec::new(),
+            step: "taken_out".into(),
+            revert: false,
+        };
+        HashMap::from([(
+            unit,
+            NewestEdit {
+                content: keys::section_ref("l1", unit),
+                edit_id: "e1".into(),
+                origin: EditOrigin::Action {
+                    name: "claim.remove".into(),
+                },
+                unbroken: true,
+                revision: "rev".into(),
+                receipt: Some(serde_json::to_value(receipt).unwrap()),
+            },
+        )])
+    }
+
     fn both() -> String {
         format!("{SENTENCE} {NEIGHBOUR}")
     }
@@ -288,13 +318,14 @@ mod tests {
     #[test]
     fn a_removed_sentence_shows_its_note_removed_with_the_claims_and_the_latest_removal_time() {
         let before = both();
-        let (first, _) = removed_by_user(claim("a", 0, SENTENCE, &before), 100);
-        let (second, _) = removed_by_user(claim("b", 0, SENTENCE, &before), 250);
+        let (first, ord_a) = removed_by_user(claim("a", 0, SENTENCE, &before), 100);
+        let (second, ord_b) = removed_by_user(claim("b", 0, SENTENCE, &before), 250);
         let bystander = claim("c", 0, NEIGHBOUR, &before);
         let mut findings = [waiting(0, "quotation:section-0")];
         name_claims(
             &ledger(vec![first, second, bystander]),
             &bodies(0, NEIGHBOUR),
+            &newest_for(0, vec![("a", ord_a), ("b", ord_b)]),
             &mut findings,
         );
         assert_eq!(findings[0].state, TeachingFindingStateDto::Resolved);
@@ -306,9 +337,14 @@ mod tests {
     #[test]
     fn a_claim_stored_with_a_two_sentence_quote_is_named_when_its_sentence_is_removed() {
         let before = both();
-        let (wide, _) = removed_by_user(claim("wide", 0, &before, &before), 100);
+        let (wide, ord) = removed_by_user(claim("wide", 0, &before, &before), 100);
         let mut findings = [waiting(0, "quotation:section-0")];
-        name_claims(&ledger(vec![wide]), &bodies(0, NEIGHBOUR), &mut findings);
+        name_claims(
+            &ledger(vec![wide]),
+            &bodies(0, NEIGHBOUR),
+            &newest_for(0, vec![("wide", ord)]),
+            &mut findings,
+        );
         assert_eq!(findings[0].state, TeachingFindingStateDto::Resolved);
         assert_eq!(findings[0].resolution, Some(TeachingResolutionDto::Removed));
         assert_eq!(named(&findings), [vec!["wide".to_owned()]]);
@@ -320,7 +356,12 @@ mod tests {
         let (entry, ordinal) = removed_by_user(claim("a", 0, SENTENCE, &before), 100);
         let entry = undone(entry, ordinal, 200);
         let mut findings = [waiting(0, "quotation:section-0")];
-        name_claims(&ledger(vec![entry]), &bodies(0, &before), &mut findings);
+        name_claims(
+            &ledger(vec![entry]),
+            &bodies(0, &before),
+            &HashMap::new(),
+            &mut findings,
+        );
         assert_eq!(findings[0].state, TeachingFindingStateDto::Waiting);
         assert_eq!(findings[0].resolution, None);
         assert_eq!(named(&findings), [vec!["a".to_owned()]]);
@@ -354,6 +395,7 @@ mod tests {
         name_claims(
             &ledger(vec![entry.clone()]),
             &bodies(0, NEIGHBOUR),
+            &newest_for(0, vec![("a", ordinal)]),
             &mut findings,
         );
         for finding in &findings {
@@ -367,6 +409,7 @@ mod tests {
         name_claims(
             &ledger(vec![undone(entry, ordinal, 200)]),
             &bodies(0, &before),
+            &HashMap::new(),
             &mut findings,
         );
         assert_eq!(findings[0].state, TeachingFindingStateDto::Kept);
@@ -386,12 +429,17 @@ mod tests {
     #[test]
     fn two_notes_on_one_sentence_both_show_removed_when_it_is_removed_once() {
         let before = both();
-        let (entry, _) = removed_by_user(claim("a", 0, SENTENCE, &before), 100);
+        let (entry, ord) = removed_by_user(claim("a", 0, SENTENCE, &before), 100);
         let mut findings = [
             waiting(0, "quotation:section-0"),
             waiting(0, "teaching:section-0"),
         ];
-        name_claims(&ledger(vec![entry]), &bodies(0, NEIGHBOUR), &mut findings);
+        name_claims(
+            &ledger(vec![entry]),
+            &bodies(0, NEIGHBOUR),
+            &newest_for(0, vec![("a", ord)]),
+            &mut findings,
+        );
         for finding in &findings {
             assert_eq!(finding.state, TeachingFindingStateDto::Resolved);
             assert_eq!(finding.resolution, Some(TeachingResolutionDto::Removed));
@@ -407,7 +455,12 @@ mod tests {
         let before = both();
         let (entry, _) = removed_by_user(claim("a", 0, SENTENCE, &before), 100);
         let mut findings = [waiting(0, "quotation:section-0")];
-        name_claims(&ledger(vec![entry]), &bodies(0, &before), &mut findings);
+        name_claims(
+            &ledger(vec![entry]),
+            &bodies(0, &before),
+            &HashMap::new(),
+            &mut findings,
+        );
         assert_eq!(findings[0].state, TeachingFindingStateDto::Waiting);
         assert_eq!(findings[0].resolution, None);
         assert_eq!(named(&findings), [Vec::<String>::new()]);
@@ -418,7 +471,12 @@ mod tests {
         let before = both();
         let entry = removed_by_machine(claim("a", 0, SENTENCE, &before));
         let mut findings = [waiting(0, "quotation:section-0")];
-        name_claims(&ledger(vec![entry]), &bodies(0, NEIGHBOUR), &mut findings);
+        name_claims(
+            &ledger(vec![entry]),
+            &bodies(0, NEIGHBOUR),
+            &HashMap::new(),
+            &mut findings,
+        );
         assert_eq!(findings[0].state, TeachingFindingStateDto::Waiting);
         assert_eq!(findings[0].resolution, None);
         assert_eq!(named(&findings), [Vec::<String>::new()]);
@@ -429,7 +487,12 @@ mod tests {
         let before = both();
         let (entry, _) = removed_by_user(claim("a", 1, SENTENCE, &before), 100);
         let mut findings = [waiting(0, "quotation:section-0")];
-        name_claims(&ledger(vec![entry]), &bodies(0, NEIGHBOUR), &mut findings);
+        name_claims(
+            &ledger(vec![entry]),
+            &bodies(0, NEIGHBOUR),
+            &HashMap::new(),
+            &mut findings,
+        );
         assert_eq!(findings[0].state, TeachingFindingStateDto::Waiting);
         assert_eq!(named(&findings), [Vec::<String>::new()]);
     }
@@ -444,6 +507,7 @@ mod tests {
         name_claims(
             &ledger(vec![first, second]),
             &bodies(0, NEIGHBOUR),
+            &HashMap::new(),
             &mut findings,
         );
         assert_eq!(findings[0].state, TeachingFindingStateDto::Resolved);
@@ -457,7 +521,12 @@ mod tests {
         let before = both();
         let entry = removed_without_a_record(claim("a", 0, SENTENCE, &before), 100);
         let mut findings = [waiting(0, "quotation:section-0")];
-        name_claims(&ledger(vec![entry]), &bodies(0, NEIGHBOUR), &mut findings);
+        name_claims(
+            &ledger(vec![entry]),
+            &bodies(0, NEIGHBOUR),
+            &HashMap::new(),
+            &mut findings,
+        );
         assert_eq!(findings[0].state, TeachingFindingStateDto::Resolved);
         assert_eq!(findings[0].resolution, Some(TeachingResolutionDto::Removed));
         assert_eq!(findings[0].resolved_at, Some(100));
@@ -475,14 +544,24 @@ mod tests {
         body: &str,
     ) -> bool {
         let mut findings = [finding];
-        name_claims(&ledger(claims), &bodies(0, body), &mut findings);
+        name_claims(
+            &ledger(claims),
+            &bodies(0, body),
+            &HashMap::new(),
+            &mut findings,
+        );
         findings[0].removable
     }
 
     #[test]
     fn a_whole_sentence_no_claim_stands_on_is_removable_and_names_no_claim() {
         let mut findings = [waiting(0, "quotation:section-0")];
-        name_claims(&ledger(Vec::new()), &bodies(0, &both()), &mut findings);
+        name_claims(
+            &ledger(Vec::new()),
+            &bodies(0, &both()),
+            &HashMap::new(),
+            &mut findings,
+        );
         assert!(findings[0].removable);
         assert_eq!(named(&findings), [Vec::<String>::new()]);
     }
@@ -494,6 +573,7 @@ mod tests {
         name_claims(
             &ledger(vec![claim("a", 0, SENTENCE, &before)]),
             &bodies(0, &before),
+            &HashMap::new(),
             &mut findings,
         );
         assert!(findings[0].removable);

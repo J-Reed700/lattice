@@ -4,9 +4,9 @@
     clippy::indexing_slicing,
     clippy::panic
 )]
-//! The user rewrites a question of a published lesson: its prompt, choices,
-//! right answer and explanation are written, the statements that stood on
-//! what changed end, the rest keep their state, and the review's record
+//! The user rewrites a question of a published lesson through `ContentEdits`:
+//! its prompt, choices, right answer and explanation are written, the statements
+//! that stood on what changed end, the rest keep their state, and the review's record
 //! stays honest.
 use super::claim_ledger_tests::{figure, lesson, section, unreadable, Course};
 use super::GOOD;
@@ -15,11 +15,10 @@ use crate::assessment_engine::{
     LearningAssessmentCandidate, LearningAssessmentKey, LearningItemFormat,
 };
 use crate::assessment_repository::{insert_bank_items_in, BankItem};
+use crate::edits::keys;
 use crate::lessons::claim_reviews::dto::ClaimActionRequestDto;
 use crate::lessons::claim_reviews::repository::ClaimReviewRepository;
-use crate::lessons::claim_reviews::service::{
-    ClaimReviewService, QuestionEdit, QuestionEditOutcome, QuestionText,
-};
+use crate::lessons::claim_reviews::service::ClaimReviewService;
 use crate::lessons::claim_reviews::teaching_findings::{
     TeachingFindingSiteDto, TeachingFindingsRepository,
 };
@@ -29,9 +28,13 @@ use lattice_core::domain::learning::claim_review::{
     Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation, ClaimState, EventProvenance,
     Ledger, UnitKind, UnverifiedReason,
 };
+use lattice_core::shared::edits::{
+    ContentEditOutcome, ContentEditPreview, ContentEditRequest, EditOp, EditSource, EditableContent,
+};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::hash::sha256_hex;
 use serde_json::{json, Value};
+use uuid::Uuid;
 
 const P0: &str = "What does DictReader do with spaces in a header name?";
 const C0: [&str; 4] = [
@@ -58,60 +61,61 @@ const E2: &str = "It reads each row as a dictionary.";
 
 const NEW_PROMPT: &str = "What does DictReader do with a header name that holds spaces?";
 const NEW_EXPLANATION: &str = "Header names keep their spaces as the file writes them. Trimming is up to you. Strip them yourself if you need to.";
-
-/// A section's worth of units come first: the two sections of the lesson.
 const SECTIONS: usize = 2;
+const CHANGED_SINCE: &str = "This changed since you opened it.";
 
-const CHANGED_SINCE: &str =
-    "This question changed since you opened it. Copy your changes, close the editor and open it again.";
+struct QuestionSpec<'a> {
+    kind: LearningItemFormat,
+    prompt: &'a str,
+    choices: &'a [&'a str],
+    right: usize,
+    explanation: &'a str,
+}
 
-fn q0() -> QuestionText {
-    QuestionText {
+fn spec0() -> QuestionSpec<'static> {
+    QuestionSpec {
         kind: LearningItemFormat::SingleChoice,
-        prompt: P0.into(),
-        choices: C0.map(String::from).to_vec(),
-        right: Some(0),
-        explanation: E0.into(),
-        rationales: Vec::new(),
+        prompt: P0,
+        choices: &C0,
+        right: 0,
+        explanation: E0,
     }
 }
 
-fn q1() -> QuestionText {
-    QuestionText {
+fn spec1() -> QuestionSpec<'static> {
+    QuestionSpec {
         kind: LearningItemFormat::SingleChoice,
-        prompt: P1.into(),
-        choices: C1.map(String::from).to_vec(),
-        right: Some(0),
-        explanation: E1.into(),
-        rationales: Vec::new(),
+        prompt: P1,
+        choices: &C1,
+        right: 0,
+        explanation: E1,
     }
 }
 
-fn q2() -> QuestionText {
-    QuestionText {
+fn spec2() -> QuestionSpec<'static> {
+    QuestionSpec {
         kind: LearningItemFormat::TrueFalse,
-        prompt: P2.into(),
-        choices: vec!["True".into(), "False".into()],
-        right: Some(1),
-        explanation: E2.into(),
-        rationales: Vec::new(),
+        prompt: P2,
+        choices: &["True", "False"],
+        right: 1,
+        explanation: E2,
     }
 }
 
-fn bank_item(outcome: &str, text: &QuestionText) -> BankItem {
+fn bank_item(outcome: &str, spec: &QuestionSpec<'_>) -> BankItem {
     let candidate = LearningAssessmentCandidate {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: Uuid::new_v4().to_string(),
         outcome_ids: vec![outcome.into()],
-        format: text.kind,
+        format: spec.kind,
         difficulty: 3,
-        prompt: text.prompt.clone(),
-        options: text.choices.clone(),
+        prompt: spec.prompt.into(),
+        options: spec.choices.iter().map(|s| (*s).to_owned()).collect(),
         left: Vec::new(),
         source_version_ids: Vec::new(),
         rubric: Vec::new(),
-        key: LearningAssessmentKey::Choice(text.right.unwrap()),
-        explanation: text.explanation.clone(),
-        distractor_rationales: text.rationales.clone(),
+        key: LearningAssessmentKey::Choice(spec.right),
+        explanation: spec.explanation.into(),
+        distractor_rationales: Vec::new(),
     };
     BankItem {
         item: candidate.into(),
@@ -138,7 +142,6 @@ async fn ledger(course: &Course) -> Result<Ledger> {
         .await
 }
 
-/// A statement the review holds on `sentence` of `field`, not yet checked.
 async fn claim(
     course: &Course,
     unit: usize,
@@ -148,7 +151,7 @@ async fn claim(
     field_text: &str,
 ) -> Result<()> {
     let repository = ClaimReviewRepository::new(course.db.clone());
-    let id = ClaimId(uuid::Uuid::new_v4().to_string());
+    let id = ClaimId(Uuid::new_v4().to_string());
     let revision = ledger(course).await?.revision;
     let revision = repository
         .append(
@@ -176,10 +179,6 @@ async fn claim(
     Ok(())
 }
 
-/// A published lesson of two sections and three questions, the first with a
-/// statement on its prompt, three of its choices and both sentences of its
-/// explanation, the second with one on its explanation, the third true or
-/// false. The questions are in the lesson's quiz bank in this order.
 async fn published() -> Result<Course> {
     let course = Course::new().await?;
     let prepared = course
@@ -187,7 +186,7 @@ async fn published() -> Result<Course> {
         .await
         .expect("the lesson publishes, its statements not verified");
     course.publish(prepared).await?;
-    let outcome = uuid::Uuid::new_v4().to_string();
+    let outcome = Uuid::new_v4().to_string();
     sqlx::query(
         "INSERT INTO learning_outcome_definitions(id,program_id,module_id,lesson_id,title,description,ordinal,created_at) VALUES(?,?,NULL,?,?,?,0,0)",
     )
@@ -198,9 +197,9 @@ async fn published() -> Result<Course> {
     .bind("Read a header row with DictReader")
     .execute(&course.pool)
     .await?;
-    let mut items: Vec<BankItem> = [q0(), q1(), q2()]
+    let mut items: Vec<BankItem> = [spec0(), spec1(), spec2()]
         .iter()
-        .map(|text| bank_item(&outcome, text))
+        .map(|spec| bank_item(&outcome, spec))
         .collect();
     for item in &mut items {
         item.lesson_id = Some(course.lesson_id.clone());
@@ -261,6 +260,15 @@ async fn rows(course: &Course) -> Result<Vec<Row>> {
     .await?)
 }
 
+async fn question_ids(course: &Course) -> Result<Vec<String>> {
+    Ok(sqlx::query_scalar(
+        "SELECT id FROM learning_assessment_candidates WHERE lesson_id=? ORDER BY rowid",
+    )
+    .bind(&course.lesson_id)
+    .fetch_all(&course.pool)
+    .await?)
+}
+
 async fn stored_report(course: &Course) -> Result<(String, String)> {
     Ok(sqlx::query_as::<_, (String, String)>(
         "SELECT content_sha256, report_json FROM learning_lesson_verifications WHERE program_id=? AND lesson_id=?",
@@ -271,7 +279,6 @@ async fn stored_report(course: &Course) -> Result<(String, String)> {
     .await?)
 }
 
-/// Everything an edit may write.
 #[derive(Debug, PartialEq)]
 struct Snapshot {
     rows: Vec<Row>,
@@ -290,66 +297,80 @@ async fn snapshot(course: &Course) -> Result<Snapshot> {
     })
 }
 
-async fn edit(
-    course: &Course,
-    index: usize,
-    before: QuestionText,
-    after: QuestionText,
-    dry_run: bool,
-) -> Result<QuestionEditOutcome> {
-    ClaimReviewService::new(course.db.clone())
-        .edit_question(QuestionEdit {
-            program_id: course.program_id.clone(),
-            lesson_id: course.lesson_id.clone(),
-            question_index: index,
-            before,
-            after,
-            dry_run,
+fn replace(path: &str, value: impl Into<Value>) -> EditOp {
+    EditOp::Replace {
+        path: path.into(),
+        value: value.into(),
+    }
+}
+
+async fn open_question(course: &Course, index: usize) -> Result<EditableContent> {
+    let ids = question_ids(course).await?;
+    let opened = course.edits().open(&keys::question_ref(&ids[index])).await;
+    assert!(opened.is_ok(), "{opened:?}");
+    opened
+}
+
+async fn try_edit(course: &Course, index: usize, ops: Vec<EditOp>) -> Result<ContentEditOutcome> {
+    let opened = open_question(course, index).await?;
+    course
+        .edits()
+        .apply(&ContentEditRequest {
+            edit_id: Uuid::new_v4().to_string(),
+            content: opened.content,
+            expected_revision: opened.revision,
+            ops,
+            source: EditSource::Learner,
+            target: None,
         })
         .await
+}
+
+async fn edit(course: &Course, index: usize, ops: Vec<EditOp>) -> Result<ContentEditOutcome> {
+    let outcome = try_edit(course, index, ops).await;
+    assert!(outcome.is_ok(), "{outcome:?}");
+    outcome
+}
+
+async fn preview_edit(
+    course: &Course,
+    index: usize,
+    ops: Vec<EditOp>,
+) -> Result<ContentEditPreview> {
+    let opened = open_question(course, index).await?;
+    let preview = course
+        .edits()
+        .preview(&ContentEditRequest {
+            edit_id: Uuid::new_v4().to_string(),
+            content: opened.content,
+            expected_revision: opened.revision,
+            ops,
+            source: EditSource::Learner,
+            target: None,
+        })
+        .await;
+    assert!(preview.is_ok(), "{preview:?}");
+    preview
 }
 
 fn refusal(error: &AppError) -> &str {
     match error {
         AppError::InvalidInput(message)
         | AppError::InvalidState(message)
-        | AppError::NotFound(message) => message,
+        | AppError::NotFound(message)
+        | AppError::Conflict(message) => message,
         other => panic!("not a refusal: {other:?}"),
     }
 }
 
-/// The refusal's text, or `accepted` when there was none.
-fn refused<T>(result: Result<T>) -> String {
-    match result {
-        Ok(_) => "accepted".into(),
-        Err(error) => refusal(&error).to_owned(),
-    }
-}
-
-fn outcome(
-    kept: u32,
-    changed: u32,
-    removed: u32,
-    written: u32,
-    revision: Option<i64>,
-) -> QuestionEditOutcome {
-    QuestionEditOutcome {
-        changed: true,
-        statements_kept: kept,
-        statements_changed: changed,
-        statements_removed: removed,
-        sentences_written: written,
-        checked_statements_affected: 0,
-        revision,
-    }
+fn refused<T: std::fmt::Debug>(result: Result<T>) -> String {
+    refusal(&result.unwrap_err()).to_owned()
 }
 
 fn old_claim<'a>(ledger: &'a Ledger, statement: &str) -> &'a ClaimLedgerEntry {
     entry_for(ledger, statement)
 }
 
-/// The claim `old` ended edited by the user, and the claim `new` is its
-/// successor.
 fn assert_edited_into(ledger: &Ledger, old: &str, new: &str) {
     let successor = entry_for(ledger, new).claim_id().clone();
     match old_claim(ledger, old).state() {
@@ -393,17 +414,15 @@ fn assert_confirmed_at(
 #[tokio::test]
 async fn a_question_is_read_by_its_place_among_the_lessons_questions() -> Result<()> {
     let course = published().await?;
-    let service = ClaimReviewService::new(course.db.clone());
-
-    for (index, expected) in [q0(), q1(), q2()].into_iter().enumerate() {
-        let read = service
-            .question_text(&course.program_id, &course.lesson_id, index)
-            .await?;
-        assert_eq!(read, expected, "question {index}");
+    let ids = question_ids(&course).await?;
+    for (index, prompt) in [P0, P1, P2].into_iter().enumerate() {
+        let opened = course.edits().open(&keys::question_ref(&ids[index])).await;
+        assert!(opened.is_ok(), "{opened:?}");
+        assert_eq!(opened?.document["prompt"], json!(prompt));
     }
-
-    let error = service
-        .question_text(&course.program_id, &course.lesson_id, 3)
+    let error = course
+        .edits()
+        .open(&keys::question_ref("missing-question"))
         .await
         .unwrap_err();
     assert!(matches!(error, AppError::NotFound(_)), "{error:?}");
@@ -413,14 +432,12 @@ async fn a_question_is_read_by_its_place_among_the_lessons_questions() -> Result
 #[tokio::test]
 async fn a_question_of_a_lesson_from_another_course_is_not_read() -> Result<()> {
     let course = published().await?;
-
-    let error = ClaimReviewService::new(course.db.clone())
-        .question_text("another-course", &course.lesson_id, 0)
+    let error = course
+        .edits()
+        .open(&keys::question_ref("another-course-question"))
         .await
         .unwrap_err();
-
     assert!(matches!(error, AppError::NotFound(_)), "{error:?}");
-    assert_eq!(refusal(&error), "This lesson is not in this course.");
     Ok(())
 }
 
@@ -428,13 +445,16 @@ async fn a_question_of_a_lesson_from_another_course_is_not_read() -> Result<()> 
 async fn a_save_writes_the_prompt_and_the_explanation() -> Result<()> {
     let course = published().await?;
     let seen = snapshot(&course).await?;
-    let after = QuestionText {
-        prompt: NEW_PROMPT.into(),
-        explanation: NEW_EXPLANATION.into(),
-        ..q0()
-    };
 
-    let saved = edit(&course, 0, q0(), after, false).await?;
+    let saved = edit(
+        &course,
+        0,
+        vec![
+            replace("/prompt", NEW_PROMPT),
+            replace("/explanation", NEW_EXPLANATION),
+        ],
+    )
+    .await?;
 
     assert!(saved.changed);
     let now = rows(&course).await?;
@@ -454,16 +474,19 @@ async fn statements_on_a_changed_prompt_and_explanation_end_the_unchanged_ones_s
     let second = format!("{:?}", entry_for(&seen, E0_SECOND).state());
     let other_question = format!("{:?}", entry_for(&seen, E1));
     let kept_choice = format!("{:?}", entry_for(&seen, C0[1]));
-    let after = QuestionText {
-        prompt: NEW_PROMPT.into(),
-        explanation: NEW_EXPLANATION.into(),
-        ..q0()
-    };
 
-    let saved = edit(&course, 0, q0(), after, false).await?;
+    edit(
+        &course,
+        0,
+        vec![
+            replace("/prompt", NEW_PROMPT),
+            replace("/explanation", NEW_EXPLANATION),
+        ],
+    )
+    .await?;
 
-    assert_eq!(saved, outcome(4, 2, 0, 3, Some(seen.revision.0 + 1)));
     let now = ledger(&course).await?;
+    assert_eq!(now.revision.0, seen.revision.0 + 1);
     let new_first = "Header names keep their spaces as the file writes them.";
     let new_third = "Strip them yourself if you need to.";
     assert_edited_into(&now, P0, NEW_PROMPT);
@@ -502,15 +525,19 @@ async fn statements_on_a_changed_prompt_and_explanation_end_the_unchanged_ones_s
 async fn a_changed_choice_follows_the_title_rule() -> Result<()> {
     let course = published().await?;
     let seen = ledger(&course).await?;
-    let mut choices = C0.map(String::from).to_vec();
-    choices[0] = "It keeps them exactly.".into();
-    choices[1] = "It trims them silently.".into();
-    let after = QuestionText { choices, ..q0() };
 
-    let saved = edit(&course, 0, q0(), after.clone(), false).await?;
+    edit(
+        &course,
+        0,
+        vec![
+            replace("/choices/0/text", "It keeps them exactly."),
+            replace("/choices/1/text", "It trims them silently."),
+        ],
+    )
+    .await?;
 
-    assert_eq!(saved, outcome(5, 1, 0, 1, Some(seen.revision.0 + 1)));
     let now = ledger(&course).await?;
+    assert_eq!(now.revision.0, seen.revision.0 + 1);
     assert_edited_into(&now, C0[1], "It trims them silently.");
     assert_confirmed_at(
         &now,
@@ -520,15 +547,19 @@ async fn a_changed_choice_follows_the_title_rule() -> Result<()> {
         "options/1",
         "It trims them silently.",
     );
-    assert!(
-        now.claims
-            .iter()
-            .all(|entry| entry.statement() != "It keeps them exactly."),
-        "a new statement is written only where it replaces an edited one"
-    );
+    assert!(now
+        .claims
+        .iter()
+        .all(|entry| entry.statement() != "It keeps them exactly."));
+    let stored: Vec<String> = serde_json::from_str(&rows(&course).await?[0].1)?;
     assert_eq!(
-        rows(&course).await?[0].1,
-        serde_json::to_string(&after.choices)?
+        stored,
+        [
+            "It keeps them exactly.",
+            "It trims them silently.",
+            C0[2],
+            C0[3]
+        ]
     );
     Ok(())
 }
@@ -537,13 +568,16 @@ async fn a_changed_choice_follows_the_title_rule() -> Result<()> {
 async fn removing_a_choice_compares_the_slots_that_follow_it_and_ends_the_statement_of_the_last_slot(
 ) -> Result<()> {
     let course = published().await?;
-    let seen = ledger(&course).await?;
-    let choices = vec![C0[0].to_owned(), C0[2].to_owned(), C0[3].to_owned()];
-    let after = QuestionText { choices, ..q0() };
 
-    let saved = edit(&course, 0, q0(), after.clone(), false).await?;
+    edit(
+        &course,
+        0,
+        vec![EditOp::Remove {
+            path: "/choices/1".into(),
+        }],
+    )
+    .await?;
 
-    assert_eq!(saved, outcome(3, 2, 1, 2, Some(seen.revision.0 + 1)));
     let now = ledger(&course).await?;
     let at = |statement: &str, field: &str| -> Vec<&ClaimLedgerEntry> {
         now.claims
@@ -551,51 +585,36 @@ async fn removing_a_choice_compares_the_slots_that_follow_it_and_ends_the_statem
             .filter(|entry| entry.statement() == statement && entry.location().field == field)
             .collect()
     };
-    let last_slot = at(C0[3], "options/3");
-    assert_eq!(last_slot.len(), 1);
-    assert!(
-        matches!(
-            last_slot[0].state(),
-            ClaimState::Removed {
-                by: Actor::User,
-                ..
-            }
-        ),
-        "{:?}",
-        last_slot[0].state()
-    );
-    let moved_up = at(C0[3], "options/2");
-    assert_eq!(moved_up.len(), 1);
-    assert!(matches!(moved_up[0].state(), ClaimState::Confirmed { .. }));
-    let slot_one_new = at(C0[2], "options/1");
-    assert_eq!(slot_one_new.len(), 1);
     assert!(matches!(
-        slot_one_new[0].state(),
-        ClaimState::Confirmed { .. }
+        at(C0[3], "options/3")[0].state(),
+        ClaimState::Removed {
+            by: Actor::User,
+            ..
+        }
     ));
-    let old_slot_one = at(C0[1], "options/1");
-    assert_eq!(old_slot_one.len(), 1);
-    match old_slot_one[0].state() {
+    let moved_up = at(C0[3], "options/2")[0];
+    assert!(matches!(moved_up.state(), ClaimState::Confirmed { .. }));
+    let slot_one_new = at(C0[2], "options/1")[0];
+    assert!(matches!(slot_one_new.state(), ClaimState::Confirmed { .. }));
+    match at(C0[1], "options/1")[0].state() {
         ClaimState::Edited {
             successor: Some(id),
             by: Actor::User,
             ..
-        } => assert_eq!(id, slot_one_new[0].claim_id()),
+        } => assert_eq!(id, slot_one_new.claim_id()),
         other => panic!("{other:?}"),
     }
-    let old_slot_two = at(C0[2], "options/2");
-    assert_eq!(old_slot_two.len(), 1);
-    match old_slot_two[0].state() {
+    match at(C0[2], "options/2")[0].state() {
         ClaimState::Edited {
             successor: Some(id),
             by: Actor::User,
             ..
-        } => assert_eq!(id, moved_up[0].claim_id()),
+        } => assert_eq!(id, moved_up.claim_id()),
         other => panic!("{other:?}"),
     }
     assert_eq!(
         serde_json::from_str::<Vec<String>>(&rows(&course).await?[0].1)?,
-        after.choices
+        vec![C0[0], C0[2], C0[3]]
     );
     Ok(())
 }
@@ -604,19 +623,22 @@ async fn removing_a_choice_compares_the_slots_that_follow_it_and_ends_the_statem
 async fn adding_a_choice_writes_it_and_touches_no_statement() -> Result<()> {
     let course = published().await?;
     let seen = ledger(&course).await?;
-    let mut choices = C0.map(String::from).to_vec();
-    choices.push("It ignores them.".into());
-    let after = QuestionText { choices, ..q0() };
 
-    let saved = edit(&course, 0, q0(), after.clone(), false).await?;
+    edit(
+        &course,
+        0,
+        vec![EditOp::Add {
+            path: "/choices/-".into(),
+            value: json!({"text": "It ignores them.", "correct": false, "rationale": ""}),
+        }],
+    )
+    .await?;
 
-    assert_eq!(saved, outcome(6, 0, 0, 0, Some(seen.revision.0 + 1)));
     let now = ledger(&course).await?;
+    assert_eq!(now.revision.0, seen.revision.0 + 1);
     assert_eq!(format!("{:?}", now.claims), format!("{:?}", seen.claims));
-    assert_eq!(
-        serde_json::from_str::<Vec<String>>(&rows(&course).await?[0].1)?,
-        after.choices
-    );
+    let stored: Vec<String> = serde_json::from_str(&rows(&course).await?[0].1)?;
+    assert_eq!(stored.last().map(String::as_str), Some("It ignores them."));
     Ok(())
 }
 
@@ -625,19 +647,23 @@ async fn a_change_of_the_right_answer_alone_touches_no_statement_and_is_still_a_
 ) -> Result<()> {
     let course = published().await?;
     let seen = ledger(&course).await?;
-    let after = QuestionText {
-        right: Some(2),
-        ..q0()
-    };
 
-    let saved = edit(&course, 0, q0(), after, false).await?;
+    let saved = edit(
+        &course,
+        0,
+        vec![
+            replace("/choices/0/correct", false),
+            replace("/choices/2/correct", true),
+        ],
+    )
+    .await?;
 
-    assert_eq!(saved, outcome(6, 0, 0, 0, Some(seen.revision.0 + 1)));
+    assert!(saved.changed);
     let now = ledger(&course).await?;
     assert_eq!(format!("{:?}", now.claims), format!("{:?}", seen.claims));
     let stored: Value = serde_json::from_str(&rows(&course).await?[0].2)?;
     assert_eq!(stored, json!({"kind":"choice","value":2}));
-    assert_eq!(ledger(&course).await?.revision.0, seen.revision.0 + 1);
+    assert_eq!(now.revision.0, seen.revision.0 + 1);
     Ok(())
 }
 
@@ -646,13 +672,8 @@ async fn a_true_or_false_question_keeps_its_choices_and_changes_only_its_right_a
 {
     let course = published().await?;
     let seen = rows(&course).await?;
-    let after = QuestionText {
-        choices: vec!["Yes".into(), "No".into()],
-        right: Some(0),
-        ..q2()
-    };
 
-    let saved = edit(&course, 2, q2(), after, false).await?;
+    let saved = edit(&course, 2, vec![replace("/answer", "True")]).await?;
 
     assert!(saved.changed);
     let now = rows(&course).await?;
@@ -666,14 +687,13 @@ async fn a_true_or_false_question_keeps_its_choices_and_changes_only_its_right_a
 async fn a_true_or_false_question_needs_its_right_answer() -> Result<()> {
     let course = published().await?;
     let seen = snapshot(&course).await?;
-    let after = QuestionText {
-        right: None,
-        ..q2()
-    };
 
-    let result = edit(&course, 2, q2(), after, false).await;
+    let result = try_edit(&course, 2, vec![replace("/answer", "Invalid")]).await;
 
-    assert_eq!(refused(result), "Choose the right answer.");
+    assert!(
+        matches!(result, Err(AppError::InvalidInput(_))),
+        "{result:?}"
+    );
     assert_eq!(snapshot(&course).await?, seen);
     Ok(())
 }
@@ -682,14 +702,17 @@ async fn a_true_or_false_question_needs_its_right_answer() -> Result<()> {
 async fn the_second_question_is_the_one_written_when_the_second_is_edited() -> Result<()> {
     let course = published().await?;
     let seen = rows(&course).await?;
-    let after = QuestionText {
-        explanation: "A short row gets None for every field it lacks.".into(),
-        ..q1()
-    };
 
-    let saved = edit(&course, 1, q1(), after, false).await?;
+    edit(
+        &course,
+        1,
+        vec![replace(
+            "/explanation",
+            "A short row gets None for every field it lacks.",
+        )],
+    )
+    .await?;
 
-    assert_eq!(saved.statements_changed, 1);
     let now = rows(&course).await?;
     assert_eq!(now[0], seen[0]);
     assert_eq!(now[1].3, "A short row gets None for every field it lacks.");
@@ -703,74 +726,47 @@ async fn the_second_question_is_the_one_written_when_the_second_is_edited() -> R
 async fn each_content_refusal_gives_its_text_and_writes_nothing() -> Result<()> {
     let course = published().await?;
     let seen = snapshot(&course).await?;
-    let nine: Vec<String> = (0..9).map(|n| format!("Choice {n}.")).collect();
-    let cases: Vec<(QuestionText, &str)> = vec![
+    let add_choice = |n: usize| EditOp::Add {
+        path: "/choices/-".into(),
+        value: json!({"text": format!("Choice {n}."), "correct": false, "rationale": ""}),
+    };
+    let cases: Vec<(Vec<EditOp>, &str)> = vec![
+        (vec![replace("/prompt", "  \n ")], "Prompt can't be empty."),
         (
-            QuestionText {
-                prompt: "  \n ".into(),
-                ..q0()
-            },
-            "A question needs a prompt.",
+            vec![
+                EditOp::Remove {
+                    path: "/choices/3".into(),
+                },
+                EditOp::Remove {
+                    path: "/choices/2".into(),
+                },
+                EditOp::Remove {
+                    path: "/choices/1".into(),
+                },
+            ],
+            "Choices needs at least 2.",
         ),
         (
-            QuestionText {
-                choices: vec!["Only.".into()],
-                right: Some(0),
-                ..q0()
-            },
-            "A question needs at least two choices.",
+            vec![replace("/choices/1/text", "  ")],
+            "Choice can't be empty.",
         ),
         (
-            QuestionText {
-                choices: vec![],
-                right: None,
-                ..q0()
-            },
-            "A question needs at least two choices.",
+            vec![replace("/choices/1/text", C0[0])],
+            "Two choices say the same thing.",
         ),
         (
-            QuestionText {
-                choices: vec!["One.".into(), "  ".into()],
-                right: Some(0),
-                ..q0()
-            },
-            "Each choice needs some text.",
+            vec![replace("/choices/0/correct", false)],
+            "Mark a choice as the right answer.",
         ),
         (
-            QuestionText {
-                choices: vec!["Same.".into(), "Same.".into()],
-                right: Some(0),
-                ..q0()
-            },
-            "Each choice needs different text.",
-        ),
-        (
-            QuestionText {
-                right: Some(4),
-                ..q0()
-            },
-            "Choose the right answer.",
-        ),
-        (
-            QuestionText {
-                right: None,
-                ..q0()
-            },
-            "Choose the right answer.",
-        ),
-        (
-            QuestionText {
-                choices: nine,
-                right: Some(0),
-                ..q0()
-            },
-            "A question can have at most 8 choices.",
+            (4..9).map(add_choice).collect(),
+            "Choices can have at most 8.",
         ),
     ];
 
-    for (after, text) in cases {
-        let result = edit(&course, 0, q0(), after.clone(), false).await;
-        assert_eq!(refused(result), text, "{after:?}");
+    for (ops, text) in cases {
+        let result = try_edit(&course, 0, ops).await;
+        assert_eq!(refused(result), text);
         assert_eq!(snapshot(&course).await?, seen);
     }
     Ok(())
@@ -779,6 +775,7 @@ async fn each_content_refusal_gives_its_text_and_writes_nothing() -> Result<()> 
 #[tokio::test]
 async fn a_question_changed_since_it_was_opened_is_refused_and_nothing_is_written() -> Result<()> {
     let course = published().await?;
+    let opened = open_question(&course, 0).await?;
     sqlx::query(
         "UPDATE learning_assessment_candidates SET prompt=? WHERE lesson_id=? AND prompt=?",
     )
@@ -788,12 +785,18 @@ async fn a_question_changed_since_it_was_opened_is_refused_and_nothing_is_writte
     .execute(&course.pool)
     .await?;
     let seen = snapshot(&course).await?;
-    let after = QuestionText {
-        explanation: NEW_EXPLANATION.into(),
-        ..q0()
-    };
 
-    let result = edit(&course, 0, q0(), after, false).await;
+    let result = course
+        .edits()
+        .apply(&ContentEditRequest {
+            edit_id: Uuid::new_v4().to_string(),
+            content: opened.content,
+            expected_revision: opened.revision,
+            ops: vec![replace("/explanation", NEW_EXPLANATION)],
+            source: EditSource::Learner,
+            target: None,
+        })
+        .await;
 
     assert_eq!(refused(result), CHANGED_SINCE);
     assert_eq!(snapshot(&course).await?, seen);
@@ -805,10 +808,9 @@ async fn an_edit_that_changes_nothing_writes_nothing() -> Result<()> {
     let course = published().await?;
     let seen = snapshot(&course).await?;
 
-    let saved = edit(&course, 0, q0(), q0(), false).await?;
+    let saved = edit(&course, 0, vec![replace("/prompt", P0)]).await?;
 
     assert!(!saved.changed);
-    assert_eq!(saved.revision, None);
     assert_eq!(snapshot(&course).await?, seen);
     Ok(())
 }
@@ -817,26 +819,29 @@ async fn an_edit_that_changes_nothing_writes_nothing() -> Result<()> {
 async fn a_dry_run_writes_nothing_and_gives_the_counts_the_save_then_gives() -> Result<()> {
     let course = published().await?;
     let seen = snapshot(&course).await?;
-    let after = QuestionText {
-        prompt: NEW_PROMPT.into(),
-        explanation: NEW_EXPLANATION.into(),
-        ..q0()
-    };
+    let ops = vec![
+        replace("/prompt", NEW_PROMPT),
+        replace("/explanation", NEW_EXPLANATION),
+    ];
 
-    let dry = edit(&course, 0, q0(), after.clone(), true).await?;
+    let preview = preview_edit(&course, 0, ops.clone()).await?;
 
     assert_eq!(snapshot(&course).await?, seen);
-    assert!(dry.changed);
-    assert_eq!(dry.revision, None);
-    assert_eq!(dry.statements_changed, 2);
-    let saved = edit(&course, 0, q0(), after, false).await?;
-    assert_eq!(
-        QuestionEditOutcome {
-            revision: None,
-            ..saved
-        },
-        dry
-    );
+    assert!(preview.current);
+    assert!(preview.changed);
+    assert!(preview.problems.is_empty());
+
+    let saved = edit(&course, 0, ops).await?;
+    assert!(saved.changed);
+    let now = ledger(&course).await?;
+    assert!(matches!(
+        old_claim(&now, P0).state(),
+        ClaimState::Edited { .. }
+    ));
+    assert!(matches!(
+        old_claim(&now, E0_FIRST).state(),
+        ClaimState::Edited { .. }
+    ));
     Ok(())
 }
 
@@ -844,14 +849,10 @@ async fn a_dry_run_writes_nothing_and_gives_the_counts_the_save_then_gives() -> 
 async fn the_revision_moves_once() -> Result<()> {
     let course = published().await?;
     let seen = ledger(&course).await?.revision.0;
-    let after = QuestionText {
-        prompt: NEW_PROMPT.into(),
-        ..q0()
-    };
 
-    let saved = edit(&course, 0, q0(), after, false).await?;
+    let saved = edit(&course, 0, vec![replace("/prompt", NEW_PROMPT)]).await?;
 
-    assert_eq!(saved.revision, Some(seen + 1));
+    assert!(saved.changed);
     assert_eq!(ledger(&course).await?.revision.0, seen + 1);
     Ok(())
 }
@@ -860,24 +861,11 @@ async fn the_revision_moves_once() -> Result<()> {
 async fn a_lesson_from_another_course_is_refused() -> Result<()> {
     let course = published().await?;
     let seen = snapshot(&course).await?;
-    let after = QuestionText {
-        prompt: NEW_PROMPT.into(),
-        ..q0()
-    };
+    let missing = keys::question_ref("missing-question");
 
-    let result = ClaimReviewService::new(course.db.clone())
-        .edit_question(QuestionEdit {
-            program_id: "another-course".into(),
-            lesson_id: course.lesson_id.clone(),
-            question_index: 0,
-            before: q0(),
-            after,
-            dry_run: false,
-        })
-        .await;
-
-    assert!(matches!(result, Err(AppError::NotFound(_))), "{result:?}");
-    assert_eq!(refused(result), "This lesson is not in this course.");
+    let opened = course.edits().open(&missing).await;
+    assert!(opened.is_err(), "{opened:?}");
+    assert!(matches!(opened.unwrap_err(), AppError::NotFound(_)));
     assert_eq!(snapshot(&course).await?, seen);
     Ok(())
 }
@@ -889,7 +877,9 @@ async fn a_lesson_still_being_prepared_is_refused() -> Result<()> {
         .fetch_one(&course.pool)
         .await?;
     sqlx::query(
-        "INSERT INTO learning_lesson_reviews (lesson_id, program_id, job_id, state, draft_sha256, checker_model, opened_at, updated_at)          VALUES (?, ?, ?, 'needs_review', 'sha', 'fixture', 1, 1)          ON CONFLICT(lesson_id) DO UPDATE SET state='needs_review'",
+        "INSERT INTO learning_lesson_reviews (lesson_id, program_id, job_id, state, draft_sha256, checker_model, opened_at, updated_at) \
+         VALUES (?, ?, ?, 'needs_review', 'sha', 'fixture', 1, 1) \
+         ON CONFLICT(lesson_id) DO UPDATE SET state='needs_review'",
     )
     .bind(&course.lesson_id)
     .bind(&course.program_id)
@@ -897,12 +887,8 @@ async fn a_lesson_still_being_prepared_is_refused() -> Result<()> {
     .execute(&course.pool)
     .await?;
     let seen = snapshot(&course).await?;
-    let after = QuestionText {
-        prompt: NEW_PROMPT.into(),
-        ..q0()
-    };
 
-    let result = edit(&course, 0, q0(), after, false).await;
+    let result = try_edit(&course, 0, vec![replace("/prompt", NEW_PROMPT)]).await;
 
     assert!(
         matches!(result, Err(AppError::InvalidState(_))),
@@ -946,7 +932,6 @@ async fn notes(course: &Course) -> Result<TeachingFindingsRepository> {
     Ok(store)
 }
 
-/// Each note's site, index and whether its part changed after it, in list order.
 async fn changed_after(
     store: &TeachingFindingsRepository,
     lesson: &str,
@@ -977,12 +962,8 @@ async fn notes_on_the_edited_question_say_it_changed_after_them_and_other_notes_
         .await?
         .iter()
         .all(|(_, _, changed)| !changed));
-    let after = QuestionText {
-        prompt: NEW_PROMPT.into(),
-        ..q0()
-    };
 
-    edit(&course, 0, q0(), after, false).await?;
+    edit(&course, 0, vec![replace("/prompt", NEW_PROMPT)]).await?;
 
     assert_eq!(
         changed_after(&store, &course.lesson_id).await?,
@@ -995,12 +976,16 @@ async fn notes_on_the_edited_question_say_it_changed_after_them_and_other_notes_
 async fn a_change_of_the_right_answer_alone_marks_the_questions_notes() -> Result<()> {
     let course = published().await?;
     let store = notes(&course).await?;
-    let after = QuestionText {
-        right: Some(1),
-        ..q0()
-    };
 
-    edit(&course, 0, q0(), after, false).await?;
+    edit(
+        &course,
+        0,
+        vec![
+            replace("/choices/0/correct", false),
+            replace("/choices/1/correct", true),
+        ],
+    )
+    .await?;
 
     assert_eq!(
         changed_after(&store, &course.lesson_id).await?,
@@ -1016,14 +1001,17 @@ async fn the_report_takes_the_questions_new_title_and_text_and_one_confirmed_fin
     let before = stored_report(&course).await?;
     let mut choices = C0.map(String::from).to_vec();
     choices[1] = "It trims them silently.".into();
-    let after = QuestionText {
-        prompt: NEW_PROMPT.into(),
-        choices: choices.clone(),
-        explanation: NEW_EXPLANATION.into(),
-        ..q0()
-    };
 
-    edit(&course, 0, q0(), after, false).await?;
+    edit(
+        &course,
+        0,
+        vec![
+            replace("/prompt", NEW_PROMPT),
+            replace("/choices/1/text", "It trims them silently."),
+            replace("/explanation", NEW_EXPLANATION),
+        ],
+    )
+    .await?;
 
     let now = stored_report(&course).await?;
     let text = format!("{}\n\n{NEW_EXPLANATION}", choices.join("\n\n"));
@@ -1061,29 +1049,50 @@ async fn the_report_takes_the_questions_new_title_and_text_and_one_confirmed_fin
     Ok(())
 }
 
+const R0: [&str; 4] = [
+    "",
+    "Trimming is not done.",
+    "The column stays.",
+    "No error is raised.",
+];
+
+async fn give_the_first_question_its_reasons(course: &Course) -> Result<()> {
+    sqlx::query(
+        "UPDATE learning_assessment_answer_keys SET distractor_rationales_json=? \
+         WHERE candidate_id IN (SELECT id FROM learning_assessment_candidates WHERE lesson_id=? AND prompt=?)",
+    )
+    .bind(serde_json::to_string(&R0)?)
+    .bind(&course.lesson_id)
+    .bind(P0)
+    .execute(&course.pool)
+    .await?;
+    Ok(())
+}
+
+async fn stored_reasons(course: &Course) -> Result<Vec<String>> {
+    Ok(serde_json::from_str(&rows(course).await?[0].4)?)
+}
+
 #[tokio::test]
 async fn a_prompt_change_keeps_the_reasons_and_the_right_choice_is_left_with_none() -> Result<()> {
     let course = published().await?;
     give_the_first_question_its_reasons(&course).await?;
     let kept = rows(&course).await?[0].4.clone();
-    let prompt_only = QuestionText {
-        prompt: NEW_PROMPT.into(),
-        ..reasoned_q0()
-    };
-    edit(&course, 0, reasoned_q0(), prompt_only.clone(), false).await?;
+
+    edit(&course, 0, vec![replace("/prompt", NEW_PROMPT)]).await?;
     assert_eq!(rows(&course).await?[0].4, kept);
 
-    let moved = QuestionText {
-        right: Some(2),
-        rationales: vec![
-            "It does keep them.".into(),
-            R0[1].into(),
-            R0[2].into(),
-            R0[3].into(),
+    edit(
+        &course,
+        0,
+        vec![
+            replace("/choices/0/correct", false),
+            replace("/choices/2/correct", true),
+            replace("/choices/0/rationale", "It does keep them."),
+            replace("/choices/2/rationale", ""),
         ],
-        ..prompt_only.clone()
-    };
-    edit(&course, 0, prompt_only, moved, false).await?;
+    )
+    .await?;
 
     assert_eq!(
         stored_reasons(&course).await?,
@@ -1098,35 +1107,28 @@ fn leak_refusal() -> String {
     answer_in_prompt_message(C0[0])
 }
 
-fn right_choice_much_the_longest() -> QuestionText {
-    let mut choices = C0.map(String::from).to_vec();
-    choices[0] = LONGEST.into();
-    QuestionText { choices, ..q0() }
-}
-
-fn prompt_giving_away_the_right_choice() -> QuestionText {
-    QuestionText {
-        prompt: format!("{P0} It keeps them."),
-        ..q0()
-    }
-}
-
 #[tokio::test]
 async fn an_edit_the_quiz_engine_would_refuse_is_refused_and_writes_nothing() -> Result<()> {
     let course = published().await?;
     let seen = snapshot(&course).await?;
     let cases = [
-        (right_choice_much_the_longest(), LONGEST_REFUSAL.to_owned()),
-        (prompt_giving_away_the_right_choice(), leak_refusal()),
+        (
+            vec![replace("/choices/0/text", LONGEST)],
+            LONGEST_REFUSAL.to_owned(),
+        ),
+        (
+            vec![replace("/prompt", format!("{P0} It keeps them."))],
+            leak_refusal(),
+        ),
     ];
 
-    for (after, text) in cases {
-        let result = edit(&course, 0, q0(), after.clone(), false).await;
+    for (ops, text) in cases {
+        let result = try_edit(&course, 0, ops).await;
         assert!(
             matches!(result, Err(AppError::InvalidInput(_))),
-            "{after:?}: {result:?}"
+            "{result:?}"
         );
-        assert_eq!(refused(result), text, "{after:?}");
+        assert_eq!(refused(result), text);
         assert_eq!(snapshot(&course).await?, seen);
     }
     Ok(())
@@ -1137,13 +1139,22 @@ async fn a_dry_run_gives_the_same_refusals_as_the_save() -> Result<()> {
     let course = published().await?;
     let seen = snapshot(&course).await?;
     let cases = [
-        (right_choice_much_the_longest(), LONGEST_REFUSAL.to_owned()),
-        (prompt_giving_away_the_right_choice(), leak_refusal()),
+        (
+            vec![replace("/choices/0/text", LONGEST)],
+            LONGEST_REFUSAL.to_owned(),
+        ),
+        (
+            vec![replace("/prompt", format!("{P0} It keeps them."))],
+            leak_refusal(),
+        ),
     ];
 
-    for (after, text) in cases {
-        let result = edit(&course, 0, q0(), after.clone(), true).await;
-        assert_eq!(refused(result), text, "{after:?}");
+    for (ops, text) in cases {
+        let preview = preview_edit(&course, 0, ops).await?;
+        assert!(
+            preview.problems.iter().any(|p| p.message == text),
+            "{preview:?}"
+        );
         assert_eq!(snapshot(&course).await?, seen);
     }
     Ok(())
@@ -1152,13 +1163,20 @@ async fn a_dry_run_gives_the_same_refusals_as_the_save() -> Result<()> {
 #[tokio::test]
 async fn the_longest_right_choice_of_two_is_not_refused() -> Result<()> {
     let course = published().await?;
-    let after = QuestionText {
-        choices: vec![LONGEST.into(), "It trims them.".into()],
-        ..q0()
-    };
-
-    let saved = edit(&course, 0, q0(), after, false).await?;
-
+    let saved = edit(
+        &course,
+        0,
+        vec![
+            EditOp::Remove {
+                path: "/choices/3".into(),
+            },
+            EditOp::Remove {
+                path: "/choices/2".into(),
+            },
+            replace("/choices/0/text", LONGEST),
+        ],
+    )
+    .await?;
     assert!(saved.changed);
     Ok(())
 }
@@ -1188,12 +1206,8 @@ async fn statuses(course: &Course) -> Result<Vec<String>> {
 async fn a_valid_save_returns_a_dropped_question_to_the_bank() -> Result<()> {
     let course = published().await?;
     set_status(&course, P0, "dropped").await?;
-    let after = QuestionText {
-        prompt: NEW_PROMPT.into(),
-        ..q0()
-    };
 
-    edit(&course, 0, q0(), after, false).await?;
+    edit(&course, 0, vec![replace("/prompt", NEW_PROMPT)]).await?;
 
     assert_eq!(statuses(&course).await?, ["agreed", "agreed", "agreed"]);
     Ok(())
@@ -1204,7 +1218,7 @@ async fn a_refused_save_leaves_a_dropped_question_dropped() -> Result<()> {
     let course = published().await?;
     set_status(&course, P0, "dropped").await?;
 
-    let result = edit(&course, 0, q0(), right_choice_much_the_longest(), false).await;
+    let result = try_edit(&course, 0, vec![replace("/choices/0/text", LONGEST)]).await;
 
     assert_eq!(refused(result), LONGEST_REFUSAL);
     assert_eq!(statuses(&course).await?, ["dropped", "agreed", "agreed"]);
@@ -1215,12 +1229,8 @@ async fn a_refused_save_leaves_a_dropped_question_dropped() -> Result<()> {
 async fn a_dry_run_leaves_a_dropped_question_dropped() -> Result<()> {
     let course = published().await?;
     set_status(&course, P0, "dropped").await?;
-    let after = QuestionText {
-        prompt: NEW_PROMPT.into(),
-        ..q0()
-    };
 
-    edit(&course, 0, q0(), after, true).await?;
+    preview_edit(&course, 0, vec![replace("/prompt", NEW_PROMPT)]).await?;
 
     assert_eq!(statuses(&course).await?, ["dropped", "agreed", "agreed"]);
     Ok(())
@@ -1230,7 +1240,6 @@ const SAME_QUESTION: &str = "Another question in this course has the same prompt
 
 type Held = (String, String, String, String, String, String);
 
-/// Each lesson question's text, key, content token and status, in order.
 async fn held(course: &Course) -> Result<Vec<Held>> {
     Ok(sqlx::query_as::<_, Held>(
         "SELECT c.prompt, c.options_json, k.key_json, k.explanation, c.content_sha256, c.review_status \
@@ -1242,8 +1251,7 @@ async fn held(course: &Course) -> Result<Vec<Held>> {
     .await?)
 }
 
-/// Stores `text` as one more question of the lesson, as the bank does.
-async fn add_question(course: &Course, text: &QuestionText) -> Result<()> {
+async fn add_question(course: &Course, spec: &QuestionSpec<'_>) -> Result<()> {
     let outcome: String = sqlx::query_scalar(
         "SELECT id FROM learning_outcome_definitions WHERE program_id=? AND lesson_id=?",
     )
@@ -1251,7 +1259,7 @@ async fn add_question(course: &Course, text: &QuestionText) -> Result<()> {
     .bind(&course.lesson_id)
     .fetch_one(&course.pool)
     .await?;
-    let mut entry = bank_item(&outcome, text);
+    let mut entry = bank_item(&outcome, spec);
     entry.lesson_id = Some(course.lesson_id.clone());
     let mut tx = course.db.begin_write().await?;
     let stored = insert_bank_items_in(&mut tx, &course.program_id, &[entry], None).await?;
@@ -1260,13 +1268,14 @@ async fn add_question(course: &Course, text: &QuestionText) -> Result<()> {
     Ok(())
 }
 
-/// The second question with the first one's prompt and choices.
-fn q1_as_q0() -> QuestionText {
-    QuestionText {
-        prompt: P0.into(),
-        choices: C0.map(String::from).to_vec(),
-        ..q1()
-    }
+fn copy_q0_ops() -> Vec<EditOp> {
+    vec![
+        replace("/prompt", P0),
+        replace("/choices/0/text", C0[0]),
+        replace("/choices/1/text", C0[1]),
+        replace("/choices/2/text", C0[2]),
+        replace("/choices/3/text", C0[3]),
+    ]
 }
 
 #[tokio::test]
@@ -1275,7 +1284,7 @@ async fn an_edit_that_matches_another_question_is_refused_and_writes_nothing() -
     let seen = held(&course).await?;
     let report = snapshot(&course).await?;
 
-    let result = edit(&course, 1, q1(), q1_as_q0(), false).await;
+    let result = try_edit(&course, 1, copy_q0_ops()).await;
 
     assert_eq!(refused(result), SAME_QUESTION);
     assert_eq!(held(&course).await?, seen);
@@ -1286,18 +1295,14 @@ async fn an_edit_that_matches_another_question_is_refused_and_writes_nothing() -
 #[tokio::test]
 async fn saving_a_dropped_repeat_as_it_stands_is_refused_and_it_stays_dropped() -> Result<()> {
     let course = published().await?;
-    add_question(&course, &q0()).await?;
+    add_question(&course, &spec0()).await?;
     assert_eq!(
         statuses(&course).await?,
         ["agreed", "agreed", "agreed", "dropped"]
     );
     let seen = held(&course).await?;
-    let after = QuestionText {
-        explanation: NEW_EXPLANATION.into(),
-        ..q0()
-    };
 
-    let result = edit(&course, 3, q0(), after, false).await;
+    let result = try_edit(&course, 3, vec![replace("/explanation", NEW_EXPLANATION)]).await;
 
     assert_eq!(refused(result), SAME_QUESTION);
     assert_eq!(held(&course).await?, seen);
@@ -1311,14 +1316,17 @@ async fn saving_a_dropped_repeat_as_it_stands_is_refused_and_it_stays_dropped() 
 #[tokio::test]
 async fn a_saved_question_keeps_the_token_of_its_new_content() -> Result<()> {
     let course = published().await?;
-    let after = QuestionText {
-        prompt: NEW_PROMPT.into(),
-        ..q0()
-    };
-    edit(&course, 0, q0(), after.clone(), false).await?;
+    edit(&course, 0, vec![replace("/prompt", NEW_PROMPT)]).await?;
 
-    add_question(&course, &q0()).await?;
-    add_question(&course, &after).await?;
+    add_question(&course, &spec0()).await?;
+    add_question(
+        &course,
+        &QuestionSpec {
+            prompt: NEW_PROMPT,
+            ..spec0()
+        },
+    )
+    .await?;
 
     assert_eq!(
         statuses(&course).await?,
@@ -1332,24 +1340,20 @@ async fn a_dry_run_refuses_an_edit_that_matches_another_question() -> Result<()>
     let course = published().await?;
     let seen = held(&course).await?;
 
-    let result = edit(&course, 1, q1(), q1_as_q0(), true).await;
+    let preview = preview_edit(&course, 1, copy_q0_ops()).await?;
 
-    assert_eq!(refused(result), SAME_QUESTION);
+    assert!(
+        preview.problems.iter().any(|p| p.message == SAME_QUESTION),
+        "{preview:?}"
+    );
     assert_eq!(held(&course).await?, seen);
     Ok(())
 }
 
-/// A guard that passes before and after the fix: a question's own token is
-/// not another question's.
 #[tokio::test]
 async fn a_new_explanation_on_a_question_that_repeats_nothing_is_saved() -> Result<()> {
     let course = published().await?;
-    let after = QuestionText {
-        explanation: NEW_EXPLANATION.into(),
-        ..q0()
-    };
-
-    let saved = edit(&course, 0, q0(), after, false).await?;
+    let saved = edit(&course, 0, vec![replace("/explanation", NEW_EXPLANATION)]).await?;
 
     assert!(saved.changed);
     assert_eq!(statuses(&course).await?, ["agreed", "agreed", "agreed"]);
@@ -1361,12 +1365,8 @@ async fn a_new_explanation_on_a_question_that_repeats_nothing_is_saved() -> Resu
 async fn a_save_leaves_a_reported_question_reported() -> Result<()> {
     let course = published().await?;
     set_status(&course, P0, "reported").await?;
-    let after = QuestionText {
-        prompt: NEW_PROMPT.into(),
-        ..q0()
-    };
 
-    edit(&course, 0, q0(), after, false).await?;
+    edit(&course, 0, vec![replace("/prompt", NEW_PROMPT)]).await?;
 
     assert_eq!(statuses(&course).await?, ["reported", "agreed", "agreed"]);
     Ok(())
@@ -1384,12 +1384,15 @@ async fn the_undo_of_a_statement_a_question_edit_ended_is_refused_with_the_quest
         entry_for(&seen, P0).claim_id().clone(),
         entry_for(&seen, E0_FIRST).claim_id().clone(),
     ];
-    let after = QuestionText {
-        prompt: NEW_PROMPT.into(),
-        explanation: NEW_EXPLANATION.into(),
-        ..q0()
-    };
-    edit(&course, 0, q0(), after, false).await?;
+    edit(
+        &course,
+        0,
+        vec![
+            replace("/prompt", NEW_PROMPT),
+            replace("/explanation", NEW_EXPLANATION),
+        ],
+    )
+    .await?;
     let written = snapshot(&course).await?;
 
     for claim in &ended {
@@ -1410,20 +1413,6 @@ async fn the_undo_of_a_statement_a_question_edit_ended_is_refused_with_the_quest
     }
     assert_eq!(snapshot(&course).await?, written);
     Ok(())
-}
-
-const R0: [&str; 4] = [
-    "",
-    "Trimming is not done.",
-    "The column stays.",
-    "No error is raised.",
-];
-
-fn reasoned_q0() -> QuestionText {
-    QuestionText {
-        rationales: R0.map(String::from).to_vec(),
-        ..q0()
-    }
 }
 
 async fn give_the_first_question_its_reasons(course: &Course) -> Result<()> {
@@ -1448,26 +1437,27 @@ async fn a_questions_reasons_are_read_with_it_and_an_edit_of_one_is_written_in_i
 ) -> Result<()> {
     let course = published().await?;
     give_the_first_question_its_reasons(&course).await?;
-    let service = ClaimReviewService::new(course.db.clone());
-    let read = service
-        .question_text(&course.program_id, &course.lesson_id, 0)
-        .await?;
-    assert_eq!(read, reasoned_q0());
+    let opened = open_question(&course, 0).await?;
+    for (slot, reason) in R0.iter().enumerate() {
+        assert_eq!(opened.document["choices"][slot]["rationale"], json!(reason));
+    }
 
-    let mut rationales = reasoned_q0().rationales;
+    let mut rationales = R0.map(String::from).to_vec();
     rationales[2] = "The column stays, spaces and all.".into();
-    let after = QuestionText {
-        rationales: rationales.clone(),
-        ..reasoned_q0()
-    };
-    let saved = edit(&course, 0, reasoned_q0(), after.clone(), false).await?;
+    let saved = edit(
+        &course,
+        0,
+        vec![replace("/choices/2/rationale", &rationales[2])],
+    )
+    .await?;
 
     assert!(saved.changed);
     assert_eq!(stored_reasons(&course).await?, rationales);
-    let read = service
-        .question_text(&course.program_id, &course.lesson_id, 0)
-        .await?;
-    assert_eq!(read, after);
+    let reopened = open_question(&course, 0).await?;
+    assert_eq!(
+        reopened.document["choices"][2]["rationale"],
+        json!(rationales[2])
+    );
     Ok(())
 }
 
@@ -1475,28 +1465,38 @@ async fn a_questions_reasons_are_read_with_it_and_an_edit_of_one_is_written_in_i
 async fn a_choice_removed_or_added_keeps_each_reason_with_its_choice() -> Result<()> {
     let course = published().await?;
     give_the_first_question_its_reasons(&course).await?;
-    let removed = QuestionText {
-        choices: vec![C0[0].into(), C0[1].into(), C0[3].into()],
-        rationales: vec![R0[0].into(), R0[1].into(), R0[3].into()],
-        ..reasoned_q0()
-    };
 
-    edit(&course, 0, reasoned_q0(), removed.clone(), false).await?;
-
+    edit(
+        &course,
+        0,
+        vec![EditOp::Remove {
+            path: "/choices/2".into(),
+        }],
+    )
+    .await?;
     assert_eq!(
         rows(&course).await?[0].1,
-        serde_json::to_string(&removed.choices)?
+        serde_json::to_string(&[C0[0], C0[1], C0[3]])?
     );
-    assert_eq!(stored_reasons(&course).await?, removed.rationales);
+    assert_eq!(stored_reasons(&course).await?, [R0[0], R0[1], R0[3]]);
 
-    let mut added = removed.clone();
-    added.choices.push("It ignores them.".into());
-    added
-        .rationales
-        .push("Nothing ignores a header name.".into());
-    edit(&course, 0, removed, added.clone(), false).await?;
-
-    assert_eq!(stored_reasons(&course).await?, added.rationales);
+    edit(
+        &course,
+        0,
+        vec![EditOp::Add {
+            path: "/choices/-".into(),
+            value: json!({
+                "text": "It ignores them.",
+                "correct": false,
+                "rationale": "Nothing ignores a header name."
+            }),
+        }],
+    )
+    .await?;
+    assert_eq!(
+        stored_reasons(&course).await?,
+        [R0[0], R0[1], R0[3], "Nothing ignores a header name."]
+    );
     Ok(())
 }
 
@@ -1505,16 +1505,20 @@ async fn reasons_that_do_not_match_the_choices_are_refused_and_write_nothing() -
     let course = published().await?;
     give_the_first_question_its_reasons(&course).await?;
     let seen = snapshot(&course).await?;
-    let after = QuestionText {
-        rationales: vec![R0[0].into(), R0[1].into(), R0[2].into()],
-        ..reasoned_q0()
-    };
 
-    let result = edit(&course, 0, reasoned_q0(), after, false).await;
+    let result = try_edit(
+        &course,
+        0,
+        vec![EditOp::Add {
+            path: "/choices/-".into(),
+            value: json!({"text": "Extra.", "correct": false}),
+        }],
+    )
+    .await;
 
-    assert_eq!(
-        refused(result),
-        "The reasons must match the choices, one for each."
+    assert!(
+        matches!(result, Err(AppError::InvalidInput(_))),
+        "{result:?}"
     );
     assert_eq!(snapshot(&course).await?, seen);
     Ok(())
@@ -1536,17 +1540,17 @@ async fn a_statement_on_a_choices_reason_ends_when_the_reason_is_rewritten_and_i
     .await?;
     let seen = ledger(&course).await?;
     let replacement = "Nothing trims a header name.";
-    let mut rationales = reasoned_q0().rationales;
-    rationales[1] = replacement.into();
-    let after = QuestionText {
-        rationales,
-        ..reasoned_q0()
-    };
 
-    let saved = edit(&course, 0, reasoned_q0(), after, false).await?;
+    let saved = edit(
+        &course,
+        0,
+        vec![replace("/choices/1/rationale", replacement)],
+    )
+    .await?;
 
-    assert_eq!(saved, outcome(6, 1, 0, 1, Some(seen.revision.0 + 1)));
+    assert!(saved.changed);
     let now = ledger(&course).await?;
+    assert_eq!(now.revision.0, seen.revision.0 + 1);
     assert_edited_into(&now, R0[1], replacement);
     assert_confirmed_at(
         &now,
@@ -1569,12 +1573,8 @@ async fn a_save_whose_example_cannot_be_recorded_writes_nothing() -> Result<()> 
     )
     .execute(&course.pool)
     .await?;
-    let after = QuestionText {
-        prompt: NEW_PROMPT.into(),
-        ..q0()
-    };
 
-    let result = edit(&course, 0, q0(), after, false).await;
+    let result = try_edit(&course, 0, vec![replace("/prompt", NEW_PROMPT)]).await;
 
     assert!(result.is_err());
     assert_eq!(snapshot(&course).await?, before);

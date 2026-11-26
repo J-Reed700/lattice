@@ -4,30 +4,34 @@
     clippy::indexing_slicing,
     clippy::panic
 )]
-//! The user rewrites a section of a published lesson: the section's title and
-//! text are written, the statements that stood on what changed end, the rest
-//! keep their state, and the review's record stays honest.
+//! The user rewrites a section of a published lesson through `ContentEdits`:
+//! the section's title and text are written, the statements that stood on
+//! what changed end, the rest keep their state, and the review's record stays honest.
 use super::claim_ledger_tests::{figure, lesson, section, unreadable, Course, Figures};
 use super::GOOD;
 use crate::content_verification::{LessonVerificationReport, Rewritten};
+use crate::edits::keys;
 use crate::lessons::claim_reviews::dto::ClaimActionRequestDto;
 use crate::lessons::claim_reviews::repository::ClaimReviewRepository;
-use crate::lessons::claim_reviews::service::{ClaimReviewService, SectionEdit, SectionEditOutcome};
+use crate::lessons::claim_reviews::service::ClaimReviewService;
 use crate::lessons::claim_reviews::teaching_findings::TeachingFindingsRepository;
 use crate::review_findings::{FindingKind, FindingSite, ReviewFinding, SetAside};
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
     Actor, ClaimId, ClaimLedgerEntry, ClaimState, Ledger,
 };
+use lattice_core::shared::edits::{
+    ContentEditOutcome, ContentEditPreview, ContentEditRequest, EditOp, EditSource,
+};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::hash::sha256_hex;
 use serde_json::{json, Value};
 use std::collections::HashSet;
+use uuid::Uuid;
 
 /// The sentence the user writes in place of a statement.
 const NEW: &str = "DictReader keeps field-name whitespace exactly as the header row writes it.";
-const CHANGED_SINCE: &str =
-    "This section changed since you opened it. Copy your changes, close the editor and open it again.";
+const CHANGED_SINCE: &str = "This changed since you opened it.";
 
 /// Two published sections whose statements the judge never read.
 async fn unchecked() -> Result<Course> {
@@ -119,44 +123,76 @@ async fn snapshot(course: &Course) -> Result<Snapshot> {
     })
 }
 
-fn request(
+fn replace(path: &str, value: &str) -> EditOp {
+    EditOp::Replace {
+        path: path.into(),
+        value: json!(value),
+    }
+}
+
+fn section_ops(title: &str, body: &str) -> Vec<EditOp> {
+    vec![replace("/title", title), replace("/body", body)]
+}
+
+async fn edit_request(
     course: &Course,
-    section: usize,
-    before: (String, String),
+    section_idx: usize,
     title: &str,
     body: &str,
-    dry_run: bool,
-) -> SectionEdit {
-    SectionEdit {
-        program_id: course.program_id.clone(),
-        lesson_id: course.lesson_id.clone(),
-        section_index: section,
-        before_title: before.0,
-        before_body: before.1,
-        title: title.into(),
-        body: body.into(),
-        dry_run,
-    }
+) -> Result<ContentEditRequest> {
+    let content = keys::section_ref(&course.lesson_id, section_idx);
+    let opened = course.edits().open(&content).await;
+    assert!(opened.is_ok(), "{opened:?}");
+    let opened = opened?;
+    Ok(ContentEditRequest {
+        edit_id: Uuid::new_v4().to_string(),
+        content,
+        expected_revision: opened.revision,
+        ops: section_ops(title, body),
+        source: EditSource::Learner,
+        target: None,
+    })
+}
+
+async fn try_rewrite(
+    course: &Course,
+    section_idx: usize,
+    title: &str,
+    body: &str,
+) -> Result<ContentEditOutcome> {
+    let req = edit_request(course, section_idx, title, body).await?;
+    course.edits().apply(&req).await
 }
 
 async fn rewrite(
     course: &Course,
-    section: usize,
+    section_idx: usize,
     title: &str,
     body: &str,
-    dry_run: bool,
-) -> Result<SectionEditOutcome> {
-    let before = text_of(course, i64::try_from(section).unwrap()).await?;
-    ClaimReviewService::new(course.db.clone())
-        .edit_section(request(course, section, before, title, body, dry_run))
-        .await
+) -> Result<ContentEditOutcome> {
+    let outcome = try_rewrite(course, section_idx, title, body).await;
+    assert!(outcome.is_ok(), "{outcome:?}");
+    outcome
+}
+
+async fn preview_rewrite(
+    course: &Course,
+    section_idx: usize,
+    title: &str,
+    body: &str,
+) -> Result<ContentEditPreview> {
+    let req = edit_request(course, section_idx, title, body).await?;
+    let preview = course.edits().preview(&req).await;
+    assert!(preview.is_ok(), "{preview:?}");
+    preview
 }
 
 fn refusal(error: &AppError) -> &str {
     match error {
         AppError::InvalidInput(message)
         | AppError::InvalidState(message)
-        | AppError::NotFound(message) => message,
+        | AppError::NotFound(message)
+        | AppError::Conflict(message) => message,
         other => panic!("not a refusal: {other:?}"),
     }
 }
@@ -175,7 +211,7 @@ async fn a_save_writes_the_sections_title_and_text() -> Result<()> {
     let course = unchecked().await?;
     let seen = snapshot(&course).await?;
 
-    let outcome = rewrite(&course, 0, "A better title", &written_over(), false).await?;
+    let outcome = rewrite(&course, 0, "A better title", &written_over()).await?;
 
     assert!(outcome.changed);
     let after = snapshot(&course).await?;
@@ -193,10 +229,8 @@ async fn claims_on_changed_sentences_end_edited_by_the_user_with_the_written_sen
     let course = unchecked().await?;
     let old = entry_for(&ledger(&course).await?, GOOD).claim_id().clone();
 
-    let outcome = rewrite(&course, 0, "Section 0", &written_over(), false).await?;
+    rewrite(&course, 0, "Section 0", &written_over()).await?;
 
-    assert_eq!(outcome.statements_changed, 1);
-    assert_eq!(outcome.sentences_written, 1);
     let ledger = ledger(&course).await?;
     let successor = entry_for(&ledger, NEW).claim_id().clone();
     let ended = ledger
@@ -220,10 +254,8 @@ async fn claims_on_deleted_sentences_end_removed_by_the_user() -> Result<()> {
     let course = unchecked().await?;
     let old = entry_for(&ledger(&course).await?, GOOD).claim_id().clone();
 
-    let outcome = rewrite(&course, 0, "Section 0", &without_statement(), false).await?;
+    rewrite(&course, 0, "Section 0", &without_statement()).await?;
 
-    assert_eq!(outcome.statements_removed, 1);
-    assert_eq!(outcome.sentences_written, 0);
     let ledger = ledger(&course).await?;
     let ended = ledger
         .claims
@@ -241,6 +273,10 @@ async fn claims_on_deleted_sentences_end_removed_by_the_user() -> Result<()> {
         "{:?}",
         ended.state()
     );
+    assert!(ledger
+        .claims
+        .iter()
+        .all(|entry| !entry.location().quote.is_empty()));
     Ok(())
 }
 
@@ -254,11 +290,8 @@ async fn the_rest_keep_their_state() -> Result<()> {
     let last = text.rfind("Try it yourself").unwrap();
     let changed_practice = format!("{}Try it yourself with a different file.", &text[..last]);
 
-    let outcome = rewrite(&course, 0, "Section 0", &changed_practice, false).await?;
+    rewrite(&course, 0, "Section 0", &changed_practice).await?;
 
-    assert_eq!(outcome.statements_kept, 1);
-    assert_eq!(outcome.statements_changed, 0);
-    assert_eq!(outcome.statements_removed, 0);
     let after = ledger(&course).await?;
     assert_eq!(format!("{:?}", entry_for(&after, &figure(7))), other);
     assert_eq!(format!("{:?}", entry_for(&after, GOOD)), kept);
@@ -271,9 +304,8 @@ async fn each_written_sentence_is_a_claim_confirmed_by_the_user() -> Result<()> 
     let extra = "Headers are never trimmed for you.";
     let body = format!("{} {NEW} {extra}", section(GOOD));
 
-    let outcome = rewrite(&course, 0, "Section 0", &body, false).await?;
+    rewrite(&course, 0, "Section 0", &body).await?;
 
-    assert_eq!(outcome.sentences_written, 2);
     let ledger = ledger(&course).await?;
     for sentence in [NEW, extra] {
         let entry = entry_for(&ledger, sentence);
@@ -312,7 +344,7 @@ async fn the_report_drops_the_ended_claims_findings_keeps_the_rest_and_adds_one_
         .0
         .clone();
 
-    rewrite(&course, 0, "Section 0", &written_over(), false).await?;
+    rewrite(&course, 0, "Section 0", &written_over()).await?;
 
     let after = stored_report(&course).await?;
     let now = findings(&after.1);
@@ -383,6 +415,7 @@ async fn the_rewritten_report_drops_findings_with_no_claim_whose_text_is_gone() 
         ended: &ended,
         written: &[("Mine is new.", &mine)],
         at: 7,
+        edit_id: "edit",
     });
 
     let quotes: Vec<&str> = report
@@ -416,9 +449,9 @@ async fn the_revision_moves_once() -> Result<()> {
     let course = unchecked().await?;
     let seen = ledger(&course).await?.revision.0;
 
-    let outcome = rewrite(&course, 0, "Section 0", &written_over(), false).await?;
+    let outcome = rewrite(&course, 0, "Section 0", &written_over()).await?;
 
-    assert_eq!(outcome.revision, Some(seen + 1));
+    assert!(outcome.changed);
     assert_eq!(ledger(&course).await?.revision.0, seen + 1);
     Ok(())
 }
@@ -426,6 +459,7 @@ async fn the_revision_moves_once() -> Result<()> {
 #[tokio::test]
 async fn a_section_changed_since_it_was_opened_is_refused_and_nothing_is_written() -> Result<()> {
     let course = unchecked().await?;
+    let req = edit_request(&course, 0, "Section 0", &written_over()).await?;
     let opened = text_of(&course, 0).await?;
     sqlx::query("UPDATE learning_blocks SET body=? WHERE lesson_id=? AND ordinal=0")
         .bind(format!("{} One more sentence.", opened.1))
@@ -434,17 +468,7 @@ async fn a_section_changed_since_it_was_opened_is_refused_and_nothing_is_written
         .await?;
     let seen = snapshot(&course).await?;
 
-    let error = ClaimReviewService::new(course.db.clone())
-        .edit_section(request(
-            &course,
-            0,
-            opened,
-            "Section 0",
-            &written_over(),
-            false,
-        ))
-        .await
-        .unwrap_err();
+    let error = course.edits().apply(&req).await.unwrap_err();
 
     assert_eq!(refusal(&error), CHANGED_SINCE);
     assert_eq!(snapshot(&course).await?, seen);
@@ -456,15 +480,15 @@ async fn a_blank_title_or_blank_text_is_refused_and_nothing_is_written() -> Resu
     let course = unchecked().await?;
     let seen = snapshot(&course).await?;
 
-    let title = rewrite(&course, 0, "   ", &written_over(), false)
+    let title = try_rewrite(&course, 0, "   ", &written_over())
         .await
         .unwrap_err();
-    let text = rewrite(&course, 0, "Section 0", " \n ", false)
+    let text = try_rewrite(&course, 0, "Section 0", " \n ")
         .await
         .unwrap_err();
 
-    assert_eq!(refusal(&title), "A section needs a title.");
-    assert_eq!(refusal(&text), "A section needs some text.");
+    assert_eq!(refusal(&title), "Title can't be empty.");
+    assert_eq!(refusal(&text), "Body can't be empty.");
     assert_eq!(snapshot(&course).await?, seen);
     Ok(())
 }
@@ -475,10 +499,9 @@ async fn an_edit_that_changes_nothing_writes_nothing() -> Result<()> {
     let seen = snapshot(&course).await?;
     let (title, body) = text_of(&course, 0).await?;
 
-    let outcome = rewrite(&course, 0, &title, &body, false).await?;
+    let outcome = rewrite(&course, 0, &title, &body).await?;
 
     assert!(!outcome.changed);
-    assert_eq!(outcome.revision, None);
     assert_eq!(snapshot(&course).await?, seen);
     Ok(())
 }
@@ -489,19 +512,21 @@ async fn a_dry_run_writes_nothing_and_gives_the_counts_the_save_then_gives() -> 
     let seen = snapshot(&course).await?;
     let body = format!("{} Headers are never trimmed for you.", written_over());
 
-    let dry = rewrite(&course, 0, "Section 0", &body, true).await?;
+    let preview = preview_rewrite(&course, 0, "Section 0", &body).await?;
 
     assert_eq!(snapshot(&course).await?, seen);
-    assert!(dry.changed);
-    assert_eq!(dry.revision, None);
-    let saved = rewrite(&course, 0, "Section 0", &body, false).await?;
-    assert_eq!(
-        SectionEditOutcome {
-            revision: None,
-            ..saved
-        },
-        dry
-    );
+    assert!(preview.current);
+    assert!(preview.changed);
+    assert!(preview.problems.is_empty());
+
+    let saved = rewrite(&course, 0, "Section 0", &body).await?;
+    assert!(saved.changed);
+    let after = ledger(&course).await?;
+    assert!(entry_for(&after, NEW).claim_id() != entry_for(&after, GOOD).claim_id());
+    assert!(matches!(
+        entry_for(&after, "Headers are never trimmed for you.").state(),
+        ClaimState::Confirmed { .. }
+    ));
     Ok(())
 }
 
@@ -518,23 +543,35 @@ async fn the_checked_count_counts_only_statements_verified_against_a_source() ->
         entry_for(&seen, GOOD).state()
     );
 
-    let changed = rewrite(&course, 0, "Section 0", &written_over(), true).await?;
+    let changed = preview_rewrite(&course, 0, "Section 0", &written_over()).await?;
     let practice_only = {
         let text = section(GOOD);
         let last = text.rfind("Try it yourself").unwrap();
         format!("{}Try it yourself with a different file.", &text[..last])
     };
-    let untouched = rewrite(&course, 0, "Section 0", &practice_only, true).await?;
-    let removed = rewrite(&course, 0, "Section 0", &without_statement(), true).await?;
+    let untouched = preview_rewrite(&course, 0, "Section 0", &practice_only).await?;
+    let removed = preview_rewrite(&course, 0, "Section 0", &without_statement()).await?;
 
-    assert_eq!(changed.checked_statements_affected, 1);
-    assert_eq!(removed.checked_statements_affected, 1);
-    assert_eq!(untouched.checked_statements_affected, 0);
+    let has_checked = |p: &ContentEditPreview| {
+        p.consequences
+            .iter()
+            .any(|c| c.code == "claims.checked_statements")
+    };
+    assert!(has_checked(&changed));
+    assert!(has_checked(&removed));
+    assert!(!has_checked(&untouched));
 
     let not_checked = unchecked().await?;
-    let outcome = rewrite(&not_checked, 0, "Section 0", &written_over(), true).await?;
-    assert_eq!(outcome.statements_changed, 1);
-    assert_eq!(outcome.checked_statements_affected, 0);
+    let preview = preview_rewrite(&not_checked, 0, "Section 0", &written_over()).await?;
+    assert!(!has_checked(&preview));
+    rewrite(&not_checked, 0, "Section 0", &written_over()).await?;
+    assert!(matches!(
+        entry_for(&ledger(&not_checked).await?, GOOD).state(),
+        ClaimState::Edited {
+            by: Actor::User,
+            ..
+        }
+    ));
     Ok(())
 }
 
@@ -552,10 +589,9 @@ async fn a_lesson_with_no_review_gets_its_text_written() -> Result<()> {
             .await?;
     }
 
-    let outcome = rewrite(&course, 0, "A new title", &written_over(), false).await?;
+    let outcome = rewrite(&course, 0, "A new title", &written_over()).await?;
 
     assert!(outcome.changed);
-    assert_eq!(outcome.revision, None);
     assert_eq!(
         text_of(&course, 0).await?,
         ("A new title".to_owned(), written_over())
@@ -567,17 +603,12 @@ async fn a_lesson_with_no_review_gets_its_text_written() -> Result<()> {
 async fn a_lesson_from_another_course_is_refused() -> Result<()> {
     let course = unchecked().await?;
     let seen = snapshot(&course).await?;
-    let before = text_of(&course, 0).await?;
-    let mut edit = request(&course, 0, before, "Section 0", &written_over(), false);
-    edit.program_id = "another-course".into();
+    let missing = keys::section_ref("missing-lesson", 0);
 
-    let error = ClaimReviewService::new(course.db.clone())
-        .edit_section(edit)
-        .await
-        .unwrap_err();
-
+    let opened = course.edits().open(&missing).await;
+    assert!(opened.is_err(), "{opened:?}");
+    let error = opened.unwrap_err();
     assert!(matches!(error, AppError::NotFound(_)), "{error:?}");
-    assert_eq!(refusal(&error), "This lesson is not in this course.");
     assert_eq!(snapshot(&course).await?, seen);
     Ok(())
 }
@@ -591,9 +622,9 @@ async fn a_lesson_still_being_prepared_is_refused() -> Result<()> {
         .await?;
     let seen = snapshot(&course).await?;
 
-    let error = rewrite(&course, 0, "Section 0", &written_over(), false)
-        .await
-        .unwrap_err();
+    let req = edit_request(&course, 0, "Section 0", &written_over()).await?;
+    let result = course.edits().apply(&req).await;
+    let error = result.unwrap_err();
 
     assert!(matches!(error, AppError::InvalidState(_)), "{error:?}");
     assert_eq!(
@@ -646,7 +677,7 @@ async fn notes_on_the_edited_section_say_it_changed_after_them_and_other_notes_d
     let store = three_notes(&course).await?;
     assert_eq!(changed_after(&store, &course.lesson_id).await?, [false; 3]);
 
-    rewrite(&course, 0, "Section 0", &written_over(), false).await?;
+    rewrite(&course, 0, "Section 0", &written_over()).await?;
 
     // The list reads the whole lesson first, then each section in order.
     let notes = store.list(&course.lesson_id).await?;
@@ -662,7 +693,7 @@ async fn notes_on_the_edited_section_say_it_changed_after_them_and_other_notes_d
 async fn a_note_written_after_the_edit_does_not_say_the_section_changed() -> Result<()> {
     let course = unchecked().await?;
     three_notes(&course).await?;
-    rewrite(&course, 0, "Section 0", &written_over(), false).await?;
+    rewrite(&course, 0, "Section 0", &written_over()).await?;
     tokio::time::sleep(std::time::Duration::from_millis(20)).await;
 
     let store = three_notes(&course).await?;
@@ -689,6 +720,7 @@ fn rewrite_of<'a>(
         ended,
         written,
         at: 7,
+        edit_id: "edit",
     }
 }
 
@@ -808,10 +840,9 @@ async fn a_new_title_with_no_statement_on_the_old_one_writes_no_statement() -> R
     let course = unchecked().await?;
     let (_, body) = text_of(&course, 0).await?;
 
-    let outcome = rewrite(&course, 0, "A better title", &body, false).await?;
+    let outcome = rewrite(&course, 0, "A better title", &body).await?;
 
     assert!(outcome.changed);
-    assert_eq!(outcome.sentences_written, 0);
     let ledger = ledger(&course).await?;
     assert!(ledger
         .claims
@@ -856,10 +887,8 @@ async fn a_title_whose_statement_is_edited_is_written_as_a_statement_confirmed_b
     }
     let (_, body) = text_of(&course, 0).await?;
 
-    let outcome = rewrite(&course, 0, "A better title", &body, false).await?;
+    rewrite(&course, 0, "A better title", &body).await?;
 
-    assert_eq!(outcome.statements_changed, 1);
-    assert_eq!(outcome.sentences_written, 1);
     let ledger = ledger(&course).await?;
     let written = entry_for(&ledger, "A better title");
     assert!(matches!(written.state(), ClaimState::Confirmed { .. }));
@@ -920,7 +949,7 @@ async fn assert_no_undo_after(body: &str, statement: &str) -> Result<()> {
     let old = entry_for(&ledger(&course).await?, statement)
         .claim_id()
         .clone();
-    rewrite(&course, 0, "Section 0", body, false).await?;
+    rewrite(&course, 0, "Section 0", body).await?;
     let seen = snapshot(&course).await?;
 
     let offered = offered_for(&course, &old).await?;
@@ -957,7 +986,8 @@ async fn a_rewrite_whose_example_cannot_be_recorded_writes_nothing() -> Result<(
     .execute(&course.pool)
     .await?;
 
-    let result = rewrite(&course, 0, "Section 0", &written_over(), false).await;
+    let req = edit_request(&course, 0, "Section 0", &written_over()).await?;
+    let result = course.edits().apply(&req).await;
 
     assert!(result.is_err());
     assert_eq!(snapshot(&course).await?, before);
