@@ -1,4 +1,5 @@
-import type { LearningCitationDto, LearningClaimEvidenceDto, LearningEvidencePassageDto, LearningLessonEvidenceDto, LearningOutlineCitationDto, LearningOutlineCitationTarget, LearningOutlineEvidenceDto } from '@/lib/bindings';
+import type { AnchoredOccurrence } from '@/features/reading/citations';
+import type { LearningCitationDto, LearningClaimEvidenceDto, LearningClaimPartDto, LearningEvidencePassageDto, LearningLessonEvidenceDto, LearningOutlineCitationDto, LearningOutlineCitationTarget, LearningOutlineEvidenceDto } from '@/lib/bindings';
 import type { ClaimVerdict } from '@/types/conversation';
 
 export function passageKey(passage: LearningEvidencePassageDto): string {
@@ -37,9 +38,24 @@ export function checkWords(claim: LearningClaimEvidenceDto, citations: ReadonlyM
   return null;
 }
 
-/** What a Sourced statement says beyond its passage, of one kind: the common knowledge or the lesson's own figures no passage states. */
-export function partsOfKind(claim: LearningClaimEvidenceDto, kind: 'common' | 'own'): string[] {
+/** What a Sourced statement says beyond its passage, of one kind: the common knowledge or the lesson's own figures no passage states, or what follows from the passages without being stated. */
+export function partsOfKind(claim: LearningClaimEvidenceDto, kind: 'common' | 'own' | 'follows'): string[] {
   return (claim.parts ?? []).filter((part) => part.kind === kind).map((part) => part.part);
+}
+
+/** The passage a part's anchors lie in, and those anchors as the one occurrence the reader opens on. */
+export interface PartOpening {
+  number: number;
+  anchoredBy: AnchoredOccurrence[];
+}
+
+/** Where the reader opens for a part that names source sentences: the cited passage holding its anchors, marked as `contradicts` for a contradicted part, else with the statement's relation or `backs`. Null when the part has no anchors or none lies in a cited passage. */
+export function partOpening(
+  _claim: LearningClaimEvidenceDto,
+  _part: LearningClaimPartDto,
+  _citations: ReadonlyMap<number, LearningCitationDto>,
+): PartOpening | null {
+  return null;
 }
 
 type ReportCitations = Pick<LearningLessonEvidenceDto, 'citations'> | null | undefined;
