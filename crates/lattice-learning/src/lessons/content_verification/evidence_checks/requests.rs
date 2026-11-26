@@ -124,10 +124,16 @@ pub(super) fn shown(pending: &PendingClaim, labels: &Labels) -> Vec<ShownPassage
 
 /// [`shown`], for a page not yet held by a comparison.
 pub(in crate::lessons::content_verification) fn shown_passages(
-    _passages: &[EvidencePassage],
-    _labels: &Labels,
+    passages: &[EvidencePassage],
+    labels: &Labels,
 ) -> Vec<ShownPassage> {
-    Vec::new()
+    passages
+        .iter()
+        .map(|p| ShownPassage {
+            label: labels.get(&p.source_id).cloned().unwrap_or_default(),
+            text: p.text.clone(),
+        })
+        .collect()
 }
 
 /// The order the judge reads `pending`'s page in: a page of the course by

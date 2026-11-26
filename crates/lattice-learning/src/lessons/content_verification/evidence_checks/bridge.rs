@@ -179,8 +179,25 @@ pub(super) fn weigh(
 
 /// The sentences `part` rests on, as spans of the saved versions of the
 /// passages they are in. Only a part that rests on sentences has any.
-fn anchors_of(_part: &BridgePart, _pending: &PendingClaim) -> Vec<Anchor> {
-    Vec::new()
+fn anchors_of(part: &BridgePart, pending: &PendingClaim) -> Vec<Anchor> {
+    if !matches!(
+        part.kind,
+        PartKind::Stated | PartKind::Follows | PartKind::Contradicted
+    ) {
+        return Vec::new();
+    }
+    part.sentences
+        .iter()
+        .filter_map(|at| {
+            let passage = pending.evidence.get(at.passage)?;
+            passage.text.get(at.start..at.end)?;
+            Some(Anchor {
+                source_version_id: passage.source_id.clone(),
+                start_byte: passage.start_byte + at.start,
+                end_byte: passage.start_byte + at.end,
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
