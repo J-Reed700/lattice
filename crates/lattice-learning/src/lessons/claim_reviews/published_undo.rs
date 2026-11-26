@@ -116,7 +116,7 @@ pub(super) async fn apply_claim_action_in(
     let fragment = fragment_span.and_then(|(start, end)| TextSelector::of(&body, start, end));
     let context = serde_json::to_value(&ClaimsContext::Claim {
         claim_id: id.0.clone(),
-        event: event.clone(),
+        event: Box::new(event.clone()),
     })?;
     edits
         .apply_in(

@@ -340,7 +340,7 @@ impl ClaimReviewService {
         let edits = crate::edits::content_edits(&self.database)?;
         let (bodies, newest) = {
             let mut read = self.database.begin_read().await?;
-            let bodies = blocks::section_bodies_in(&mut *read, lesson_id).await?;
+            let bodies = blocks::section_bodies_in(&mut read, lesson_id).await?;
             let refs: Vec<_> = bodies
                 .keys()
                 .map(|&unit| keys::section_ref(lesson_id, unit))

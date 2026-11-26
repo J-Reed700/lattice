@@ -36,8 +36,13 @@ use crate::edits::question::ledger_unit;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(super) enum ClaimsContext {
-    Claim { claim_id: String, event: ClaimEvent },
-    Sentence { sentence: String },
+    Claim {
+        claim_id: String,
+        event: Box<ClaimEvent>,
+    },
+    Sentence {
+        sentence: String,
+    },
 }
 
 /// Receipt recorded on `content_edits` for reversible ledger mutations.
@@ -350,7 +355,7 @@ async fn apply_action(
     match parsed {
         ClaimsContext::Claim { claim_id, event } => {
             let id = ClaimId(claim_id);
-            match &event {
+            match event.as_ref() {
                 ClaimEvent::UserAction {
                     action: UserAction::Edit { before, after },
                     ..
@@ -388,8 +393,12 @@ async fn apply_action(
                         .ok_or_else(|| {
                             AppError::NotFound("No statement with that id in this lesson.".into())
                         })?;
-                    let plan =
-                        published_restore::plan(ledger_claims, target, &event, &unit.before_body)?;
+                    let plan = published_restore::plan(
+                        ledger_claims,
+                        target,
+                        event.as_ref(),
+                        &unit.before_body,
+                    )?;
                     if plan.new_body != unit.after_body {
                         return Err(AppError::InvalidState(MOVED_UNDER_ACTION.into()));
                     }

@@ -168,8 +168,7 @@ impl LearningCurriculumRepository {
                 .bind(program_id).bind(&module_id).fetch_all(&mut **conn).await? {
                 let lesson_id: String = l.get("id");
                 let assessment_started =
-                    lesson_activity_started(&mut **conn, program_id, &module_id, &lesson_id)
-                        .await?;
+                    lesson_activity_started(conn, program_id, &module_id, &lesson_id).await?;
                 let completed = l.get::<i64, _>("completed") != 0;
                 let preparation: String = l.get("preparation");
                 lessons.push(LearningCurriculumLesson {

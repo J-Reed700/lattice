@@ -102,7 +102,7 @@ async fn add_source_version(db: &Database, program_id: &str, marker: &str) -> Re
                 title: format!("Source {marker}"),
                 publisher: None,
                 requested_url: Some(url.clone()),
-                resolved_url: Some(url),
+                resolved_url: Some(url.clone()),
                 text: format!("Passage {marker} explaining the topic."),
                 truncated: false,
                 extraction_version: "test_v1".into(),

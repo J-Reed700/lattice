@@ -102,7 +102,7 @@ pub(in crate::lessons::claim_reviews) async fn section_bodies(
     lesson_id: &str,
 ) -> Result<HashMap<usize, String>> {
     let mut read = database.begin_read().await?;
-    let bodies = section_bodies_in(&mut *read, lesson_id).await?;
+    let bodies = section_bodies_in(&mut read, lesson_id).await?;
     read.commit().await?;
     Ok(bodies)
 }
