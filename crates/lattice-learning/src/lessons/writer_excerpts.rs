@@ -31,10 +31,20 @@ impl WriterExcerpts {
     /// The excerpts out of the writer's prompt `context`, the ones `candidate`
     /// cites first. `None` when it carries none.
     pub(super) fn take(llm: &dyn LLMPort, context: &mut Value, candidate: &Value) -> Option<Self> {
-        let excerpts = match context.get_mut("sources") {
+        let mut excerpts = match context.get_mut("sources") {
             Some(Value::Array(sources)) if !sources.is_empty() => std::mem::take(sources),
             _ => return None,
         };
+        for excerpt in &mut excerpts {
+            if let Some(slot) = excerpt.get_mut("excerpt") {
+                if let Some(raw) = slot.as_str() {
+                    let cleaned = lattice_core::shared::text::strip_scraped_chrome(raw);
+                    if cleaned != raw {
+                        *slot = Value::String(cleaned);
+                    }
+                }
+            }
+        }
         let cited = cited_sources(candidate);
         let (mut order, uncited): (Vec<_>, Vec<_>) = excerpts
             .iter()

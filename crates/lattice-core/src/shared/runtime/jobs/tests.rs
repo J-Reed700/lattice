@@ -1732,3 +1732,263 @@ async fn set_rank_in_updates_rank_and_due_orders_lowest_rank_first() -> Result<(
     assert_eq!(due_ids, vec![second, first, unranked]);
     Ok(())
 }
+
+#[tokio::test]
+async fn summary_reads_omit_staged_results_while_get_and_staged_preserve_them() -> Result<()> {
+    let db = database().await;
+    let store = JobStore::new(db.clone());
+    let (handler, mut started) = gate();
+    let runtime = JobRuntime::new(db.clone());
+    runtime
+        .register(
+            KIND,
+            handler.clone(),
+            JobKindConfig::new(RecoveryPolicy::Requeue),
+        )
+        .await?;
+    let job = runtime
+        .submit(&new_job(KIND, "staged-summary", Some("s")))
+        .await?;
+    let id = next(&mut started).await;
+    assert_eq!(id, job.id);
+    assert!(
+        store
+            .update_staged(&id, |_| Ok(json!({"big": "payload"})))
+            .await?
+    );
+
+    assert_eq!(
+        store.get(&id).await?.staged_result,
+        Some(json!({"big": "payload"}))
+    );
+    assert_eq!(store.staged(&id).await?, Some(json!({"big": "payload"})));
+    assert_eq!(store.get_summary(&id).await?.staged_result, None);
+    let mut read = db.begin_read().await?;
+    assert_eq!(
+        JobStore::list_summaries_for_subject_in(&mut read, KIND, "s").await?[0].staged_result,
+        None
+    );
+    read.commit().await?;
+    assert_eq!(store.live(KIND).await?[0].staged_result, None);
+
+    handler.release.add_permits(1);
+    finished(&runtime, &id).await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn begin_cancel_trips_worker_blocks_dispatch_and_abort_cancel_recovers() -> Result<()> {
+    let db = database().await;
+    let runtime = JobRuntime::with_poll_interval(db.clone(), Duration::from_millis(20));
+    let (handler, mut started) = gate();
+    runtime
+        .register(
+            KIND,
+            handler.clone(),
+            JobKindConfig::new(RecoveryPolicy::Requeue),
+        )
+        .await?;
+    let job = runtime.submit(&new_job(KIND, "abort-cancel", None)).await?;
+    assert_eq!(next(&mut started).await, job.id);
+
+    runtime.begin_cancel(&job.id);
+    // Worker finishes stopping cleanly -> suspended to pending, but cancelling guard keeps it paused.
+    finished(&runtime, &job.id).await;
+    runtime.dispatch(&job.id);
+    quiet(&mut started).await;
+
+    // If SQLite rejected cancellation (e.g. revision conflict), abort_cancel allows re-dispatch.
+    runtime.abort_cancel(&job.id);
+    assert_eq!(next(&mut started).await, job.id);
+
+    // Committing cancel ends it permanently.
+    runtime.cancel(&job.id).await?;
+    finished(&runtime, &job.id).await;
+    assert_eq!(
+        runtime.store().get_summary(&job.id).await?.status,
+        JobStatus::Cancelled
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancelling_many_jobs_under_heavy_write_load_completes_promptly_without_zombies(
+) -> Result<()> {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cancel-storm.sqlite");
+    crate::shared::testing::sqlite::write_migrated(&path)
+        .await
+        .unwrap();
+    let base =
+        crate::shared::testing::sqlite::file_options(&path).busy_timeout(Duration::from_secs(2));
+    let writer_pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(base.clone())
+        .await
+        .unwrap();
+    let reader_pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(2)
+        .acquire_timeout(Duration::from_secs(5))
+        .connect_with(base.pragma("query_only", "ON"))
+        .await
+        .unwrap();
+    let db = Database::with_writer_pool(reader_pool, writer_pool);
+    let runtime = JobRuntime::with_poll_interval(db.clone(), Duration::from_millis(25));
+    let (handler, mut started) = gate();
+    runtime
+        .register(
+            KIND,
+            handler.clone(),
+            JobKindConfig::new(RecoveryPolicy::Requeue).concurrency(12),
+        )
+        .await?;
+
+    let mut job_ids = Vec::new();
+    for index in 0..12 {
+        let job = runtime
+            .submit(&new_job(KIND, &format!("storm-{index}"), Some("course")))
+            .await?;
+        job_ids.push(job.id);
+    }
+    for _ in 0..12 {
+        next(&mut started).await;
+    }
+    let big_staged = "x".repeat(128 * 1024);
+    for id in &job_ids {
+        assert!(
+            runtime
+                .store()
+                .update_staged(id, {
+                    let big_staged = big_staged.clone();
+                    move |_| Ok(json!({"draft": big_staged}))
+                })
+                .await?
+        );
+    }
+
+    let order = Arc::new(Mutex::new(Vec::<&'static str>::new()));
+    let active_holder = db.begin_write().await.unwrap();
+    let mut queued_bg = Vec::new();
+    for job_id in job_ids.iter().take(10) {
+        let db = db.clone();
+        let store = runtime.store().clone();
+        let id = job_id.clone();
+        let order = Arc::clone(&order);
+        queued_bg.push(tokio::spawn(async move {
+            let _ = store.progress(&id, 1, "bg", None).await;
+            let tx = db.begin_write().await.unwrap();
+            order.lock().unwrap().push("bg");
+            tx.commit().await.unwrap();
+        }));
+        tokio::task::yield_now().await;
+    }
+    tokio::time::sleep(Duration::from_millis(20)).await;
+
+    let cancels: Vec<_> = job_ids
+        .iter()
+        .map(|id| {
+            let runtime = Arc::clone(&runtime);
+            let id = id.clone();
+            let order = Arc::clone(&order);
+            tokio::spawn(async move {
+                let res = runtime.cancel(&id).await?;
+                order.lock().unwrap().push("cancel");
+                Ok::<_, AppError>(res)
+            })
+        })
+        .collect();
+
+    // Even before the held write commits, every active cancellation token has tripped.
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    active_holder.commit().await.unwrap();
+
+    for handle in cancels {
+        let cancelled = tokio::time::timeout(Duration::from_secs(2), handle)
+            .await
+            .expect("cancel timed out behind standard write queue")
+            .unwrap()?;
+        assert_eq!(cancelled.status, JobStatus::Cancelled);
+    }
+    for handle in queued_bg {
+        handle.await.unwrap();
+    }
+    // Wait past poll interval to confirm no cancelled job ever revives as pending/running.
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    for id in &job_ids {
+        assert_eq!(
+            runtime.store().get_summary(id).await?.status,
+            JobStatus::Cancelled
+        );
+    }
+    let recorded = order.lock().unwrap().clone();
+    assert_eq!(recorded.first().copied(), Some("cancel"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn work_exit_wakes_dispatcher_after_registration_drops_without_poll_delay() -> Result<()> {
+    let runtime = JobRuntime::with_poll_interval(db().await, Duration::from_secs(60));
+    let (handler, mut started) = gate();
+    runtime
+        .register(KIND, handler, JobKindConfig::new(RecoveryPolicy::Requeue))
+        .await?;
+
+    let job = runtime.submit(&new_job(KIND, "wake-after-drop", None)).await?;
+    assert_eq!(next(&mut started).await, job.id);
+
+    runtime.begin_cancel(&job.id);
+    // Worker stops cleanly and suspends back to pending, waking the dispatcher
+    // only after `Registration` drops. Even with a 60s poll interval, aborting
+    // cancel must re-dispatch immediately.
+    finished(&runtime, &job.id).await;
+    runtime.abort_cancel(&job.id);
+    assert_eq!(next(&mut started).await, job.id);
+
+    runtime.cancel(&job.id).await?;
+    finished(&runtime, &job.id).await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn batch_runtime_cancel_helpers_stop_and_recover_all_jobs() -> Result<()> {
+    let runtime = JobRuntime::with_poll_interval(db().await, Duration::from_secs(60));
+    let (handler, mut started) = gate();
+    runtime
+        .register(
+            KIND,
+            handler,
+            JobKindConfig::new(RecoveryPolicy::Requeue).concurrency(4),
+        )
+        .await?;
+
+    let mut ids = Vec::new();
+    for i in 0..3 {
+        let job = runtime
+            .submit(&new_job(KIND, &format!("batch-{i}"), None))
+            .await?;
+        ids.push(job.id);
+    }
+    for _ in 0..3 {
+        next(&mut started).await;
+    }
+
+    runtime.begin_cancel_many(&ids);
+    for id in &ids {
+        finished(&runtime, id).await;
+    }
+    runtime.abort_cancel_many(&ids);
+    for _ in 0..3 {
+        next(&mut started).await;
+    }
+
+    runtime.begin_cancel_many(&ids);
+    for id in &ids {
+        runtime.store().cancel(id).await?;
+    }
+    runtime.finish_cancel_many(&ids).await;
+    for id in &ids {
+        finished(&runtime, id).await;
+        assert_eq!(runtime.store().get_summary(id).await?.status, JobStatus::Cancelled);
+    }
+    Ok(())
+}

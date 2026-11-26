@@ -117,7 +117,7 @@ impl LearningCurriculumRepository {
         let mut tx = self.db.begin_write().await?;
         let not_found = || AppError::NotFound("Generation job not found".into());
         let scope = job_scope(&mut tx, id).await?.ok_or_else(not_found)?;
-        let job = JobStore::find_in(&mut tx, id)
+        let job = JobStore::find_summary_in(&mut tx, id)
             .await?
             .ok_or_else(not_found)?;
         if job.status != JobStatus::Running {

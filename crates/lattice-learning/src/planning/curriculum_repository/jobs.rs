@@ -1,8 +1,8 @@
 //! Lesson generation jobs: starting, cancelling, retrying and reading them with their scope.
 use super::generation_recovery::{ENDED_BY_UPDATE, LESSON_PREPARATION};
 use super::{
-    curriculum_operation, stable_job_operation_id, validate_operation_id, JobScope,
-    LearningCurriculumRepository,
+    curriculum_operation, lesson_rank_in, stable_job_operation_id, validate_operation_id,
+    JobScope, LearningCurriculumRepository,
 };
 use crate::course_plan::COURSE_PLAN;
 use crate::curriculum::{
@@ -21,6 +21,24 @@ use lattice_core::shared::runtime::jobs::{JobRecord, JobStatus, JobStore, NewJob
 use sqlx::Row;
 use std::collections::HashSet;
 
+/// Result of read-only cancellation preflight before tripping worker tokens.
+#[derive(Debug, Clone)]
+pub enum CancelPreflight {
+    /// Matching operation already committed; return the saved job without
+    /// tripping any runtime token or taking a write turn.
+    Replayed(LearningGenerationJob),
+    /// Inputs, program revision, ownership, and status permit cancellation.
+    Proceed,
+}
+
+enum ValidatedJobAction {
+    Replayed(String),
+    Ready {
+        payload: String,
+        content_is_current: bool,
+    },
+}
+
 impl LearningCurriculumRepository {
     pub async fn jobs(&self, program_id: &str) -> Result<Vec<LearningGenerationJob>> {
         let mut read = self.db.begin_read().await?;
@@ -37,7 +55,7 @@ impl LearningCurriculumRepository {
         let mut jobs = Vec::new();
         for kind in [LESSON_PREPARATION, QUIZ_BANK, QUIZ_GRADING, COURSE_PLAN] {
             let mut of_kind =
-                JobStore::list_for_subject_in(&mut *connection, kind, program_id).await?;
+                JobStore::list_summaries_for_subject_in(&mut *connection, kind, program_id).await?;
             of_kind.reverse();
             jobs.extend(of_kind);
         }
@@ -231,19 +249,20 @@ impl LearningCurriculumRepository {
         .fetch_all(&mut *tx)
         .await?;
         let scopes = job_scopes(&mut tx, program_id).await?;
-        let covered = JobStore::list_for_subject_in(&mut tx, LESSON_PREPARATION, program_id)
-            .await?
-            .into_iter()
-            .filter(|job| {
-                scopes
-                    .get(&job.id)
-                    .is_some_and(|scope| scope.content_revision == Some(content_revision))
-            })
-            .map(|job| PreparationRequest::parse(&job.requested.to_string()))
-            .collect::<Result<Vec<_>>>()?
-            .into_iter()
-            .flat_map(|request| request.lesson_ids)
-            .collect::<HashSet<_>>();
+        let covered =
+            JobStore::list_summaries_for_subject_in(&mut tx, LESSON_PREPARATION, program_id)
+                .await?
+                .into_iter()
+                .filter(|job| {
+                    scopes
+                        .get(&job.id)
+                        .is_some_and(|scope| scope.content_revision == Some(content_revision))
+                })
+                .map(|job| PreparationRequest::parse(&job.requested.to_string()))
+                .collect::<Result<Vec<_>>>()?
+                .into_iter()
+                .flat_map(|request| request.lesson_ids)
+                .collect::<HashSet<_>>();
         let untried: Vec<String> = candidates
             .into_iter()
             .filter(|lesson| !covered.contains(lesson))
@@ -448,7 +467,7 @@ impl LearningCurriculumRepository {
         content_revision: i64,
     ) -> Result<Vec<(JobRecord, PreparationRequest)>> {
         let scopes = job_scopes(&mut *connection, program_id).await?;
-        JobStore::list_for_subject_in(&mut *connection, LESSON_PREPARATION, program_id)
+        JobStore::list_summaries_for_subject_in(&mut *connection, LESSON_PREPARATION, program_id)
             .await?
             .into_iter()
             .filter(|job| {
@@ -476,12 +495,62 @@ impl LearningCurriculumRepository {
         Ok(preparable)
     }
 
-    /// Commits the cancellation. The caller then signals the running worker.
+    /// Validates a cancellation request via read-only query (`begin_read`)
+    /// before tripping any in-memory worker token or queuing on write turns.
+    pub async fn preflight_cancel(
+        &self,
+        request: &LearningGenerationJobActionRequestDto,
+    ) -> Result<CancelPreflight> {
+        let mut read = self.db.begin_read().await?;
+        let preflight =
+            match Self::validate_job_action_on(&mut read, request, JobAction::Cancel).await? {
+                ValidatedJobAction::Replayed(id) => {
+                    CancelPreflight::Replayed(Self::job_on(&mut read, &id).await?)
+                }
+                ValidatedJobAction::Ready { .. } => {
+                    JobStore::ensure_cancellable_in(&mut read, &request.job_id).await?;
+                    CancelPreflight::Proceed
+                }
+            };
+        read.commit().await?;
+        Ok(preflight)
+    }
+
+    /// Commits the cancellation on the urgent write lane. Callers should run
+    /// [`Self::preflight_cancel`] and signal [`JobRuntime::begin_cancel`]
+    /// before calling this, then [`JobRuntime::finish_cancel`] or
+    /// [`JobRuntime::abort_cancel`] after.
     pub async fn cancel_job(
         &self,
         request: &LearningGenerationJobActionRequestDto,
     ) -> Result<LearningGenerationJob> {
-        self.job_action(request, JobAction::Cancel).await
+        let tx = self.db.urgent().begin_write().await?;
+        Self::commit_job_action(tx, request, JobAction::Cancel).await
+    }
+
+    /// Commits multiple cancellations in a single urgent write transaction.
+    ///
+    /// Already-terminal jobs (`Completed`, `Failed`, `Cancelled`) are skipped
+    /// so a concurrent finish does not roll back pauses for active siblings,
+    /// while invalid inputs, missing jobs, or program revision conflicts still
+    /// fail the batch atomically. Callers cancelling jobs tracked by a live
+    /// runtime should pair this with `JobRuntime::begin_cancel_many` and
+    /// `finish_cancel_many` / `abort_cancel_many`.
+    pub async fn cancel_jobs(
+        &self,
+        requests: &[LearningGenerationJobActionRequestDto],
+    ) -> Result<Vec<LearningGenerationJob>> {
+        if requests.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut tx = self.db.urgent().begin_write().await?;
+        let mut jobs = Vec::with_capacity(requests.len());
+        for request in requests {
+            let id = Self::cancel_batch_item_on(&mut tx, request).await?;
+            jobs.push(Self::job_on(&mut tx, &id).await?);
+        }
+        tx.commit().await?;
+        Ok(jobs)
     }
 
     /// Saves a new attempt that inherits the job's saved work. The caller
@@ -490,7 +559,7 @@ impl LearningCurriculumRepository {
         &self,
         request: &LearningGenerationJobActionRequestDto,
     ) -> Result<LearningGenerationJob> {
-        self.job_action(request, JobAction::Retry).await
+        self.standard_job_action(request, JobAction::Retry).await
     }
 
     /// Saves a new attempt of a completed job whose lessons wait for the
@@ -502,124 +571,58 @@ impl LearningCurriculumRepository {
         &self,
         request: &LearningGenerationJobActionRequestDto,
     ) -> Result<LearningGenerationJob> {
-        self.job_action(request, JobAction::ContinueReview).await
+        self.standard_job_action(request, JobAction::ContinueReview).await
     }
 
-    /// Moves a queued pending lesson-preparation job to the front of its course
-    /// queue by lowering its rank strictly below all other unfinished lesson
-    /// jobs for that course. Running jobs are an idempotent no-op.
-    pub async fn prioritize_job(
-        &self,
-        request: &LearningGenerationJobActionRequestDto,
-    ) -> Result<LearningGenerationJob> {
-        validate_operation_id(&request.operation_id)?;
-        uuid::Uuid::parse_str(&request.program_id)
-            .map_err(|_| AppError::InvalidInput("Invalid program ID.".into()))?;
-        uuid::Uuid::parse_str(&request.job_id)
-            .map_err(|_| AppError::InvalidInput("Invalid generation job ID.".into()))?;
-        let payload = hash(request)?;
-        let operation = curriculum_operation(
-            &request.operation_id,
-            &request.program_id,
-            "prioritize_job",
-            &payload,
-            "Operation ID was reused with different job action data.",
-        );
-        let mut tx = self.db.begin_write().await?;
-        if let Some(id) = operation.replay::<String>(&mut tx).await? {
-            let job = Self::job_on(&mut tx, &id).await?;
-            tx.commit().await?;
-            return Ok(job);
-        }
-        check_program_open(&mut tx, &request.program_id, request.expected_revision).await?;
-        let scope = job_scope(&mut tx, &request.job_id)
-            .await?
-            .filter(|scope| scope.program_id == request.program_id)
-            .ok_or_else(|| AppError::NotFound("Generation job not found".into()))?;
-        let existing = JobStore::find_in(&mut tx, &request.job_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("Generation job not found".into()))?;
-        if existing.kind != LESSON_PREPARATION {
-            return Err(AppError::InvalidState(
-                "Only lesson preparation jobs can be prioritized.".into(),
-            ));
-        }
-        match existing.status {
-            JobStatus::Running => {
-                operation.record(&mut tx, &existing.id).await?;
-                let job = learning_job(existing, scope)?;
-                tx.commit().await?;
-                return Ok(job);
-            }
-            JobStatus::Pending => {}
-            _ => {
-                return Err(AppError::InvalidState(
-                    "Only queued or running lesson preparation jobs can be prioritized.".into(),
-                ));
-            }
-        }
-        let other_min: Option<i64> = sqlx::query_scalar(
-            "SELECT MIN(j.rank) FROM jobs j JOIN learning_jobs lj ON lj.job_id=j.id WHERE lj.program_id=? AND j.kind=? AND j.status IN ('pending','running') AND j.id<>? AND j.rank IS NOT NULL",
-        )
-        .bind(&request.program_id)
-        .bind(LESSON_PREPARATION)
-        .bind(&request.job_id)
-        .fetch_one(&mut *tx)
-        .await?;
-        let already_strict_min = matches!(
-            (existing.rank, other_min),
-            (Some(current), Some(other)) if current < other
-        ) || matches!((existing.rank, other_min), (Some(_), None));
-        if !already_strict_min {
-            let all_min: Option<i64> = sqlx::query_scalar(
-                "SELECT MIN(j.rank) FROM jobs j JOIN learning_jobs lj ON lj.job_id=j.id WHERE lj.program_id=? AND j.kind=? AND j.status IN ('pending','running') AND j.rank IS NOT NULL",
-            )
-            .bind(&request.program_id)
-            .bind(LESSON_PREPARATION)
-            .fetch_one(&mut *tx)
-            .await?;
-            let new_rank = all_min.unwrap_or(0).saturating_sub(1);
-            JobStore::set_rank_in(&mut tx, &request.job_id, new_rank).await?;
-        }
-        operation.record(&mut tx, &request.job_id).await?;
-        let job = Self::job_on(&mut tx, &request.job_id).await?;
-        tx.commit().await?;
-        Ok(job)
-    }
-
-    async fn job_action(
+    async fn standard_job_action(
         &self,
         request: &LearningGenerationJobActionRequestDto,
         action: JobAction,
     ) -> Result<LearningGenerationJob> {
-        let mut tx = self.db.begin_write().await?;
+        let tx = self.db.begin_write().await?;
+        Self::commit_job_action(tx, request, action).await
+    }
+
+    async fn commit_job_action(
+        mut tx: WriteTx,
+        request: &LearningGenerationJobActionRequestDto,
+        action: JobAction,
+    ) -> Result<LearningGenerationJob> {
         let id = Self::job_action_on(&mut tx, request, action).await?;
         let job = Self::job_on(&mut tx, &id).await?;
         tx.commit().await?;
         Ok(job)
     }
 
-    async fn job_action_on(
-        tx: &mut WriteTx,
-        request: &LearningGenerationJobActionRequestDto,
+    fn action_operation<'a>(
+        request: &'a LearningGenerationJobActionRequestDto,
         action: JobAction,
-    ) -> Result<String> {
-        validate_operation_id(&request.operation_id)?;
-        let payload = hash(request)?;
-        let operation = curriculum_operation(
+        payload: &'a str,
+    ) -> crate::operations::Operation<'a> {
+        curriculum_operation(
             &request.operation_id,
             &request.program_id,
             action.operation_kind(),
-            &payload,
+            payload,
             "Operation ID was reused with different job action data.",
-        );
-        if let Some(id) = operation.replay::<String>(tx).await? {
-            return Ok(id);
+        )
+    }
+
+    async fn validate_job_action_on(
+        connection: &mut sqlx::SqliteConnection,
+        request: &LearningGenerationJobActionRequestDto,
+        action: JobAction,
+    ) -> Result<ValidatedJobAction> {
+        validate_operation_id(&request.operation_id)?;
+        let payload = hash(request)?;
+        let operation = Self::action_operation(request, action, &payload);
+        if let Some(id) = operation.replay::<String>(connection).await? {
+            return Ok(ValidatedJobAction::Replayed(id));
         }
         let program =
             sqlx::query("SELECT revision,content_revision FROM learning_programs WHERE id=?")
                 .bind(&request.program_id)
-                .fetch_optional(&mut **tx)
+                .fetch_optional(&mut *connection)
                 .await?
                 .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
         if program.get::<i64, _>("revision") != request.expected_revision {
@@ -627,19 +630,55 @@ impl LearningCurriculumRepository {
                 "Program changed; reload and retry.".into(),
             ));
         }
-        let scope = job_scope(tx, &request.job_id)
+        let scope = job_scope(connection, &request.job_id)
             .await?
             .filter(|scope| scope.program_id == request.program_id)
             .ok_or_else(|| AppError::NotFound("Generation job not found".into()))?;
-        let old = JobStore::find_in(tx, &request.job_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("Generation job not found".into()))?;
+        Ok(ValidatedJobAction::Ready {
+            payload,
+            content_is_current: scope.content_revision
+                == Some(program.get::<i64, _>("content_revision")),
+        })
+    }
+
+    async fn cancel_batch_item_on(
+        tx: &mut WriteTx,
+        request: &LearningGenerationJobActionRequestDto,
+    ) -> Result<String> {
+        let payload = match Self::validate_job_action_on(tx, request, JobAction::Cancel).await? {
+            ValidatedJobAction::Replayed(id) => return Ok(id),
+            ValidatedJobAction::Ready { payload, .. } => payload,
+        };
+        if JobStore::cancel_if_active_in(tx, &request.job_id).await? {
+            Self::action_operation(request, JobAction::Cancel, &payload)
+                .record(tx, &request.job_id)
+                .await?;
+        }
+        Ok(request.job_id.clone())
+    }
+
+    async fn job_action_on(
+        tx: &mut WriteTx,
+        request: &LearningGenerationJobActionRequestDto,
+        action: JobAction,
+    ) -> Result<String> {
+        let (payload, content_is_current) =
+            match Self::validate_job_action_on(tx, request, action).await? {
+                ValidatedJobAction::Replayed(id) => return Ok(id),
+                ValidatedJobAction::Ready {
+                    payload,
+                    content_is_current,
+                } => (payload, content_is_current),
+            };
         let result_id = match action {
             JobAction::Cancel => {
                 JobStore::cancel_in(tx, &request.job_id).await?;
                 request.job_id.clone()
             }
             JobAction::Retry | JobAction::ContinueReview => {
+                let old = JobStore::find_summary_in(tx, &request.job_id)
+                    .await?
+                    .ok_or_else(|| AppError::NotFound("Generation job not found".into()))?;
                 let lessons = if action == JobAction::Retry {
                     if !matches!(
                         old.status,
@@ -653,7 +692,7 @@ impl LearningCurriculumRepository {
                 } else {
                     Some(held_outlines(tx, &request.program_id, &old).await?)
                 };
-                if scope.content_revision != Some(program.get::<i64, _>("content_revision")) {
+                if !content_is_current {
                     return Err(AppError::InvalidState(
                         "Course content changed after this job was created. Start preparation again for the updated course.".into(),
                     ));
@@ -689,7 +728,9 @@ impl LearningCurriculumRepository {
                 admitted.id
             }
         };
-        operation.record(tx, &result_id).await?;
+        Self::action_operation(request, action, &payload)
+            .record(tx, &result_id)
+            .await?;
         Ok(result_id)
     }
 
@@ -700,7 +741,7 @@ impl LearningCurriculumRepository {
         Ok(job)
     }
 
-    async fn job_on(
+    pub(super) async fn job_on(
         connection: &mut sqlx::SqliteConnection,
         id: &str,
     ) -> Result<LearningGenerationJob> {
@@ -708,7 +749,7 @@ impl LearningCurriculumRepository {
         let scope = job_scope(&mut *connection, id)
             .await?
             .ok_or_else(not_found)?;
-        let job = JobStore::find_in(&mut *connection, id)
+        let job = JobStore::find_summary_in(&mut *connection, id)
             .await?
             .ok_or_else(not_found)?;
         learning_job(job, scope)
@@ -749,22 +790,6 @@ pub(super) async fn preparable_in(
         query = query.bind(id);
     }
     Ok(query.fetch_all(connection).await?.into_iter().collect())
-}
-
-/// A lesson's place in its course, counting from 0 through every lesson in
-/// course order (module ordinal, then lesson ordinal). It is the rank of the
-/// lesson's jobs: the model serves a course's backlog lowest rank first.
-pub(crate) async fn lesson_rank_in(
-    connection: &mut sqlx::SqliteConnection,
-    lesson_id: &str,
-) -> Result<Option<i64>> {
-    sqlx::query_scalar(
-        "SELECT (SELECT count(*) FROM learning_lessons earlier JOIN learning_modules earlier_module ON earlier_module.id=earlier.module_id WHERE earlier.program_id=lesson.program_id AND (earlier_module.ordinal<own_module.ordinal OR (earlier_module.ordinal=own_module.ordinal AND earlier.ordinal<lesson.ordinal))) FROM learning_lessons lesson JOIN learning_modules own_module ON own_module.id=lesson.module_id WHERE lesson.id=?",
-    )
-    .bind(lesson_id)
-    .fetch_optional(connection)
-    .await
-    .map_err(AppError::from)
 }
 
 /// Validates a program ID and returns non-empty deduplicated lesson IDs.
@@ -892,7 +917,7 @@ async fn job_scopes(
         .collect())
 }
 
-fn learning_job(job: JobRecord, scope: JobScope) -> Result<LearningGenerationJob> {
+pub(super) fn learning_job(job: JobRecord, scope: JobScope) -> Result<LearningGenerationJob> {
     use LearningGenerationJobStatus as S;
     let kind = match job.kind.as_str() {
         LESSON_PREPARATION => LearningGenerationJobKind::LessonPreparation,

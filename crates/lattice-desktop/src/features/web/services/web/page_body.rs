@@ -44,9 +44,9 @@ pub(super) async fn body_text(
 ) -> Result<String> {
     match kind {
         BodyKind::Pdf => pdf_text(body).await,
-        BodyKind::Text | BodyKind::Html => {
-            Ok(decode_response_text(body, content_type).trim().to_string())
-        }
+        BodyKind::Text | BodyKind::Html => Ok(lattice_core::shared::text::strip_scraped_chrome(
+            decode_response_text(body, content_type).trim(),
+        )),
     }
 }
 
@@ -101,5 +101,14 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(text, "Section 1. Scope");
+
+        let stripped = body_text(
+            BodyKind::Text,
+            b"[View a markdown version of this page](https://docs.aws.amazon.com/guide.md)\n\n# Real Heading".to_vec(),
+            Some("text/markdown"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(stripped, "# Real Heading");
     }
 }

@@ -93,8 +93,8 @@ impl WriteTurns {
         })
     }
 
-    /// Skips the standard lane queue so an interactive user edit waits only for
-    /// at most one active standard unit and any earlier urgent units.
+    /// Skips the standard lane queue so an interactive user action waits only
+    /// for at most one active standard unit and any earlier urgent units.
     pub(super) async fn take_urgent(
         self: &Arc<Self>,
         at: &'static Location<'static>,
