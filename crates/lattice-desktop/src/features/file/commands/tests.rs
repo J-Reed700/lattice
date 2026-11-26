@@ -129,3 +129,13 @@ fn test_no_command_injection_patterns() {
         );
     }
 }
+
+#[test]
+fn read_file_bytes_wraps_bytes_as_raw_binary_ipc_response() {
+    use tauri::ipc::{InvokeResponseBody, IpcResponse};
+
+    let payload = vec![0x25, 0x50, 0x44, 0x46, 0x00, 0xff];
+    let response = super::into_binary_ipc_response(payload.clone());
+    let body = response.body().expect("raw IPC response body");
+    assert!(matches!(body, InvokeResponseBody::Raw(bytes) if bytes == payload));
+}

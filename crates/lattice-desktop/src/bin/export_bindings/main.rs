@@ -23,6 +23,41 @@ mod settings;
 use specta_typescript::{BigIntExportBehavior, Typescript};
 use std::path::{Path, PathBuf};
 
+const RAW_READ_FILE_BYTES_BINDING: &str = "\
+/**
+ * Legacy Tauri shim - Reads the content of a file as raw binary bytes for preview purposes
+ */
+async readFileBytes(path: string) : Promise<Result<ArrayBuffer, AppError>> {
+    try {
+    return { status: \"ok\", data: await TAURI_INVOKE(\"read_file_bytes\", { path }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: \"error\", error: e  as any };
+}
+},
+";
+
+/// Commands returning `tauri::ipc::Response` (binary payloads) are not
+/// `specta::Type` and cannot be collected by `tauri_specta::collect_commands!`.
+/// Insert their typed wrappers right alongside the `file` plugin shims before
+/// `routes::qualify_commands` and `contracts::render_contracts` run so
+/// `src/lib/bindings.ts` and `src/shared/ipc/routes.generated.ts` retain full
+/// `CommandArgs` / `CommandResults` / route contracts.
+fn inject_raw_ipc_commands(bindings: &str) -> Result<String, String> {
+    let read_content_start = bindings
+        .find("async readFileContent(")
+        .ok_or("missing `readFileContent` anchor in generated bindings")?;
+    let rest = bindings
+        .get(read_content_start..)
+        .ok_or("invalid `readFileContent` offset in generated bindings")?;
+    let entry_end = rest
+        .find("\n},\n")
+        .ok_or("missing end of `readFileContent` entry in generated bindings")?;
+    let insert_at = read_content_start + entry_end + "\n},\n".len();
+    let (before, after) = bindings.split_at(insert_at);
+    Ok(format!("{before}{RAW_READ_FILE_BYTES_BINDING}{after}"))
+}
+
 fn normalize_generated_bindings(generated: &str) -> Result<String, String> {
     let generated =
         settings::normalize_settings_output(generated).map_err(|error| error.to_string())?;
@@ -342,7 +377,6 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::file::commands::open_file,
             lattice::features::file::commands::open_file_by_id,
             lattice::features::file::commands::read_file_content,
-            lattice::features::file::commands::read_file_bytes,
             lattice::features::file::commands::show_in_folder,
             lattice::interfaces::commands::document_list::get_document,
             lattice::features::compare::plugin::compare_documents,
@@ -607,6 +641,7 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
         )
         .map_err(|error| format!("Error generating bindings: {error}"))?;
     let bindings = normalize_generated_bindings(&bindings)?;
+    let bindings = inject_raw_ipc_commands(&bindings)?;
 
     let capabilities_path = workspace_root
         .join("crates")
@@ -711,5 +746,51 @@ mod tests {
             first_difference(generated, committed),
             Some((2, "export type B = number".to_string(), String::new()))
         );
+    }
+
+    #[test]
+    fn raw_read_file_bytes_command_is_injected_and_qualified_as_array_buffer() -> Result<(), String>
+    {
+        let sample = "export const commands = {\n\
+async readFileContent(path: string) : Promise<Result<string, AppError>> {\n\
+    try {\n\
+    return { status: \"ok\", data: await TAURI_INVOKE(\"read_file_content\", { path }) };\n\
+} catch (e) {\n\
+    if(e instanceof Error) throw e;\n\
+    else return { status: \"error\", error: e  as any };\n\
+}\n\
+},\n\
+/**\n\
+ * Legacy Tauri shim - Reveals a file in the system file explorer\n\
+ */\n\
+async showInFolder(path: string) : Promise<Result<null, AppError>> {\n\
+    try {\n\
+    return { status: \"ok\", data: await TAURI_INVOKE(\"show_in_folder\", { path }) };\n\
+} catch (e) {\n\
+    if(e instanceof Error) throw e;\n\
+    else return { status: \"error\", error: e  as any };\n\
+}\n\
+},\n\
+}\n";
+        let injected = super::inject_raw_ipc_commands(sample)?;
+        let capabilities = r#"{
+            "permissions": [
+                "file:allow-read-file-content",
+                "file:allow-read-file-bytes",
+                "file:allow-show-in-folder"
+            ]
+        }"#;
+        let owners = super::routes::command_owners(capabilities)?;
+        let (qualified, routes) = super::routes::qualify_commands(&injected, &owners)?;
+        let contracts = super::contracts::render_contracts(&qualified)?;
+
+        assert_eq!(
+            routes.get("read_file_bytes").map(String::as_str),
+            Some("file")
+        );
+        assert!(qualified.contains("TAURI_INVOKE(\"plugin:file|read_file_bytes\", { path })"));
+        assert!(contracts.contains("\tread_file_bytes: { path: string };\n"));
+        assert!(contracts.contains("\tread_file_bytes: ArrayBuffer;\n"));
+        Ok(())
     }
 }

@@ -130,12 +130,20 @@ describe('documentApi', () => {
   });
 
   describe('readFileBytes', () => {
-    it('turns the byte array into a Uint8Array', async () => {
-      vi.mocked(invoke).mockResolvedValueOnce([104, 105]);
-      const result = await documentApi.readFileBytes('/notes/hi.txt');
-      expect(invoke).toHaveBeenCalledWith(route('read_file_bytes'), { path: '/notes/hi.txt' });
-      expect(result.ok && Array.from(result.data)).toEqual([104, 105]);
+    it('wraps the binary ArrayBuffer payload in a Uint8Array', async () => {
+      const bytes = new Uint8Array([0x25, 0x50, 0x00, 0xff]);
+      vi.mocked(invoke).mockResolvedValueOnce(bytes.buffer);
+      const result = await documentApi.readFileBytes('/notes/hi.pdf');
+      expect(invoke).toHaveBeenCalledWith(route('read_file_bytes'), { path: '/notes/hi.pdf' });
       expect(result.ok && result.data).toBeInstanceOf(Uint8Array);
+      expect(result.ok && Array.from(result.data)).toEqual([0x25, 0x50, 0x00, 0xff]);
+    });
+
+    it('preserves an empty ArrayBuffer as an empty Uint8Array', async () => {
+      vi.mocked(invoke).mockResolvedValueOnce(new ArrayBuffer(0));
+      const result = await documentApi.readFileBytes('/notes/empty.bin');
+      expect(result.ok && result.data).toBeInstanceOf(Uint8Array);
+      expect(result.ok && result.data.byteLength).toBe(0);
     });
 
     it('passes a failed read through', async () => {

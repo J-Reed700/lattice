@@ -151,7 +151,7 @@ pub async fn get_indexing_activities(
 ///
 /// # Security
 /// - Path validation prevents directory traversal (CWE-22)
-/// - File size bounded by `read_content::MAX_FILE_SIZE_BYTES` to prevent WebView/IPC OOM (CWE-770)
+/// - Admitted against measured available system memory to prevent WebView/IPC OOM (CWE-770)
 pub async fn read_file_content_impl(
     container: &Container,
     path: String,
@@ -167,9 +167,9 @@ pub async fn read_file_content_impl(
             max_size_bytes,
             ..
         }) => Err(AppError::InvalidInput(format!(
-            "File too large to preview (max {} MiB, file is {} bytes)",
-            max_size_bytes / (1024 * 1024),
-            size_bytes
+            "File too large for available memory to preview (max {}, file is {})",
+            crate::infrastructure::services::memory_admission::format_bytes(max_size_bytes),
+            crate::infrastructure::services::memory_admission::format_bytes(size_bytes),
         ))),
         Err(e) => Err(e),
     }
@@ -179,7 +179,7 @@ pub async fn read_file_content_impl(
 ///
 /// # Security
 /// - Path validation prevents directory traversal (CWE-22)
-/// - File size bounded by `read_bytes::MAX_FILE_SIZE_BYTES` to prevent WebView/IPC OOM (CWE-770)
+/// - Admitted against measured available system memory to prevent WebView/IPC OOM (CWE-770)
 pub async fn read_file_bytes_impl(
     container: &Container,
     path: String,
@@ -195,9 +195,9 @@ pub async fn read_file_bytes_impl(
             max_size_bytes,
             ..
         }) => Err(AppError::InvalidInput(format!(
-            "File too large to preview (max {} MiB, file is {} bytes)",
-            max_size_bytes / (1024 * 1024),
-            size_bytes
+            "File too large for available memory to preview (max {}, file is {})",
+            crate::infrastructure::services::memory_admission::format_bytes(max_size_bytes),
+            crate::infrastructure::services::memory_admission::format_bytes(size_bytes),
         ))),
         Err(e) => Err(e),
     }
@@ -213,14 +213,19 @@ pub async fn read_file_content(
     read_file_content_impl(&container, path).await
 }
 
-/// Legacy Tauri shim - Reads the content of a file as bytes for preview purposes
+/// Wrap raw file bytes in a binary Tauri IPC response (no JSON number-array encoding).
+fn into_binary_ipc_response(bytes: Vec<u8>) -> tauri::ipc::Response {
+    tauri::ipc::Response::new(bytes)
+}
+
+/// Legacy Tauri shim - Reads the content of a file as raw binary bytes over Tauri IPC.
 #[tauri::command]
-#[specta::specta]
 pub async fn read_file_bytes(
     path: String,
     container: State<'_, Container>,
-) -> Result<Vec<u8>, AppError> {
-    read_file_bytes_impl(&container, path).await
+) -> Result<tauri::ipc::Response, AppError> {
+    let bytes = read_file_bytes_impl(&container, path).await?;
+    Ok(into_binary_ipc_response(bytes))
 }
 
 /// Core implementation - Retrieves file metadata (size and modification time) for a given path

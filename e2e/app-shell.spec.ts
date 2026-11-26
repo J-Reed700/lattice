@@ -406,7 +406,7 @@ test('opens imported PDF bytes in the library and renders pages after reopening'
       }],
       read_file_bytes: (args) => {
         if ((args as { path: string }).path !== filePath) throw new Error('Unexpected PDF path');
-        return bytes;
+        return new Uint8Array(bytes).buffer;
       },
       initialize_database: () => 'Database initialized',
       list_downloads: () => [],

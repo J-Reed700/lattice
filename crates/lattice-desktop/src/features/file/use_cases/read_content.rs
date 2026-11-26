@@ -1,42 +1,38 @@
 //! Read File Content Use Case
 //!
-//! Reads the content of a text file with security limits.
+//! Reads the content of a text file with memory-based admission.
 
 use crate::features::file::dto::{FileContentDto, ReadFileContentRequestDto};
 use crate::infrastructure::security::{FileAccessConfig, ValidatedFile};
+use crate::infrastructure::services::memory_admission::{
+    check_read_content_admission, MemoryProbe, SysinfoMemoryProbe,
+};
 use lattice_core::application::ports::{ContentExtractionPort, FileStoragePort};
 use lattice_core::shared::error::{AppError, Result};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
-
-/// Maximum file size for in-app text preview (100 MiB).
-///
-/// Preview reads materialize the entire file in Rust memory and send it over
-/// Tauri JSON IPC into the WebView renderer. Keeping a 100 MiB UI/IPC OOM
-/// guard prevents multi-gigabyte binaries or logs from exhausting memory
-/// (CWE-400 / CWE-770) while still allowing large local documents.
-pub const MAX_FILE_SIZE_BYTES: u64 = lattice_core::shared::constants::MAX_FILE_SIZE_BYTES;
 
 /// Use case for reading file content as text.
 ///
 /// This use case:
 /// 1. Validates the file path (security: CWE-22)
 /// 2. Checks file existence
-/// 3. Validates file size (security: prevents DoS)
+/// 3. Validates available system memory headroom (security: prevents DoS)
 /// 4. Reads file content as UTF-8 text
 /// 5. Returns content with metadata
 ///
 /// # Security
 ///
 /// - Path validation prevents directory traversal (CWE-22)
-/// - File size limit prevents resource exhaustion (CWE-770, CWE-400)
+/// - Memory-based admission prevents resource exhaustion (CWE-770, CWE-400)
 /// - UTF-8 validation ensures safe text processing
 pub struct ReadFileContentUseCase {
     file_access_config: Arc<FileAccessConfig>,
     /// Reads text out of a document that is not plain UTF-8 (a PDF, an office
-    /// file), limited to [`MAX_FILE_SIZE_BYTES`] and sharing the app's parser
+    /// file), gated by available-memory admission and sharing the app's parser
     /// workers with indexing.
     preview_extractor: Arc<dyn ContentExtractionPort>,
+    memory_probe: Arc<dyn MemoryProbe>,
 }
 
 impl ReadFileContentUseCase {
@@ -49,7 +45,15 @@ impl ReadFileContentUseCase {
         Self {
             file_access_config,
             preview_extractor,
+            memory_probe: Arc::new(SysinfoMemoryProbe),
         }
+    }
+
+    /// Override the memory probe (primarily for deterministic testing).
+    #[must_use]
+    pub fn with_memory_probe(mut self, memory_probe: Arc<dyn MemoryProbe>) -> Self {
+        self.memory_probe = memory_probe;
+        self
     }
 
     /// Execute the use case.
@@ -96,12 +100,14 @@ impl ReadFileContentUseCase {
             )));
         }
 
-        // Check file size limit (security: prevent DoS)
-        if size_bytes > MAX_FILE_SIZE_BYTES {
+        // Check memory admission against measured available OS memory (security: prevent DoS)
+        let decision =
+            check_read_content_admission(size_bytes, self.memory_probe.available_memory_bytes());
+        if !decision.admitted {
             return Err(AppError::FileTooLarge {
                 path: validated_path.display().to_string(),
                 size_bytes,
-                max_size_bytes: MAX_FILE_SIZE_BYTES,
+                max_size_bytes: decision.max_input_bytes.unwrap_or(0),
             });
         }
 
@@ -366,22 +372,27 @@ mod tests {
     #[tokio::test]
     async fn test_read_file_content_file_too_large() {
         use crate::infrastructure::security::FileAccessConfig;
+        use crate::infrastructure::services::memory_admission::FixedMemoryProbe;
         use std::env;
 
+        const MIB: u64 = 1024 * 1024;
         let temp_dir = env::temp_dir();
         let test_file = temp_dir.join("large_test.txt");
         std::fs::write(&test_file, "").ok();
 
         let _canonical_path = test_file.canonicalize().unwrap_or(test_file.clone());
         let file_access_config = Arc::new(FileAccessConfig::new(vec![temp_dir.clone()]));
+        // 6 MiB available -> 3 MiB headroom -> 1 MiB text preview limit.
+        let max_input = MIB;
         std::fs::OpenOptions::new()
             .write(true)
             .open(&test_file)
-            .and_then(|file| file.set_len(MAX_FILE_SIZE_BYTES + 1))
+            .and_then(|file| file.set_len(max_input + 1))
             .expect("create sparse oversized test file");
         let file_storage = Arc::new(MockFileStorage::new());
         let use_case =
-            ReadFileContentUseCase::new(file_storage, file_access_config, preview_extractor());
+            ReadFileContentUseCase::new(file_storage, file_access_config, preview_extractor())
+                .with_memory_probe(Arc::new(FixedMemoryProbe(Some(6 * MIB))));
 
         let request = ReadFileContentRequestDto {
             path: test_file.to_string_lossy().to_string(),
@@ -391,8 +402,13 @@ mod tests {
 
         std::fs::remove_file(&test_file).ok();
 
-        assert!(result.is_err());
-        assert!(matches!(result, Err(AppError::FileTooLarge { .. })));
+        assert!(matches!(
+            result,
+            Err(AppError::FileTooLarge {
+                max_size_bytes,
+                ..
+            }) if max_size_bytes == max_input
+        ));
     }
 
     #[tokio::test]
