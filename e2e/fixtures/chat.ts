@@ -33,13 +33,18 @@ export const ANSWER_CHUNKS: ReplyPieceDto[][] = [
   [said('Sticky, silica-rich magma traps gas until it bursts out '), cited(2), said('.')],
 ];
 const REPLY = ANSWER_CHUNKS.flat();
-const ANSWER = REPLY.map(piece => (piece.type === 'text' ? piece.text : piece.reference.written)).join('');
+const written = (piece: ReplyPieceDto) =>
+  piece.type === 'reference' ? piece.reference.written : piece.type === 'quoted' ? `“${piece.text}”` : piece.text;
+const ANSWER = REPLY.map(written).join('');
 
 /** Delivers streamed pieces of the answer as the backend's llm-stream events do: each a text delta or one reference. */
 export async function streamAnswer(page: Page, requestId: string, pieces: ReplyPieceDto[]) {
   await page.evaluate(({ conversationId, requestId, pieces }) => {
     for (const piece of pieces) {
-      const part = piece.type === 'text' ? { content: piece.text } : { reference: piece.reference };
+      const part =
+        piece.type === 'reference'
+          ? { reference: piece.reference }
+          : { content: piece.type === 'quoted' ? `“${piece.text}”` : piece.text };
       window.__LATTICE_IPC__.emit('llm-stream', { conversationId, requestId, done: false, ...part });
     }
   }, { conversationId: CONVERSATION.id!, requestId, pieces });
