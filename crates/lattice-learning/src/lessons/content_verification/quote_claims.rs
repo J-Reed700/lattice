@@ -5,6 +5,8 @@
 //! else, including a quotation that is not found, goes to the model's check.
 use super::classify::{inner, quotations};
 use super::*;
+use lattice_core::application::services::claim_verification::PartKind;
+use lattice_core::domain::citation::Anchor;
 use lattice_core::shared::text::same_text;
 
 /// Marks a quotation uses for words it leaves out.
@@ -79,6 +81,7 @@ pub(super) fn settle(
         return Ok(None);
     };
     let mut spans = Vec::new();
+    let mut checked = Vec::new();
     let mut from = 0;
     for part in parts {
         let Some((start, end)) = source
@@ -96,6 +99,16 @@ pub(super) fn settle(
             return Ok(None);
         }
         spans.push((start, end));
+        checked.push(CheckedPart {
+            part: part.trim().to_owned(),
+            kind: PartKind::Stated,
+            source_id: None,
+            anchors: vec![Anchor {
+                source_version_id: source.id.clone(),
+                start_byte: start,
+                end_byte: end,
+            }],
+        });
         from = end;
     }
     let supporting_quote = spans
@@ -117,7 +130,10 @@ pub(super) fn settle(
         supporting_quote,
         resolution: None,
         claim_id: None,
-        two_pass: Default::default(),
+        two_pass: TwoPass {
+            parts: checked,
+            ..TwoPass::default()
+        },
         label: Some(Label::Attributed),
         class: None,
         trust: None,

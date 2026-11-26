@@ -28,6 +28,7 @@ mod citations;
 mod cited_text;
 mod claim_ledger;
 mod claim_sentences;
+mod support;
 pub(crate) use citations::names_a_source;
 use citations::{section_citations, source_mentions, take_cited, Citations};
 #[cfg(test)]
@@ -126,7 +127,8 @@ pub(crate) use report::{not_verified_line, persist_report, sources_changed};
 /// the provenance gate (source provenance §11) and passages carry their
 /// source's title, domain and date.
 /// v22: the part-wise judge has a kind for the lesson's own figures.
-const POLICY: Protocol = lattice_core::protocol!("lesson-evidence", 22);
+/// v23: the part-wise judge names the sentences each part rests on, and settled quotations record where they are.
+const POLICY: Protocol = lattice_core::protocol!("lesson-evidence", 23);
 
 /// What a check judged, which names the policy its fingerprint is under.
 #[derive(Clone, Copy)]

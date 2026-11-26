@@ -8,7 +8,7 @@
 //! through it.
 use super::classify::{markers, Case};
 use super::evidence_checks::{
-    alone, applies, bridge_checker, compare, group, labelled_passages, pack, part_wise, AnswerSize,
+    alone, applies, bridge_checker, compare, group, pack, part_wise, shown_passages, AnswerSize,
     CheckedPart, Comparison, Labels, Pass, PendingClaim,
 };
 use super::*;
@@ -170,7 +170,7 @@ fn specifics(at: &ReadContext<'_>, unit: usize) -> impl Fn(&str) -> bool {
 /// that `Page` leaves out, and of the section's passages `Ground` reads.
 fn parts_fit<'a>(at: &'a ReadContext<'_>) -> impl Fn(&str, &[EvidencePassage]) -> bool + 'a {
     move |claim, passages| {
-        bridge_checker(at.llm).bridge_fits(claim, &labelled_passages(passages, &at.labels))
+        bridge_checker(at.llm).bridge_fits(claim, &shown_passages(passages, &at.labels))
     }
 }
 
@@ -348,7 +348,7 @@ fn bridge_of(finding: &Finding) -> Option<BridgeOutcome> {
         .map(|part: &CheckedPart| BridgePart {
             part: part.part.clone(),
             kind: part.kind,
-            passage: None,
+            sentences: Vec::new(),
         })
         .collect();
     (!parts.is_empty()).then(|| BridgeOutcome {

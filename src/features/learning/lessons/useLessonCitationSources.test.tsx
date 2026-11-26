@@ -66,6 +66,15 @@ describe('the sources behind a lesson’s citations', () => {
     expect(result.current[1]?.webSnapshot).toBeUndefined();
   });
 
+  it('places a chip’s anchors by the text its source shows: the saved page from its start, a passage shown alone from its own start', async () => {
+    const { result } = render(cited);
+    expect(result.current[0]?.anchorBase).toBe(10);
+    await waitFor(() => expect(result.current[0]?.webSnapshot?.text).toBe(FULL_TEXT['guide-v1']));
+    expect(result.current[0]?.anchorBase).toBe(0);
+    expect(result.current[3]?.anchorBase).toBe(0);
+    expect(result.current[1]?.anchorBase).toBe(20);
+  });
+
   it('fetches each saved web page once, and never a passage without a page or an executed example', async () => {
     const { result } = render(cited);
     await waitFor(() => expect(result.current[0]?.webSnapshot?.text).toBe(FULL_TEXT['guide-v1']));

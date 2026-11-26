@@ -388,6 +388,40 @@ describe('sourceAdapter canonical mappings', () => {
       }
     });
 
+    describe('the text anchors are placed in', () => {
+      const passage: LearningEvidencePassageDto = {
+        sourceVersionId: 'sv-123',
+        title: 'Evidence on Backpropagation',
+        text: '\n  Backpropagation computes the gradient.  \n',
+        startByte: 100,
+        endByte: 148,
+        url: 'https://learn.example.com/backprop',
+        retrievalKind: 'lexical',
+        trust: null,
+      };
+
+      it('keeps a saved page exactly as given and starts at byte 0', () => {
+        const { source } = fromLearningEvidencePassage(passage, 0, '\n\nThe whole saved page.\n');
+
+        expect(source.webSnapshot?.text).toBe('\n\nThe whole saved page.\n');
+        expect(source.anchorBase).toBe(0);
+      });
+
+      it('keeps a web passage shown alone exactly as given and starts at its own byte', () => {
+        const { source } = fromLearningEvidencePassage(passage, 0);
+
+        expect(source.webSnapshot?.text).toBe(passage.text);
+        expect(source.anchorBase).toBe(100);
+      });
+
+      it('starts a passage with no page at its own byte', () => {
+        const { source } = fromLearningEvidencePassage({ ...passage, url: null }, 0);
+
+        expect(source.anchorBase).toBe(100);
+        expect(source.content.trim()).toBe('Backpropagation computes the gradient.');
+      });
+    });
+
     it('reads a whole source with no passage as its full text', () => {
       const passage: LearningEvidencePassageDto = {
         sourceVersionId: 'sv-123', title: 'Lecture notes', text: '', startByte: 0, endByte: 0, url: null, retrievalKind: 'source', trust: null,

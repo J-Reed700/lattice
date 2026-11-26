@@ -269,6 +269,13 @@ test("Learning Studio citations trace saved evidence and support clean reading a
   await page.screenshot({ path: `e2e-results/learning-citations-narrow-${browserName}.png`, fullPage: true });
   await page.keyboard.press('Escape');
   await expect(narrowReader).toHaveCount(0);
+  await chip.hover();
+  await expect(page.getByRole('tooltip').getByText('Paraphrased from')).toBeVisible();
+  const quotedSection = page.locator('#lesson-lesson-observation-section-1');
+  await expect(quotedSection.locator('.cite-quote')).toHaveText(['“', '”']);
+  await expect(quotedSection).toContainText('The original edition remains available for exact citation review.');
+  expect((await quotedSection.textContent())?.replace(/[\uE000-\uE00F]/g, '')).toContain('“The original edition remains available for exact citation review.”');
+  await expect(quotedSection.getByRole('button', { name: 'Citation 2', exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
   await page.getByRole('button', { name: 'Hide citations', exact: true }).click();

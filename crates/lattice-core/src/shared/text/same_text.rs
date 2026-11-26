@@ -5,6 +5,11 @@
 
 use crate::shared::text::segmentation::sentences;
 
+/// The fewest characters a quotation holds.
+pub const MIN_QUOTE_CHARS: usize = 25;
+/// The fewest words a quotation holds.
+pub const MIN_QUOTE_WORDS: usize = 5;
+
 /// One character of folded text with the bytes of the original it came from.
 pub type Folded = Vec<(char, usize, usize)>;
 
@@ -90,6 +95,20 @@ pub fn find(text: &str, needle: &str) -> Option<(usize, usize)> {
     let first = hay.get(at)?;
     let last = hay.get(at + needle.len() - 1)?;
     Some((first.1, last.2))
+}
+
+/// Whether `quote` is long enough to be a quotation: the floor the prompts state.
+pub fn long_enough_quote(quote: &str) -> bool {
+    let quote = quote.trim();
+    quote.chars().count() >= MIN_QUOTE_CHARS && quote.split_whitespace().count() >= MIN_QUOTE_WORDS
+}
+
+/// Where `text` holds `quote` as a quotation: long enough to stand as one, and word for word apart from spacing, typography, emphasis marks and letter case.
+pub fn quotation(text: &str, quote: &str) -> Option<(usize, usize)> {
+    if !long_enough_quote(quote) {
+        return None;
+    }
+    find(text, quote.trim())
 }
 
 /// The bytes of `text` that `needle` stands for at each place it occurs once

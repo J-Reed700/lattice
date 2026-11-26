@@ -4,7 +4,8 @@
 use super::super::readings::driver::{read_until_remedy, ReadSteps};
 use super::super::readings::{Observer, Read, ReadContext, Reader, ReaderSet, Readers, Statement};
 use super::bridge_tests::{
-    citing, half_stated, parts_reply, sources, Reading as ScriptedBridge, STATED, STATEMENT,
+    citing, half_stated, parts_reply, resolved_parts, sources, Reading as ScriptedBridge, STATED,
+    STATEMENT,
 };
 use super::class_checks_tests::Classes;
 use super::evidence_paging_tests::{
@@ -12,7 +13,7 @@ use super::evidence_paging_tests::{
 };
 use super::*;
 use crate::lesson_drafts;
-use lattice_core::application::services::claim_verification::PartKind;
+use lattice_core::application::services::claim_verification::{PartKind, ShownPassage};
 use lattice_core::domain::learning::acceptance::{
     start, Outcome, Position, Reading, StandardPolicy,
 };
@@ -325,14 +326,17 @@ async fn a_statement_its_citation_states_in_part_stands_with_the_rest_as_common_
         kinds(&finding.two_pass.parts),
         vec![PartKind::Stated, PartKind::Common]
     );
-    assert_eq!(
-        finding.two_pass.parts[0].source_id.as_deref(),
-        Some("quillet")
-    );
+    assert_eq!(finding.two_pass.parts[0].source_id, None);
+    let anchors = &finding.two_pass.parts[0].anchors;
+    assert!(!anchors.is_empty());
+    assert!(anchors
+        .iter()
+        .all(|anchor| anchor.source_version_id == "quillet"));
     assert_eq!(finding.two_pass.parts[1].source_id, None);
+    assert!(finding.two_pass.parts[1].anchors.is_empty());
     assert!(finding
         .reason
-        .contains("Common knowledge, not in the passages: a lexer turns characters into tokens."));
+        .contains("Common knowledge, not in the passages: turns characters into tokens."));
     assert_eq!(finding.class, Some(classed()));
     assert_eq!(model.requests(), (1, 0));
     Ok(())
@@ -345,8 +349,8 @@ async fn a_statement_whose_every_part_is_common_reads_all_common() -> Result<()>
     let world = world_of(&references, citing(&references)?);
     let model = ScriptedBridge::new(vec![parts_reply(
         json!([
-            {"part": "a lexer turns characters into tokens", "kind": "common", "passage": null},
-            {"part": "a token is the smallest unit a parser reads", "kind": "common", "passage": null},
+            {"part": "turns characters into tokens", "kind": "common", "passage": null},
+            {"part": "Quillet is a lexer", "kind": "common", "passage": null},
         ]),
         "supported_with_common",
     )]);
@@ -370,7 +374,7 @@ async fn a_specific_the_citation_lacks_leaves_the_statement_unproven() -> Result
     let model = ScriptedBridge::new(vec![parts_reply(
         json!([
             {"part": "Quillet is a lexer", "kind": "stated", "passage": "passage-0"},
-            {"part": "it was written in 2004", "kind": "specific_missing", "passage": null},
+            {"part": "turns characters into tokens", "kind": "specific_missing", "passage": null},
         ]),
         "supported",
     )]);
@@ -382,7 +386,7 @@ async fn a_specific_the_citation_lacks_leaves_the_statement_unproven() -> Result
     assert!(read
         .finding()
         .reason
-        .contains("Not given by the passages: it was written in 2004."));
+        .contains("Not given by the passages: turns characters into tokens."));
     Ok(())
 }
 
@@ -666,15 +670,13 @@ async fn the_guard_asks_the_rule_layers_test_with_the_sections_givens() -> Resul
     );
     let model = ScriptedBridge::new(vec![reply.clone(), reply.clone(), reply]);
 
+    let batch =
+        "Quillet reads rows in batches, and a batch of 8 rows is small enough to hold in memory.";
     let reads = read_all(
         Reading::Parts,
         &model,
         &world,
-        &[
-            (0, claim(STATEMENT)),
-            (1, claim(STATEMENT)),
-            (2, claim(STATEMENT)),
-        ],
+        &[(0, claim(batch)), (1, claim(batch)), (2, claim(batch))],
     )
     .await?;
 
@@ -885,9 +887,10 @@ impl Windowed {
 
 #[async_trait::async_trait]
 impl LLMPort for Windowed {
-    async fn complete(&self, _: &CompletionRequest) -> Result<CompletionResponse> {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let (_, user) = fixture_messages(request);
         let reply = self.replies.lock().unwrap().pop_front().unwrap_or_default();
-        Ok(CompletionResponse::from_text(reply))
+        Ok(CompletionResponse::from_text(resolved_parts(&reply, user)))
     }
     fn model_name(&self) -> &str {
         "windowed-fixture"
@@ -932,10 +935,15 @@ fn texts_of(passages: &[EvidencePassage]) -> Vec<String> {
         .collect()
 }
 
+/// `passages` as the part-wise judge is shown them, with no labels.
+fn shown_of(passages: &[EvidencePassage]) -> Vec<ShownPassage> {
+    evidence_checks::shown_passages(passages, &evidence_checks::Labels::new())
+}
+
 /// The smallest window in which the part-wise judge holds `passages` beside
 /// `FEEDS`.
 fn window_for_part_wise(passages: &[EvidencePassage]) -> usize {
-    let texts = texts_of(passages);
+    let texts = shown_of(passages);
     (1..)
         .find(|&window| {
             evidence_checks::bridge_checker(&Windowed::new(window, Vec::new()))
@@ -1014,7 +1022,7 @@ fn a_citations_page_is_still_fitted_to_the_strict_judge() {
     assert_eq!(sources_of(&shown), vec!["source-0", "source-1"]);
     // The part-wise judge holds all three in that window: its room is not the
     // strict judge's, which is why a reader fits its page to its own.
-    assert!(evidence_checks::bridge_checker(&model).bridge_fits(FEEDS, &texts_of(&three)));
+    assert!(evidence_checks::bridge_checker(&model).bridge_fits(FEEDS, &shown_of(&three)));
 }
 
 /// Unit 0 cites a related passage that does not state the claim, as source 0.
@@ -1797,6 +1805,7 @@ struct HeldUntil {
 #[async_trait::async_trait]
 impl LLMPort for HeldUntil {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let (_, user) = fixture_messages(request);
         let prompt: String = request
             .input()
             .iter()
@@ -1811,7 +1820,10 @@ impl LLMPort for HeldUntil {
         if prompt.contains(self.held) {
             self.gate.notified().await;
         }
-        Ok(CompletionResponse::from_text(half_stated()))
+        Ok(CompletionResponse::from_text(resolved_parts(
+            &half_stated(),
+            user,
+        )))
     }
     fn model_name(&self) -> &str {
         "held-fixture"
