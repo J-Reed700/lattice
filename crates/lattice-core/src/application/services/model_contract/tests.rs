@@ -338,6 +338,7 @@ fn a_refusal_is_the_errors_own_text() {
 
 #[test]
 fn answer_step_forces_deterministic_sampling_while_draft_step_preserves_caller_sampling() {
+    use super::request::GroundedRequest;
     use crate::application::ports::llm_port::SamplingOverride;
     let base = GroundedRequest::of("System".into(), "Task".into());
     assert_eq!(base.call.sampling, None);

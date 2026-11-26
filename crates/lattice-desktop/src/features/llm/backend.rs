@@ -64,7 +64,7 @@ pub(crate) async fn read_bounded_json(
     mut response: reqwest::Response,
     max_bytes: usize,
     on_oversize: impl FnOnce() -> AppError,
-    on_transport: impl FnOnce(reqwest::Error) -> AppError,
+    on_transport: impl Fn(reqwest::Error) -> AppError,
     on_json: impl FnOnce(serde_json::Error) -> AppError,
 ) -> Result<serde_json::Value> {
     if response
@@ -75,7 +75,7 @@ pub(crate) async fn read_bounded_json(
         return Err(on_oversize());
     }
     let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(on_transport)? {
+    while let Some(chunk) = response.chunk().await.map_err(&on_transport)? {
         if bytes.len().saturating_add(chunk.len()) > max_bytes {
             return Err(on_oversize());
         }
