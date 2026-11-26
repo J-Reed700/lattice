@@ -3,7 +3,8 @@ import { type QueryClient, useMutation, useMutationState, useQuery, useQueryClie
 import { useApi } from '@/contexts/ApiContext';
 import { fetchLibraryDocuments, LIBRARY_DOCUMENTS_QUERY_KEY } from '@/features/files/hooks/useLibraryDocumentsQuery';
 import { useAppNavigate } from '@/hooks/useAppNavigate';
-import type { CreateInterviewStudyDeckRequestDto, GenerateConversationStudyDeckRequestDto, GenerateStudyDeckRequestDto, ReviewStudyCardRequestDto, SetStudyDeckTargetRequestDto, UpdateStudyCardRequestDto } from '@/lib/bindings';
+import type { CreateInterviewStudyDeckRequestDto, GenerateConversationStudyDeckRequestDto, GenerateStudyDeckRequestDto, ReviewStudyCardRequestDto, SetStudyDeckTargetRequestDto } from '@/lib/bindings';
+import { refreshAffected } from '@/shared/edits/affected';
 import { toast } from '@/stores/toastStore';
 import type { ApiResult } from '@/types';
 
@@ -24,12 +25,7 @@ async function data<T>(result: Promise<ApiResult<T>>): Promise<T> {
 // A program's recall deck is listed here too, so a review or an edit made in
 // Flashcards must also refresh that program's Recall tab and practice due counts.
 function invalidateDecks(client: QueryClient) {
-  return Promise.all([
-    client.invalidateQueries({ queryKey: key }),
-    client.invalidateQueries({ queryKey: ['learning-memory'] }),
-    client.invalidateQueries({ queryKey: ['learning-recall-v2'] }),
-    client.invalidateQueries({ queryKey: ['learning-practice-due'] }),
-  ]);
+  return refreshAffected(['study.decks', 'learning.recall'], { feature: 'study', container: '' }, client);
 }
 export function useFlashcardDecks() {
   const api = useApi();
@@ -94,11 +90,6 @@ export function useReviewFlashcard() {
   const api = useApi();
   const client = useQueryClient();
   return useMutation({ mutationFn: (request: ReviewStudyCardRequestDto) => data(api.reviewStudyCard(request)), onSuccess: () => invalidateDecks(client) });
-}
-export function useUpdateFlashcard() {
-  const api = useApi();
-  const client = useQueryClient();
-  return useMutation({ mutationFn: (request: UpdateStudyCardRequestDto) => data(api.updateStudyCard(request)), onSuccess: () => invalidateDecks(client) });
 }
 export function useDeleteFlashcardDeck() {
   const api = useApi();

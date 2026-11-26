@@ -11,6 +11,8 @@ import { itemVerdict, type GradingState } from '@/features/learning/quizzes/quiz
 import { QuizSourceLine } from '@/features/learning/quizzes/QuizSourceLine';
 import { VerdictChip } from '@/features/learning/quizzes/QuizVerdict';
 import type { LearningAssessmentFormItemDto, LearningAssessmentItemResultDto, LearningSourceDto } from '@/lib/bindings';
+import { Editable } from '@/shared/edits/Editable';
+import { useCorrectedSince } from '@/shared/edits/useCorrectedSince';
 
 const CONTESTABLE = new Set(['provisional', 'uncertain', 'needs_review']);
 const link = 'inline-flex min-h-11 items-center gap-1.5 rounded-full px-3 text-sm font-medium text-text-secondary hover:bg-background hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50';
@@ -46,13 +48,15 @@ function ReportLink({ itemId, actions }: { itemId: string; actions: ItemActions 
 }
 
 /** One reviewed question: verdict in words, the key and why, the grade's reasons, and what you can do next. */
-export function QuizItemReview({ item, result, index, grading, practice, sources, actions, programId }: {
+export function QuizItemReview({ item, result, index, grading, practice, sources, actions, programId, drawnAt }: {
   item: LearningAssessmentFormItemDto; result: LearningAssessmentItemResultDto | null; index: number; grading: GradingState;
   practice: boolean; sources: LearningSourceDto[]; actions: ItemActions;
   /** The course, so the answer's sources open in the docked reader. */
   programId?: string;
+  drawnAt: number | null;
 }) {
   const [contesting, setContesting] = useState(false);
+  const correctedSince = useCorrectedSince({ kind: 'learning.question', key: item.id }, drawnAt);
   const renderer = itemRegistry[item.format];
   const draft = draftOf(item);
   const verdict = result ? itemVerdict(result, grading) : null;
@@ -75,20 +79,23 @@ export function QuizItemReview({ item, result, index, grading, practice, sources
       overridePending={actions.overridePending} overrideError={actions.overrideError} onOverride={() => actions.override(item.id)} /></div>}
   </>;
   return <li className="px-5 py-6 sm:px-8" aria-labelledby={`review-${item.id}`}>
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-      <h4 id={`review-${item.id}`} className="text-[11px] font-semibold uppercase tracking-[.15em] text-text-muted">Question {index + 1} · {renderer.label}</h4>
-      {verdict && <VerdictChip words={verdict} />}
-      {verdict?.detail && <span className="text-xs text-text-secondary">{verdict.detail}</span>}
-      {item.previouslyExposed && <span className="text-xs text-text-muted">· Seen before</span>}
-    </div>
-    {!renderer.ownsPrompt && <div className="mt-2 max-w-3xl font-serif text-lg leading-snug text-text-primary"><TiptapViewer content={item.prompt} /></div>}
-    {!rationaleFirst && review}
-    {result?.rationale && <GradeRationale rationale={result.rationale} answer={answer} lostPoints={Boolean(verdict?.lostPoints)} statusWord={verdict?.label.toLowerCase() ?? 'graded'} sources={sources} programId={programId} ownerKey={`quiz-item:${item.id}`}>
-      <div className="flex flex-wrap items-center gap-1">{recall}{contestControls}</div>
-    </GradeRationale>}
-    {rationaleFirst && review}
-    {!result?.rationale && result?.feedback && result.gradeStatus !== 'pending' && <p className="mt-3 text-sm leading-6 text-text-secondary">{result.feedback}</p>}
-    {!result?.rationale && <div className="mt-3 flex flex-wrap items-center gap-1">{recall}{contestControls}{result?.gradeStatus === 'deterministic' && !practice && <ReportLink itemId={item.id} actions={actions} />}</div>}
-    <QuizSourceLine ids={item.sourceVersionIds} sources={sources} label="Source" programId={programId} ownerKey={`quiz-item:${item.id}`} />
+    <Editable content={{ kind: 'learning.question', key: item.id }} label={`question ${index + 1}`}>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <h4 id={`review-${item.id}`} className="text-[11px] font-semibold uppercase tracking-[.15em] text-text-muted">Question {index + 1} · {renderer.label}</h4>
+        {verdict && <VerdictChip words={verdict} />}
+        {verdict?.detail && <span className="text-xs text-text-secondary">{verdict.detail}</span>}
+        {item.previouslyExposed && <span className="text-xs text-text-muted">· Seen before</span>}
+      </div>
+      {!renderer.ownsPrompt && <div className="mt-2 max-w-3xl font-serif text-lg leading-snug text-text-primary"><TiptapViewer content={item.prompt} /></div>}
+      {!rationaleFirst && review}
+      {result?.rationale && <GradeRationale rationale={result.rationale} answer={answer} lostPoints={Boolean(verdict?.lostPoints)} statusWord={verdict?.label.toLowerCase() ?? 'graded'} sources={sources} programId={programId} ownerKey={`quiz-item:${item.id}`}>
+        <div className="flex flex-wrap items-center gap-1">{recall}{contestControls}</div>
+      </GradeRationale>}
+      {rationaleFirst && review}
+      {!result?.rationale && result?.feedback && result.gradeStatus !== 'pending' && <p className="mt-3 text-sm leading-6 text-text-secondary">{result.feedback}</p>}
+      {!result?.rationale && <div className="mt-3 flex flex-wrap items-center gap-1">{recall}{contestControls}{result?.gradeStatus === 'deterministic' && !practice && <ReportLink itemId={item.id} actions={actions} />}</div>}
+      <QuizSourceLine ids={item.sourceVersionIds} sources={sources} label="Source" programId={programId} ownerKey={`quiz-item:${item.id}`} />
+    </Editable>
+    {correctedSince && <p className="mt-2 text-xs text-text-muted">This question was changed after this quiz was drawn. The quiz shows it as it was asked.</p>}
   </li>;
 }

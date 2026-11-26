@@ -9,13 +9,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { NotebookPanel, RecallPanel } from '@/features/learning/memory/MemoryPanels';
 import { resetRecallGenerationStore } from '@/features/learning/memory/recallGenerationStore';
-import { useLearningMemory } from '@/features/learning/memory/useLearningMemory';
+import * as useLearningMemoryHooks from '@/features/learning/memory/useLearningMemory';
 import type { LearningMemoryDto, LearningProgramDto, StudyCardDto, WorkspaceNoteDto } from '@/lib/bindings';
+import { useEditMode } from '@/shared/edits/editMode';
+import { useEditorStore } from '@/shared/edits/editorStore';
 
 const api = vi.hoisted(() => ({
   getLearningMemory: vi.fn(), ensureLearningLessonNote: vi.fn(), generateLearningCardDrafts: vi.fn(),
   saveLearningCardDraft: vi.fn(), acceptLearningCardDraft: vi.fn(), discardLearningCardDraft: vi.fn(),
-  updateWorkspaceNote: vi.fn(), updateStudyCard: vi.fn(), reviewStudyCard: vi.fn(),
+  updateWorkspaceNote: vi.fn(), reviewStudyCard: vi.fn(),
 }));
 vi.mock('@/lib/api', () => ({ default: api, VaultAPI: api }));
 vi.mock('@/components/TiptapEditor', () => ({
@@ -43,14 +45,14 @@ function memory(overrides: Partial<LearningMemoryDto> = {}): LearningMemoryDto {
 }
 
 function NotebookHarness({ enabled = true, lessonId = lesson.id, margin = false }: { enabled?: boolean; lessonId?: string; margin?: boolean }) {
-  const query = useLearningMemory(program.summary.id);
+  const query = useLearningMemoryHooks.useLearningMemory(program.summary.id);
   const [drafts, setDrafts] = useState<Record<string, { title: string; content: string }>>({});
   const [compact, setCompact] = useState(margin);
   return <NotebookPanel compact={compact} onOpenNotebook={() => setCompact(false)} enabled={enabled} program={program} lessonId={lessonId} memory={query.data} memoryLoading={query.isLoading} memoryError={query.error?.message} onRetryMemory={() => void query.refetch()} drafts={drafts} setDraft={(key, draft) => setDrafts((current) => ({ ...current, [key]: draft }))} />;
 }
 
 function NotebookLessonSwitchHarness() {
-  const query = useLearningMemory(program.summary.id);
+  const query = useLearningMemoryHooks.useLearningMemory(program.summary.id);
   const [activeLessonId, setActiveLessonId] = useState(lesson.id);
   const [drafts, setDrafts] = useState<Record<string, { title: string; content: string }>>({});
   const twoLessonProgram = { ...program, modules: [{ ...program.modules[0], lessons: [lesson, secondLesson] }] };
@@ -58,7 +60,7 @@ function NotebookLessonSwitchHarness() {
 }
 
 function RecallHarness() {
-  const query = useLearningMemory(program.summary.id);
+  const query = useLearningMemoryHooks.useLearningMemory(program.summary.id);
   return <RecallPanel program={program} lessonId={lesson.id} memory={query.data} memoryLoading={query.isLoading} memoryError={query.error?.message} onRetryMemory={() => void query.refetch()} />;
 }
 
@@ -79,6 +81,8 @@ function draft(id = 'draft-1', origin: 'generated' | 'manual' = 'generated') {
 describe('Learning Studio notebook and recall', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    useEditMode.getState().set(false);
+    useEditorStore.setState({ current: null, next: null });
     resetRecallGenerationStore();
     api.getLearningMemory.mockResolvedValue(ok(memory()));
     api.ensureLearningLessonNote.mockResolvedValue(ok(memory({ lessonNotes: [{ lessonId: lesson.id, note }] })));
@@ -279,46 +283,27 @@ describe('Learning Studio notebook and recall', () => {
     }
   });
 
-  it('does not cap the fields of an accepted card being edited', async () => {
+  it('hides accepted answers outside the editor and opens the shared editor instead of an inline form', async () => {
     const user = userEvent.setup();
     const notDue = { ...card, dueAt: Date.now() + 86_400_000 };
     mount(<RecallPanel program={program} lessonId={lesson.id} memory={memory({ studyDeck: { id: 'deck-1', title: 'Recall', focus: 'Foundations', modelName: 'Model', createdAt: 1, cards: [notDue] }, acceptedCards: [{ cardId: card.id, lessonId: lesson.id, origin: 'generated', sourceIds: ['source-1'], acceptedAt: Date.now() }] })} memoryLoading={false} onRetryMemory={() => undefined} />);
-    await user.click(screen.getByRole('button', { name: `Edit accepted card: ${card.question}` }));
-    for (const name of ['Question', 'Answer', 'Explanation']) {
-      expect(screen.getByLabelText(name, { selector: 'textarea' })).not.toHaveAttribute('maxlength');
-    }
-  });
-
-  it('hides accepted answers outside explicit editing', async () => {
-    const user = userEvent.setup();
-    const notDue = { ...card, dueAt: Date.now() + 86_400_000 };
-    mount(<RecallPanel program={program} lessonId={lesson.id} memory={memory({ studyDeck: { id: 'deck-1', title: 'Recall', focus: 'Foundations', modelName: 'Model', createdAt: 1, cards: [notDue] }, acceptedCards: [{ cardId: card.id, lessonId: lesson.id, origin: 'generated', sourceIds: ['source-1'], acceptedAt: Date.now() }] })} memoryLoading={false} onRetryMemory={() => undefined} />);
+    expect('useUpdateLearningStudyCard' in useLearningMemoryHooks).toBe(false);
     expect(screen.queryByText(card.answer)).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: `Edit accepted card: ${card.question}` }));
-    expect(screen.getByLabelText('Answer')).toHaveValue(card.answer);
-    expect(screen.getByRole('button', { name: 'Cancel card edit' })).toBeEnabled();
+    expect(useEditorStore.getState().current?.address).toEqual({
+      content: { kind: 'study.card', key: card.id },
+      path: null,
+      fragment: null,
+    });
+    expect(screen.queryByRole('button', { name: 'Save card' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Answer')).not.toBeInTheDocument();
   });
 
-  it('keeps an accepted-card save error attached to the card that failed', async () => {
-    const user = userEvent.setup();
-    const secondCard = { ...card, id: 'card-2', question: 'What is the second idea?' };
-    api.updateStudyCard.mockResolvedValue(fail('Card update failed'));
-    mount(<RecallPanel program={program} lessonId={lesson.id} memory={memory({
-      studyDeck: { id: 'deck-1', title: 'Recall', focus: 'Foundations', modelName: 'Model', createdAt: 1, cards: [{ ...card, dueAt: Date.now() + 86_400_000 }, { ...secondCard, dueAt: Date.now() + 86_400_000 }] },
-      acceptedCards: [
-        { cardId: card.id, lessonId: lesson.id, origin: 'generated', sourceIds: ['source-1'], acceptedAt: Date.now() },
-        { cardId: secondCard.id, lessonId: lesson.id, origin: 'generated', sourceIds: ['source-1'], acceptedAt: Date.now() },
-      ],
-    })} memoryLoading={false} onRetryMemory={() => undefined} />);
-    await user.click(screen.getByRole('button', { name: `Edit accepted card: ${card.question}` }));
-    await user.click(screen.getByRole('button', { name: `Edit accepted card: ${secondCard.question}` }));
-    const firstForm = screen.getByDisplayValue(card.question).closest('form');
-    const secondForm = screen.getByDisplayValue(secondCard.question).closest('form');
-    expect(firstForm).not.toBeNull();
-    expect(secondForm).not.toBeNull();
-    await user.click(within(secondForm as HTMLFormElement).getByRole('button', { name: 'Save card' }));
-    expect(await within(secondForm as HTMLFormElement).findByRole('alert')).toHaveTextContent('Card update failed');
-    expect(within(firstForm as HTMLFormElement).queryByRole('alert')).not.toBeInTheDocument();
+  it('renders an Edit card button for each accepted card in edit mode', () => {
+    useEditMode.getState().set(true);
+    const notDue = { ...card, dueAt: Date.now() + 86_400_000 };
+    mount(<RecallPanel program={program} lessonId={lesson.id} memory={memory({ studyDeck: { id: 'deck-1', title: 'Recall', focus: 'Foundations', modelName: 'Model', createdAt: 1, cards: [notDue] }, acceptedCards: [{ cardId: card.id, lessonId: lesson.id, origin: 'generated', sourceIds: ['source-1'], acceptedAt: Date.now() }] })} memoryLoading={false} onRetryMemory={() => undefined} />);
+    expect(screen.getByRole('button', { name: `Edit card: ${card.question}` })).toBeVisible();
   });
 
   it('retries draft generation after a recoverable error', async () => {
