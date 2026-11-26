@@ -193,6 +193,12 @@ const session = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+async function findEditableEditor() {
+  const editor = await screen.findByRole("textbox", { name: "Edit main.py" });
+  await waitFor(() => expect(editor).not.toHaveAttribute("readonly"));
+  return editor;
+}
+
 function renderPractical(chosenLesson = lesson, extra: { activityId?: string | null; composer?: ComposerRequest | null } = {}) {
   const client = new QueryClient({
     defaultOptions: {
@@ -319,7 +325,7 @@ describe("Learning Studio Labs & simulations", () => {
       return ok(run());
     });
     renderPractical();
-    const editor = await screen.findByRole("textbox", { name: "Edit main.py" });
+    const editor = await findEditableEditor();
     await user.clear(editor);
     await user.type(editor, 'print("edited")');
     await user.click(screen.getByRole("button", { name: "Run locally" }));
@@ -348,7 +354,7 @@ describe("Learning Studio Labs & simulations", () => {
         return ok(run({ status: "interrupted", stdout: "partial output" }));
       });
     renderPractical();
-    await screen.findByRole("textbox", { name: "Edit main.py" });
+    await findEditableEditor();
     await user.click(screen.getByRole("button", { name: "Run locally" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Connection interrupted",
@@ -570,14 +576,13 @@ describe("Learning Studio Labs & simulations", () => {
   it("restores a draft after leaving the lab without running it", async () => {
     const user = userEvent.setup();
     const first = renderPractical();
-    const editor = await screen.findByRole("textbox", { name: "Edit main.py" });
-    await waitFor(() => expect(editor).not.toHaveAttribute("readonly"));
+    const editor = await findEditableEditor();
     await user.clear(editor);
     await user.type(editor, 'print("saved before running")');
     first.unmount();
     await waitFor(() => expect(mocks.saveDraft).toHaveBeenCalled());
     renderPractical();
-    expect(await screen.findByRole("textbox", { name: "Edit main.py" })).toHaveValue('print("saved before running")');
+    expect(await findEditableEditor()).toHaveValue('print("saved before running")');
     expect(mocks.startRun).not.toHaveBeenCalled();
   });
 
@@ -586,8 +591,7 @@ describe("Learning Studio Labs & simulations", () => {
     mocks.workspace.mockResolvedValue(ok(workspace({ activities: [activity(), activity({ id: "activity-2", title: "Another activity" })] })));
     mocks.saveDraft.mockResolvedValue(fail("Disk full"));
     renderPractical();
-    const editor = await screen.findByRole("textbox", { name: "Edit main.py" });
-    await waitFor(() => expect(editor).not.toHaveAttribute("readonly"));
+    const editor = await findEditableEditor();
     await user.clear(editor);
     await user.type(editor, "important work");
     await user.click(screen.getByRole("button", { name: /Another activity/ }));
@@ -601,8 +605,7 @@ describe("Learning Studio Labs & simulations", () => {
     const user = userEvent.setup();
     mocks.saveDraft.mockResolvedValue(fail("Disk full"));
     renderPractical();
-    const editor = await screen.findByRole("textbox", { name: "Edit main.py" });
-    await waitFor(() => expect(editor).not.toHaveAttribute("readonly"));
+    const editor = await findEditableEditor();
     await user.clear(editor);
     await user.type(editor, "important existing work");
     await user.click(screen.getByRole("button", { name: "New activity" }));
