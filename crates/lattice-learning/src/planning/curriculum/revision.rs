@@ -171,44 +171,6 @@ pub fn apply_curriculum_revision(
                     description: format!("Added lesson “{title}”."),
                 });
             }
-            LearningCurriculumOperation::EditLesson {
-                lesson_id,
-                title,
-                objective,
-                estimated_minutes,
-            } => {
-                not_blank(&title, "Lesson title")?;
-                not_blank(&objective, "Lesson objective")?;
-                if estimated_minutes < 1 {
-                    return Err(AppError::InvalidInput(
-                        "Lesson time must be at least 1 minute.".into(),
-                    ));
-                }
-                let (module_index, lesson_index) = lesson_location(&modules, &lesson_id)
-                    .ok_or_else(|| AppError::NotFound("Lesson was not found.".into()))?;
-                let module_id = module_id_at(&modules, module_index)?;
-                let lesson = lesson_at_mut(&mut modules, (module_index, lesson_index))?;
-                if immutable(lesson) {
-                    return Err(AppError::InvalidState(
-                        "Completed lessons and lessons with a started assessment cannot change."
-                            .into(),
-                    ));
-                }
-                let before = lesson.clone();
-                lesson.title = title;
-                lesson.objective = objective;
-                lesson.estimated_minutes = estimated_minutes;
-                let after = lesson.clone();
-                changes.push(LearningCurriculumChange {
-                    kind: LearningCurriculumChangeKind::Edited,
-                    lesson_id,
-                    from_module_id: Some(module_id.clone()),
-                    to_module_id: Some(module_id),
-                    before: Some(before),
-                    after: Some(after),
-                    description: "Updated the lesson title, objective, or session estimate.".into(),
-                });
-            }
             LearningCurriculumOperation::MoveLesson {
                 lesson_id,
                 target_module_id,

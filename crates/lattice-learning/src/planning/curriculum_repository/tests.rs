@@ -378,11 +378,8 @@ async fn completed_and_assessed_lessons_are_protected_by_current_outcome_joins()
             program_id: program.summary.id.clone(),
             expected_revision: program.summary.revision,
             reason: "Try changing assessed module work".into(),
-            operations: vec![LearningCurriculumOperation::EditLesson {
+            operations: vec![LearningCurriculumOperation::SkipLesson {
                 lesson_id: assessed_lesson,
-                title: "Changed after assessment start".into(),
-                objective: "A changed objective".into(),
-                estimated_minutes: 25,
             }],
         })
         .await;

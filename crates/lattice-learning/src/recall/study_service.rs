@@ -174,13 +174,6 @@ pub async fn review(
         .await
 }
 
-pub async fn update_card(repo: &StudyRepository, request: UpdateStudyCardRequestDto) -> Result<()> {
-    not_blank(&request.question, "Question")?;
-    not_blank(&request.answer, "Answer")?;
-    not_blank(&request.explanation, "Explanation")?;
-    repo.update_card(&request).await
-}
-
 /// A target must be ahead of now and within a few years, so a mistyped date
 /// cannot make every review land in the past or centuries out.
 pub(crate) fn validate_target(target_at: Option<i64>, now: i64) -> Result<()> {

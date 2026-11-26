@@ -637,13 +637,31 @@ async fn decks_reviews_edits_and_deletion_persist_atomically() -> anyhow::Result
     correct.selected_option = Some(0);
     let recalled = repo.review(&correct, reviewed.due_at).await?;
     assert!(recalled.due_at > reviewed.due_at);
-    let edit = UpdateStudyCardRequestDto {
-        card_id: c.id.clone(),
-        question: "Revised question".into(),
-        answer: "The complete stated conditions".into(),
-        explanation: "Revised explanation".into(),
-    };
-    service::update_card(&repo, edit).await?;
+    let edits = crate::edits::content_edits(&db)?;
+    let opened = edits.open(&crate::edits::keys::card_ref(&c.id)).await?;
+    edits
+        .apply(&lattice_core::shared::edits::ContentEditRequest {
+            edit_id: uuid::Uuid::new_v4().to_string(),
+            content: crate::edits::keys::card_ref(&c.id),
+            expected_revision: opened.revision,
+            ops: vec![
+                lattice_core::shared::edits::EditOp::Replace {
+                    path: "/question".into(),
+                    value: serde_json::json!("Revised question"),
+                },
+                lattice_core::shared::edits::EditOp::Replace {
+                    path: "/choices/0/text".into(),
+                    value: serde_json::json!("The complete stated conditions"),
+                },
+                lattice_core::shared::edits::EditOp::Replace {
+                    path: "/explanation".into(),
+                    value: serde_json::json!("Revised explanation"),
+                },
+            ],
+            source: lattice_core::shared::edits::EditSource::Learner,
+            target: None,
+        })
+        .await?;
     let reopened = StudyRepository::new(db.clone()).get(&d.id).await?;
     assert_eq!(
         reopened.cards[0].options[0],
@@ -671,17 +689,48 @@ async fn a_card_is_edited_at_any_length() -> anyhow::Result<()> {
     let repo = StudyRepository::new(db.clone());
     let d = deck();
     repo.save(&d).await?;
-    let edit = UpdateStudyCardRequestDto {
-        card_id: d.cards[0].id.clone(),
-        question: "Which condition does the passage ask the reader to study first? ".repeat(40),
-        answer: "The complete stated conditions of the procedure, read in full. ".repeat(25),
-        explanation: "The passage says the reader studies them before choosing. ".repeat(60),
-    };
-    service::update_card(&repo, edit.clone()).await?;
+    let question = "Which condition does the passage ask the reader to study first? "
+        .repeat(40)
+        .trim()
+        .to_owned();
+    let answer = "The complete stated conditions of the procedure, read in full. "
+        .repeat(25)
+        .trim()
+        .to_owned();
+    let explanation = "The passage says the reader studies them before choosing. "
+        .repeat(60)
+        .trim()
+        .to_owned();
+    let edits = crate::edits::content_edits(&db)?;
+    let card_id = d.cards[0].id.clone();
+    let opened = edits.open(&crate::edits::keys::card_ref(&card_id)).await?;
+    edits
+        .apply(&lattice_core::shared::edits::ContentEditRequest {
+            edit_id: uuid::Uuid::new_v4().to_string(),
+            content: crate::edits::keys::card_ref(&card_id),
+            expected_revision: opened.revision,
+            ops: vec![
+                lattice_core::shared::edits::EditOp::Replace {
+                    path: "/question".into(),
+                    value: serde_json::json!(question),
+                },
+                lattice_core::shared::edits::EditOp::Replace {
+                    path: "/choices/0/text".into(),
+                    value: serde_json::json!(answer),
+                },
+                lattice_core::shared::edits::EditOp::Replace {
+                    path: "/explanation".into(),
+                    value: serde_json::json!(explanation),
+                },
+            ],
+            source: lattice_core::shared::edits::EditSource::Learner,
+            target: None,
+        })
+        .await?;
     let reopened = repo.get(&d.id).await?;
-    assert_eq!(reopened.cards[0].question, edit.question.trim());
-    assert_eq!(reopened.cards[0].explanation, edit.explanation.trim());
-    assert_eq!(reopened.cards[0].options[0], edit.answer.trim());
+    assert_eq!(reopened.cards[0].question, question);
+    assert_eq!(reopened.cards[0].explanation, explanation);
+    assert_eq!(reopened.cards[0].options[0], answer);
     Ok(())
 }
 

@@ -28,6 +28,7 @@ mod generation_recovery;
 pub(crate) use generation_recovery::lesson_failure;
 pub use generation_recovery::{lesson_job_config, LESSON_PREPARATION};
 
+pub(crate) mod corrections;
 mod diagnostics;
 mod jobs;
 mod preparation;
@@ -166,21 +167,24 @@ impl LearningCurriculumRepository {
             for l in sqlx::query("SELECT * FROM learning_lessons WHERE program_id=? AND module_id=? ORDER BY ordinal")
                 .bind(program_id).bind(&module_id).fetch_all(&mut **conn).await? {
                 let lesson_id: String = l.get("id");
-                let practice_started: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_practice_sessions WHERE program_id=? AND lesson_id=?")
-                    .bind(program_id).bind(&lesson_id).fetch_one(&mut **conn).await?;
-                let assessment_started: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_assessment_form_item_outcomes fio JOIN learning_assessment_forms f ON f.id=fio.form_id JOIN learning_outcome_definitions o ON o.id=fio.outcome_id WHERE f.program_id=? AND (o.lesson_id=? OR (o.lesson_id IS NULL AND o.module_id=?))")
-                    .bind(program_id).bind(&lesson_id).bind(&module_id).fetch_one(&mut **conn).await?;
-                let completed = l.get::<i64,_>("completed") != 0;
+                let assessment_started =
+                    lesson_activity_started(&mut **conn, program_id, &module_id, &lesson_id)
+                        .await?;
+                let completed = l.get::<i64, _>("completed") != 0;
                 let preparation: String = l.get("preparation");
                 lessons.push(LearningCurriculumLesson {
                     id: lesson_id,
                     title: l.get("title"),
                     objective: l.get("objective"),
-                    estimated_minutes: l.get::<i64,_>("estimated_minutes").max(1) as u32,
-                    state: if completed { LearningCurriculumLessonState::Completed }
-                        else if preparation == "ready" { LearningCurriculumLessonState::Ready }
-                        else { LearningCurriculumLessonState::Outline },
-                    assessment_started: practice_started > 0 || assessment_started > 0,
+                    estimated_minutes: l.get::<i64, _>("estimated_minutes").max(1) as u32,
+                    state: if completed {
+                        LearningCurriculumLessonState::Completed
+                    } else if preparation == "ready" {
+                        LearningCurriculumLessonState::Ready
+                    } else {
+                        LearningCurriculumLessonState::Outline
+                    },
+                    assessment_started,
                     replacement_lesson_id: None,
                 });
             }
@@ -253,7 +257,6 @@ impl LearningCurriculumRepository {
                     lesson.state = LearningCurriculumLessonState::Completed;
                 }
             }
-            let practice:i64=sqlx::query_scalar("SELECT count(*) FROM learning_practice_sessions WHERE program_id=? AND lesson_id=?").bind(program_id).bind(&lesson.id).fetch_one(&mut *tx).await?;
             let module_id: String = sqlx::query_scalar(
                 "SELECT module_id FROM learning_lessons WHERE id=? AND program_id=?",
             )
@@ -261,8 +264,8 @@ impl LearningCurriculumRepository {
             .bind(program_id)
             .fetch_one(&mut *tx)
             .await?;
-            let forms:i64=sqlx::query_scalar("SELECT count(*) FROM learning_assessment_form_item_outcomes fio JOIN learning_assessment_forms f ON f.id=fio.form_id JOIN learning_outcome_definitions o ON o.id=fio.outcome_id WHERE f.program_id=? AND (o.lesson_id=? OR (o.lesson_id IS NULL AND o.module_id=?))").bind(program_id).bind(&lesson.id).bind(&module_id).fetch_one(&mut *tx).await?;
-            lesson.assessment_started |= practice > 0 || forms > 0;
+            lesson.assessment_started |=
+                lesson_activity_started(&mut *tx, program_id, &module_id, &lesson.id).await?;
         }
         Ok((row.get("id"), snapshot))
     }
@@ -629,5 +632,34 @@ struct JobScope {
     content_revision: Option<i64>,
 }
 
+async fn lesson_activity_started(
+    conn: &mut sqlx::SqliteConnection,
+    program_id: &str,
+    module_id: &str,
+    lesson_id: &str,
+) -> Result<bool> {
+    let practice: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM learning_practice_sessions WHERE program_id=? AND lesson_id=?",
+    )
+    .bind(program_id)
+    .bind(lesson_id)
+    .fetch_one(&mut *conn)
+    .await?;
+    let forms: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM learning_assessment_form_item_outcomes fio \
+         JOIN learning_assessment_forms f ON f.id=fio.form_id \
+         JOIN learning_outcome_definitions o ON o.id=fio.outcome_id \
+         WHERE f.program_id=? AND (o.lesson_id=? OR (o.lesson_id IS NULL AND o.module_id=?))",
+    )
+    .bind(program_id)
+    .bind(lesson_id)
+    .bind(module_id)
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok(practice > 0 || forms > 0)
+}
+
+#[cfg(test)]
+mod corrections_tests;
 #[cfg(test)]
 mod tests;

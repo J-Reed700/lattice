@@ -1,5 +1,7 @@
 use super::{
-    curriculum::LearningCurriculumOperation,
+    curriculum::{
+        LearningCurriculumLesson, LearningCurriculumLessonState, LearningCurriculumOperation,
+    },
     curriculum_repository::LearningCurriculumRepository,
     dto::{CompleteLearningLessonRequestDto, LearningPreparation, LearningProgramStatus},
     plan_dto::{
@@ -40,11 +42,18 @@ async fn completed_lesson_does_not_prevent_editing_and_accepting_the_curriculum(
             program_id: program.summary.id.clone(),
             expected_revision: plan.program_revision,
             reason: "Adapt upcoming work after completing a lesson".into(),
-            operations: vec![LearningCurriculumOperation::EditLesson {
-                lesson_id: program.modules[0].lessons[1].id.clone(),
-                title: "Updated lesson".into(),
-                objective: "Apply the evidence".into(),
-                estimated_minutes: 25,
+            operations: vec![LearningCurriculumOperation::AddLesson {
+                module_id: program.modules[0].id.clone(),
+                after_lesson_id: Some(program.modules[0].lessons[0].id.clone()),
+                lesson: LearningCurriculumLesson {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    title: "Updated lesson".into(),
+                    objective: "Apply the evidence".into(),
+                    estimated_minutes: 25,
+                    state: LearningCurriculumLessonState::Outline,
+                    assessment_started: false,
+                    replacement_lesson_id: None,
+                },
             }],
         })
         .await?;
