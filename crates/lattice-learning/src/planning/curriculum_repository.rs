@@ -630,4 +630,6 @@ struct JobScope {
 }
 
 #[cfg(test)]
+mod corrections_tests;
+#[cfg(test)]
 mod tests;
