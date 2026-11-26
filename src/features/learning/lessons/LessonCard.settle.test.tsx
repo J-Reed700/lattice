@@ -6,7 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { learningClaimReviewKey, learningLessonEvidencePrefix, learningProgramKey } from '@/features/learning/api/learningQueryKeys';
+import { learningClaimReviewPrefix, learningLessonEvidencePrefix, learningProgramKey } from '@/features/learning/api/learningQueryKeys';
 import { LessonCard } from '@/features/learning/lessons/LessonCard';
 import { claimItem, review } from '@/features/learning/lessons/review/claimReviewTestData';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
@@ -224,7 +224,7 @@ describe('Settling a published lesson’s unverified statements from the note', 
       const keys = invalidate.mock.calls.map(([filters]) => JSON.stringify((filters as { queryKey?: unknown } | undefined)?.queryKey));
       expect(keys).toContain(JSON.stringify(learningProgramKey('program-1')));
       expect(keys).toContain(JSON.stringify(learningLessonEvidencePrefix('program-1')));
-      expect(keys).toContain(JSON.stringify(learningClaimReviewKey('program-1', 'lesson-1')));
+      expect(keys).toContain(JSON.stringify(learningClaimReviewPrefix('program-1')));
     });
   });
 

@@ -73,6 +73,7 @@ function show(lesson: LearningLessonDto, current: boolean) {
 describe('Lesson card edit mode', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    localStorage.clear();
     useEditMode.getState().set(false);
     closeEditor();
     capture.fn = null;
@@ -84,6 +85,7 @@ describe('Lesson card edit mode', () => {
   });
 
   afterEach(() => {
+    localStorage.clear();
     useEditMode.getState().set(false);
     closeEditor();
     capture.fn = null;

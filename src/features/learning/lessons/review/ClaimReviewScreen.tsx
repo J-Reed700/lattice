@@ -23,7 +23,7 @@ import { useReviewSelection } from '@/features/learning/lessons/review/useReview
 import { EMPTY_LESSON_ATTACH_RUN, lessonAttachRunKey, useSourceRecheckStore } from '@/features/learning/sources/sourceRecheckStore';
 import { useEvidenceWaitsForIndex } from '@/features/learning/sources/useCourseIndexStatus';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
-import type { ClaimReviewItemDto, ClaimSupportDto, ContentAddress, TeachingFindingDto } from '@/lib/bindings';
+import type { ClaimSupportDto, ContentAddress, TeachingFindingDto } from '@/lib/bindings';
 import { openEditor } from '@/shared/edits/editorStore';
 
 const NARROW = '(max-width: 767px)';

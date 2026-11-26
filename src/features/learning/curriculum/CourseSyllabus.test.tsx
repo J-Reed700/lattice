@@ -88,7 +88,7 @@ describe('course journey navigation', () => {
 
   it('opens a lesson in its own module, and not the module on its own', async () => {
     const { onSelect, onSelectModule } = renderJourney();
-    await userEvent.click(screen.getByRole('button', { name: /Weigh sources/ }));
+    await userEvent.click(screen.getByRole('button', { name: /1\.2.*Weigh sources/ }));
     expect(onSelect).toHaveBeenCalledWith(journey.modules[0], 'l2');
     expect(onSelectModule).not.toHaveBeenCalled();
   });
@@ -130,7 +130,7 @@ describe('course syllabus edit mode', () => {
     expect(screen.getByRole('button', { name: 'Edit lesson: Read closely' })).toBeVisible();
     expect(screen.getByRole('button', { name: 'Edit lesson: Weigh sources' })).toBeVisible();
 
-    await userEvent.click(screen.getByRole('button', { name: /Weigh sources/ }));
+    await userEvent.click(screen.getByRole('button', { name: /1\.2.*Weigh sources/ }));
     expect(onSelect).toHaveBeenCalledWith(journey.modules[0], 'l2');
   });
 

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tansta
 
 import { useApi } from '@/contexts/ApiContext';
 import { learningClaimReviewKey, learningPlanKey } from '@/features/learning/api/learningQueryKeys';
+import { registerLearningAffected } from '@/features/learning/edits/affected';
 import { learningSourcesKey } from '@/features/learning/sources/useLearningSources';
 import type {
   ClaimActionRequestDto,
@@ -35,6 +36,7 @@ export function useLessonClaimReview(programId: string, lessonId: string, enable
 }
 
 async function refreshAfterAction(client: QueryClient, programId: string) {
+  registerLearningAffected();
   await refreshAffected(['learning.claims', 'learning.program'], { feature: 'learning', container: programId }, client);
 }
 

@@ -6,9 +6,9 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { isConflict, newId } from '@/lib/api';
+import { getErrorMessage } from '@/lib/errorUtils';
 import { clearDraft, useDraft } from '@/shared/drafts/drafts';
 import { toast } from '@/stores/toastStore';
-import { getErrorMessage } from '@/types/api/result';
 
 import { refreshAffected } from './affected';
 import {

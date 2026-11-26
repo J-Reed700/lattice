@@ -234,10 +234,10 @@ describe('quiz result', () => {
 
   it('shows a note when a question changed after the quiz was drawn, and hides it otherwise', () => {
     const drawnAt = 1_700_000_000_000;
-    const form = submitted({
+    const form = {
+      ...submitted({ itemResults: [itemResult({ itemId: 'choice' }), itemResult({ itemId: 'written' })] }),
       createdAt: drawnAt,
-      itemResults: [itemResult({ itemId: 'choice' }), itemResult({ itemId: 'written' })],
-    });
+    };
     const { rerender } = show(form);
     expect(api.correctedSince).toHaveBeenCalledWith({ kind: 'learning.question', key: 'choice' }, drawnAt);
     expect(api.correctedSince).toHaveBeenCalledWith({ kind: 'learning.question', key: 'written' }, drawnAt);

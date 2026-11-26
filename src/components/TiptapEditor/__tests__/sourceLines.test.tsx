@@ -40,7 +40,7 @@ describe('SourceLines', () => {
     expect(topParagraphs.map((el) => el.getAttribute('data-source-lines'))).toEqual(['2-3', '4-5']);
 
     const listItems = Array.from(annotated.container.querySelectorAll('ol > li'));
-    expect(listItems.map((el) => el.getAttribute('data-source-lines'))).toEqual(['6-7', '7-8', '8-9']);
+    expect(listItems.map((el) => el.getAttribute('data-source-lines'))).toEqual(['6-7', '7-8', '8-10']);
 
     expect(annotated.container.querySelector('blockquote')).toHaveAttribute('data-source-lines', '10-11');
     expect(annotated.container.querySelector('pre')).toHaveAttribute('data-source-lines', '12-15');

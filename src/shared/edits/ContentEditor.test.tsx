@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { clearDraft, flushDrafts, readDraft } from '@/shared/drafts/drafts';
@@ -183,11 +183,14 @@ describe('ContentEditor', () => {
       expect(textarea.selectionEnd).toBe('First\nTarget block'.length);
     });
 
-    useEditorStore.setState({ current: null, next: null });
-    openEditor(
-      { content, path: '/body', fragment: null },
-      { aim: { lines: [1, 2], source: 'Different text', sourceStart: 0 } },
-    );
+    act(() => useEditorStore.setState({ current: null, next: null }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    act(() => {
+      openEditor(
+        { content, path: '/body', fragment: null },
+        { aim: { lines: [1, 2], source: 'Different text', sourceStart: 0 } },
+      );
+    });
 
     const nextTextarea = (await screen.findByLabelText('Body')) as HTMLTextAreaElement;
     await waitFor(() => {

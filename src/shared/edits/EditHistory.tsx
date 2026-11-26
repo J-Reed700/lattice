@@ -4,8 +4,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { Button } from '@/components/ui/button';
 import { newId } from '@/lib/api';
+import { getErrorMessage } from '@/lib/errorUtils';
 import { toast } from '@/stores/toastStore';
-import { getErrorMessage } from '@/types/api/result';
 
 import { refreshAffected } from './affected';
 import { contentEditKeys, getContentEditHistory, revertContentEdit } from './api';

@@ -2,6 +2,7 @@ import { type QueryClient, useMutation, useMutationState, useQuery, useQueryClie
 
 import { useApi } from '@/contexts/ApiContext';
 import { fetchLibraryDocuments, LIBRARY_DOCUMENTS_QUERY_KEY } from '@/features/files/hooks/useLibraryDocumentsQuery';
+import { registerLearningAffected } from '@/features/learning/edits/affected';
 import { useAppNavigate } from '@/hooks/useAppNavigate';
 import type { CreateInterviewStudyDeckRequestDto, GenerateConversationStudyDeckRequestDto, GenerateStudyDeckRequestDto, ReviewStudyCardRequestDto, SetStudyDeckTargetRequestDto } from '@/lib/bindings';
 import { refreshAffected } from '@/shared/edits/affected';
@@ -25,6 +26,7 @@ async function data<T>(result: Promise<ApiResult<T>>): Promise<T> {
 // A program's recall deck is listed here too, so a review or an edit made in
 // Flashcards must also refresh that program's Recall tab and practice due counts.
 function invalidateDecks(client: QueryClient) {
+  registerLearningAffected();
   return refreshAffected(['study.decks', 'learning.recall'], { feature: 'study', container: '' }, client);
 }
 export function useFlashcardDecks() {
