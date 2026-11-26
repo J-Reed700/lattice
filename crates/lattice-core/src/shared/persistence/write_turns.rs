@@ -65,7 +65,7 @@ impl WriteTurns {
         let mut acquire = std::pin::pin!(Arc::clone(semaphore).acquire_owned());
         loop {
             match tokio::time::timeout(STILL_WAITING, acquire.as_mut()).await {
-                Ok(permit) => return Ok(permit.map_err(|_closed| PersistenceError::closed())?),
+                Ok(permit) => return permit.map_err(|_closed| PersistenceError::closed()),
                 Err(_still_waiting) => self.report_wait(at, asked),
             }
         }

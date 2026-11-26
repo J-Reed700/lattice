@@ -16,8 +16,6 @@ pub(super) struct StoredEditRow {
     pub id: String,
     pub kind: String,
     pub content_key: String,
-    pub scope_feature: String,
-    pub scope_container: String,
     pub seq: i64,
     pub origin: EditOrigin,
     pub target: Option<ContentAddress>,
@@ -49,29 +47,18 @@ pub(super) struct NewEditRow<'a> {
     pub created_at: i64,
 }
 
-macro_rules! edit_columns {
-    () => {
-        "id, kind, content_key, scope_feature, scope_container, seq, origin_json, \
-         target_json, ops_json, inverse_json, before_revision, after_revision, \
-         reverts_edit_id, request_sha256, outcome_json, created_at"
-    };
-}
-
-const SELECT_BY_ID: &str = concat!(
-    "SELECT ",
-    edit_columns!(),
-    " FROM content_edits WHERE id = ?"
-);
-const SELECT_ENTITY_EDITS: &str = concat!(
-    "SELECT ",
-    edit_columns!(),
-    " FROM content_edits WHERE kind = ? AND content_key = ? ORDER BY seq ASC"
-);
-const SELECT_QUERY_PREFIX: &str = concat!(
-    "SELECT ",
-    edit_columns!(),
-    " FROM content_edits WHERE 1 = 1"
-);
+const SELECT_BY_ID: &str = "SELECT id, kind, content_key, seq, origin_json, \
+     target_json, ops_json, inverse_json, before_revision, after_revision, \
+     reverts_edit_id, request_sha256, outcome_json, created_at \
+     FROM content_edits WHERE id = ?";
+const SELECT_ENTITY_EDITS: &str = "SELECT id, kind, content_key, seq, origin_json, \
+     target_json, ops_json, inverse_json, before_revision, after_revision, \
+     reverts_edit_id, request_sha256, outcome_json, created_at \
+     FROM content_edits WHERE kind = ? AND content_key = ? ORDER BY seq ASC";
+const SELECT_QUERY_PREFIX: &str = "SELECT id, kind, content_key, seq, origin_json, \
+     target_json, ops_json, inverse_json, before_revision, after_revision, \
+     reverts_edit_id, request_sha256, outcome_json, created_at \
+     FROM content_edits WHERE 1 = 1";
 
 fn parse_row(row: &SqliteRow) -> Result<StoredEditRow> {
     let origin: EditOrigin = serde_json::from_str(&row.get::<String, _>("origin_json"))?;
@@ -91,8 +78,6 @@ fn parse_row(row: &SqliteRow) -> Result<StoredEditRow> {
         id: row.get("id"),
         kind: row.get("kind"),
         content_key: row.get("content_key"),
-        scope_feature: row.get("scope_feature"),
-        scope_container: row.get("scope_container"),
         seq: row.get("seq"),
         origin,
         target,
