@@ -2625,9 +2625,9 @@ async readFileContent(path: string) : Promise<Result<string, AppError>> {
 }
 },
 /**
- * Legacy Tauri shim - Reads the content of a file as bytes for preview purposes
+ * Legacy Tauri shim - Reads the content of a file as raw binary bytes for preview purposes
  */
-async readFileBytes(path: string) : Promise<Result<number[], AppError>> {
+async readFileBytes(path: string) : Promise<Result<ArrayBuffer, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:file|read_file_bytes", { path }) };
 } catch (e) {
@@ -13458,7 +13458,7 @@ export type CommandResults = {
 	prioritize_learning_generation_job: LearningGenerationJob;
 	promote_conversation_tangent: ConversationDto;
 	quick_capture: QuickCaptureResultDto;
-	read_file_bytes: number[];
+	read_file_bytes: ArrayBuffer;
 	read_file_content: string;
 	read_model_fits: (FitVerdictDto | null)[];
 	read_web_page: WebPageDto;

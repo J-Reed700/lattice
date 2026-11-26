@@ -13,6 +13,9 @@ use std::sync::Arc;
 
 use crate::features::indexing::dto::IndexFileResponseDto;
 use crate::infrastructure::persistence::repositories::{document, embedding};
+use crate::infrastructure::services::memory_admission::{
+    check_indexing_admission, format_bytes, MemoryProbe, SysinfoMemoryProbe,
+};
 use crate::infrastructure::services::metadata_extraction::MetadataExtractor;
 use lattice_core::application::factories::FileMetadataFactory;
 use lattice_core::application::ports::{
@@ -47,6 +50,8 @@ pub struct ReindexDocumentUseCase {
     /// Search results cached against the corpus, dropped once the rebuilt
     /// chunks are live.
     query_cache: Option<Arc<dyn SearchResultCachePort>>,
+    /// Probes available system memory before extracting and reindexing a file.
+    memory_probe: Arc<dyn MemoryProbe>,
 }
 
 impl ReindexDocumentUseCase {
@@ -62,6 +67,13 @@ impl ReindexDocumentUseCase {
     #[must_use]
     pub fn with_query_cache(mut self, cache: Arc<dyn SearchResultCachePort>) -> Self {
         self.query_cache = Some(cache);
+        self
+    }
+
+    /// Override the memory probe (primarily for deterministic testing).
+    #[must_use]
+    pub fn with_memory_probe(mut self, memory_probe: Arc<dyn MemoryProbe>) -> Self {
+        self.memory_probe = memory_probe;
         self
     }
 
@@ -104,6 +116,7 @@ impl ReindexDocumentUseCase {
             database,
             vector_search,
             query_cache: None,
+            memory_probe: Arc::new(SysinfoMemoryProbe),
         }
     }
 
@@ -142,8 +155,23 @@ impl ReindexDocumentUseCase {
             .map(|c| c.id().to_string())
             .collect();
 
-        // 2. Read current file content (clone to avoid borrow conflict)
+        // 2. Check available-memory admission, then read current file content
         let file_path = document.file_path().to_path_buf();
+        let source_metadata = self.file_storage.metadata(&file_path).await?;
+        let admission = check_indexing_admission(
+            &file_path,
+            source_metadata.size,
+            self.memory_probe.available_memory_bytes(),
+        );
+        if !admission.admitted {
+            return Err(AppError::ServiceNotAvailable(format!(
+                "Insufficient available memory to reindex {} (file is {}, estimated indexing footprint is {}, available memory headroom is {})",
+                file_path.display(),
+                format_bytes(source_metadata.size),
+                format_bytes(admission.estimated_bytes),
+                format_bytes(admission.headroom_bytes.unwrap_or(0)),
+            )));
+        }
         let (content, pages, ocr_pages) = self.extract(&file_path).await?;
         // The import path refuses a file with no text; a reindex must too, or
         // it replaces every chunk and vector with nothing and still marks the

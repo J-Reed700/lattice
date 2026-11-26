@@ -443,7 +443,7 @@ export function Settings() {
       >
         <div
           className={cn(
-            'settings-content mx-auto w-full px-8 pb-20 pt-8',
+            'settings-content mx-auto w-full px-8 pb-20 pt-5',
             !isSearching && isWideContentTab ? 'max-w-[1060px]' : 'max-w-[760px]',
           )}
         >
@@ -517,7 +517,7 @@ export function Settings() {
             <>
               {/* In-pane underline sub-tabs whenever a domain groups 2+ sub-sections */}
               {activeDomain.tabs.length > 1 ? (
-                <div className="mb-6">
+                <div className="mb-4">
                   <Tabs
                     variant="underline"
                     value={activeTab}

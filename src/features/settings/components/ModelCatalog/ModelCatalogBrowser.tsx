@@ -197,7 +197,7 @@ export function ModelCatalogBrowser({ routerModelId, onSetRouterModel }: ModelCa
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <RecommendedSection recommendations={recommendations ?? []} models={compatibleModels} onSelect={selectModel} />
       <details className="catalog-computer group rounded-lg border border-border-subtle bg-surface">
         <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-xs text-text-secondary">

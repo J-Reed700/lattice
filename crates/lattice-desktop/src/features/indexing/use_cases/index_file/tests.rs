@@ -843,3 +843,61 @@ async fn prepare_for_indexing_preserves_tokenizer_counts_code_flags_and_avoids_f
     };
     assert_eq!(cjk_prepared.document.chunks()[0].token_count(), 14);
 }
+
+#[tokio::test]
+async fn prepare_for_indexing_refuses_when_estimated_footprint_exceeds_available_memory() {
+    use crate::infrastructure::services::memory_admission::FixedMemoryProbe;
+    use std::fs;
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("notes.txt");
+    fs::write(&file_path, "Document body for memory admission check.").unwrap();
+
+    let pool = test_pool().await;
+    let db = Database::new(pool.clone());
+    // MockFileStorage reports size = 100 -> estimated indexing footprint = 400 bytes.
+    // With 600 bytes available (300 bytes headroom), admission refuses before import/extraction.
+    let refused_use_case = IndexFileUseCase::new(
+        Arc::new(MockContentStorage),
+        Arc::new(MockFileStorage),
+        Arc::new(MockContentExtractor),
+        Arc::new(MockEmbedder),
+        Arc::new(MockDocumentRepo),
+        Arc::new(MockEmbeddingRepo),
+        db.clone(),
+    )
+    .with_memory_probe(Arc::new(FixedMemoryProbe(Some(600))));
+
+    let request = IndexFileRequestDto {
+        path: file_path.to_str().unwrap().to_string(),
+        chunking_strategy: crate::features::indexing::dto::ChunkingStrategyDto::FixedSize {
+            size: 512,
+        },
+        tags: None,
+        metadata: None,
+        space_id: None,
+    };
+
+    let err = refused_use_case.execute(request.clone()).await.unwrap_err();
+    assert!(
+        matches!(&err, AppError::ServiceNotAvailable(msg) if msg.contains("Insufficient available memory")),
+        "expected ServiceNotAvailable, got {err:?}"
+    );
+    assert_eq!(count(&pool, "documents").await, 0);
+
+    // With 800 bytes available (400 bytes headroom >= 400 bytes footprint), admission succeeds.
+    let admitted_use_case = IndexFileUseCase::new(
+        Arc::new(MockContentStorage),
+        Arc::new(MockFileStorage),
+        Arc::new(MockContentExtractor),
+        Arc::new(MockEmbedder),
+        Arc::new(MockDocumentRepo),
+        Arc::new(MockEmbeddingRepo),
+        db,
+    )
+    .with_memory_probe(Arc::new(FixedMemoryProbe(Some(800))));
+
+    let ok = admitted_use_case.execute(request).await;
+    assert!(ok.is_ok(), "expected admission to succeed: {ok:?}");
+}

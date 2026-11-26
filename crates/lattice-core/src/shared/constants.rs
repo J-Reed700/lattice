@@ -18,9 +18,6 @@ pub const LLM_INFERENCE_TIMEOUT: Duration = Duration::from_secs(60);
 /// ONNX inference timeout
 pub const ONNX_INFERENCE_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Maximum file size for processing (100 MB in bytes)
-pub const MAX_FILE_SIZE_BYTES: u64 = 100 * 1024 * 1024;
-
 /// Default batch size for processing operations
 pub const DEFAULT_BATCH_SIZE: usize = 100;
 
@@ -76,7 +73,6 @@ mod tests {
     #[test]
     #[allow(clippy::assertions_on_constants)]
     fn test_constants_validity() {
-        assert!(MAX_FILE_SIZE_BYTES > 0);
         assert!(DEFAULT_BATCH_SIZE > 0);
         assert!(DEFAULT_BATCH_SIZE <= MAX_BATCH_SIZE);
         assert!(MIN_SIMILARITY_SCORE >= 0.0 && MIN_SIMILARITY_SCORE <= 1.0);

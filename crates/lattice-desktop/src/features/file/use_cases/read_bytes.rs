@@ -1,36 +1,32 @@
 //! Read File Bytes Use Case
 //!
-//! Reads the content of a file as raw bytes with security limits.
+//! Reads the content of a file as raw bytes with memory-based admission.
 
 use crate::features::file::dto::ReadFileBytesRequestDto;
 use crate::infrastructure::security::FileAccessConfig;
+use crate::infrastructure::services::memory_admission::{
+    check_read_bytes_admission, MemoryProbe, SysinfoMemoryProbe,
+};
 use lattice_core::application::ports::FileStoragePort;
 use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
-
-/// Maximum file size for reading raw bytes over IPC (100 MiB).
-///
-/// `read_file_bytes` materializes the full file and serializes `Vec<u8>` over
-/// Tauri JSON IPC (as a JSON number array) into WebView memory. A 100 MiB
-/// ceiling protects the backend and WebView from OOM (CWE-400 / CWE-770) on
-/// multi-gigabyte binaries while supporting large local PDFs and office files.
-const MAX_FILE_SIZE_BYTES: u64 = lattice_core::shared::constants::MAX_FILE_SIZE_BYTES;
 
 /// Use case for reading file content as bytes.
 ///
 /// This use case:
 /// 1. Validates the file path (security: CWE-22)
 /// 2. Checks file existence
-/// 3. Validates file size (security: prevents DoS)
+/// 3. Checks available system memory headroom for the binary IPC transfer (CWE-400 / CWE-770)
 /// 4. Reads file content as bytes
 ///
 /// # Security
 ///
 /// - Path validation prevents directory traversal (CWE-22)
-/// - File size limit prevents resource exhaustion (CWE-770, CWE-400)
+/// - Memory-based admission prevents resource exhaustion (CWE-770, CWE-400)
 pub struct ReadFileBytesUseCase {
     file_storage: Arc<dyn FileStoragePort>,
     file_access_config: Arc<FileAccessConfig>,
+    memory_probe: Arc<dyn MemoryProbe>,
 }
 
 impl ReadFileBytesUseCase {
@@ -42,7 +38,15 @@ impl ReadFileBytesUseCase {
         Self {
             file_storage,
             file_access_config,
+            memory_probe: Arc::new(SysinfoMemoryProbe),
         }
+    }
+
+    /// Override the memory probe (primarily for deterministic testing).
+    #[must_use]
+    pub fn with_memory_probe(mut self, memory_probe: Arc<dyn MemoryProbe>) -> Self {
+        self.memory_probe = memory_probe;
+        self
     }
 
     /// Execute the use case.
@@ -51,7 +55,7 @@ impl ReadFileBytesUseCase {
     ///
     /// - `AppError::NotFound` if file does not exist
     /// - `AppError::InvalidInput` if path is invalid or is a directory
-    /// - `AppError::FileTooLarge` if file exceeds size limit
+    /// - `AppError::FileTooLarge` if file exceeds available-memory headroom
     /// - `AppError::Io` if file cannot be read
     pub async fn execute(&self, request: ReadFileBytesRequestDto) -> Result<Vec<u8>> {
         // CRITICAL: Validate path FIRST to prevent directory traversal (CWE-22)
@@ -76,12 +80,14 @@ impl ReadFileBytesUseCase {
             )));
         }
 
-        // Check file size limit (security: prevent DoS)
-        if metadata.size > MAX_FILE_SIZE_BYTES {
+        // Check memory admission against measured available OS memory (CWE-400 / CWE-770)
+        let decision =
+            check_read_bytes_admission(metadata.size, self.memory_probe.available_memory_bytes());
+        if !decision.admitted {
             return Err(AppError::FileTooLarge {
                 path: validated_path.display().to_string(),
                 size_bytes: metadata.size,
-                max_size_bytes: MAX_FILE_SIZE_BYTES,
+                max_size_bytes: decision.max_input_bytes.unwrap_or(0),
             });
         }
 
@@ -190,12 +196,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_file_bytes_success() {
+        use crate::infrastructure::services::memory_admission::FixedMemoryProbe;
+
         let temp_root = std::env::temp_dir().canonicalize().unwrap();
         let file_path = temp_root.join("file.bin");
         let storage =
             MockFileStorage::new().with_file(file_path.to_string_lossy().as_ref(), b"hello");
         let access_config = Arc::new(FileAccessConfig::new(vec![temp_root]));
-        let use_case = ReadFileBytesUseCase::new(Arc::new(storage), access_config);
+        let use_case = ReadFileBytesUseCase::new(Arc::new(storage), access_config)
+            .with_memory_probe(Arc::new(FixedMemoryProbe(Some(64 * 1024 * 1024))));
 
         let result = use_case
             .execute(ReadFileBytesRequestDto {
@@ -208,23 +217,23 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_read_file_bytes_allows_files_over_ten_mib_and_rejects_above_limit() {
+    async fn test_read_file_bytes_admits_within_available_memory_and_refuses_above_headroom() {
+        use crate::infrastructure::services::memory_admission::FixedMemoryProbe;
+
+        const MIB: u64 = 1024 * 1024;
         let temp_root = std::env::temp_dir().canonicalize().unwrap();
         let large_pdf = temp_root.join("textbook.pdf");
-        let huge_bin = temp_root.join("huge.bin");
-        let storage = MockFileStorage::new()
-            .with_sized_file(
-                large_pdf.to_string_lossy().as_ref(),
-                b"%PDF-1.7",
-                25 * 1024 * 1024,
-            )
-            .with_sized_file(
-                huge_bin.to_string_lossy().as_ref(),
-                b"",
-                MAX_FILE_SIZE_BYTES + 1,
-            );
+        let oversized_bin = temp_root.join("oversized.bin");
+        let storage = Arc::new(
+            MockFileStorage::new()
+                .with_sized_file(large_pdf.to_string_lossy().as_ref(), b"%PDF-1.7", 150 * MIB)
+                .with_sized_file(oversized_bin.to_string_lossy().as_ref(), b"", 300 * MIB),
+        );
         let access_config = Arc::new(FileAccessConfig::new(vec![temp_root]));
-        let use_case = ReadFileBytesUseCase::new(Arc::new(storage), access_config);
+
+        // 1 GiB available -> 512 MiB headroom -> 256 MiB binary IPC limit (no 100 MiB cap).
+        let use_case = ReadFileBytesUseCase::new(storage, access_config)
+            .with_memory_probe(Arc::new(FixedMemoryProbe(Some(1024 * MIB))));
 
         let allowed = use_case
             .execute(ReadFileBytesRequestDto {
@@ -235,7 +244,7 @@ mod tests {
 
         let rejected = use_case
             .execute(ReadFileBytesRequestDto {
-                path: huge_bin.to_string_lossy().into_owned(),
+                path: oversized_bin.to_string_lossy().into_owned(),
             })
             .await;
         assert!(matches!(
@@ -243,7 +252,7 @@ mod tests {
             Err(AppError::FileTooLarge {
                 max_size_bytes,
                 ..
-            }) if max_size_bytes == MAX_FILE_SIZE_BYTES
+            }) if max_size_bytes == 256 * MIB
         ));
     }
 }
