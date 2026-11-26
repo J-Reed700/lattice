@@ -429,4 +429,7 @@ fn status_error(api: &dyn ProviderApi, status: reqwest::StatusCode, reply: &Valu
 }
 
 #[cfg(test)]
+mod resend_tests;
+
+#[cfg(test)]
 mod transport_tests;
