@@ -4,8 +4,6 @@ import { ArrowLeft, LoaderCircle } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { useLearningPlan } from '@/features/learning/curriculum/useLearningPlan';
-import { LessonQuestionEditor } from '@/features/learning/lessons/edit/LessonQuestionEditor';
-import { LessonSectionEditor } from '@/features/learning/lessons/edit/LessonSectionEditor';
 import { AcceptSourceDialog } from '@/features/learning/lessons/review/AcceptSourceDialog';
 import { AddSourceSheet, type AddSourceTarget } from '@/features/learning/lessons/review/AddSourceSheet';
 import { ClaimInFocus } from '@/features/learning/lessons/review/ClaimInFocus';
@@ -24,9 +22,9 @@ import { useReviewDrop, type DroppedSource } from '@/features/learning/lessons/r
 import { useReviewSelection } from '@/features/learning/lessons/review/useReviewSelection';
 import { EMPTY_LESSON_ATTACH_RUN, lessonAttachRunKey, useSourceRecheckStore } from '@/features/learning/sources/sourceRecheckStore';
 import { useEvidenceWaitsForIndex } from '@/features/learning/sources/useCourseIndexStatus';
-import { useLearningProgram } from '@/features/learning/workspace/useLearningStudio';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
-import type { ClaimReviewItemDto, ClaimSupportDto, TeachingFindingDto } from '@/lib/bindings';
+import type { ClaimReviewItemDto, ClaimSupportDto, ContentAddress, TeachingFindingDto } from '@/lib/bindings';
+import { openEditor } from '@/shared/edits/editorStore';
 
 const NARROW = '(max-width: 767px)';
 
@@ -76,8 +74,6 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   const [sheet, setSheet] = useState<{ target: AddSourceTarget; initial: DroppedSource | null; /** The teaching note the sheet was opened from. */ findingKey?: string } | null>(null);
   const [trusting, setTrusting] = useState<{ support: ClaimSupportDto; sharing: number } | null>(null);
   const [reader, setReader] = useState<ReaderRequest | null>(null);
-  const [editing, setEditing] = useState<{ sectionIndex: number; title: string; body: string; focusText: string } | null>(null);
-  const [editingQuestion, setEditingQuestion] = useState<number | null>(null);
   const [legend, setLegend] = useState(false);
   const [narrowView, setNarrowView] = useState<'queue' | 'claim'>('queue');
   const attachKey = lessonAttachRunKey(programId, lessonId);
@@ -85,46 +81,19 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   const clearAttachBanner = useSourceRecheckStore((store) => store.clearLessonAttachBanner);
 
   const { review, active, ordered, waiting, groups } = session;
-  // A published lesson's section text comes from the course the page already loads for the lesson card.
   const published = review?.state === 'ready';
-  const course = useLearningProgram(published ? programId : null);
-  /** The section's text with the first of `wanted` it still holds as the focus, else `fallback`; null when the course has not loaded it. */
-  const sectionAt = (index: number, wanted: Array<string | null | undefined>, fallback = '') => {
-    if (!published) return null;
-    const lesson = course.data?.modules.flatMap((entry) => entry.lessons).find((candidate) => candidate.id === lessonId);
-    const block = lesson?.blocks[index];
-    if (!block) return null;
-    const focusText = wanted.find((text) => text && block.body.includes(text)) ?? fallback;
-    return { sectionIndex: index, title: block.title, body: block.body, focusText };
-  };
-  const sectionOf = (claim: ClaimReviewItemDto | null | undefined) => {
-    const place = claim?.location;
-    if (!claim || place?.unitKind !== 'block' || place.field !== 'body') return null;
-    return sectionAt(place.unitIndex, [place.quote], claim.presentation.sentence);
-  };
-  const editable = sectionOf(active);
-  /** The question a statement is about, counted among the lesson's questions; its unit follows the sections. */
-  const questionOf = (claim: ClaimReviewItemDto | null | undefined) => {
-    const place = claim?.location;
-    if (!published || !review || !place || (place.unitKind !== 'question' && place.unitKind !== 'answer_key')) return null;
-    const index = place.unitIndex - review.sections.length;
-    return index >= 0 ? index : null;
-  };
-  const editableQuestion = questionOf(active);
-  const noteQuestionEditor = (finding: TeachingFindingDto) => {
-    const index = finding.site === 'question' ? finding.unitIndex : null;
-    return published && index !== null ? () => setEditingQuestion(index) : null;
-  };
-  const noteEditor = (finding: TeachingFindingDto) => {
-    const section = finding.site === 'section' && finding.unitIndex !== null ? sectionAt(finding.unitIndex, [finding.sentence, finding.passage]) : null;
-    return section ? () => setEditing(section) : null;
-  };
+  const openAt = (address: ContentAddress) => openEditor(address, { returnFocusTo: document.activeElement as HTMLElement | null });
+  const activeAddress = published ? active?.location.address ?? null : null;
+  const editable = activeAddress?.content.kind === 'learning.section' ? activeAddress : null;
+  const editableQuestion = activeAddress?.content.kind === 'learning.question' ? activeAddress : null;
+  const noteQuestionEditor = (finding: TeachingFindingDto) =>
+    published && finding.address?.content.kind === 'learning.question' ? () => openAt(finding.address!) : null;
+  const noteEditor = (finding: TeachingFindingDto) =>
+    published && finding.address?.content.kind === 'learning.section' ? () => openAt(finding.address!) : null;
   const takenOutEditor = (entry: TakenOutSentence) => {
     const claim = review?.claims.find((candidate) => candidate.claimId === entry.statements[0]?.claimId);
-    const place = claim?.location;
-    if (!claim || !place || claim.putBackUnit === null || place.unitKind !== 'block' || place.field !== 'body') return null;
-    const section = sectionAt(claim.putBackUnit, [claim.putBackBeside]);
-    return section ? () => setEditing(section) : null;
+    if (!published || !claim || claim.putBackUnit === null) return null;
+    return () => openAt({ content: { kind: 'learning.section', key: `${lessonId}/${claim.putBackUnit}` }, path: '/body', fragment: null });
   };
   const selection = useReviewSelection(useMemo(() => ordered.map((claim) => claim.claimId), [ordered]));
   // A preparation attempt for this lesson is running: act now, Resume is not needed.
@@ -173,7 +142,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
     openSheet(sheet?.target ?? claimTarget() ?? fallbackTarget, source);
   });
 
-  const anyOpen = Boolean(session.form || sheet || trusting || reader || editing || editingQuestion !== null);
+  const anyOpen = Boolean(session.form || sheet || trusting || reader);
   const click = (keys: string) => rootRef.current?.querySelector<HTMLButtonElement>(`[aria-keyshortcuts="${keys}"]:not(:disabled)`)?.click();
   const shortcuts = useMemo(() => [
     { id: 'review-next', keys: 'J', description: 'Next statement', handler: () => session.step(1) },
@@ -190,13 +159,13 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   ], [session]);
   useKeyboardShortcuts(shortcuts, { context: 'review', enabled: !anyOpen && !session.acting });
   const escape = useMemo(() => [{ id: 'review-escape', keys: 'Escape', description: 'Close a form, then the screen', global: Boolean(sheet) && !session.form, handler: () => {
-    if (reader || trusting || editing || editingQuestion !== null) return; // the dialog closes itself
+    if (reader || trusting) return; // the dialog closes itself
     if (session.form) session.setForm(null);
     else if (sheet) setSheet(null);
     else if (legend) setLegend(false);
     else if (narrow && narrowView === 'claim') setNarrowView('queue');
     else onBack();
-  } }], [reader, trusting, editing, editingQuestion, session, sheet, legend, narrow, narrowView, onBack]);
+  } }], [reader, trusting, session, sheet, legend, narrow, narrowView, onBack]);
   useKeyboardShortcuts(escape, { context: 'review' });
 
   const header = (
@@ -286,8 +255,8 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
       closest={session.closestSupport} onOpenSource={(support) => setReader({ source: support.source, passage: support.passage, quote: support.quote })}
       onOpenRelevant={(source) => setReader({ source, passage: null, quote: null })} sheet={focusSheet}
       back={narrow ? <Button type="button" size="icon" variant="ghost" aria-label="Back to the queue" onClick={() => setNarrowView('queue')}><ArrowLeft aria-hidden="true" /></Button> : undefined}
-      stickyActions={narrow} published={review.state === 'ready'} onEditSection={editable ? () => setEditing(editable) : null}
-      onEditQuestion={editableQuestion !== null ? () => setEditingQuestion(editableQuestion) : null} />;
+      stickyActions={narrow} published={review.state === 'ready'} onEditSection={editable ? () => openAt(editable) : null}
+      onEditQuestion={editableQuestion ? () => openAt(editableQuestion) : null} />;
     if (review.state === 'needs_review' && (hold === 'audit' || hold === 'audit_stop')) return <AuditHold reason={auditStop} />;
     if (focusSheet) return focusSheet;
     const takenOut = removedCount > 0
@@ -375,8 +344,6 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
       <AcceptSourceDialog programId={programId} support={trusting?.support ?? null} sharing={trusting?.sharing ?? 0}
         onClose={() => setTrusting(null)} onTrusted={(result, support) => { setTrusting(null); session.trusted(result, support); }} />
       <ReviewSourceReader programId={programId} request={reader} onClose={() => setReader(null)} />
-      {editing && <LessonSectionEditor programId={programId} lessonId={lessonId} {...editing} open onClose={() => setEditing(null)} onSaved={() => session.say('Section saved.')} />}
-      {editingQuestion !== null && <LessonQuestionEditor programId={programId} lessonId={lessonId} questionIndex={editingQuestion} open onClose={() => setEditingQuestion(null)} onSaved={() => session.say('Question saved.')} />}
     </div>
   );
 }

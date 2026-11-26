@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { UNVERIFIED_REASONS } from '@/features/learning/lessons/review/claimReviewCopy';
 import { useLessonClaimReview, useResolveLearningClaim } from '@/features/learning/lessons/review/useLessonClaimReview';
 import type { ClaimReviewItemDto, LearningLessonEvidenceDto, UnverifiedReasonDto } from '@/lib/bindings';
+import { openEditor } from '@/shared/edits/editorStore';
 
 export type UnverifiedStatement = { key: string; statement: string; reason: UnverifiedReasonDto; claimId: string | null };
 
@@ -66,6 +67,11 @@ function Statement({ item, programId, lessonId, revision, claim, onReview }: {
         <div className="mt-1 flex flex-wrap gap-2">
           {available.has('confirm') && <Button type="button" size="sm" variant="outline" disabled={busy} onClick={confirm}>This is right</Button>}
           {available.has('edit') && <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => { setText(claim?.location.quote ?? ''); setForm(form === 'edit' ? null : 'edit'); }}>Edit</Button>}
+          {claim?.location.address && (
+            <Button type="button" size="sm" variant="ghost" onClick={(event) => openEditor(claim.location.address!, { returnFocusTo: event.currentTarget })}>
+              Edit the section
+            </Button>
+          )}
           {onReview && <Button type="button" size="sm" variant="ghost" onClick={() => onReview(programId, lessonId, claimId)}>Check the sources</Button>}
         </div>
       )}
