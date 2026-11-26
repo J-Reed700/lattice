@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
 import { PassageHighlighter, SelectionToolbar, useTextSelection } from '@/features/reading';
+import { isAnchored } from '@/features/reading/citations/source';
 import { CitationRail } from '@/features/reading/components/CitationRail';
 import { ImportScopeSelect } from '@/features/reading/components/ImportScopeSelect';
 import { JournalCapturePreview } from '@/features/reading/components/JournalCapturePreview';
@@ -147,8 +148,10 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
 
   const mimeType = source.mimeType || '';
   const sourcePreviewKind = getSourcePreviewKind(source);
+  // A source whose chips say how they use it is read from its saved text, whatever kind of text it is.
+  const anchored = isAnchored(source);
   const hasDocumentId = Boolean(source.documentId && UUID_PATTERN.test(source.documentId));
-  const looksUpDocumentPath = hasDocumentId && !isHttpUrl(source.filePath);
+  const looksUpDocumentPath = !anchored && hasDocumentId && !isHttpUrl(source.filePath);
   const documentPathQuery = useQuery({
     queryKey: readingKeys.documentPath(source.documentId ?? ''),
     queryFn: async () => {
@@ -180,6 +183,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     !isWebCategory &&
     !isWebDocumentId;
   const isWebSourceLike =
+    anchored ||
     isWebArchiveArticle ||
     isExternalWebSource ||
     isWebCategory ||
@@ -231,6 +235,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     !isLocalHtmlFile &&
     // Course material carries its own text; there is no file behind it to read.
     !isCourseSource(source) &&
+    !anchored &&
     (hasDocumentId || Boolean(source.filePath && !isHttpUrl(source.filePath)));
   const shouldResolveDocumentPath = hasDocumentId && !isWebSourceLike;
   // Citation metadata can retain the path from when it was indexed. A stable
@@ -291,7 +296,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     [locatorChunkId, onLocationResolved]
   );
 
-  const { canTravel, goToCitation } = useCitationTravel(citations, citationIndex, onCitationIndexChange);
+  const { canTravel, stepCitation, position, total } = useCitationTravel(citations, citationIndex, onCitationIndexChange);
 
   const { captureDraft, setCaptureDraft, handleReference, handleAddToJournal, handleAskAbout } =
     usePassageCapture({ source, initialLocator, resolvedLabel, onClose });
@@ -393,7 +398,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
 
   const enrichedWebSource = (() => {
     if (!showsWebArticle) return source;
-    if (source.webSnapshot?.text) return source;
+    if (source.webSnapshot?.text || anchored) return source;
     const resolvedText = webPageMode.snapshot?.readerText?.trim() || content?.trim();
     if (!resolvedText) return source;
     return {
@@ -518,10 +523,11 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
             source={source}
             locator={initialLocator}
             resolvedLabel={resolvedLabel}
-            index={citationIndex}
-            total={citations?.length}
-            onPrevious={canTravel ? () => goToCitation((citationIndex ?? 0) - 1) : undefined}
-            onNext={canTravel ? () => goToCitation((citationIndex ?? 0) + 1) : undefined}
+            occurrence={occurrence}
+            index={position >= 0 ? position : undefined}
+            total={total}
+            onPrevious={canTravel ? () => stepCitation(-1) : undefined}
+            onNext={canTravel ? () => stepCitation(1) : undefined}
             onReference={() => handleReference(initialLocator.text)}
             onAddToJournal={() => handleAddToJournal(initialLocator.text)}
             onAskAbout={() => handleAskAbout(initialLocator.text)}

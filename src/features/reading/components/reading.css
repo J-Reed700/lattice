@@ -22,3 +22,16 @@
   color: transparent;
   border-radius: 2px;
 }
+
+/* A quotation's opening and closing marks, drawn by the reply viewer: the glyph in the text's own colour. */
+.cite-quote {
+  color: inherit;
+  font: inherit;
+}
+
+/* One cited sentence on a citation card, set off by a rule on its left. */
+.cite-card-excerpt {
+  margin: 0;
+  padding-left: 0.625rem;
+  border-left: 2px solid hsl(var(--accent) / 0.5);
+}

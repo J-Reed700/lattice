@@ -52,7 +52,7 @@ describe('fromLearningSourceVersion', () => {
     expect(source.category).toBe('saved text');
     expect(source.content).toBe('');
     expect(source.excerpt).toBeUndefined();
-    expect(source.webSnapshot?.text).toBe('The saved capture.');
+    expect(source.webSnapshot?.text).toBe('  The saved capture.  ');
     expect(source.webSnapshot?.url).toBe('');
     expect(source.citationId).toBe(2);
     expect(locator).toBeNull();
@@ -66,5 +66,11 @@ describe('fromLearningSourceVersion', () => {
     expect(first.source.chunkId).not.toBe(second.source.chunkId);
     expect(first.locator?.chunkId).toBe(first.source.chunkId);
     expect(whole.source.chunkId).toBe('version-1#0');
+  });
+
+  it('keeps the reader text exactly as given, so a byte span of the saved version lands on the same words', () => {
+    const { source } = fromLearningSourceVersion(detail(version()), { readerText: '\n\n  Tides follow the moon.\n' });
+
+    expect(source.webSnapshot?.text).toBe('\n\n  Tides follow the moon.\n');
   });
 });

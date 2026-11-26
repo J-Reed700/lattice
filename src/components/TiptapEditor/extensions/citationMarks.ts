@@ -3,8 +3,21 @@ import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 
 import type { FoundMark } from '@/utils/foundMark';
+import { QUOTE_END, QUOTE_START } from '@/utils/replyPieces';
 
 export const citationMarksKey = new PluginKey('citationMarks');
+
+const QUOTE_MARKS = new RegExp(`[${QUOTE_START}${QUOTE_END}]`, 'g');
+
+/** The quotation mark a private-use mark stands for, drawn in the text's own colour. */
+function quoteWidget(opening: boolean): () => HTMLElement {
+  return () => {
+    const glyph = document.createElement('span');
+    glyph.className = 'cite-quote';
+    glyph.textContent = opening ? '“' : '”';
+    return glyph;
+  };
+}
 
 export interface CitationMarksOptions {
   /** Decides, at draw time, whether source number `n` is one this answer has. */
@@ -29,6 +42,10 @@ export interface CitationMarksOptions {
  * one source from several sentences and each mark means its own sentence.
  * Whoever hosts the viewer handles clicks and hover. `sentencesByOccurrence`
  * counts the same way, from the same list of references.
+ *
+ * A quotation's pair of private-use marks is drawn as opening and closing
+ * quotation marks (`cite-quote`), whoever the host is and whether or not
+ * citations are shown.
  */
 export const CitationMarks = Extension.create<CitationMarksOptions>({
   name: 'citationMarks',
@@ -81,6 +98,13 @@ export const CitationMarks = Extension.create<CitationMarksOptions>({
               if (!node.isText || !node.text) return;
               if (parent?.type.spec.code) return;
               if (node.marks.some((mark) => mark.type.spec.code)) return;
+              for (const quote of node.text.matchAll(QUOTE_MARKS)) {
+                const at = pos + (quote.index ?? 0);
+                decorations.push(
+                  Decoration.inline(at, at + 1, { class: 'citation-hidden', 'aria-hidden': 'true' }),
+                  Decoration.widget(at, quoteWidget(quote[0] === QUOTE_START), { side: -1, key: `quote-${at}` }),
+                );
+              }
               for (const found of findMarks(node.text)) {
                 const { number } = found;
                 const from = pos + found.index;
