@@ -160,7 +160,7 @@ describe('sourceAdapter canonical mappings', () => {
       expect(target.source.citationId).toBe(4);
       expect(target.source.anchoredBy).toEqual([
         {
-          occurrence: 1,
+          occurrence: 0,
           relation: 'cites',
           anchors: [{ exact: 'Mitochondria are the powerhouse of the cell.', span: null }],
         },

@@ -2,15 +2,7 @@ import { type FC, useRef } from 'react';
 
 import * as Popover from '@radix-ui/react-popover';
 
-import {
-  anchoredEntry,
-  anchoredText,
-  CitationCard,
-  headingTrail,
-  isAnchored,
-  placeAnchors,
-} from '@/features/reading/citations';
-import { articleBlocks } from '@/features/reading/model/articleBlocks';
+import { anchoredCardDetails, CitationCard } from '@/features/reading/citations';
 import { formatSourceLocation } from '@/shared/sources/passageLocator';
 import type { SourceWithMetadata } from '@/types/conversation';
 import { sanitizeFileName } from '@/utils/sanitize';
@@ -33,6 +25,8 @@ interface CitationFootnoteProps {
   provenanceLabel?: string;
   /** A location a viewer has already resolved, e.g. "p. 12". */
   resolvedLocation?: string;
+  /** Specific chip occurrence in the reply, when one was cited. */
+  occurrence?: number | null;
   onViewFile: () => void;
   /** Why the source cannot be opened right now; the citation still shows what it cites. */
   disabledReason?: string;
@@ -43,6 +37,7 @@ export const CitationFootnote: FC<CitationFootnoteProps> = ({
   source,
   provenanceLabel,
   resolvedLocation,
+  occurrence = null,
   onViewFile,
   disabledReason,
 }) => {
@@ -54,15 +49,8 @@ export const CitationFootnote: FC<CitationFootnoteProps> = ({
   // reader is a non-modal dialog that closes when focus moves outside it, so the
   // popover must not take focus back to the chip when it unmounts.
   const handedToReaderRef = useRef(false);
-  const entry = anchoredEntry(source, null);
-  const excerpts = entry?.anchors.map((anchor) => anchor.exact).filter(Boolean) ?? [];
+  const { relation, excerpts, trail } = anchoredCardDetails(source, occurrence);
   const passage = (source.excerpt ?? source.content ?? '').trim();
-  const text = isAnchored(source) ? anchoredText(source) : null;
-  const firstPlaced = entry && text ? placeAnchors(text, entry.anchors, source.anchorBase ?? 0).ranges[0] : undefined;
-  const trail =
-    text && firstPlaced && firstPlaced.start > 0
-      ? headingTrail(text, articleBlocks(text), firstPlaced.start)
-      : undefined;
   const meta = [provenanceLabel, location, source.category].filter(Boolean).join(' · ');
 
   return (
@@ -97,7 +85,7 @@ export const CitationFootnote: FC<CitationFootnoteProps> = ({
           <CitationCard
             number={number}
             title={sanitizedFileName}
-            relation={entry?.relation}
+            relation={relation}
             excerpts={excerpts}
             passage={excerpts.length === 0 ? passage : null}
             trail={trail}

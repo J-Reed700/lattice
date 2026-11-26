@@ -84,4 +84,35 @@ describe('CitationFootnote', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: 'View source' })).not.toBeInTheDocument());
     await waitFor(() => expect(chip).toHaveFocus());
   });
+
+  it('renders relation, excerpts, and heading trail via anchoredCardDetails for whole-source and named occurrences', async () => {
+    const text = '# Guide\n\n## Methods\n\nFirst passage here.\n\n## Results\n\nSecond passage here.';
+    const spanFor = (exact: string) => {
+      const start = new TextEncoder().encode(text.slice(0, text.indexOf(exact))).length;
+      return { start, end: start + new TextEncoder().encode(exact).length };
+    };
+    const anchored: SourceWithMetadata = {
+      ...source,
+      fileName: 'Guide.md',
+      content: text,
+      anchoredBy: [
+        { occurrence: 0, relation: 'quotes', anchors: [{ exact: 'First passage here.', span: spanFor('First passage here.') }] },
+        { occurrence: 1, relation: 'cites', anchors: [{ exact: 'Second passage here.', span: spanFor('Second passage here.') }] },
+      ],
+      anchorBase: 0,
+    };
+
+    const view = render(<CitationFootnote number={1} source={anchored} onViewFile={vi.fn()} />);
+    openPopover();
+    const firstCard = await screen.findByRole('group', { name: 'Source 1, quoted from Guide.md' });
+    expect(firstCard).toHaveTextContent('Quoted from');
+    expect(firstCard).toHaveTextContent('“First passage here.”');
+    expect(firstCard).toHaveTextContent('Guide › Methods');
+
+    view.rerender(<CitationFootnote number={1} source={anchored} occurrence={1} onViewFile={vi.fn()} />);
+    const secondCard = await screen.findByRole('group', { name: 'Source 1, cited (not checked) in Guide.md' });
+    expect(secondCard).toHaveTextContent('Cited (not checked)');
+    expect(secondCard).toHaveTextContent('Second passage here.');
+    expect(secondCard).toHaveTextContent('Guide › Results');
+  });
 });

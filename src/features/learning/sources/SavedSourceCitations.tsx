@@ -58,11 +58,12 @@ function chipSource(citation: SavedSourceCitation, title: string): SourceWithMet
   const anchoredBy = support
     ? [
         {
-          occurrence: 1,
+          occurrence: 0,
           relation: support.relation,
           anchors: support.anchors.map((anchor) => ({
             ...anchor,
             exact: cleanQuoteText(anchor.exact),
+            span: null,
           })),
         },
       ]

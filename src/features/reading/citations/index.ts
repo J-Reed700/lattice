@@ -5,5 +5,5 @@ export type { CitationCardProps } from './CitationCard';
 export { headingTrail } from './headingTrail';
 export { anchoredOccurrences } from './occurrences';
 export { citationAccessibleName, relationLabel, RELATION_LABELS } from './relation';
-export { anchoredEntry, anchoredText, isAnchored } from './source';
+export { anchoredCardDetails, anchoredEntry, anchoredText, isAnchored } from './source';
 export type { AnchoredOccurrence } from './types';

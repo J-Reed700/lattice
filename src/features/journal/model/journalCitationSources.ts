@@ -24,7 +24,7 @@ export function toJournalCitationSource(
       ? {
           anchoredBy: [
             {
-              occurrence: 1,
+              occurrence: 0,
               relation: noteCitation.support.relation,
               anchors: noteCitation.support.anchors,
             },

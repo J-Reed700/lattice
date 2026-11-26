@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ApiProvider, type ApiClient } from '@/contexts/ApiContext';
 import { SavedSourceCitations, type SavedSourceCitation } from '@/features/learning/sources/SavedSourceCitations';
+import { anchoredCardDetails } from '@/features/reading/citations';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import { useReaderStore } from '@/features/reading/stores/readerStore';
 import type { SourceWithMetadata } from '@/types/conversation';
@@ -151,12 +152,56 @@ describe('SavedSourceCitations', () => {
     expect(item.querySelector('q')).toBeNull();
     await waitFor(() => expect(item).toHaveTextContent('paraphrased claim reference — Library alpha'));
     openChip(7);
-    const card = await screen.findByRole('group', { name: 'Source 7, Library alpha' });
+    const card = await screen.findByRole('group', { name: 'Source 7, cited (not checked) in Library alpha' });
+    expect(card).toHaveTextContent('Cited (not checked)');
     expect(card).toHaveTextContent('paraphrased claim reference');
     expect(card.textContent).not.toContain('“');
     fireEvent.click(await screen.findByRole('button', { name: 'View source' }));
     await waitFor(() => expect(useReaderStore.getState().session?.citations[0]?.citationId).toBe(7));
-    expect(useReaderStore.getState().session?.citations[0]?.anchoredBy?.[0]?.relation).toBe('cites');
+    expect(useReaderStore.getState().session?.citations[0]?.anchoredBy?.[0]).toEqual({
+      occurrence: 0,
+      relation: 'cites',
+      anchors: [{ exact: 'paraphrased claim reference', span: null }],
+    });
+  });
+
+  it('clears preview byte spans so chips still render quoted excerpts while full spans and trails open in the reader', async () => {
+    const exact = 'Exact sentence inside saved source.';
+    const fullText = [
+      '# Course Guide',
+      '## Background',
+      'Opening context longer than the cited excerpt so preview offsets exceed the preview length.',
+      exact,
+    ].join('\n\n');
+    const start = new TextEncoder().encode(fullText.slice(0, fullText.indexOf(exact))).length;
+    const end = start + new TextEncoder().encode(exact).length;
+    mocks.version.mockResolvedValueOnce(
+      ok({ sourceId: 'source-a', version: summary('va', 'Library alpha'), fullText, usage: [] }),
+    );
+    const withRemoteSpan: SavedSourceCitation[] = [
+      {
+        number: 4,
+        versionId: 'va',
+        quote: exact,
+        support: {
+          relation: 'quotes',
+          anchors: [{ exact, span: { start, end } }],
+        },
+      },
+    ];
+    renderWith(<SavedSourceCitations programId="program-1" citations={withRemoteSpan} quotes ownerKey="owner-1" />);
+
+    openChip(4);
+    const card = await screen.findByRole('group', { name: 'Source 4, quoted from Library alpha' });
+    expect(card).toHaveTextContent('Quoted from');
+    expect(card).toHaveTextContent(`“${exact}”`);
+    fireEvent.click(await screen.findByRole('button', { name: 'View source' }));
+    await waitFor(() => expect(useReaderStore.getState().session?.citations[0]?.citationId).toBe(4));
+    expect(anchoredCardDetails(useReaderStore.getState().session!.citations[0]!, null)).toMatchObject({
+      relation: 'quotes',
+      excerpts: [exact],
+      trail: ['Course Guide', 'Background'],
+    });
   });
 
   it('shows a quote that is all syntax as written rather than nothing', () => {

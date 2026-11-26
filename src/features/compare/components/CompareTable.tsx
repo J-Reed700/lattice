@@ -66,7 +66,7 @@ export function CompareTable({ table, onOpenCitation }: CompareTableProps) {
                   setHoverState({
                     hover: {
                       number: citation.number,
-                      occurrence: 1,
+                      occurrence: 0,
                       rect: target.getBoundingClientRect(),
                     },
                     source,

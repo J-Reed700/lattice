@@ -26,7 +26,7 @@ export function compareCitationSource(
     citationId: citation.number,
     anchoredBy: [
       {
-        occurrence: 1,
+        occurrence: 0,
         relation: citation.support.relation,
         anchors: citation.support.anchors,
       },

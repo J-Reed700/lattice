@@ -153,11 +153,12 @@ export function EntryEditor({
     if (!source || !activeNote) return;
     const citations = [...citationMap.entries()].sort(([a], [b]) => a - b).map(([, value]) => value);
     const index = citations.findIndex((candidate) => candidate.citationId === number);
-    openReader(`journal:${activeNote.id}`, citations, index, occurrence);
+    openReader(`journal:${activeNote.id}`, citations, index, source.anchoredBy?.length ? null : occurrence);
   }, [activeNote, citationMap, openReader]);
   const handleCitationHover = useCallback((number: number, occurrence: number, rect: DOMRect) => {
-    setHover({ number, occurrence, rect });
-  }, []);
+    const source = citationMap.get(number);
+    setHover({ number, occurrence: source?.anchoredBy?.length ? null : occurrence, rect });
+  }, [citationMap]);
   const handleCitationLeave = useCallback(() => {
     setHover(null);
   }, []);
@@ -187,7 +188,7 @@ export function EntryEditor({
         ? {
             anchoredBy: [
               {
-                occurrence: 1,
+                occurrence: 0,
                 relation: source.anchoredBy[0]!.relation,
                 anchors: excerpt.excerpt ? [{ exact: excerpt.excerpt, span: null }] : source.anchoredBy[0]!.anchors,
               },

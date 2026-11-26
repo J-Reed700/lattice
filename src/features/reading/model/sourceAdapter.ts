@@ -209,7 +209,7 @@ export function fromStudySource(
       ? {
           anchoredBy: [
             {
-              occurrence: 1,
+              occurrence: 0,
               relation: studySource.support.relation,
               anchors: studySource.support.anchors,
             },
@@ -544,7 +544,7 @@ export function fromLearningSourceVersion(
       citationId: reading.number,
       ...(reading.support
         ? {
-            anchoredBy: [{ occurrence: 1, relation: reading.support.relation, anchors: reading.support.anchors }],
+            anchoredBy: [{ occurrence: 0, relation: reading.support.relation, anchors: reading.support.anchors }],
             anchorBase: 0,
           }
         : {}),

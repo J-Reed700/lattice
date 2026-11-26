@@ -3,8 +3,7 @@ import { useMemo, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
-import { anchoredEntry, anchoredText, CitationCard, headingTrail, isAnchored, placeAnchors } from '@/features/reading/citations';
-import { articleBlocks } from '@/features/reading/model/articleBlocks';
+import { anchoredCardDetails, CitationCard } from '@/features/reading/citations';
 import { formatSourceLocation } from '@/shared/sources/passageLocator';
 import type { SourceWithMetadata } from '@/types/conversation';
 
@@ -216,11 +215,7 @@ export function SourceCitations({
                 : undefined,
             ].filter(Boolean);
 
-            const entry = anchoredEntry(source, null);
-            const excerpts = entry?.anchors.map((anchor) => anchor.exact).filter(Boolean) ?? [];
-            const text = isAnchored(source) ? anchoredText(source) : null;
-            const firstPlaced = entry && text ? placeAnchors(text, entry.anchors, source.anchorBase ?? 0).ranges[0] : undefined;
-            const trail = text && firstPlaced && firstPlaced.start > 0 ? headingTrail(text, articleBlocks(text), firstPlaced.start) : undefined;
+            const { relation, excerpts, trail } = anchoredCardDetails(source, null);
             const chunksBody = group.chunks.length > 0 && (
               <div className="mt-2.5 space-y-1.5">
                 {group.chunks.map((chunk) => {
@@ -275,7 +270,7 @@ export function SourceCitations({
                   <CitationCard
                     number={source.citationId}
                     title={source.fileName}
-                    relation={entry?.relation}
+                    relation={relation}
                     excerpts={excerpts}
                     trail={trail}
                     footer={
