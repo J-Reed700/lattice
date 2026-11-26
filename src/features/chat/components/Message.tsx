@@ -30,13 +30,14 @@ import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { useDrawnReply } from '@/shared/conversations/useDrawnReply';
 import type { DisplayMessage, SourceWithMetadata } from '@/types/conversation';
+import { withoutMarks } from '@/utils/replyPieces';
 
 const NO_SOURCES: SourceWithMetadata[] = [];
 
 /** The answer as the reader sees it, each formula as its source. */
 function readAnswer(answer: HTMLElement | null): string {
   if (!answer) return '';
-  return textWithFormulas(answer) ?? answer.innerText;
+  return withoutMarks(textWithFormulas(answer) ?? answer.innerText);
 }
 
 interface MessageProps {

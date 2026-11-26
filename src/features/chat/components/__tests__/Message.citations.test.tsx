@@ -40,11 +40,19 @@ vi.mock('@/features/reading/hooks/usePassageReferencesQuery', () => ({ usePassag
 vi.mock('@/features/model/hooks/useActiveModels', () => ({ useActiveModels: () => ({ activeModels: null }) }));
 vi.mock('@/features/model/hooks/useDownloadedModels', () => ({ useDownloadedModels: () => ({ downloadedModels: [] }) }));
 vi.mock('@/features/model/hooks/useLoadedModels', () => ({ useLoadedModels: () => [], degradedReasonFor: () => null }));
-vi.mock('@/features/chat/components/MessageActions', () => ({ MessageActions: () => null }));
+const capturedTangentSources: Array<{ getText: () => string }> = [];
+
+vi.mock('@/features/chat/components/MessageActions', () => ({
+  MessageActions: ({ tangentSource }: { tangentSource?: { getText: () => string } }) => {
+    if (tangentSource) capturedTangentSources.push(tangentSource);
+    return null;
+  },
+}));
 vi.mock('@/features/chat/components/turn/TurnRecord', () => ({ TurnRecord: () => null }));
 
 describe('Message anchored citations and Quoted pieces', () => {
   beforeEach(() => {
+    capturedTangentSources.length = 0;
     citationDisplayStore.getState().setVisible(true);
     useReaderStore.setState({ session: null, resolvedLocations: new Map() });
   });
@@ -148,5 +156,59 @@ describe('Message anchored citations and Quoted pieces', () => {
       { occurrence: 0, relation: 'quotes', anchors: [{ exact: 'Hold the mitigation for 20 seconds.' }] },
       { occurrence: 1, relation: 'backs', anchors: [{ exact: 'Once the hold expires, page Marisol Quenby.' }] },
     ]);
+  });
+
+  it('strips private-use citation and quote marks from tangent answer reads even with TeX math', async () => {
+    const sources: SourceWithMetadata[] = [
+      {
+        documentId: 'doc-1',
+        chunkId: 'chunk-1',
+        fileName: 'Runbook.md',
+        filePath: '/vault/Runbook.md',
+        mimeType: 'text/markdown',
+        category: 'Markdown',
+        content: 'Hold the mitigation for 20 seconds.',
+        score: 0.9,
+        fileSizeBytes: 120,
+        modifiedAt: '2026-10-20T00:00:00.000Z',
+        citationId: 1,
+      },
+    ];
+
+    const reply: ReplyPieceDto[] = [
+      { type: 'quoted', text: 'Hold the mitigation for 20 seconds' },
+      { type: 'text', text: ' ' },
+      {
+        type: 'reference',
+        reference: {
+          written: '[s1]',
+          kind: 'source',
+          number: 1,
+          support: { relation: 'quotes', anchors: [{ exact: 'Hold the mitigation for 20 seconds.' }] },
+        },
+      },
+      { type: 'text', text: ' for $t = 20$.' },
+    ];
+
+    const message: DisplayMessage = {
+      id: 'msg-math-quote',
+      conversationId: 'conversation',
+      role: 'assistant',
+      content: 'Hold the mitigation for 20 seconds [s1] for $t = 20$.',
+      tokens: 18,
+      status: 'completed',
+      createdAt: '2026-10-20T00:00:00.000Z',
+      sources,
+      reply,
+    };
+
+    render(<Message message={message} isLastTurn={false} />);
+    await screen.findByRole('button', { name: 'Citation 1' });
+    expect(document.querySelector('[data-type="inline-math"][data-latex="t = 20"]')).toBeInTheDocument();
+
+    const tangentText = capturedTangentSources.at(-1)?.getText() ?? '';
+    expect(tangentText).toContain('“Hold the mitigation for 20 seconds”');
+    expect(tangentText).toContain('$t = 20$');
+    expect(tangentText).not.toMatch(/[\uE000-\uF8FF]/);
   });
 });

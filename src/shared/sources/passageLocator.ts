@@ -64,10 +64,8 @@ export function locatorFromSource(
       ? source.anchoredBy?.find((entry) => entry.occurrence === occurrence)
       : undefined;
   const anchoredText = matchedEntry?.anchors
-    .map((anchor) => anchor.exact)
-    .filter(Boolean)
-    .join(' ')
-    .trim();
+    .map((anchor) => anchor.exact.trim())
+    .find(Boolean);
 
   const text = (!chunkId || chunkId === source.chunkId)
     ? anchoredText || source.content?.trim() || source.excerpt || ''

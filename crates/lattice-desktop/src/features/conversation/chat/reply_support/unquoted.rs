@@ -18,16 +18,25 @@ pub(super) fn find_unquoted_in_sentence(
     formulas: &[Range<usize>],
     haystack: &str,
 ) -> Option<(Range<usize>, String)> {
-    // Only search segments inside this sentence that precede `placed` cleanly
-    // without crossing other chips.
-    let seg_end = placed.range.start.min(sentence.range.end);
-    let seg_start = reply
+    // Only search the clause inside this sentence that precedes `placed` (or
+    // the immediately adjacent chip cluster `placed` belongs to) without
+    // crossing prose separated by other chips.
+    let mut seg_end = placed.range.start.min(sentence.range.end);
+    let mut seg_start = sentence.range.start;
+    while let Some(prev) = reply
         .references
         .iter()
         .filter(|other| other.range.end <= seg_end && other.range.start >= sentence.range.start)
-        .map(|other| other.range.end)
-        .max()
-        .unwrap_or(sentence.range.start);
+        .max_by_key(|other| other.range.end)
+    {
+        let gap = reply.text.get(prev.range.end..seg_end).unwrap_or_default();
+        if gap.trim().is_empty() {
+            seg_end = prev.range.start;
+        } else {
+            seg_start = prev.range.end;
+            break;
+        }
+    }
     if seg_start >= seg_end {
         return None;
     }

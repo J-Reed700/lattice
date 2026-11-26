@@ -354,3 +354,44 @@ fn explorer_file_references_keep_empty_support_while_source_chips_carry_support(
         RelationDto::Quotes
     );
 }
+
+#[test]
+fn consecutive_chips_with_judge_verdict_both_quote_and_deduplicate_quoted_piece() {
+    let other_runbook =
+        "Recovery guide:\nHold the mitigation for 20 seconds before notifying on-call.\n";
+    let sources = [chunk_source(RUNBOOK, 1), chunk_source(other_runbook, 2)];
+    let r = reply("Hold the mitigation for 20 seconds [s1][s2].", &sources);
+    let verification = json!({
+        "claimVerdicts": [{
+            "sentence": "Hold the mitigation for 20 seconds.",
+            "citationIds": [1, 2],
+            "verdict": "supported",
+            "method": "judge",
+            "evidenceQuote": "Hold the mitigation for 20 seconds.",
+        }]
+    });
+
+    let out = pieces(&r, &sources, Some(&verification));
+    let quoted: Vec<_> = out
+        .iter()
+        .filter_map(|p| match p {
+            ReplyPieceDto::Quoted { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(quoted, vec!["Hold the mitigation for 20 seconds"]);
+
+    let refs: Vec<_> = out
+        .iter()
+        .filter_map(|p| match p {
+            ReplyPieceDto::Reference { reference } => Some(reference),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(refs.len(), 2);
+    for reference in refs {
+        let support = reference.support.as_ref().unwrap();
+        assert_eq!(support.relation, RelationDto::Quotes);
+        assert_eq!(support.anchors[0].exact, "Hold the mitigation for 20 seconds");
+    }
+}
