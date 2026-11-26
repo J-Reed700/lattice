@@ -817,6 +817,7 @@ fn ollama_answer_enforces_output_budget_token_and_tool_limits() {
     for i in 0..4 {
         let line = serde_json::json!({
             "model": "qwen3.5",
+            "created_at": "2026-01-01T00:00:00Z",
             "message": {"role": "assistant", "content": format!("t{i}")},
             "done": false
         });
@@ -826,6 +827,7 @@ fn ollama_answer_enforces_output_budget_token_and_tool_limits() {
     }
     let fifth = serde_json::json!({
         "model": "qwen3.5",
+        "created_at": "2026-01-01T00:00:00Z",
         "message": {"role": "assistant", "content": "t4"},
         "done": false
     });
@@ -839,6 +841,7 @@ fn ollama_answer_enforces_output_budget_token_and_tool_limits() {
     let mut tool_answer = Answer::with_budget(tool_budget);
     let too_many_tools = serde_json::json!({
         "model": "qwen3.5",
+        "created_at": "2026-01-01T00:00:00Z",
         "message": {
             "role": "assistant",
             "content": "",

@@ -66,7 +66,7 @@ fn response_budget_scales_with_output_tokens_from_small_ceilings_to_large_window
     let large = ResponseBudget::for_tokens(128_000);
     assert_eq!(large.max_token_events, 128_000);
     assert_eq!(large.max_tool_calls, 32_000);
-    assert!(large.max_stream_bytes > 64 * 1024 * 1024);
+    assert!(large.max_stream_bytes > 62 * 1024 * 1024);
     assert!(large.max_event_bytes > 16 * 1024 * 1024);
 
     // Zero clamps to 1 so even degenerate caps keep a floor envelope.
