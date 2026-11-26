@@ -544,4 +544,58 @@ mod tests {
         assert_eq!(bindings[1].lesson_ids[1], program.modules[1].lessons[1].id);
         Ok(())
     }
+
+    #[tokio::test]
+    async fn shows_a_citation_quoted_from_past_the_saved_preview() -> Result<()> {
+        let quote = "A randomized comparison isolates the intervention.";
+        let url = "https://example.com/experimental-design";
+        let captured = crate::source_library::CapturedLearningSource {
+            title: "Experimental design textbook".into(),
+            publisher: None,
+            requested_url: Some(url.into()),
+            resolved_url: Some(url.into()),
+            text: format!(
+                "{}\n\n{quote}",
+                "Preface and publishing information.\n".repeat(500)
+            ),
+            truncated: false,
+            extraction_version: "test_full_capture".into(),
+            signals: crate::references::trust::capture::not_extracted("test fixture"),
+        };
+        let id = uuid::Uuid::new_v4().to_string();
+        let preview = crate::sources::preview(&id, &captured);
+        assert!(!preview.excerpt.contains(quote));
+        let reference = crate::sources::InitialReference {
+            source_id: id.clone(),
+            origin: url.into(),
+            captured,
+            found: false,
+        };
+        let mut program = crate::tests::fixture();
+        program.modules[0].outcomes =
+            vec!["Explain how a randomized comparison isolates an intervention.".into()];
+        program.sources = vec![preview];
+        let mut candidate = json!({"modules":program.modules.iter().map(|module| json!({
+            "title":module.title,
+            "summary":{"text":module.summary},
+            "outcomes":module.outcomes.iter().map(|outcome| json!({"text":outcome})).collect::<Vec<_>>(),
+            "lessons":module.lessons.iter().map(|lesson| json!({"title":lesson.title})).collect::<Vec<_>>()
+        })).collect::<Vec<_>>()});
+        candidate["modules"][0]["outcomes"][0]["sourceIndex"] = json!(0);
+        candidate["modules"][0]["outcomes"][0]["quote"] = json!(quote);
+        let mut draft = bound_fixture().1;
+        draft.bindings = None;
+        draft.candidate = candidate;
+        draft.source_ids = vec![id.clone()];
+        let db = Database::new(crate::tests::pool().await?);
+        LearningRepository::new(db.clone())
+            .create_outline_draft(&program, &[reference], Some(&draft))
+            .await?;
+        let evidence = get(&db, &program.summary.id).await?.unwrap();
+        assert_eq!(evidence.unavailable_count, 0);
+        assert_eq!(evidence.citations.len(), 1);
+        assert_eq!(evidence.citations[0].quote, quote);
+        assert_eq!(evidence.citations[0].source_id, id);
+        Ok(())
+    }
 }
