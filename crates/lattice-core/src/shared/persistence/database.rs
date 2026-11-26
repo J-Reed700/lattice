@@ -59,7 +59,7 @@ impl Database {
         }
     }
 
-    /// Returns the urgent write handle for user edits (P0 stub takes the standard turn; P1 adds the urgent lane).
+    /// Returns the urgent write handle for user edits.
     pub fn urgent(&self) -> UrgentWrites<'_> {
         UrgentWrites { database: self }
     }
@@ -141,7 +141,7 @@ impl UrgentWrites<'_> {
     ) -> impl Future<Output = Result<WriteTx, PersistenceError>> + Send + '_ {
         let at = Location::caller();
         async move {
-            let turn = self.database.turns.take(at).await?;
+            let turn = self.database.turns.take_urgent(at).await?;
             WriteTx::start(self.database.writer(), turn).await
         }
     }

@@ -3,10 +3,12 @@
 pub mod kind;
 mod notices;
 mod ops;
+mod pipeline;
 pub mod registry;
 mod revision;
 mod rules;
 pub mod service;
+mod store;
 pub mod types;
 
 #[cfg(test)]
