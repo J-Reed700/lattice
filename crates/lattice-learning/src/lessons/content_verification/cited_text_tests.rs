@@ -433,7 +433,7 @@ fn compared_only_passages_are_numbered_after_every_cited_one_and_get_no_chip() {
         numbered.sections[0],
         vec![
             text("One."),
-            cite_as(1, RelationDto::States, vec![words("p1", 0, 2)]),
+            cite_as(1, RelationDto::Restates, vec![words("p1", 0, 2)]),
         ]
     );
     assert_eq!(numbered.sections[1], vec![text("Two."), cite(2)]);
