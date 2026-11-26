@@ -57,6 +57,11 @@ fn stated(source: &str) -> CheckedPart {
     }
 }
 
+fn stating(mut found: Finding, source: &str) -> Finding {
+    found.two_pass.parts = vec![stated(source)];
+    found
+}
+
 fn places(found: Vec<&EvidencePassage>) -> Vec<(&str, usize)> {
     found
         .into_iter()
@@ -223,7 +228,7 @@ fn a_sourced_statement_without_stated_parts_cites_the_passage_holding_its_suppor
 }
 
 #[test]
-fn a_sourced_statement_whose_quote_is_in_no_passage_cites_the_first_passage() {
+fn a_sourced_statement_whose_check_named_no_passage_cites_nothing() {
     let mut found = finding(
         0,
         "q",
@@ -234,9 +239,9 @@ fn a_sourced_statement_whose_quote_is_in_no_passage_cites_the_first_passage() {
         ],
     );
     found.supporting_quote = Some("nowhere".into());
-    assert_eq!(places(stands_on(&found)), vec![("a", 0)]);
+    assert!(stands_on(&found).is_empty());
     found.supporting_quote = None;
-    assert_eq!(places(stands_on(&found)), vec![("a", 0)]);
+    assert!(stands_on(&found).is_empty());
 }
 
 #[test]
@@ -250,7 +255,7 @@ fn a_statement_with_no_class_is_read_as_sourced() {
     found.two_pass.parts = vec![stated("b")];
     assert_eq!(places(stands_on(&found)), vec![("b", 0)]);
     found.two_pass.parts.clear();
-    assert_eq!(places(stands_on(&found)), vec![("a", 0)]);
+    assert!(stands_on(&found).is_empty());
 }
 
 #[test]
@@ -300,8 +305,8 @@ fn numbers_follow_reading_order_across_blocks_even_when_report_order_differs() {
 fn a_passage_cited_by_two_statements_keeps_one_number() {
     let shared = passage("a", 0, "shared");
     let findings = vec![
-        finding(0, "One fact.", None, vec![shared.clone()]),
-        finding(0, "Another fact.", None, vec![shared]),
+        stating(finding(0, "One fact.", None, vec![shared.clone()]), "a"),
+        stating(finding(0, "Another fact.", None, vec![shared]), "a"),
     ];
     let numbered = numbering(&["One fact. Another fact."], &findings);
 
@@ -353,13 +358,16 @@ fn two_statements_on_one_sentence_share_one_point_with_ascending_references() {
 #[test]
 fn compared_only_passages_are_numbered_after_every_cited_one_and_get_no_chip() {
     let findings = vec![
-        finding(
-            0,
-            "One.",
-            None,
-            vec![passage("a", 0, "p1"), passage("a", 10, "p2")],
+        stating(
+            finding(
+                0,
+                "One.",
+                None,
+                vec![passage("a", 0, "p1"), passage("a", 10, "p2")],
+            ),
+            "a",
         ),
-        finding(1, "Two.", None, vec![passage("b", 0, "p3")]),
+        stating(finding(1, "Two.", None, vec![passage("b", 0, "p3")]), "b"),
     ];
     let numbered = numbering(&["One.", "Two."], &findings);
 
@@ -372,9 +380,15 @@ fn compared_only_passages_are_numbered_after_every_cited_one_and_get_no_chip() {
 #[test]
 fn a_statement_without_a_chip_is_numbered_after_every_placed_one_in_the_lesson() {
     let findings = vec![
-        finding(0, "Title text.", None, vec![passage("t", 0, "pt")]),
-        finding(0, "Body sentence.", None, vec![passage("b", 0, "pb")]),
-        finding(1, "Later.", None, vec![passage("l", 0, "pl")]),
+        stating(
+            finding(0, "Title text.", None, vec![passage("t", 0, "pt")]),
+            "t",
+        ),
+        stating(
+            finding(0, "Body sentence.", None, vec![passage("b", 0, "pb")]),
+            "b",
+        ),
+        stating(finding(1, "Later.", None, vec![passage("l", 0, "pl")]), "l"),
     ];
     let numbered = numbering(&["Body sentence. More.", "Later."], &findings);
 
@@ -385,6 +399,49 @@ fn a_statement_without_a_chip_is_numbered_after_every_placed_one_in_the_lesson()
         vec![text("Body sentence."), cite(1), text(" More.")]
     );
     assert_eq!(numbered.sections[1], vec![text("Later."), cite(2)]);
+}
+
+#[test]
+fn an_unsupported_statement_gets_no_chip_for_the_passages_it_was_compared_with() {
+    let mut backed = finding(
+        0,
+        "Routes differ.",
+        Some(Class::Sourced),
+        vec![passage("a", 0, "routes differ in what they send")],
+    );
+    backed.two_pass.parts = vec![stated("a")];
+    let lexical = |source: &str| EvidencePassage {
+        retrieval_kind: "lexical".into(),
+        ..passage(source, 0, "an unrelated table row")
+    };
+    let mut rejected = finding(
+        0,
+        "The workflow decides.",
+        None,
+        vec![lexical("x"), lexical("y")],
+    );
+    rejected.class = Some(Classed {
+        class: Class::Sourced,
+        by: ClassifiedBy::Evidence,
+    });
+    rejected.verdict = ClaimVerdict::Unsupported;
+    let findings = vec![backed, rejected];
+    let numbered = numbering(&["Routes differ. The workflow decides."], &findings);
+
+    assert!(numbered.cites[1].is_empty());
+    assert_eq!(numbered.cites[0], vec![1]);
+    assert_eq!(
+        numbered.sections[0],
+        vec![
+            text("Routes differ."),
+            cite(1),
+            text(" The workflow decides.")
+        ]
+    );
+    assert_eq!(
+        rebuilt(&numbered.sections[0]),
+        "Routes differ. The workflow decides."
+    );
 }
 
 #[test]
@@ -407,11 +464,26 @@ fn the_text_pieces_rebuild_every_body_exactly() {
         "**Bold sentence.** Next.",
     ];
     let findings = vec![
-        finding(0, "First one.", None, vec![passage("a", 0, "p1")]),
-        finding(0, "Second one.", None, vec![passage("a", 10, "p2")]),
-        finding(0, "item a.", None, vec![passage("a", 20, "p3")]),
-        finding(0, "item b.", None, vec![passage("a", 30, "p4")]),
-        finding(1, "Bold sentence.", None, vec![passage("b", 0, "p5")]),
+        stating(
+            finding(0, "First one.", None, vec![passage("a", 0, "p1")]),
+            "a",
+        ),
+        stating(
+            finding(0, "Second one.", None, vec![passage("a", 10, "p2")]),
+            "a",
+        ),
+        stating(
+            finding(0, "item a.", None, vec![passage("a", 20, "p3")]),
+            "a",
+        ),
+        stating(
+            finding(0, "item b.", None, vec![passage("a", 30, "p4")]),
+            "a",
+        ),
+        stating(
+            finding(1, "Bold sentence.", None, vec![passage("b", 0, "p5")]),
+            "b",
+        ),
     ];
     let numbered = numbering(&bodies, &findings);
 
