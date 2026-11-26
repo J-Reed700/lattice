@@ -254,10 +254,9 @@ async fn the_draft_is_answered_from_under_the_schema_with_no_format_named() -> R
             ("user", answer_step.as_str()),
         ]
     );
-    assert!(
-        structured.sampling.is_none(),
-        "the answer step inherits the request's sampling profile"
-    );
+    let sampling = structured.sampling.unwrap_or_default();
+    assert_eq!(sampling.temperature, Some(0.0));
+    assert_eq!(sampling.top_k, Some(1));
     for request in [draft, structured] {
         for (_, content) in messages(request) {
             for demand in FORMAT_DEMANDS {

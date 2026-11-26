@@ -377,6 +377,25 @@ impl<'a> ReferenceCollection<'a> {
         self.retrieve_in(query, &Scope::All, fits).await
     }
 
+    /// Passages for `query`, best first, stopping at the query's relevance
+    /// cutoff (`subject_of`) while `fits` accepts them: the caller's window
+    /// bounds how much fits, and the relevance cutoff stops retrieval before
+    /// off-subject passages fill a large window.
+    pub(crate) async fn retrieve_relevant_within(
+        &self,
+        query: &str,
+        fits: impl Fn(&[ReferencePassage]) -> bool,
+    ) -> Result<Vec<ReferencePassage>> {
+        let subject = self.subject_of(query).await?;
+        self.retrieve_filtered_in(
+            query,
+            &Scope::All,
+            |passage| subject.undivided() || subject.mentioned_in(&passage.text),
+            fits,
+        )
+        .await
+    }
+
     /// The next page of verification evidence for `query`: ranked passages,
     /// each widened to its surrounding source text (see
     /// `verification_context`), that overlap none of `shown`, best first,
@@ -461,6 +480,20 @@ impl<'a> ReferenceCollection<'a> {
         scope: &Scope,
         fits: impl Fn(&[ReferencePassage]) -> bool,
     ) -> Result<Vec<ReferencePassage>> {
+        self.retrieve_filtered_in(query, scope, |_| true, fits)
+            .await
+    }
+
+    /// Pages `rank` over `scope`, keeping passages accepted by `keep`, and stops
+    /// when `fits` rejects the next prefix, the ranking is exhausted, or the tail
+    /// passage no longer satisfies `keep`.
+    async fn retrieve_filtered_in(
+        &self,
+        query: &str,
+        scope: &Scope,
+        keep: impl Fn(&ReferencePassage) -> bool,
+        fits: impl Fn(&[ReferencePassage]) -> bool,
+    ) -> Result<Vec<ReferencePassage>> {
         let mut depth = FIRST_PAGE;
         loop {
             let found: Vec<ReferencePassage> = self
@@ -470,9 +503,10 @@ impl<'a> ReferenceCollection<'a> {
                 .map(|ranked| ranked.passage)
                 .collect();
             let exhausted = found.len() < depth;
-            let mut passages = found;
+            let tail_kept = found.last().is_some_and(&keep);
+            let mut passages: Vec<ReferencePassage> = found.into_iter().filter(&keep).collect();
             let fitting = longest_fitting_prefix(&passages, &fits);
-            if fitting < passages.len() || exhausted {
+            if fitting < passages.len() || exhausted || !tail_kept {
                 passages.truncate(fitting);
                 return Ok(passages);
             }

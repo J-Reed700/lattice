@@ -36,7 +36,8 @@ pub(super) enum FindPlan {
     /// Normalized lesson sentences (and question keys) match a prior clean pass.
     Skip,
     /// Every remaining sentence existed in the prior clean lesson (pure deletion/reorder):
-    /// check only `usedBeforeTaught` in parts at or after `from_part_order`.
+    /// scope `usedBeforeTaught` to parts at or after `from_part_order`, while still
+    /// checking contradictions and dangling `unseen` references across remaining text.
     DeletionOnly { from_part_order: usize },
     /// Some sentences were added/edited (`Δ`): scope `usedBeforeTaught` to `from_part_order..`,
     /// `contradiction` to pairs involving `Δ`, and `unseen` to `changed_parts`.
@@ -153,9 +154,10 @@ impl Receipts {
             .unwrap_or(shared);
         if from_part_order >= current.len() {
             // Trailing parts were removed: earlier parts cannot have new
-            // contradictions or usedBeforeTaught, but an earlier sentence could
-            // point "below" at a removed part (`unseen`), so still run the
-            // deletion-scoped check with empty `focusParts`.
+            // usedBeforeTaught, but an earlier sentence could point "below" at
+            // a removed part (`unseen`) or lose a qualifier/exception that
+            // prevented a contradiction, so still run the deletion-scoped check
+            // with empty `focusParts`.
             return FindPlan::DeletionOnly {
                 from_part_order: current.len(),
             };

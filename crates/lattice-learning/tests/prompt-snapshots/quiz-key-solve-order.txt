@@ -62,7 +62,12 @@ Step 2: give the final answer from your draft. Keep its content, wording, number
   "reasoning_effort": "low",
   "tool_choice": null,
   "include_reasoning": false,
-  "sampling": null,
+  "sampling": {
+    "temperature": 0.0,
+    "top_p": 1.0,
+    "top_k": 1,
+    "presence_penalty": 0.0
+  },
   "thinking": "off",
   "max_output_tokens": 650,
   "stop": [],

@@ -1945,7 +1945,7 @@ async fn pure_deletion_after_clean_find_scopes_to_used_before_taught_and_danglin
     contract::check(&model, &ctx, &candidate, &[], &mut receipts, &[]).await?;
     assert_eq!(model.asked_of(Ask::Find).len(), 1);
 
-    // Pure deletion in Section 2: checks usedBeforeTaught from Section 2 onwards + dangling unseen, skipping contradictions.
+    // Pure deletion in Section 2: checks usedBeforeTaught from Section 2 onwards, contradictions, and dangling unseen.
     let deleted = lesson([
         "A terminal takes typed commands.",
         "The list shows names.",
@@ -1968,7 +1968,8 @@ async fn pure_deletion_after_clean_find_scopes_to_used_before_taught_and_danglin
     assert!(
         drafting
             .iter()
-            .any(|said| said.contains(contract::FIND_DELETION_BRIEF)),
+            .any(|said| said.contains(contract::FIND_DELETION_SYSTEM)
+                && said.contains(contract::FIND_DELETION_BRIEF)),
         "{drafting:?}"
     );
 

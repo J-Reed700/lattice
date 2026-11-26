@@ -519,3 +519,53 @@ fn a_quote_in_other_letter_case_cites_its_passage() -> Result<()> {
         .contains("The borrow checker rejects two mutable borrows"));
     Ok(())
 }
+
+#[tokio::test]
+async fn retrieve_relevant_within_stops_at_subject_cutoff_and_exceeds_six_thousand_tokens(
+) -> Result<()> {
+    let mut sources: Vec<LearningSourceDto> = (0..24)
+        .map(|i| LearningSourceDto {
+            id: format!("crane-{i}"),
+            title: format!("Crane log {i}"),
+            url: None,
+            excerpt: format!(
+                "The harbour crane lifts crate {i} before the tide turns. {}",
+                "Cargo manifests remain sealed. ".repeat(34)
+            ),
+            acquired_at: 1,
+        })
+        .collect();
+    sources.extend((0..24).map(|i| LearningSourceDto {
+        id: format!("shelf-{i}"),
+        title: format!("Shelf note {i}"),
+        url: None,
+        excerpt: format!(
+            "Item {i} sits under the shelf before noon. {}",
+            "Inventory stickers remain intact. ".repeat(34)
+        ),
+        acquired_at: 1,
+    }));
+    let collection = ReferenceCollection::lexical(&sources)?;
+    let query = "The harbour crane lifts no crate before the tide turns.";
+    let all_relevant = collection.retrieve_relevant_within(query, |_| true).await?;
+    assert_eq!(all_relevant.len(), 24);
+    assert!(all_relevant
+        .iter()
+        .all(|passage| passage.source_id.starts_with("crane-")));
+    let total_tokens: usize = all_relevant
+        .iter()
+        .map(|passage| passage.text.chars().count().div_ceil(4))
+        .sum();
+    assert!(
+        total_tokens > 6_000,
+        "expected relevant passages past 6,000 tokens, got {total_tokens}"
+    );
+    let bounded = collection
+        .retrieve_relevant_within(query, |passages| passages.len() <= 5)
+        .await?;
+    assert_eq!(bounded.len(), 5);
+    assert!(bounded
+        .iter()
+        .all(|passage| passage.source_id.starts_with("crane-")));
+    Ok(())
+}
