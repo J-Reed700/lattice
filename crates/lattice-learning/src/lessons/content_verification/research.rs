@@ -754,7 +754,7 @@ async fn research<'a>(
     for (need, gap) in needs {
         let selection = select_need_candidates(
             llm,
-            &context,
+            context,
             gaps,
             &urls,
             &mut searched,

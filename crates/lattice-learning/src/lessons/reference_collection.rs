@@ -396,19 +396,17 @@ impl<'a> ReferenceCollection<'a> {
             let ranked = self.rank(&[query], &Scope::All, depth).await?;
             let exhausted = ranked.len() < depth;
             let floor = ranked.first().map_or(0.0, |top| {
-                let top_score = f64::from(top.passage.score);
+                let top_score = top.passage.score;
                 let anchor_score = ranked
                     .get(ANCHOR_INDEX)
                     .or_else(|| ranked.last())
-                    .map_or(top_score, |hit| f64::from(hit.passage.score));
+                    .map_or(top_score, |hit| hit.passage.score);
                 (top_score * TOP_SCORE_RATIO).max(anchor_score * ANCHOR_SCORE_RATIO)
             });
-            let below_floor = ranked
-                .last()
-                .is_some_and(|hit| f64::from(hit.passage.score) < floor);
+            let below_floor = ranked.last().is_some_and(|hit| hit.passage.score < floor);
             let mut passages: Vec<ReferencePassage> = ranked
                 .into_iter()
-                .take_while(|hit| f64::from(hit.passage.score) >= floor)
+                .take_while(|hit| hit.passage.score >= floor)
                 .filter(|hit| hit.dense.is_some() || relevance.matches(&hit.passage.text))
                 .map(|hit| hit.passage)
                 .collect();

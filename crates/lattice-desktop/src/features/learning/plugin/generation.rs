@@ -34,7 +34,7 @@ pub(crate) async fn cancel_generation_job(
         );
     match repo.preflight_cancel(request).await.map_err(ApiError::from)? {
         crate::features::learning::curriculum_repository::CancelPreflight::Replayed(job) => {
-            return Ok(job);
+            return Ok(*job);
         }
         crate::features::learning::curriculum_repository::CancelPreflight::Proceed => {}
     }

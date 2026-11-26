@@ -356,7 +356,8 @@ pub(crate) async fn append_for_test_in(
     provenance: EventProvenance,
     event: ClaimEvent,
 ) -> Result<()> {
-    append_in(tx, lesson_id, claim_id, provenance, event).await
+    append_in(tx, lesson_id, claim_id, provenance, event).await?;
+    Ok(())
 }
 
 pub(crate) async fn load_in(connection: &mut SqliteConnection, lesson_id: &str) -> Result<Ledger> {

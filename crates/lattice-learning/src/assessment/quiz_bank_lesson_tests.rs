@@ -853,7 +853,7 @@ async fn unverified_claims_are_stripped_from_material_and_exclude_seed_and_bank_
     let mut tx2 = db.begin_write().await?;
     let user_prov = EventProvenance {
         actor: Actor::User,
-        ..prov
+        ..prov.clone()
     };
     crate::lessons::claim_reviews::repository::append_for_test_in(
         &mut tx2,
@@ -1089,7 +1089,7 @@ async fn unverified_material_checks_span_quotes_unlinked_bank_items_and_partial_
     let mut tx2 = db.begin_write().await?;
     let user_prov = EventProvenance {
         actor: Actor::User,
-        ..prov
+        ..prov.clone()
     };
     crate::lessons::claim_reviews::repository::append_for_test_in(
         &mut tx2,

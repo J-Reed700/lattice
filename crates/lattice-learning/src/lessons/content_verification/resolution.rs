@@ -68,9 +68,9 @@ pub(super) fn standing<'a>(
 
 /// Whether `state` currently stands as unverified (`no_source` / unsupported) or
 /// still unsettled (excluding edited/removed claims).
-pub(crate) fn is_claim_active_unverified<'a>(
+pub(crate) fn is_claim_active_unverified(
     state: &ClaimState,
-    by_id: &HashMap<&str, &'a ClaimState>,
+    by_id: &HashMap<&str, &ClaimState>,
 ) -> bool {
     if matches!(
         state,

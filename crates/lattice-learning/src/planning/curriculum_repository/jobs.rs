@@ -26,7 +26,7 @@ use std::collections::HashSet;
 pub enum CancelPreflight {
     /// Matching operation already committed; return the saved job without
     /// tripping any runtime token or taking a write turn.
-    Replayed(LearningGenerationJob),
+    Replayed(Box<LearningGenerationJob>),
     /// Inputs, program revision, ownership, and status permit cancellation.
     Proceed,
 }
@@ -505,7 +505,7 @@ impl LearningCurriculumRepository {
         let preflight =
             match Self::validate_job_action_on(&mut read, request, JobAction::Cancel).await? {
                 ValidatedJobAction::Replayed(id) => {
-                    CancelPreflight::Replayed(Self::job_on(&mut read, &id).await?)
+                    CancelPreflight::Replayed(Box::new(Self::job_on(&mut read, &id).await?))
                 }
                 ValidatedJobAction::Ready { .. } => {
                     JobStore::ensure_cancellable_in(&mut read, &request.job_id).await?;

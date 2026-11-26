@@ -27,7 +27,7 @@ mod reads;
 pub use reads::ActiveVersion;
 mod repository;
 pub(crate) use repository::reads::{
-    version_sources_on, version_texts, version_texts_on, workspace_in,
+    version_sources_on, version_texts_on, workspace_in,
 };
 mod user_evidence;
 pub use user_evidence::{ChosenVersion, SavedSource};

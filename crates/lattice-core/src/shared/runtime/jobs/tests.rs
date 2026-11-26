@@ -1927,7 +1927,7 @@ async fn cancelling_many_jobs_under_heavy_write_load_completes_promptly_without_
 
 #[tokio::test]
 async fn work_exit_wakes_dispatcher_after_registration_drops_without_poll_delay() -> Result<()> {
-    let runtime = JobRuntime::with_poll_interval(db().await, Duration::from_secs(60));
+    let runtime = JobRuntime::with_poll_interval(database().await, Duration::from_secs(60));
     let (handler, mut started) = gate();
     runtime
         .register(KIND, handler, JobKindConfig::new(RecoveryPolicy::Requeue))
@@ -1951,7 +1951,7 @@ async fn work_exit_wakes_dispatcher_after_registration_drops_without_poll_delay(
 
 #[tokio::test]
 async fn batch_runtime_cancel_helpers_stop_and_recover_all_jobs() -> Result<()> {
-    let runtime = JobRuntime::with_poll_interval(db().await, Duration::from_secs(60));
+    let runtime = JobRuntime::with_poll_interval(database().await, Duration::from_secs(60));
     let (handler, mut started) = gate();
     runtime
         .register(

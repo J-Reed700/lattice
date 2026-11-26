@@ -23,7 +23,7 @@ export function anchoredEntry(
 /** The saved text a source's anchors are placed in, exactly as saved. */
 export function anchoredText(source: Pick<SourceWithMetadata, 'webSnapshot' | 'excerpt' | 'content'>): string {
   if (source.webSnapshot?.text.trim()) return source.webSnapshot.text;
-  return source.excerpt?.trim() ? source.excerpt : (source.content ?? '');
+  return source.content?.trim() ? source.content : (source.excerpt ?? '');
 }
 
 /**

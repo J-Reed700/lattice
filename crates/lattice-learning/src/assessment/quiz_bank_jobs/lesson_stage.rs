@@ -45,6 +45,7 @@ pub(crate) fn lesson_question_item(
 /// address them by; every form draw shuffles them. A question that fails the
 /// bank's checks stays, marked `dropped`, so the lesson's questions keep their
 /// places.
+#[cfg(test)]
 pub(crate) fn lesson_seed_items(
     lesson_id: &str,
     outcome_id: &str,

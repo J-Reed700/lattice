@@ -649,20 +649,14 @@ async fn a_statement_carries_the_address_of_its_sentence() -> Result<()> {
 #[tokio::test]
 async fn editing_a_disputed_question_syncs_its_bank_status_across_partial_edits_and_revert(
 ) -> Result<()> {
-    use lattice_core::domain::learning::claim_review::ReopenCause;
+    use lattice_core::domain::learning::claim_review::{HumanBinding, ReopenCause};
     use lattice_core::shared::edits::RevertContentEditRequest;
 
     let course = unchecked().await?;
     let prompt = "How does DictReader handle spaces?";
     let expl = "Header names keep spaces intact.";
-    let question_id = insert_question(
-        &course,
-        Some(&course.lesson_id),
-        "lesson",
-        prompt,
-        expl,
-    )
-    .await?;
+    let question_id =
+        insert_question(&course, Some(&course.lesson_id), "lesson", prompt, expl).await?;
     let store = ClaimReviewRepository::new(course.db.clone());
     let claim_prompt = ClaimId(Uuid::new_v4().to_string());
     let claim_expl = ClaimId(Uuid::new_v4().to_string());
@@ -694,9 +688,15 @@ async fn editing_a_disputed_question_syncs_its_bank_status_across_partial_edits_
             .append(
                 &course.lesson_id,
                 id,
-                prov.clone(),
-                ClaimEvent::Confirmed {
-                    evidence: Default::default(),
+                EventProvenance {
+                    actor: Actor::User,
+                    ..prov.clone()
+                },
+                ClaimEvent::UserAction {
+                    action: UserAction::Confirm {
+                        bound: HumanBinding::new(stmt, Vec::new()),
+                    },
+                    note: None,
                 },
                 rev,
             )
