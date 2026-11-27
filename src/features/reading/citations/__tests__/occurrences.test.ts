@@ -2,9 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import type { SupportDto } from '@/lib/bindings';
 import { cites, filePiece, said } from '@/tests/replyFixtures';
-import type { ReplyPiece } from '@/utils/replyPieces';
-
 import type { SourceWithMetadata } from '@/types/conversation';
+import type { ReplyPiece } from '@/utils/replyPieces';
 
 import { anchoredOccurrences, attachAnchoredOccurrences } from '../occurrences';
 import { anchoredCardDetails } from '../source';

@@ -668,9 +668,9 @@ async fn editing_a_disputed_question_syncs_its_bank_status_across_partial_edits_
         checker_model: Some("fixture".into()),
     };
     let mut rev = ledger(&course).await?.revision;
-    for (id, field, stmt) in [
-        (&claim_prompt, "prompt", prompt),
-        (&claim_expl, "explanation", expl),
+    for (id, kind, field, stmt) in [
+        (&claim_prompt, UnitKind::Question, "prompt", prompt),
+        (&claim_expl, UnitKind::AnswerKey, "explanation", expl),
     ] {
         rev = store
             .append(
@@ -678,7 +678,7 @@ async fn editing_a_disputed_question_syncs_its_bank_status_across_partial_edits_
                 id,
                 prov.clone(),
                 ClaimEvent::Extracted {
-                    location: ClaimLocation::locate(2, UnitKind::AnswerKey, field, stmt, stmt),
+                    location: ClaimLocation::locate(2, kind, field, stmt, stmt),
                     statement: stmt.into(),
                 },
                 rev,

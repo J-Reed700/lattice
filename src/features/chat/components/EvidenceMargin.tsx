@@ -118,7 +118,7 @@ export function EvidenceMargin({
             const claims = claimLine(number, claimVerdicts);
             const passage = (source.excerpt || source.content || '').trim();
             const matchedOcc =
-              activeOccurrence && activeOccurrence.number === number ? activeOccurrence.occurrence : null;
+              activeOccurrence?.number === number ? activeOccurrence.occurrence : null;
             const { relation, excerpts, trail } = anchoredCardDetails(source, matchedOcc);
             return (
               <li key={number}>

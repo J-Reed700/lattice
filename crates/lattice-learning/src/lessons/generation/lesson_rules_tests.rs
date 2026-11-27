@@ -1111,12 +1111,17 @@ fn consecutive_duplicates_and_prefix_stutters_in_prose_and_lists_are_findings() 
     candidate["blocks"][0]["body"] = json!("Check MSA-2. Check MSA-2.");
     let findings = lesson_rules(&candidate);
     let ids = rule_ids(&findings);
-    assert_eq!(
-        ids,
-        [
-            "rule/sentence-repeated/section-0",
-            "rule/sentence-repeated/section-7",
-        ],
+    assert_eq!(findings.len(), 2, "{findings:?}");
+    assert_eq!(findings[0].place().site, FindingSite::Section(0));
+    assert_eq!(findings[1].place().site, FindingSite::Section(7));
+    assert_eq!(findings[0].kind, FindingKind::Teaching);
+    assert_eq!(findings[1].kind, FindingKind::Teaching);
+    assert!(
+        ids[0].starts_with("rule/sentence-repeated/section-0/"),
+        "{ids:?}"
+    );
+    assert!(
+        ids[1].starts_with("rule/sentence-repeated/section-7/"),
         "{ids:?}"
     );
     assert_eq!(findings[0].passage.as_deref(), Some("Check MSA-2."));

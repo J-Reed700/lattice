@@ -167,9 +167,9 @@ mod support_tests {
         let support = SupportDto::verify_quote(Some(full), "Exact  words\nmatter");
         assert_eq!(support.relation, RelationDto::Quotes);
         assert_eq!(support.anchors.len(), 1);
-        assert_eq!(support.anchors[0].exact, "Exact words\nmatter");
+        assert_eq!(support.anchors[0].exact, "Exact words matter");
         let start = full.find("Exact words").unwrap();
-        let end = start + "Exact words\nmatter".len();
+        let end = start + "Exact words matter".len();
         assert_eq!(support.anchors[0].span, Some(ByteSpanDto { start, end }));
     }
 

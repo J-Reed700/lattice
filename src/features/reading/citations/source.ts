@@ -4,6 +4,7 @@ import type { SourceWithMetadata } from '@/types/conversation';
 
 import { placeAnchors } from './anchors';
 import { headingTrail } from './headingTrail';
+
 import type { AnchoredOccurrence } from './types';
 
 /** Whether a source carries chips that say how they use it. */

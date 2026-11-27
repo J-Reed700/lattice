@@ -1,13 +1,13 @@
 import { useMemo } from 'react';
 
 import { TiptapViewer } from '@/components/TiptapEditor';
-import { parseSources } from '@/features/chat/controller/messageMetadata';
 import { attachAnchoredOccurrences } from '@/features/reading/citations';
 import { CitationHoverCard } from '@/features/reading/components/CitationHoverCard';
 import { CitationSourcesRow } from '@/features/reading/components/CitationSourcesRow';
 import { useCitationInteractions } from '@/features/reading/hooks/useCitationInteractions';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import { useReaderStore } from '@/features/reading/stores/readerStore';
+import { parseSources } from '@/shared/conversations/sourceMetadata';
 import { useDrawnReply } from '@/shared/conversations/useDrawnReply';
 import type { SnapshotMessage } from '@/types/api/dailyNotes';
 import type { SourceWithMetadata } from '@/types/conversation';

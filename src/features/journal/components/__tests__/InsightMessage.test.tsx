@@ -4,8 +4,8 @@ import { beforeEach, expect, it, vi } from 'vitest';
 
 import { InsightMessage } from '@/features/journal/components/InsightMessage';
 import { citationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
-import { reply } from '@/tests/replyFixtures';
 import type { ReplyPieceDto, SupportDto } from '@/lib/bindings';
+import { reply } from '@/tests/replyFixtures';
 import type { SnapshotMessage } from '@/types/api/dailyNotes';
 import { withoutMarks } from '@/utils/replyPieces';
 
