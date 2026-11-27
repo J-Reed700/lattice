@@ -435,15 +435,18 @@ fn has_mid_sentence_title_setting(statement: &str) -> bool {
 }
 
 fn is_release_version_token(token: &str) -> bool {
-    let bytes = token.as_bytes();
-    if bytes.len() < 2 || !bytes[0].is_ascii_uppercase() || !bytes[1].is_ascii_digit() {
+    let Some((&first, rest)) = token.as_bytes().split_first() else {
+        return false;
+    };
+    if !first.is_ascii_uppercase() {
         return false;
     }
-    let mut i = 1;
-    while i < bytes.len() && bytes[i].is_ascii_digit() {
-        i += 1;
+    let digits = rest.iter().take_while(|b| b.is_ascii_digit()).count();
+    if digits == 0 {
+        return false;
     }
-    i == bytes.len() || (i + 1 == bytes.len() && bytes[i].is_ascii_uppercase())
+    digits == rest.len()
+        || (digits + 1 == rest.len() && rest.get(digits).is_some_and(u8::is_ascii_uppercase))
 }
 
 fn has_version_profile_claim(statement: &str, lower: &str) -> bool {
