@@ -1510,8 +1510,13 @@ async fn consistent_claims_count_as_grounded_against_minority_unverified_claims(
     .await?;
 
     let marker = "Consistent token validation keeps active sessions healthy.";
+    let unv_sentences = [
+        "Optional vendor field defaults may vary across regional sandboxes.",
+        "Legacy client tenants permit temporary fallback credentials.",
+    ];
+    let body0 = format!("{marker} {} {}", unv_sentences[0], unv_sentences[1]);
     sqlx::query("UPDATE learning_blocks SET body=? WHERE lesson_id=? AND ordinal=0")
-        .bind(marker)
+        .bind(&body0)
         .bind(lesson_id)
         .execute(&mut *tx)
         .await?;
@@ -1552,7 +1557,7 @@ async fn consistent_claims_count_as_grounded_against_minority_unverified_claims(
         )
         .await?;
     }
-    for i in 0..2usize {
+    for (i, sent) in unv_sentences.iter().enumerate() {
         let id = ClaimId(format!("c-unv-{i}"));
         crate::lessons::claim_reviews::repository::append_for_test_in(
             &mut tx,
@@ -1560,7 +1565,7 @@ async fn consistent_claims_count_as_grounded_against_minority_unverified_claims(
             &id,
             prov.clone(),
             ClaimEvent::Extracted {
-                location: ClaimLocation::locate(0, UnitKind::Block, "body", marker, marker),
+                location: ClaimLocation::locate(0, UnitKind::Block, "body", *sent, *sent),
                 statement: format!("Unverified claim {i}."),
             },
         )
@@ -1581,8 +1586,10 @@ async fn consistent_claims_count_as_grounded_against_minority_unverified_claims(
     let mut read = db.begin_read().await?;
     let material = LearningAssessmentRepository::lesson_material_in(&mut read, lesson_id).await?;
     assert!(
-        material.iter().any(|m| m.text.contains(marker)),
-        "block with 8 consistent, 0 verified, 2 unverified claims should remain grounded: {material:?}"
+        material.iter().any(|m| m.text.contains(marker)
+            && !m.text.contains(unv_sentences[0])
+            && !m.text.contains(unv_sentences[1])),
+        "block with 8 consistent, 0 verified, 2 unverified claims should keep grounded prose while stripping unverified sentences: {material:?}"
     );
     Ok(())
 }
