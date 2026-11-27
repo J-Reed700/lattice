@@ -37,7 +37,7 @@ export function fieldGuideSupport(overrides: Partial<ClaimSupportDto> = {}): Cla
 export function claimItem(overrides: Partial<ClaimReviewItemDto> = {}): ClaimReviewItemDto {
   return {
     claimId: 'claim-1',
-    location: { unitIndex: 0, unitKind: 'block', unitTitle: 'Phase changes', field: 'body', quote: 'Water boils at 100 °C.', span: [42, 65] },
+    location: { unitIndex: 0, unitKind: 'block', unitTitle: 'Phase changes', field: 'body', quote: 'Water boils at 100 °C.', span: [42, 65], address: null },
     statement: 'Water boils at 100 °C at sea level.',
     state: { state: 'queued' },
     verdictKind: { kind: 'contradicted' },
@@ -74,7 +74,7 @@ export function claimItem(overrides: Partial<ClaimReviewItemDto> = {}): ClaimRev
 export function unsupportedItem(index: number, unitIndex = index): ClaimReviewItemDto {
   return claimItem({
     claimId: `claim-${index}`,
-    location: { unitIndex, unitKind: 'block', unitTitle: `Section title ${unitIndex + 1}`, field: 'body', quote: `Sentence number ${index}.`, span: null },
+    location: { unitIndex, unitKind: 'block', unitTitle: `Section title ${unitIndex + 1}`, field: 'body', quote: `Sentence number ${index}.`, span: null, address: null },
     statement: `Statement number ${index}.`,
     verdictKind: { kind: 'unsupported' },
     reason: `No passage supports statement ${index}.`,
@@ -118,6 +118,7 @@ export function teachingFinding(overrides: Partial<TeachingFindingDto> = {}): Te
     repairs: 2,
     state: 'waiting',
     partChanged: false,
+    address: null,
     ...overrides,
   };
 }

@@ -8,13 +8,14 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/compone
 import { PageHeader, SectionHeading } from '@/components/ui/PageHeader';
 import { CardText, cardPreview } from '@/features/learning/recall/CardText';
 import { DeckTarget } from '@/features/learning/recall/flashcards/DeckTarget';
-import { EditFlashcard } from '@/features/learning/recall/flashcards/EditFlashcard';
 import { FlashcardSession, type FlashcardMode } from '@/features/learning/recall/flashcards/FlashcardSession';
 import { FlashcardSource } from '@/features/learning/recall/flashcards/FlashcardSource';
 import { NewFlashcardDeck } from '@/features/learning/recall/flashcards/NewFlashcardDeck';
 import { fromNow, interleaveByTopic } from '@/features/learning/recall/flashcards/retrieval';
 import { useDeleteFlashcardDeck, useFlashcardDeck } from '@/features/learning/recall/flashcards/useFlashcards';
 import type { StudyCardDto } from '@/lib/bindings';
+import { Editable } from '@/shared/edits/Editable';
+import { openEditor } from '@/shared/edits/editorStore';
 
 interface Session { id: string; cards: StudyCardDto[]; mode: FlashcardMode }
 function shuffled<T>(items: T[]): T[] {
@@ -39,7 +40,6 @@ export function FlashcardDeckView() {
   const deck = useFlashcardDeck(id);
   const remove = useDeleteFlashcardDeck();
   const [session, setSession] = useState<Session | null>(null);
-  const [editing, setEditing] = useState<StudyCardDto | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const current = deck.data;
   const [now, setNow] = useState(Date.now);
@@ -78,7 +78,7 @@ export function FlashcardDeckView() {
       <div className="border-t border-border-subtle">
         {current.cards.map((card, index) => <details key={card.id} className="border-b border-border-subtle py-4">
           <summary className="cursor-pointer text-sm leading-relaxed text-text-primary"><span className="mr-3 text-text-muted">{index + 1}.</span>{' '}{cardPreview(card.question)}</summary>
-          <div className="ml-6 mt-4">{card.question.trim() !== cardPreview(card.question) && <CardText className="mb-3 text-sm text-text-primary" text={card.question} />}<CardText className="mb-3 text-sm font-medium text-text-primary" text={card.answer} />{card.explanation && <CardText className="text-sm leading-relaxed text-text-secondary" text={card.explanation} />}<FlashcardSource sources={card.citations?.length ? card.citations : [card.source]} /><div className="mt-4 flex items-center justify-between gap-3"><span className="text-xs text-text-muted">{card.reviewCount} reviews{card.lapses > 0 ? ` · ${card.lapses} missed` : ''}</span><Button variant="ghost" size="sm" onClick={() => setEditing(card)}>Edit card</Button></div></div>
+          <div className="ml-6 mt-4"><Editable content={{ kind: 'study.card', key: card.id }} label={`card: ${card.question.split('\n')[0]}`}>{card.question.trim() !== cardPreview(card.question) && <CardText className="mb-3 text-sm text-text-primary" text={card.question} />}<CardText className="mb-3 text-sm font-medium text-text-primary" text={card.answer} />{card.explanation && <CardText className="text-sm leading-relaxed text-text-secondary" text={card.explanation} />}</Editable><FlashcardSource sources={card.citations?.length ? card.citations : [card.source]} /><div className="mt-4 flex items-center justify-between gap-3"><span className="text-xs text-text-muted">{card.reviewCount} reviews{card.lapses > 0 ? ` · ${card.lapses} missed` : ''}</span><Button variant="ghost" size="sm" onClick={(event) => openEditor({ content: { kind: 'study.card', key: card.id }, path: null, fragment: null }, { returnFocusTo: event.currentTarget })}>Edit card</Button></div></div>
         </details>)}
       </div>
       <div className="mt-8 flex items-center justify-between gap-4"><p className="text-xs text-text-muted">Generated with {current.modelName}</p><Button variant="ghost" size="sm" onClick={() => setConfirmDelete(true)}>Delete deck</Button></div>
@@ -87,7 +87,6 @@ export function FlashcardDeckView() {
 
   return <main className="h-full overflow-y-auto bg-background"><div className="mx-auto w-full max-w-[800px] px-6 pb-16 pt-10">
     {content}
-    {editing && <EditFlashcard card={editing} onClose={() => setEditing(null)} />}
     <Dialog open={confirmDelete} onOpenChange={open => { if (!remove.isPending) setConfirmDelete(open); }}><DialogContent><DialogTitle>Delete {current?.title}?</DialogTitle><DialogDescription>This removes the deck, its cards, and its review history. Your source documents stay in the library.</DialogDescription>{remove.isError && <p role="alert" className="text-sm text-danger-fg">{remove.error.message}</p>}<div className="flex justify-end gap-2"><Button variant="ghost" disabled={remove.isPending} onClick={() => setConfirmDelete(false)}>Cancel</Button><Button variant="destructive" disabled={remove.isPending} onClick={() => { if (id) remove.mutate(id, { onSuccess: () => { setConfirmDelete(false); back(); } }); }}>{remove.isPending ? 'Deleting…' : 'Delete deck'}</Button></div></DialogContent></Dialog>
   </div></main>;
 }

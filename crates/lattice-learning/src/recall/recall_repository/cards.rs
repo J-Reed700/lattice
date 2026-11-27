@@ -49,11 +49,13 @@ impl LearningRecallRepository {
                 ));
             }
         }
-        let prior: Option<sqlx::sqlite::SqliteRow> = sqlx::query("SELECT content_revision FROM learning_recall_card_profiles WHERE card_id=? AND program_id=?")
-            .bind(&req.card_id)
-            .bind(&req.program_id)
-            .fetch_optional(&mut *tx)
-            .await?;
+        let prior: Option<sqlx::sqlite::SqliteRow> = sqlx::query(
+            "SELECT format,answer_json,content_revision FROM learning_recall_card_profiles WHERE card_id=? AND program_id=?",
+        )
+        .bind(&req.card_id)
+        .bind(&req.program_id)
+        .fetch_optional(&mut *tx)
+        .await?;
         let new_card = prior.is_none();
         let revision = if let Some(row) = &prior {
             let old_revision: i64 = row.get("content_revision");
@@ -61,6 +63,14 @@ impl LearningRecallRepository {
                 return Err(AppError::Conflict(
                     "Recall card changed; reload and retry.".into(),
                 ));
+            }
+            let stored_format = parse_format(row.get("format"))?;
+            let stored_content: LearningRecallContentDto =
+                serde_json::from_str(row.get("answer_json")).map_err(|error| {
+                    AppError::InvalidState(format!("Invalid saved recall content: {error}"))
+                })?;
+            if stored_format == req.format && stored_content != req.content {
+                return Err(invalid("Edit this card in place to change its text."));
             }
             old_revision + 1
         } else {
@@ -109,6 +119,9 @@ impl LearningRecallRepository {
         };
         let timestamp = now();
         if new_card {
+            let prompt_json = json(&req.content.prompt)?;
+            let answer_json = json(&req.content)?;
+            let source_version_ids_json = json(&req.source_version_ids)?;
             sqlx::query("INSERT INTO study_cards(id,deck_id,question,answer,options_json,correct_index,explanation,source_json,topic,due_at,format) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
                 .bind(&req.card_id)
                 .bind(&deck_id)
@@ -127,50 +140,56 @@ impl LearningRecallRepository {
                 .bind(&req.card_id)
                 .bind(&req.program_id)
                 .bind(format_name(req.format))
-                .bind(json(&req.content.prompt)?)
-                .bind(json(&req.content)?)
-                .bind(json(&req.source_version_ids)?)
+                .bind(&prompt_json)
+                .bind(&answer_json)
+                .bind(&source_version_ids_json)
                 .bind(revision)
                 .bind(timestamp)
                 .bind(timestamp)
                 .execute(&mut *tx)
                 .await?;
+            card_text::insert_card_version(
+                &mut tx,
+                &req.card_id,
+                revision,
+                format_name(req.format),
+                &prompt_json,
+                &answer_json,
+                &source_version_ids_json,
+                req.change_reason.trim(),
+                timestamp,
+            )
+            .await?;
         } else {
-            sqlx::query("UPDATE study_cards SET question=?,answer=?,options_json=?,correct_index=?,explanation=?,source_json=?,format=? WHERE id=?")
-                .bind(req.content.prompt.trim())
-                .bind(answer)
-                .bind(json(&req.content.options)?)
-                .bind(req.content.correct_option_index.unwrap_or(0) as i64)
-                .bind(req.content.explanation.trim())
+            sqlx::query("UPDATE study_cards SET source_json=?,format=? WHERE id=?")
                 .bind(source_json)
                 .bind(study_format)
                 .bind(&req.card_id)
                 .execute(&mut *tx)
                 .await?;
-            sqlx::query("UPDATE learning_recall_card_profiles SET format=?,prompt_json=?,answer_json=?,source_version_ids_json=?,content_revision=?,updated_at=? WHERE card_id=? AND program_id=?")
+            sqlx::query("UPDATE learning_recall_card_profiles SET format=?,source_version_ids_json=? WHERE card_id=? AND program_id=?")
                 .bind(format_name(req.format))
-                .bind(json(&req.content.prompt)?)
-                .bind(json(&req.content)?)
                 .bind(json(&req.source_version_ids)?)
-                .bind(revision)
-                .bind(timestamp)
                 .bind(&req.card_id)
                 .bind(&req.program_id)
                 .execute(&mut *tx)
                 .await?;
-        }
-        sqlx::query("INSERT INTO learning_recall_card_versions(card_id,revision,format,prompt_json,answer_json,source_version_ids_json,change_reason,created_at) VALUES(?,?,?,?,?,?,?,?)")
-            .bind(&req.card_id)
-            .bind(revision)
-            .bind(format_name(req.format))
-            .bind(json(&req.content.prompt)?)
-            .bind(json(&req.content)?)
-            .bind(json(&req.source_version_ids)?)
-            .bind(req.change_reason.trim())
-            .bind(timestamp)
-            .execute(&mut *tx)
+            card_text::write_card_text(
+                &mut tx,
+                &req.card_id,
+                &card_text::CardText {
+                    question: req.content.prompt.trim(),
+                    answer: &answer,
+                    options: &req.content.options,
+                    correct_index: req.content.correct_option_index.unwrap_or(0),
+                    explanation: req.content.explanation.trim(),
+                    profile: Some((&req.content, req.change_reason.trim())),
+                },
+                timestamp,
+            )
             .await?;
-        self.suggest_duplicates(
+        }
+        suggest_duplicates_in(
             &mut tx,
             &req.program_id,
             &req.card_id,
@@ -338,58 +357,57 @@ impl LearningRecallRepository {
         }
         Ok(out)
     }
+}
 
-    async fn suggest_duplicates(
-        &self,
-        tx: &mut WriteTx,
-        program_id: &str,
-        card_id: &str,
-        prompt: &str,
-        timestamp: i64,
-    ) -> Result<()> {
-        let new_terms = lexical_terms(prompt);
-        let rows = sqlx::query("SELECT card_id,prompt_json FROM learning_recall_card_profiles WHERE program_id=? AND card_id<>?")
-            .bind(program_id)
-            .bind(card_id)
-            .fetch_all(&mut **tx)
-            .await?;
-        for row in rows {
-            let other_id: String = row.get("card_id");
-            let other_prompt: String =
-                serde_json::from_str(row.get("prompt_json")).map_err(|error| {
-                    AppError::InvalidState(format!("Invalid recall prompt: {error}"))
-                })?;
-            let similarity = jaccard(&new_terms, &lexical_terms(&other_prompt));
-            if similarity < 0.65 {
-                continue;
-            }
-            let (first, second) = if card_id < other_id.as_str() {
-                (card_id, other_id.as_str())
-            } else {
-                (other_id.as_str(), card_id)
-            };
-            let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM learning_recall_duplicate_suggestions WHERE program_id=? AND card_id=? AND possible_duplicate_card_id=? AND status='pending'")
-                .bind(program_id)
-                .bind(first)
-                .bind(second)
-                .fetch_optional(&mut **tx)
-                .await?;
-            if exists.is_some() {
-                continue;
-            }
-            sqlx::query("INSERT INTO learning_recall_duplicate_suggestions(id,program_id,card_id,possible_duplicate_card_id,reason,similarity,status,created_at) VALUES(?,?,?,?,?,?,'pending',?)")
-                .bind(uuid::Uuid::new_v4().to_string())
-                .bind(program_id)
-                .bind(first)
-                .bind(second)
-                .bind("similar_prompt")
-                .bind(similarity)
-                .bind(timestamp)
-                .execute(&mut **tx)
-                .await?;
+pub(crate) async fn suggest_duplicates_in(
+    tx: &mut WriteTx,
+    program_id: &str,
+    card_id: &str,
+    prompt: &str,
+    timestamp: i64,
+) -> Result<()> {
+    let new_terms = lexical_terms(prompt);
+    let rows = sqlx::query(
+        "SELECT card_id,prompt_json FROM learning_recall_card_profiles WHERE program_id=? AND card_id<>?",
+    )
+    .bind(program_id)
+    .bind(card_id)
+    .fetch_all(&mut **tx)
+    .await?;
+    for row in rows {
+        let other_id: String = row.get("card_id");
+        let other_prompt: String = serde_json::from_str(row.get("prompt_json"))
+            .map_err(|error| AppError::InvalidState(format!("Invalid recall prompt: {error}")))?;
+        let similarity = jaccard(&new_terms, &lexical_terms(&other_prompt));
+        if similarity < 0.65 {
+            continue;
         }
-        Ok(())
+        let (first, second) = if card_id < other_id.as_str() {
+            (card_id, other_id.as_str())
+        } else {
+            (other_id.as_str(), card_id)
+        };
+        let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM learning_recall_duplicate_suggestions WHERE program_id=? AND card_id=? AND possible_duplicate_card_id=? AND status='pending'")
+            .bind(program_id)
+            .bind(first)
+            .bind(second)
+            .fetch_optional(&mut **tx)
+            .await?;
+        if exists.is_some() {
+            continue;
+        }
+        sqlx::query("INSERT INTO learning_recall_duplicate_suggestions(id,program_id,card_id,possible_duplicate_card_id,reason,similarity,status,created_at) VALUES(?,?,?,?,?,?,'pending',?)")
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(program_id)
+            .bind(first)
+            .bind(second)
+            .bind("similar_prompt")
+            .bind(similarity)
+            .bind(timestamp)
+            .execute(&mut **tx)
+            .await?;
     }
+    Ok(())
 }
 
 fn lexical_terms(value: &str) -> HashSet<String> {

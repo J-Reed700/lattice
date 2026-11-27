@@ -1,7 +1,9 @@
 //! Course edits invalidate pending teaching; ordinary learner progress does not.
 use super::*;
 use crate::{
-    curriculum::LearningCurriculumOperation,
+    curriculum::{
+        LearningCurriculumLesson, LearningCurriculumLessonState, LearningCurriculumOperation,
+    },
     dto::{
         AcceptLearningProgramRequestDto, CompleteLearningLessonRequestDto, LearningBlockDto,
         LearningBlockKind, LearningPreparation, LearningProgramDto, PreparedLearningLesson,
@@ -194,11 +196,18 @@ async fn accepted_curriculum_edits_cannot_publish_or_retry_old_teaching() -> Res
             program_id: program.summary.id.clone(),
             expected_revision: program.summary.revision,
             reason: "Change the teaching objective".into(),
-            operations: vec![LearningCurriculumOperation::EditLesson {
-                lesson_id: target.clone(),
-                title: "Changed teaching objective".into(),
-                objective: "A different objective requires fresh authoring.".into(),
-                estimated_minutes: 25,
+            operations: vec![LearningCurriculumOperation::AddLesson {
+                module_id: program.modules[0].id.clone(),
+                after_lesson_id: None,
+                lesson: LearningCurriculumLesson {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    title: "Changed teaching context".into(),
+                    objective: "A different outline requires fresh authoring.".into(),
+                    estimated_minutes: 25,
+                    state: LearningCurriculumLessonState::Outline,
+                    assessment_started: false,
+                    replacement_lesson_id: None,
+                },
             }],
         })
         .await?;

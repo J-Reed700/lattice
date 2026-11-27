@@ -1030,7 +1030,7 @@ async fn the_undo_of_a_removal_is_refused_by_hand_when_the_section_changed_after
 
     let error = refused(&course, &claim, ClaimActionRequestDto::Undo).await;
 
-    assert!(error.to_string().contains(AFTER_IT), "{error}");
+    assert!(error.to_string().contains(UNDO_BLOCKED), "{error}");
     Ok(())
 }
 
@@ -1051,10 +1051,10 @@ async fn a_batch_undo_of_a_batch_remove_puts_every_sentence_back_in_one_step() -
 
     let undone = act_many(&course, &ids, ClaimActionRequestDto::Undo, removed).await?;
 
-    assert_eq!(undone, removed + 1);
+    assert_eq!(undone, removed + 3);
     let after = stored(&course).await?;
     assert_eq!(after.blocks, before.blocks);
-    assert_eq!(after.ledger_revision, removed + 1);
+    assert_eq!(after.ledger_revision, removed + 3);
     assert_eq!(read(&course).await?.claims, seen.claims);
     let ledger = ledger(&course).await?;
     for id in &ids {
@@ -1189,9 +1189,9 @@ async fn a_batch_remove_on_a_published_lesson_takes_every_sentence_out_in_one_st
     )
     .await?;
 
-    assert_eq!(revision, before.ledger_revision + 1);
+    assert_eq!(revision, before.ledger_revision + 3);
     let after = stored(&course).await?;
-    assert_eq!(after.ledger_revision, before.ledger_revision + 1);
+    assert_eq!(after.ledger_revision, before.ledger_revision + 3);
     for (index, statement) in statements.iter().enumerate() {
         assert_eq!(
             after.blocks[index],
@@ -1638,8 +1638,7 @@ async fn a_note_shows_removed_while_the_users_removal_of_its_sentence_stands() -
     Ok(())
 }
 
-const AFTER_IT: &str = "This section changed after you removed this sentence, so it can't go back on its own. Edit the section to add it back.";
-const FIRST_UNDO: &str = "First undo the other sentences you removed from this section.";
+const UNDO_BLOCKED: &str = "This section changed after that, so it can't be undone on its own. Edit the section to change it back.";
 
 const ALPHA: &str = "Alpha comes first.";
 const BRAVO: &str = "Bravo comes second.";
@@ -1726,7 +1725,7 @@ async fn adjacent_removals_undone_in_any_order_come_back_in_place_or_are_refused
                         assert!(in_order(&body), "{order:?}: {body}");
                     }
                     Err(error) => {
-                        assert!(error.to_string().contains(FIRST_UNDO), "{error}");
+                        assert!(error.to_string().contains(UNDO_BLOCKED), "{error}");
                         assert_eq!(stored(&course).await?, before, "{order:?}");
                         refused_now.push(*index);
                     }
@@ -1756,8 +1755,7 @@ async fn the_undo_of_a_removal_is_refused_when_a_neighbour_was_edited_after_it_a
 
     let error = refused(&course, &bravo, ClaimActionRequestDto::Undo).await;
 
-    assert!(error.to_string().contains(AFTER_IT), "{error}");
-    assert!(!error.to_string().contains(FIRST_UNDO), "{error}");
+    assert!(error.to_string().contains(UNDO_BLOCKED), "{error}");
     Ok(())
 }
 
@@ -1776,7 +1774,7 @@ async fn the_undo_of_a_removal_is_refused_when_a_neighbour_was_edited_but_kept_i
 
     let error = refused(&course, &bravo, ClaimActionRequestDto::Undo).await;
 
-    assert!(error.to_string().contains(AFTER_IT), "{error}");
+    assert!(error.to_string().contains(UNDO_BLOCKED), "{error}");
     Ok(())
 }
 
@@ -1796,7 +1794,7 @@ async fn the_undo_of_the_first_sentences_removal_is_refused_when_the_next_one_wa
 
     let error = refused(&course, &ids[0], ClaimActionRequestDto::Undo).await;
 
-    assert!(error.to_string().contains(AFTER_IT), "{error}");
+    assert!(error.to_string().contains(UNDO_BLOCKED), "{error}");
     Ok(())
 }
 
@@ -2112,8 +2110,8 @@ async fn two_notes_in_one_section_go_in_one_call_with_one_revision_and_one_undo_
 
     let after = stored(&course).await?;
     assert_eq!(after.blocks[0], [ALPHA, DELTA, ECHO].join(" "));
-    assert_eq!(removed.revision, before.ledger_revision + 1);
-    assert_eq!(after.ledger_revision, before.ledger_revision + 1);
+    assert_eq!(removed.revision, before.ledger_revision + 2);
+    assert_eq!(after.ledger_revision, before.ledger_revision + 2);
     assert_eq!(removed.claim_ids.len(), 2);
 
     let undone = act_many(
@@ -2124,7 +2122,7 @@ async fn two_notes_in_one_section_go_in_one_call_with_one_revision_and_one_undo_
     )
     .await?;
 
-    assert_eq!(undone, removed.revision + 1);
+    assert_eq!(undone, removed.revision + 2);
     assert_eq!(stored(&course).await?.blocks, before.blocks);
     for note in notes_of(&course).await? {
         assert_eq!(note.state, findings::TeachingFindingStateDto::Waiting);

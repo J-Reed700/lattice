@@ -8,6 +8,7 @@ import { useLessonDraft } from '@/features/learning/lessons/active/useLessonDraf
 import { useLearningRecallV2, useReviewLearningRecallCard, useSaveLearningRecallCard } from '@/features/learning/portability/useLearningPortability';
 import { MarkdownViewer } from '@/features/reading/components/viewers/MarkdownViewer';
 import type { LearningCheckDto, StudyRating } from '@/lib/bindings';
+import { Editable } from '@/shared/edits/Editable';
 
 /**
  * How close the learner's own answer came decides the card's first review:
@@ -41,12 +42,13 @@ export function comesBack(dueAt: number, now = Date.now()): string {
  * close they came schedules the case as a review card, so it comes back
  * later from memory (§3.5).
  */
-export function LessonCheck({ programId, lessonId, lessonTitle, section, body, parts, sourceIds, active, questionView }: {
+export function LessonCheck({ programId, lessonId, lessonTitle, section, sectionTitle, body, parts, sourceIds, active, questionView }: {
   programId: string;
   lessonId: string;
   lessonTitle: string;
   /** The check's section index in its lesson. */
   section: number;
+  sectionTitle?: string;
   /** The check's whole body: a rewritten check names a new card. */
   body: string;
   parts: LearningCheckDto;
@@ -137,7 +139,15 @@ export function LessonCheck({ programId, lessonId, lessonTitle, section, body, p
       {revealed && (
         <div ref={revealRef} tabIndex={-1} className="mt-5 outline-none" aria-live="polite">
           <div className="studio-section-label">Check your thinking</div>
-          <div className="studio-lesson-prose"><MarkdownViewer content={parts.reveal} /></div>
+          <Editable
+            content={{ kind: 'learning.section', key: `${lessonId}/${section}` }}
+            path="/body"
+            source={parts.reveal}
+            sourceStart={body.length - parts.reveal.length}
+            label={sectionTitle ? `answer of section ${section + 1}: ${sectionTitle}` : `answer of section ${section + 1}`}
+          >
+            <div className="studio-lesson-prose"><MarkdownViewer content={parts.reveal} sourceLines /></div>
+          </Editable>
           {active && (scheduled ? (
             <p role="status" className="mt-4 flex items-center gap-2 text-xs text-text-secondary">
               <CalendarClock size={14} className="text-accent" />

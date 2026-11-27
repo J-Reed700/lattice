@@ -127,15 +127,6 @@ pub struct ReviewStudyCardRequestDto {
     pub rating: StudyRating,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct UpdateStudyCardRequestDto {
-    pub card_id: String,
-    pub question: String,
-    pub answer: String,
-    pub explanation: String,
-}
-
 /// Set or clear the moment a deck must be remembered by.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]

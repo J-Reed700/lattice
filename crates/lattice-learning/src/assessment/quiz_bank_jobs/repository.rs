@@ -3,8 +3,10 @@
 
 use super::{QUIZ_BANK, QUIZ_GRADING};
 use crate::assessment_generation::{MaterialPassage, StoredItem};
-use crate::assessment_repository::LearningAssessmentRepository;
+use crate::assessment_repository::{insert_bank_items_in, BankItem, LearningAssessmentRepository};
 use crate::curriculum_repository::lesson_rank_in;
+use crate::edits::keys;
+use lattice_core::shared::edits::{ContentEdits, ContentRef, ReadMark};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::{Database, WriteTx};
@@ -19,11 +21,14 @@ pub(super) struct LessonInputs {
     pub(super) objective: String,
     pub(super) material: Vec<MaterialPassage>,
     pub(super) seeds: Vec<StoredItem>,
+    pub(super) marks: Vec<ReadMark>,
 }
 
-/// The lesson's heading, blocks and reviewed questions, read in one unit of work.
+/// The lesson's heading, blocks, reviewed questions, and edit-mode read marks,
+/// read in one unit of work.
 pub(super) async fn lesson_inputs(
     database: &Database,
+    edits: &ContentEdits,
     program_id: &str,
     lesson_id: &str,
 ) -> Result<LessonInputs> {
@@ -34,13 +39,58 @@ pub(super) async fn lesson_inputs(
     let material = LearningAssessmentRepository::lesson_material_in(&mut tx, lesson_id).await?;
     let seeds =
         LearningAssessmentRepository::lesson_seeds_in(&mut tx, program_id, lesson_id).await?;
+    let ordinals: Vec<i64> = sqlx::query_scalar(
+        "SELECT ordinal FROM learning_blocks WHERE lesson_id=? ORDER BY ordinal",
+    )
+    .bind(lesson_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    let refs: Vec<ContentRef> = ordinals
+        .into_iter()
+        .filter_map(|ord| usize::try_from(ord).ok())
+        .map(|ordinal| keys::section_ref(lesson_id, ordinal))
+        .collect();
+    let mut marks = edits.marks(&mut tx.reading(), &refs).await?;
+    let lesson_ref = keys::lesson_ref(lesson_id);
+    if let Ok(lesson_marks) = edits
+        .marks(&mut tx.reading(), std::slice::from_ref(&lesson_ref))
+        .await
+    {
+        marks.extend(lesson_marks);
+    }
     tx.commit().await?;
     Ok(LessonInputs {
         title,
         objective,
         material,
         seeds,
+        marks,
     })
+}
+
+pub(super) enum Published {
+    Moved,
+    Written(usize),
+}
+
+/// Inserts the stage's items unless any entity read at the start of authoring
+/// has moved since.
+pub(super) async fn publish_lesson_bank(
+    database: &Database,
+    edits: &ContentEdits,
+    program_id: &str,
+    marks: &[ReadMark],
+    items: &[BankItem],
+    author_model: Option<&str>,
+) -> Result<Published> {
+    let mut tx = database.begin_write().await?;
+    if !edits.moved(&mut tx.reading(), marks).await?.is_empty() {
+        tx.commit().await?;
+        return Ok(Published::Moved);
+    }
+    let written = insert_bank_items_in(&mut tx, program_id, items, author_model).await?;
+    tx.commit().await?;
+    Ok(Published::Written(written))
 }
 
 /// A UUID derived from text, so a repeated request finds the same job.

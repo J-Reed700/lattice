@@ -6,6 +6,8 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RecallEvolutionPanel } from '@/features/learning/recall/RecallEvolutionPanel';
+import { useEditMode } from '@/shared/edits/editMode';
+import { useEditorStore } from '@/shared/edits/editorStore';
 
 const mocks = vi.hoisted(() => ({ recall: vi.fn(), sources: vi.fn(), save: vi.fn(), duplicate: vi.fn(), review: vi.fn() }));
 vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: {
@@ -30,6 +32,8 @@ function renderPanel() {
 describe('Learning Studio versioned recall', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    useEditMode.getState().set(false);
+    useEditorStore.setState({ current: null, next: null });
     mocks.recall.mockResolvedValue(ok(workspace()));
     mocks.sources.mockResolvedValue(ok(sourceWorkspace()));
     mocks.save.mockResolvedValue(ok(workspace()));
@@ -153,5 +157,52 @@ describe('Learning Studio versioned recall', () => {
     await user.click(screen.getByRole('button', { name: 'Try again' }));
     await waitFor(() => expect(mocks.duplicate).toHaveBeenCalledTimes(2));
     expect(mocks.duplicate.mock.calls[1][0]).toEqual(duplicateRequest);
+  });
+
+  it('opens the shared editor from Edit text and exposes Editable cards in edit mode', async () => {
+    const user = userEvent.setup();
+    useEditMode.getState().set(true);
+    renderPanel();
+    expect(await screen.findByRole('button', { name: `Edit card: ${content.prompt}` })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Edit text' }));
+    expect(useEditorStore.getState().current?.address).toEqual({
+      content: { kind: 'study.card', key: 'card-1' },
+      path: null,
+      fragment: null,
+    });
+  });
+
+  it('hides text controls when keeping the format, saves stored content with chosen sources, and shows text controls when changing format', async () => {
+    const user = userEvent.setup();
+    mocks.sources.mockResolvedValue(ok({
+      programId: 'program-1',
+      sources: [{
+        id: 'source-1',
+        deletedAt: null,
+        versions: [
+          { id: 'version-1', versionNumber: 1, title: 'Operations guide' },
+          { id: 'version-2', versionNumber: 2, title: 'Operations guide' },
+        ],
+      }],
+    }));
+    renderPanel();
+    await user.click(await screen.findByRole('button', { name: 'Change format or sources' }));
+    expect(screen.queryByRole('textbox', { name: 'Card prompt' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Card answer' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Card explanation' })).not.toBeInTheDocument();
+    await user.click(screen.getByLabelText(/Operations guide · v2/));
+    await user.click(screen.getByRole('button', { name: 'Save card version' }));
+    await waitFor(() => expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({
+      programId: 'program-1',
+      cardId: 'card-1',
+      expectedContentRevision: 2,
+      format: 'question_answer',
+      content,
+      sourceVersionIds: ['version-1', 'version-2'],
+    })));
+
+    await user.click(screen.getByRole('button', { name: 'Change format or sources' }));
+    await user.selectOptions(screen.getByLabelText('Card format'), 'cloze');
+    expect(screen.getByRole('textbox', { name: 'Card prompt' })).toBeVisible();
   });
 });

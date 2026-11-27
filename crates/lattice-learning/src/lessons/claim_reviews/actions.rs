@@ -1,12 +1,10 @@
 //! What the user may do to a claim, one rule for the review's cards and for
-//! the service that carries the action out. A published lesson has no draft
-//! and no pass to run, so it offers what the ledger and the published text can
-//! carry: Confirm, Unconfirm, Add a source, Edit and Remove on a section's own
-//! text, and Undo of an Accept.
+//! the service that carries the action out.
 
 use lattice_core::domain::learning::claim_review::{
     ClaimActionKind, ClaimEvent, ClaimLedgerEntry, UnitKind, UserAction,
 };
+use lattice_core::shared::edits::NewestEdit;
 use lattice_core::shared::error::AppError;
 
 use super::published_restore::{ended_by_section_edit, undoable_in_published};
@@ -28,11 +26,15 @@ pub(super) fn in_section_body(entry: &ClaimLedgerEntry) -> bool {
 }
 
 /// The actions the claim offers now.
-pub(super) fn offered(entry: &ClaimLedgerEntry, published: bool) -> Vec<ClaimActionKind> {
+pub(super) fn offered(
+    entry: &ClaimLedgerEntry,
+    published: bool,
+    newest: Option<&NewestEdit>,
+) -> Vec<ClaimActionKind> {
     entry
         .available_actions()
         .into_iter()
-        .filter(|action| !published || offered_when_published(entry, *action))
+        .filter(|action| !published || offered_when_published(entry, *action, newest))
         .collect()
 }
 
@@ -58,7 +60,11 @@ fn undoes_an_accept(entry: &ClaimLedgerEntry) -> bool {
         })
 }
 
-fn offered_when_published(entry: &ClaimLedgerEntry, action: ClaimActionKind) -> bool {
+fn offered_when_published(
+    entry: &ClaimLedgerEntry,
+    action: ClaimActionKind,
+    newest: Option<&NewestEdit>,
+) -> bool {
     match action {
         ClaimActionKind::Confirm | ClaimActionKind::Unconfirm | ClaimActionKind::AttachEvidence => {
             true
@@ -67,27 +73,30 @@ fn offered_when_published(entry: &ClaimLedgerEntry, action: ClaimActionKind) -> 
         | ClaimActionKind::Remove
         | ClaimActionKind::PutBack
         | ClaimActionKind::RestoreOriginal => in_section_body(entry),
-        ClaimActionKind::Undo => undoes_an_accept(entry) || undoable_in_published(entry),
+        ClaimActionKind::Undo => undoes_an_accept(entry) || undoable_in_published(entry, newest),
         ClaimActionKind::ResearchWithHint => false,
     }
 }
 
 /// Why `action` is not carried out on a published lesson's claim; `None`
-/// when it is offered, or the ledger alone is to refuse it.
+/// when it is offered, or the ledger/pipeline decides it.
 pub(super) fn refusal(entry: &ClaimLedgerEntry, action: ClaimActionKind) -> Option<AppError> {
-    if action == ClaimActionKind::Undo && ended_by_section_edit(entry) {
-        let on_question = matches!(
-            entry.location().unit_kind,
-            UnitKind::Question | UnitKind::AnswerKey
-        );
-        let text = if on_question {
-            EDITED_THE_QUESTION
-        } else {
-            EDITED_THE_SECTION
-        };
-        return Some(AppError::InvalidState(text.into()));
+    if action == ClaimActionKind::Undo {
+        if ended_by_section_edit(entry) {
+            let on_question = matches!(
+                entry.location().unit_kind,
+                UnitKind::Question | UnitKind::AnswerKey
+            );
+            let text = if on_question {
+                EDITED_THE_QUESTION
+            } else {
+                EDITED_THE_SECTION
+            };
+            return Some(AppError::InvalidState(text.into()));
+        }
+        return None;
     }
-    if !entry.allows(action) || offered_when_published(entry, action) {
+    if !entry.allows(action) || offered_when_published(entry, action, None) {
         return None;
     }
     Some(match action {

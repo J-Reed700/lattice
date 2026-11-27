@@ -6,7 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { learningClaimReviewKey, learningLessonEvidencePrefix, learningProgramKey } from '@/features/learning/api/learningQueryKeys';
+import { learningClaimReviewPrefix, learningLessonEvidencePrefix, learningProgramKey } from '@/features/learning/api/learningQueryKeys';
 import { LessonCard } from '@/features/learning/lessons/LessonCard';
 import { claimItem, review } from '@/features/learning/lessons/review/claimReviewTestData';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
@@ -55,7 +55,7 @@ const evidence = (teachingClaims: LearningClaimEvidenceDto[]): LearningLessonEvi
 /** The evidence reads as settled once the claim action has run, as the backend's evidence follows each claim's state. */
 function serve(reason: Reason, overrides: Record<string, unknown> = {}, reviewed = true) {
   let settled = false;
-  api.review.mockResolvedValue(ok(review(reviewed ? [claimItem({ claimId: 'claim-1', location: { unitIndex: 0, unitKind: 'block', unitTitle: 'Boiling', field: 'body', quote: SENTENCE, span: null }, state: { state: 'unverified', at: 2, reason }, verdictKind: null, availableActions: ['confirm', 'edit', 'attach_evidence'] })] : [], { state: 'ready', revision: REVISION })));
+  api.review.mockResolvedValue(ok(review(reviewed ? [claimItem({ claimId: 'claim-1', location: { unitIndex: 0, unitKind: 'block', unitTitle: 'Boiling', field: 'body', quote: SENTENCE, span: null, address: null }, state: { state: 'unverified', at: 2, reason }, verdictKind: null, availableActions: ['confirm', 'edit', 'attach_evidence'] })] : [], { state: 'ready', revision: REVISION })));
   api.evidence.mockImplementation(async () => ok(evidence(settled ? [confirmed()] : [unverified(reason, overrides)])));
   api.resolve.mockImplementation(async () => { settled = true; return ok({ revision: REVISION + 1 }); });
 }
@@ -224,7 +224,7 @@ describe('Settling a published lesson’s unverified statements from the note', 
       const keys = invalidate.mock.calls.map(([filters]) => JSON.stringify((filters as { queryKey?: unknown } | undefined)?.queryKey));
       expect(keys).toContain(JSON.stringify(learningProgramKey('program-1')));
       expect(keys).toContain(JSON.stringify(learningLessonEvidencePrefix('program-1')));
-      expect(keys).toContain(JSON.stringify(learningClaimReviewKey('program-1', 'lesson-1')));
+      expect(keys).toContain(JSON.stringify(learningClaimReviewPrefix('program-1')));
     });
   });
 

@@ -442,6 +442,37 @@ struct NeedSource {
     material: Vec<MaterialPassage>,
 }
 
+/// A bank question carrying a verbatim quote from a lesson's sections.
+pub(crate) struct QuotedQuestion {
+    pub id: String,
+    pub prompt: String,
+    pub source_quote: String,
+}
+
+/// Active questions for `lesson_id` whose `source_quote` came from the lesson.
+pub(crate) async fn quoted_questions_in(
+    connection: &mut SqliteConnection,
+    lesson_id: &str,
+) -> Result<Vec<QuotedQuestion>> {
+    let rows = sqlx::query(
+        "SELECT id, prompt, source_quote \
+         FROM learning_assessment_candidates \
+         WHERE lesson_id=? AND source_quote<>'' AND review_status<>'dropped' \
+         ORDER BY rowid",
+    )
+    .bind(lesson_id)
+    .fetch_all(&mut *connection)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| QuotedQuestion {
+            id: row.get("id"),
+            prompt: row.get("prompt"),
+            source_quote: row.get("source_quote"),
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]

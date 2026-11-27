@@ -180,6 +180,7 @@ async fn a_resumed_quiz_job_inserts_its_saved_stage_output_once() -> Result<()> 
         }],
         dropped: vec![],
         author_model: Some("the-authoring-model".into()),
+        marks: Vec::new(),
     };
     let context = claimed(&db, &job_id).await?;
     assert!(
@@ -409,6 +410,7 @@ async fn lesson_stage_report_reads_a_completed_jobs_numbers() -> Result<()> {
         }],
         dropped: vec!["a key out of range".into(), "a duplicate question".into()],
         author_model: Some("the-authoring-model".into()),
+        marks: Vec::new(),
     };
     let context = claimed(&db, &job_id).await?;
     assert_eq!(lesson_stage_report(&db, &job_id).await?, None);
@@ -578,6 +580,104 @@ async fn a_quiz_job_over_a_bank_short_of_a_format_but_full_of_the_outcome_can_st
     assert!(
         !message.contains("cannot start"),
         "the job said the quiz cannot start: {message}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_lesson_edited_while_its_bank_stage_runs_is_read_again() -> Result<()> {
+    use crate::edits::{content_edits, keys};
+    use crate::lessons::generation_jobs::pinned_for_test;
+    use lattice_core::shared::edits::{ContentEditRequest, EditOp, EditSource};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    const EDITED_MARK: &str = "quibbleflux";
+
+    struct EditOnce {
+        inner: Arc<Recorder>,
+        edits: Arc<lattice_core::shared::edits::ContentEdits>,
+        lesson_id: String,
+        edited: AtomicBool,
+    }
+
+    #[async_trait::async_trait]
+    impl LLMPort for EditOnce {
+        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+            if !self.edited.swap(true, Ordering::SeqCst) {
+                let content = keys::section_ref(&self.lesson_id, 0);
+                let opened = self.edits.open(&content).await?;
+                self.edits
+                    .apply(&ContentEditRequest {
+                        edit_id: uuid::Uuid::new_v4().to_string(),
+                        content,
+                        expected_revision: opened.revision,
+                        ops: vec![EditOp::Replace {
+                            path: "/body".into(),
+                            value: serde_json::json!(format!(
+                                "Updated lesson section containing {EDITED_MARK}."
+                            )),
+                        }],
+                        source: EditSource::Learner,
+                        target: None,
+                    })
+                    .await?;
+            }
+            self.inner.complete(request).await
+        }
+        fn model_name(&self) -> &str {
+            self.inner.model_name()
+        }
+        fn count_tokens(&self, text: &str) -> usize {
+            self.inner.count_tokens(text)
+        }
+        fn max_context_tokens(&self) -> usize {
+            self.inner.max_context_tokens()
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            self.inner.is_ready().await
+        }
+        fn enforces(
+            &self,
+            schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            self.inner.enforces(schema)
+        }
+    }
+
+    let pool = crate::tests::pool().await?;
+    let db = Database::new(pool);
+    let (published, job_id) = published(&db).await?;
+    let inner = Recorder::new();
+    let llm: Arc<dyn LLMPort> = Arc::new(EditOnce {
+        inner: inner.clone(),
+        edits: content_edits(&db)?,
+        lesson_id: published.lesson_id.clone(),
+        edited: AtomicBool::new(false),
+    });
+    let worker = QuizBankWorker {
+        database: db.clone(),
+        load_llm: Arc::new(move || {
+            let llm = llm.clone();
+            Box::pin(async move { Ok(pinned_for_test(llm)) })
+        }),
+    };
+
+    let context = claimed(&db, &job_id).await?;
+    let outcome = worker.run(&context).await;
+    assert!(
+        matches!(outcome, Ok(JobOutcome::Completed { .. })),
+        "{outcome:?}"
+    );
+
+    let requests = inner.requests();
+    assert!(
+        requests.len() >= 2,
+        "expected re-run after edit, got {} request(s)",
+        requests.len()
+    );
+    assert!(
+        requests.last().is_some_and(|r| r.contains(EDITED_MARK)),
+        "second pass did not read the edited lesson text: {requests:?}"
     );
     Ok(())
 }

@@ -5,13 +5,17 @@ import { Link, MemoryRouter, Route, Routes, useSearchParams } from 'react-router
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 
-import { EditFlashcard } from '@/features/learning/recall/flashcards/EditFlashcard';
+import { registerLearningAffected } from '@/features/learning/edits/affected';
 import { FlashcardDeckView } from '@/features/learning/recall/flashcards/FlashcardDeckView';
 import { FlashcardSession } from '@/features/learning/recall/flashcards/FlashcardSession';
 import { FlashcardsSection } from '@/features/learning/recall/flashcards/FlashcardsSection';
 import { NewFlashcardDeck } from '@/features/learning/recall/flashcards/NewFlashcardDeck';
+import * as useFlashcards from '@/features/learning/recall/flashcards/useFlashcards';
 import type { StudyCardDto } from '@/lib/bindings';
 import { queryClient } from '@/lib/queryClient';
+import * as affected from '@/shared/edits/affected';
+import { useEditMode } from '@/shared/edits/editMode';
+import { useEditorStore } from '@/shared/edits/editorStore';
 
 const mocks = vi.hoisted(() => ({ review: vi.fn(), generate: vi.fn(), documents: vi.fn(), decks: vi.fn(), deck: vi.fn() }));
 vi.mock('@/lib/api', () => ({ default: { reviewStudyCard: mocks.review, generateStudyDeck: mocks.generate, listAllDocuments: mocks.documents, listStudyDecks: mocks.decks, getStudyDeck: mocks.deck } }));
@@ -33,12 +37,41 @@ function show(ui: React.ReactNode) {
   return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { ...queryClient.getDefaultOptions().queries, retry: false }, mutations: { retry: false } } })}>{ui}</QueryClientProvider>);
 }
 describe('Flashcards', () => {
-  beforeEach(() => { vi.resetAllMocks(); });
-  it('does not cap the question, answer or explanation of a card being edited', () => {
-    show(<EditFlashcard card={card} onClose={() => undefined} />);
-    expect(screen.getByLabelText('Question')).not.toHaveAttribute('maxlength');
-    expect(screen.getByLabelText('Correct answer')).not.toHaveAttribute('maxlength');
-    expect(screen.getByLabelText('Explanation')).not.toHaveAttribute('maxlength');
+  beforeEach(() => {
+    vi.resetAllMocks();
+    useEditMode.getState().set(false);
+    useEditorStore.setState({ current: null, next: null });
+  });
+  it('opens the shared editor for a deck card and renders an Editable button in edit mode', async () => {
+    const user = userEvent.setup();
+    mocks.deck.mockResolvedValue({ ok: true, data: { id: 'deck', title: 'Biology', focus: '', studyGoal: '', modelName: 'test', createdAt: 0, cards: [card] } });
+    useEditMode.getState().set(true);
+    show(<MemoryRouter initialEntries={['/studio?deck=deck']}><StudioFlashcards /></MemoryRouter>);
+    await user.click(await screen.findByText(/What absorbs light in photosynthesis\?/));
+    expect('useUpdateFlashcard' in useFlashcards).toBe(false);
+    expect(screen.getByRole('button', { name: `Edit card: ${card.question}` })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Edit card' }));
+    expect(useEditorStore.getState().current?.address).toEqual({
+      content: { kind: 'study.card', key: card.id },
+      path: null,
+      fragment: null,
+    });
+  });
+  it('refreshes study and recall queries through refreshAffected after a review', async () => {
+    const user = userEvent.setup();
+    registerLearningAffected();
+    const client = new QueryClient({ defaultOptions: { queries: { ...queryClient.getDefaultOptions().queries, retry: false }, mutations: { retry: false } } });
+    const refreshSpy = vi.spyOn(affected, 'refreshAffected');
+    const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
+    mocks.review.mockResolvedValue({ ok: true, data: { ...card, reviewCount: 1 } });
+    render(<QueryClientProvider client={client}><FlashcardSession cards={[card]} mode="flashcard" title="Biology" onClose={vi.fn()} /></QueryClientProvider>);
+    await user.click(screen.getByRole('button', { name: 'Reveal answer: Not sure' }));
+    await user.click(screen.getByRole('button', { name: 'Good' }));
+    await waitFor(() => expect(refreshSpy).toHaveBeenCalledWith(['study.decks', 'learning.recall'], { feature: 'study', container: '' }, client));
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['study'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['learning-memory'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['learning-recall-v2'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['learning-practice-due'] });
   });
   it('keeps a revealed flashcard in place on save failure and retries the same review', async () => {
     const user = userEvent.setup();

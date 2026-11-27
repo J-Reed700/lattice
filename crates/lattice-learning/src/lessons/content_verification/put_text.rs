@@ -27,19 +27,6 @@ pub(crate) fn insert_sentence(text: &str, anchor: &Anchor, sentence: &str) -> Op
     Some(out)
 }
 
-/// `text` without the one occurrence of `sentence` and a space beside it;
-/// `None` when it is not in `text` exactly once.
-pub(crate) fn remove_sentence(text: &str, sentence: &str) -> Option<String> {
-    let own = span_of(text, sentence)?;
-    let (start, end) = [format!(" {sentence}"), format!("{sentence} ")]
-        .iter()
-        .find_map(|pattern| span_of(text, pattern))
-        .unwrap_or(own);
-    let mut out = text.to_owned();
-    out.replace_range(start..end, "");
-    Some(out)
-}
-
 /// Where the placing of a sentence a machine cut ended: a place, no place the
 /// records name, or places the records and the text cannot tell apart.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,28 +156,6 @@ pub(crate) fn put_sentence(
     }
     insert_sentence(text, stored, sentence)
         .or_else(|| insert_sentence(text, &Anchor::End, sentence))
-}
-
-/// `text` with `removed` written back between `follows` and `precedes`, the
-/// shortest texts that stood on either side of it, but only where they still
-/// meet: both, exactly once together; only `precedes`, at the start; only
-/// `follows`, at the end; neither, in a blank text. `None` otherwise.
-pub(crate) fn put_at_junction(
-    text: &str,
-    removed: &str,
-    follows: Option<&str>,
-    precedes: Option<&str>,
-) -> Option<String> {
-    let at = match (follows, precedes) {
-        (Some(follows), Some(precedes)) => {
-            let (start, _) = span_of(text, &format!("{follows}{precedes}"))?;
-            start + follows.len()
-        }
-        (None, Some(precedes)) => text.starts_with(precedes).then_some(0)?,
-        (Some(follows), None) => text.ends_with(follows).then_some(text.len())?,
-        (None, None) => return text.trim().is_empty().then(|| removed.to_owned()),
-    };
-    Some(format!("{}{removed}{}", text.get(..at)?, text.get(at..)?))
 }
 
 #[cfg(test)]

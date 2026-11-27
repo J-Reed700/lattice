@@ -89,15 +89,36 @@ async fn setting_a_target_waits_for_a_writer_between_its_read_and_its_write() {
 
 #[tokio::test]
 async fn editing_a_card_waits_for_a_writer_between_its_read_and_its_write() {
+    use lattice_core::shared::edits::{ContentEditRequest, EditOp, EditSource};
     let (_dir, pool, db, deck) = open().await;
-    let other = another_writer(&pool).await;
+    let edits = crate::edits::content_edits(&db).unwrap();
     let card = deck.cards.first().unwrap();
-    StudyRepository::new(db.clone())
-        .update_card(&UpdateStudyCardRequestDto {
-            card_id: card.id.clone(),
-            question: "What comes before choosing a procedure?".into(),
-            answer: "The stated conditions".into(),
-            explanation: "The passage says so.".into(),
+    let opened = edits
+        .open(&crate::edits::keys::card_ref(&card.id))
+        .await
+        .unwrap();
+    let other = another_writer(&pool).await;
+    edits
+        .apply(&ContentEditRequest {
+            edit_id: uuid::Uuid::new_v4().to_string(),
+            content: crate::edits::keys::card_ref(&card.id),
+            expected_revision: opened.revision,
+            ops: vec![
+                EditOp::Replace {
+                    path: "/question".into(),
+                    value: serde_json::json!("What comes before choosing a procedure?"),
+                },
+                EditOp::Replace {
+                    path: "/choices/0/text".into(),
+                    value: serde_json::json!("The procedural sequence"),
+                },
+                EditOp::Replace {
+                    path: "/explanation".into(),
+                    value: serde_json::json!("The passage says so."),
+                },
+            ],
+            source: EditSource::Learner,
+            target: None,
         })
         .await
         .unwrap();

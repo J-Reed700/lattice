@@ -306,8 +306,9 @@ impl JobHandler for QuizBankWorker {
 }
 
 impl QuizBankWorker {
-    /// A published lesson's bank: its stage runs once on the lesson's own
-    /// rows, and its output is saved before it is inserted.
+    /// A published lesson's bank: its stage runs on the lesson's own rows,
+    /// saves its output under a checkpoint, and repeats if an edit landed
+    /// while authoring ran.
     async fn run_lesson_stage(
         &self,
         context: &JobContext,
@@ -321,93 +322,120 @@ impl QuizBankWorker {
         context
             .progress(0, "Writing this lesson's quiz questions", None)
             .await?;
-        let saved: Option<LessonBank> = context
+        let edits = crate::edits::content_edits(&self.database)?;
+        let mut saved: Option<LessonBank> = context
             .checkpoint(LESSON_BANK_CHECKPOINT)
             .await?
             .and_then(|value| serde_json::from_value(value).ok());
-        let bank = match saved {
-            Some(bank) => bank,
-            None => {
-                let inputs =
-                    repository::lesson_inputs(&self.database, program_id, lesson_id).await?;
-                let Some(pin) = context.until_cancelled((self.load_llm)()).await else {
-                    return Ok(JobOutcome::Stopped);
-                };
-                let pin = pin?;
-                let Some(bank) = context
-                    .until_cancelled(
-                        lesson_bank_stage(
-                            pin.llm.as_ref(),
+        let mut pinned: Option<PinnedModel> = None;
+        loop {
+            let bank = match saved.take() {
+                Some(bank) => bank,
+                None => {
+                    let inputs =
+                        repository::lesson_inputs(&self.database, &edits, program_id, lesson_id)
+                            .await?;
+                    let pin = match pinned.as_ref() {
+                        Some(pin) => pin,
+                        None => {
+                            let Some(loaded) = context.until_cancelled((self.load_llm)()).await
+                            else {
+                                return Ok(JobOutcome::Stopped);
+                            };
+                            pinned.insert(loaded?)
+                        }
+                    };
+                    let Some(bank) = context
+                        .until_cancelled(
+                            lesson_bank_stage(
+                                pin.llm.as_ref(),
+                                &self.database,
+                                program_id,
+                                lesson_id,
+                                &inputs.title,
+                                &inputs.objective,
+                                inputs.material,
+                                inputs.seeds,
+                            )
+                            .instrument(trace::lesson_span(lesson_id)),
+                        )
+                        .await
+                    else {
+                        return Ok(JobOutcome::Stopped);
+                    };
+                    let mut bank = bank?;
+                    bank.marks = inputs.marks;
+                    context
+                        .put_checkpoint(LESSON_BANK_CHECKPOINT, &serde_json::to_value(&bank)?)
+                        .await?;
+                    bank
+                }
+            };
+            let items: Vec<BankItem> = bank
+                .items
+                .iter()
+                .map(|authored| {
+                    let mut item = authored.candidate.clone();
+                    item.outcome_ids = vec![bank.outcome_id.clone()];
+                    BankItem {
+                        item,
+                        source_quote: authored.source_quote.clone(),
+                        lesson_id: Some(lesson_id.to_owned()),
+                        origin: "bank",
+                        review_status: "agreed",
+                    }
+                })
+                .collect();
+            match repository::publish_lesson_bank(
+                &self.database,
+                &edits,
+                program_id,
+                &bank.marks,
+                &items,
+                bank.author_model.as_deref(),
+            )
+            .await?
+            {
+                repository::Published::Moved => {
+                    context
+                        .put_checkpoint(LESSON_BANK_CHECKPOINT, &serde_json::Value::Null)
+                        .await?;
+                }
+                repository::Published::Written(written) => {
+                    let dropped = bank.dropped.len();
+                    trace::lesson_span(lesson_id).in_scope(|| {
+                        for authored in &bank.items {
+                            trace::decided(
+                                trace::Stage::Quiz,
+                                &format!("question {}", authored.candidate.prompt),
+                                "kept",
+                                "written for the quiz bank and reviewed",
+                            );
+                        }
+                        for reason in &bank.dropped {
+                            trace::decided(trace::Stage::Quiz, "quiz item", "dropped", reason);
+                        }
+                        trace::decided(
+                            trace::Stage::Quiz,
+                            "quiz bank",
+                            "written",
+                            &format!("{written} items inserted, {dropped} dropped"),
+                        );
+                    });
+                    return Ok(JobOutcome::Completed {
+                        result_ref: format!("quiz_bank:{written}"),
+                        message: completion_message(
                             &self.database,
                             program_id,
-                            lesson_id,
-                            &inputs.title,
-                            &inputs.objective,
-                            inputs.material,
-                            inputs.seeds,
+                            scope,
+                            written,
+                            dropped,
                         )
-                        .instrument(trace::lesson_span(lesson_id)),
-                    )
-                    .await
-                else {
-                    return Ok(JobOutcome::Stopped);
-                };
-                let bank = bank?;
-                context
-                    .put_checkpoint(LESSON_BANK_CHECKPOINT, &serde_json::to_value(&bank)?)
-                    .await?;
-                bank
-            }
-        };
-        trace::lesson_span(lesson_id).in_scope(|| {
-            for authored in &bank.items {
-                trace::decided(
-                    trace::Stage::Quiz,
-                    &format!("question {}", authored.candidate.prompt),
-                    "kept",
-                    "written for the quiz bank and reviewed",
-                );
-            }
-            for reason in &bank.dropped {
-                trace::decided(trace::Stage::Quiz, "quiz item", "dropped", reason);
-            }
-        });
-        let dropped = bank.dropped.len();
-        let items: Vec<BankItem> = bank
-            .items
-            .into_iter()
-            .map(|authored| {
-                let mut item = authored.candidate;
-                item.outcome_ids = vec![bank.outcome_id.clone()];
-                BankItem {
-                    item,
-                    source_quote: authored.source_quote,
-                    lesson_id: Some(lesson_id.to_owned()),
-                    origin: "bank",
-                    review_status: "agreed",
+                        .await?,
+                    });
                 }
-            })
-            .collect();
-        let written = LearningAssessmentRepository::insert_bank_items(
-            &self.database,
-            program_id,
-            &items,
-            bank.author_model.as_deref(),
-        )
-        .await?;
-        trace::lesson_span(lesson_id).in_scope(|| {
-            trace::decided(
-                trace::Stage::Quiz,
-                "quiz bank",
-                "written",
-                &format!("{written} items inserted, {dropped} dropped"),
-            );
-        });
-        Ok(JobOutcome::Completed {
-            result_ref: format!("quiz_bank:{written}"),
-            message: completion_message(&self.database, program_id, scope, written, dropped)
-                .await?,
-        })
+            }
+        }
     }
 }
 

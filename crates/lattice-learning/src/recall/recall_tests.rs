@@ -318,12 +318,21 @@ async fn source_tombstone_reimport_selector_search_and_recall_history_persist() 
         change_reason: "Manual recall".into(),
     };
     recall.save_card(&card).await?;
-    let mut edit = card.clone();
-    edit.operation_id = id();
-    edit.expected_content_revision = Some(1);
-    edit.content.answer = "A changed answer.".into();
-    edit.change_reason = "Clarified answer".into();
-    recall.save_card(&edit).await?;
+    let edits = crate::edits::content_edits(&db)?;
+    let opened = edits.open(&crate::edits::keys::card_ref(&card_id)).await?;
+    edits
+        .apply(&lattice_core::shared::edits::ContentEditRequest {
+            edit_id: id(),
+            content: crate::edits::keys::card_ref(&card_id),
+            expected_revision: opened.revision,
+            ops: vec![lattice_core::shared::edits::EditOp::Replace {
+                path: "/answer".into(),
+                value: serde_json::json!("A changed answer."),
+            }],
+            source: lattice_core::shared::edits::EditSource::Learner,
+            target: None,
+        })
+        .await?;
     let card_item = recall
         .workspace(&program.summary.id)
         .await?

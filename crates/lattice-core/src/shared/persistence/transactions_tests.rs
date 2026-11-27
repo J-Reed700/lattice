@@ -292,3 +292,30 @@ async fn a_read_unit_commits_after_another_unit_wrote_meanwhile() {
     read.commit().await.unwrap();
     assert_eq!(notes(&opened.pool).await, 2);
 }
+
+async fn count_notes(connection: &mut sqlx::SqliteConnection) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM notes")
+        .fetch_one(connection)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_write_unit_reads_its_own_uncommitted_row_through_reading() {
+    let opened = open().await;
+    let mut tx = opened.db.begin_write().await.unwrap();
+    sqlx::query("INSERT INTO notes(body) VALUES('inside')")
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    assert_eq!(count_notes(&mut tx.reading()).await, 2);
+    tx.commit().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_read_unit_reads_through_reading() {
+    let opened = open().await;
+    let mut read = opened.db.begin_read().await.unwrap();
+    assert_eq!(count_notes(&mut read.reading()).await, 1);
+    read.commit().await.unwrap();
+}

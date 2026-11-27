@@ -85,6 +85,7 @@ pub(crate) struct Rewritten<'a> {
     /// Each sentence the user wrote, in text order, with its claim.
     pub written: &'a [(&'a str, &'a ClaimId)],
     pub at: i64,
+    pub edit_id: &'a str,
 }
 
 /// What a user's edit took out of a unit: the findings that stood on it go.
@@ -200,7 +201,17 @@ impl LessonVerificationReport {
         };
         let dropped = |finding: &Finding| taken(finding, rewrite.unit, rewrite.ended, &took);
         let first = self.findings.iter().position(dropped);
-        self.findings.retain(|finding| !dropped(finding));
+        let (gone, kept): (Vec<Finding>, Vec<Finding>) = std::mem::take(&mut self.findings)
+            .into_iter()
+            .partition(|finding| dropped(finding));
+        self.findings = kept;
+        if !gone.is_empty() {
+            self.replaced_findings.push(ReplacedFindings {
+                by: rewrite.edit_id.to_owned(),
+                at: first.unwrap_or(0),
+                findings: gone,
+            });
+        }
         let at = self.place(first, rewrite.unit);
         for (offset, (text, successor)) in rewrite.written.iter().enumerate() {
             let finding =
@@ -216,6 +227,30 @@ impl LessonVerificationReport {
             ])
             .to_string(),
         );
+    }
+
+    /// Puts back the findings an earlier `rewritten` replaced under `edit_id`
+    /// and removes the user's `written` findings.
+    pub(crate) fn rewritten_back(
+        &mut self,
+        unit: usize,
+        new_title: &str,
+        new_body: &str,
+        edit_id: &str,
+        written: &HashSet<String>,
+    ) {
+        let own = |finding: &Finding| {
+            finding
+                .claim_id
+                .as_ref()
+                .is_some_and(|id| written.contains(id))
+        };
+        let at = self.findings.iter().position(own);
+        self.findings.retain(|finding| !own(finding));
+        let entry = HashSet::from([edit_id.to_owned()]);
+        self.restore_replaced(&entry, at);
+        self.content_sha256 =
+            sha256_hex(json!([self.content_sha256, unit, new_title, new_body]).to_string());
     }
 
     /// The report after the user's sentence took the place of the text the

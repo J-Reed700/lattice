@@ -705,52 +705,6 @@ impl StudyRepository {
         Ok(result)
     }
 
-    pub async fn update_card(&self, request: &UpdateStudyCardRequestDto) -> Result<()> {
-        let mut tx = self.db.begin_write().await?;
-        let row = sqlx::query("SELECT * FROM study_cards WHERE id=?")
-            .bind(&request.card_id)
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or_else(|| AppError::NotFound("Study card no longer exists".into()))?;
-        let mut current = card(&row)?;
-        if current.format == StudyCardFormat::QuestionAnswer {
-            sqlx::query("UPDATE study_cards SET question=?,answer=?,explanation=? WHERE id=?")
-                .bind(request.question.trim())
-                .bind(request.answer.trim())
-                .bind(request.explanation.trim())
-                .bind(&request.card_id)
-                .execute(&mut *tx)
-                .await?;
-            tx.commit().await?;
-            return Ok(());
-        }
-        if current.options.iter().enumerate().any(|(i, text)| {
-            i != current.correct_index && text.trim().eq_ignore_ascii_case(request.answer.trim())
-        }) {
-            return Err(AppError::InvalidInput(
-                "The answer must differ from the other choices".into(),
-            ));
-        }
-        let correct_option = current
-            .options
-            .get_mut(current.correct_index)
-            .ok_or_else(|| {
-                AppError::InvalidState("A study card has an invalid correct option".into())
-            })?;
-        *correct_option = request.answer.trim().to_owned();
-        sqlx::query(
-            "UPDATE study_cards SET question=?,answer=?,explanation=?,options_json=? WHERE id=?",
-        )
-        .bind(request.question.trim())
-        .bind(request.answer.trim())
-        .bind(request.explanation.trim())
-        .bind(serde_json::to_string(&current.options).map_err(json)?)
-        .bind(&request.card_id)
-        .execute(&mut *tx)
-        .await?;
-        tx.commit().await.map_err(AppError::from)
-    }
-
     pub async fn delete_deck(&self, id: &str) -> Result<()> {
         let mut tx = self.db.begin_write().await?;
         sqlx::query("DELETE FROM study_decks WHERE id=?")

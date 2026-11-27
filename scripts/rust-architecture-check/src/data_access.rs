@@ -95,6 +95,18 @@ pub const HANDOUT_EXEMPTIONS: &[Exemption<'static>] = &[
         "the unit-of-work guard: read functions take &mut SqliteConnection and a unit passed as &mut tx coerces to it; write functions take &mut WriteTx",
     ),
     (
+        TRANSACTIONS,
+        "impl Deref for Reading",
+        "*",
+        "the unit-of-work guard: read functions take &mut SqliteConnection and a unit passed as &mut tx coerces to it; write functions take &mut WriteTx",
+    ),
+    (
+        TRANSACTIONS,
+        "impl DerefMut for Reading",
+        "*",
+        "the unit-of-work guard: read functions take &mut SqliteConnection and a unit passed as &mut tx coerces to it; write functions take &mut WriteTx",
+    ),
+    (
         "crates/lattice-sync/src/persistence/db.rs",
         "impl Database",
         "sqlx_pool",
