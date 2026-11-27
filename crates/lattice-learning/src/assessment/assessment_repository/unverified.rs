@@ -26,10 +26,9 @@ fn strip_unverified_sentences(body: &str, claims: &[UnverifiedClaim<'_>]) -> Str
     }
     let sentence_spans = sentences(body);
     if sentence_spans.is_empty() {
-        let covered = claims.iter().any(|claim| {
-            let q = claim.quote.trim();
-            claim.span.is_some() || (!q.is_empty() && (body.contains(q) || q.contains(body.trim())))
-        });
+        let covered = claims
+            .iter()
+            .any(|c| c.span.is_some() || quote_matches_sentence(body, c.quote));
         return if covered {
             String::new()
         } else {
@@ -46,27 +45,9 @@ fn strip_unverified_sentences(body: &str, claims: &[UnverifiedClaim<'_>]) -> Str
                 return None;
             }
             let blocked = claims.iter().any(|claim| {
-                let quote = claim.quote.trim();
-                let valid_span = claim.span.filter(|&(cs, ce)| {
-                    cs < ce
-                        && ce <= body.len()
-                        && body.is_char_boundary(cs)
-                        && body.is_char_boundary(ce)
-                        && !quote.is_empty()
-                        && body.get(cs..ce).is_some_and(|slice| {
-                            let st = slice.trim();
-                            !st.is_empty()
-                                && (st == quote
-                                    || st.contains(quote)
-                                    || (st.len() >= 20 && quote.contains(st)))
-                        })
-                });
-                let span_hit = valid_span.is_some_and(|span| overlaps((start, end), span));
-                let quote_hit = !quote.is_empty()
-                    && (trimmed == quote
-                        || trimmed.contains(quote)
-                        || (trimmed.len() >= 20 && quote.contains(trimmed)));
-                span_hit || quote_hit
+                let span = claim.span.and_then(|s| valid_claim_span(body, s, claim.quote));
+                span.is_some_and(|s| overlaps((start, end), s))
+                    || quote_matches_sentence(trimmed, claim.quote)
             });
             (!blocked).then_some(trimmed)
         })
@@ -280,14 +261,7 @@ async fn unverified_candidates_inner(
         for row in bank_rows {
             let lesson_id: Option<String> = row.get("lesson_id");
             let source_quote: String = row.get("source_quote");
-            let sq = source_quote.trim();
-            let quote_matches = |quote: &String| {
-                let uq = quote.trim();
-                !uq.is_empty()
-                    && (sq == uq
-                        || (uq.len() >= 20 && sq.contains(uq))
-                        || (sq.len() >= 20 && uq.contains(sq)))
-            };
+            let quote_matches = |quote: &String| quote_matches_sentence(&source_quote, quote);
             let tainted = match lesson_id.as_deref() {
                 Some(lid) => unverified_quotes
                     .get(lid)
@@ -301,6 +275,40 @@ async fn unverified_candidates_inner(
     }
 
     Ok(held_back)
+}
+
+fn valid_claim_span(body: &str, span: (usize, usize), quote: &str) -> Option<(usize, usize)> {
+    let (cs, ce) = span;
+    if cs >= ce || ce > body.len() || !body.is_char_boundary(cs) || !body.is_char_boundary(ce) {
+        return None;
+    }
+    let slice = body.get(cs..ce)?;
+    quote_matches_sentence(slice, quote).then_some(span)
+}
+
+fn quote_matches_sentence(text: &str, quote: &str) -> bool {
+    let text = text.trim();
+    let quote = quote.trim();
+    if text.is_empty() || quote.is_empty() {
+        return false;
+    }
+    text == quote
+        || (quote.len() >= 20 && text.contains(quote))
+        || (text.len() >= 20 && quote.contains(text))
+        || contains_word_bounded(text, quote)
+}
+
+fn contains_word_bounded(haystack: &str, needle: &str) -> bool {
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    let starts_word = needle.chars().next().is_some_and(is_word);
+    let ends_word = needle.chars().next_back().is_some_and(is_word);
+    haystack.match_indices(needle).any(|(pos, _)| {
+        let before = haystack[..pos].chars().next_back();
+        let after = haystack[pos + needle.len()..].chars().next();
+        let left_ok = !starts_word || before.is_none_or(|c| !is_word(c));
+        let right_ok = !ends_word || after.is_none_or(|c| !is_word(c));
+        left_ok && right_ok
+    })
 }
 
 fn collect_ledger_unverified(
