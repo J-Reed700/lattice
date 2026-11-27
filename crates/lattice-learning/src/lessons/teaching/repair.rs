@@ -539,7 +539,7 @@ fn normalized_inserts(edits: &rows::Edits) -> Vec<String> {
         .sentences
         .change()
         .insert
-        .into_iter()
+        .iter()
         .map(|(_, with)| with.0.text.split_whitespace().collect::<Vec<_>>().join(" "))
         .filter(|text| !text.is_empty())
         .collect()

@@ -1,8 +1,8 @@
 //! Guards quiz-bank authoring and quiz draws against lesson claims that are
 //! unverified (`no_source`, `unsupported`, `contradicted`, or still unsettled).
 use crate::content_verification::{
-    is_claim_active_unverified, report_unverified_block_quotes, report_unverified_question_indices,
-    LessonVerificationReport,
+    is_claim_active_unverified, report_block_claim_counts, report_unverified_block_quotes,
+    report_unverified_question_indices, LessonVerificationReport,
 };
 use crate::lessons::claim_reviews::repository::load_in;
 use crate::persistence::decode;
@@ -112,24 +112,19 @@ impl BlockClaimStats {
 fn filter_blocks_with_report(raw: &str, blocks: &[(usize, String)]) -> Option<Vec<String>> {
     let report = decode::<LessonVerificationReport>(raw).ok()?;
     let by_block = report_unverified_block_quotes(&report, blocks.len());
-    let mut stats: HashMap<usize, BlockClaimStats> = HashMap::new();
-    for finding in &report.findings {
-        if finding.unit < blocks.len() {
-            let entry = stats.entry(finding.unit).or_default();
-            if !finding.verdict.is_supported() {
-                entry.unverified += 1;
-            } else {
-                entry.verified += 1;
-            }
-        }
-    }
+    let counts = report_block_claim_counts(&report, blocks.len());
     let filtered: Vec<String> = blocks
         .iter()
         .map(|(ordinal, body)| match by_block.get(ordinal) {
             Some(_)
-                if stats
+                if counts
                     .get(ordinal)
                     .copied()
+                    .map(|(unverified, verified)| BlockClaimStats {
+                        unverified,
+                        verified,
+                        consistent: 0,
+                    })
                     .unwrap_or_default()
                     .is_ungrounded_dominated() =>
             {

@@ -1294,9 +1294,11 @@ fn lesson_question_item_clears_right_choice_rationale_before_bank_validation() {
 #[tokio::test]
 async fn block_dominated_by_no_source_claims_excludes_orphan_scenario_and_taints_bank() -> Result<()>
 {
+    use lattice_core::domain::learning::acceptance::{
+        End, Outcome as StepOutcome, Reading, Step, Then,
+    };
     use lattice_core::domain::learning::claim_review::{
-        Actor, ClaimEvent, ClaimId, ClaimLocation, EventProvenance, Outcome as StepOutcome, Step,
-        Then, UnitKind, UnverifiedReason,
+        Actor, ClaimEvent, ClaimId, ClaimLocation, EventProvenance, UnitKind, UnverifiedReason,
     };
 
     let pool = crate::tests::pool().await?;
@@ -1367,10 +1369,11 @@ async fn block_dominated_by_no_source_claims_excludes_orphan_scenario_and_taints
             prov.clone(),
             ClaimEvent::Stepped {
                 policy: "acceptance-v4".into(),
-                step: Step::CheckConsistency,
+                step: Step::Read(Reading::Consistency),
                 outcome: StepOutcome::Stands,
-                then: Then::Consistent,
+                then: Then::End(End::Consistent),
                 reason: "Consistent fallback".into(),
+                rewrite_ahead: false,
             },
         )
         .await?;
@@ -1401,10 +1404,11 @@ async fn block_dominated_by_no_source_claims_excludes_orphan_scenario_and_taints
         prov.clone(),
         ClaimEvent::Stepped {
             policy: "acceptance-v4".into(),
-            step: Step::CheckConsistency,
+            step: Step::Read(Reading::Consistency),
             outcome: StepOutcome::Stands,
-            then: Then::Consistent,
+            then: Then::End(End::Consistent),
             reason: "Internal scenario setup".into(),
+            rewrite_ahead: false,
         },
     )
     .await?;
