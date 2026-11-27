@@ -1170,8 +1170,9 @@ async fn lesson_material_strips_code_fences_and_preserves_verbatim_contiguous_ru
     };
     let pool = crate::tests::pool().await?;
     let db = Database::new(pool);
-    let (published, _) = published(&db).await?;
+    let (published, job_id) = published(&db).await?;
     let lesson_id = &published.lesson_id;
+    let program_id = &published.program_id;
 
     let verified_a = "First verified sentence explains token discovery clearly.";
     let verified_b = "Second verified sentence explains client_assertion expiration.";
@@ -1186,9 +1187,20 @@ async fn lesson_material_strips_code_fences_and_preserves_verbatim_contiguous_ru
         .bind(lesson_id)
         .execute(&mut *tx)
         .await?;
+    let now = 1_700_000_000_000i64;
+    sqlx::query(
+        "INSERT OR REPLACE INTO learning_lesson_reviews(lesson_id,program_id,job_id,state,revision,draft_sha256,checker_model,opened_at,updated_at) VALUES(?,?,?,'ready',1,'sha','m',?,?)",
+    )
+    .bind(lesson_id)
+    .bind(program_id)
+    .bind(&job_id)
+    .bind(now)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
     let prov = EventProvenance {
         actor: Actor::Machine,
-        at: 1_700_000_000_000,
+        at: now,
         job_id: None,
         app_version: "0.1.0".into(),
         checker_model: Some("test-model".into()),

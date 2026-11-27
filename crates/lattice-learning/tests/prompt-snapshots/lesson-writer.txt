@@ -14,7 +14,7 @@ Answer in two steps. Step 1, now: work through the task in prose. Write the less
   "include_reasoning": false,
   "sampling": null,
   "thinking": "off",
-  "max_output_tokens": 105251,
+  "max_output_tokens": 105020,
   "stop": [],
   "want_logprobs": false,
   "priority": "background",
