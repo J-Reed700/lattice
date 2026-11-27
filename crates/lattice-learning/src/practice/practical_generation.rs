@@ -113,7 +113,7 @@ struct SimulationJson {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct ActivityJson {
+pub(in crate::practice) struct ActivityJson {
     pub(super) title: String,
     pub(super) brief: String,
     pub(super) source_version_ids: Vec<String>,
@@ -124,7 +124,7 @@ struct ActivityJson {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct CriterionJson {
+pub(in crate::practice) struct CriterionJson {
     pub(super) title: String,
     pub(super) description: String,
     pub(super) max_points: u32,
@@ -132,7 +132,7 @@ struct CriterionJson {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct FileJson {
+pub(in crate::practice) struct FileJson {
     pub(super) path: String,
     pub(super) content: String,
 }

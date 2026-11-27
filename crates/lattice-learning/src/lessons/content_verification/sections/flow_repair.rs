@@ -176,7 +176,7 @@ impl FlowInput {
 
 /// What the model answers for one gap: the edits that restore its flow.
 #[derive(Debug, Clone, PartialEq)]
-struct Fix {
+pub(in crate::lessons::content_verification::sections) struct Fix {
     edits: rows::Edits,
 }
 
