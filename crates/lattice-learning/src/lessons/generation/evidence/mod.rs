@@ -21,7 +21,8 @@ use lattice_core::shared::error::Result;
 use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::protocol::Protocol;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+#[cfg(test)]
+use serde_json::Value;
 
 mod coverage;
 mod pack;

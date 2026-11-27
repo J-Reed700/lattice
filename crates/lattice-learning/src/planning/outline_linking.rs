@@ -5,9 +5,10 @@
 //! source exactly joins the candidates; one that does not is removed. Every
 //! decision is receipted, so a linked item is never judged again, and nothing
 //! here is ever a review finding: the reviewer never sees citations.
+#[cfg(test)]
+use crate::generation;
 use crate::{
     dto::LearningSourceDto,
-    generation,
     lessons::structured_call::{Asking, CallKind, ReasonFirst},
     outline_draft::OutlineDraft,
     outline_progress::{OutlineProgress, OutlineStage},
@@ -33,10 +34,11 @@ mod candidates;
 mod contract;
 mod spans;
 
-use candidates::{apply, candidates_for, citation};
+use candidates::{
+    apply, candidates_for, citation, declined_key, fields, input_for, leave_undecided, strip,
+    Candidate, Pending,
+};
 pub use candidates::{cited_count, item_count};
-#[cfg(test)]
-use candidates::{declined_key, fields, strip, Candidate, Pending};
 pub(crate) use candidates::{is_verified, receipt_key, source_hashes, strip_unmatched};
 #[cfg(test)]
 use contract::Choice;

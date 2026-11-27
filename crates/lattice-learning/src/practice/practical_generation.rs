@@ -23,7 +23,7 @@ use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[path = "practical_generation/activity.rs"]
 mod activity;
@@ -163,6 +163,8 @@ pub fn validate_request(learner_brief: &str) -> Result<()> {
     bounded(learner_brief, "Practical request", MAX_CHAT_MESSAGE_CHARS)
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PracticalRuntimeContext {
     pub name: String,
     pub command: Vec<String>,

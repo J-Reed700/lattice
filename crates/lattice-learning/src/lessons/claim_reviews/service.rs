@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
     span_of, ClaimActionKind, ClaimCounts, ClaimEvent, ClaimId, ClaimLedgerEntry, HumanBinding,
-    Ledger, LessonReview, LessonReviewState, Revision, TrustVerdict, UserAction,
+    LessonReview, LessonReviewState, Revision, TrustVerdict, UserAction,
 };
 use lattice_core::domain::provenance::ClaimKind;
 use lattice_core::shared::edits::{ContentEdits, Uncommitted};

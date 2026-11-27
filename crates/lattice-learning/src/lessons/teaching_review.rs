@@ -24,12 +24,11 @@ pub(crate) use concerns::LessonConcern;
 mod contract;
 #[cfg(test)]
 use contract::answer_form;
-pub(super) use contract::ANSWER_FORM_HEAD;
-#[cfg(test)]
-pub(super) use contract::CONCERN_FORM_HEAD;
 pub(crate) use contract::{
-    Anything, Concerns, Entry, Input, Item, Kinds, Lens, OpenFinding, Passage, TeachingReview,
+    Anything, Concerns, Entry, Input, Item, Lens, OpenFinding, Passage, TeachingReview,
 };
+#[cfg(test)]
+pub(super) use contract::{ANSWER_FORM_HEAD, CONCERN_FORM_HEAD};
 
 pub(super) const POLICY: Protocol = protocol!("section-review", 8);
 

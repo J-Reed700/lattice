@@ -2,6 +2,7 @@
 //! when no saved reference covers a lesson topic before it is written.
 use super::*;
 use crate::lessons::trace::{self, Stage};
+use crate::model_call;
 use crate::references::{admission, web_research};
 #[cfg(test)]
 use lattice_core::application::contracts::web::WebSearchInput;
@@ -26,7 +27,9 @@ pub(super) use query::select_noted;
 pub use query::select_references;
 #[cfg(test)]
 use query::SELECT_SYSTEM;
-pub(crate) use query::{selection_cost, selection_room, Hit, Input, Keep, ResearchQuery};
+pub(crate) use query::{selection_cost, selection_room};
+#[cfg(test)]
+pub(crate) use query::{Hit, Input, Keep, ResearchQuery};
 use saving::Saving;
 
 #[derive(Clone)]

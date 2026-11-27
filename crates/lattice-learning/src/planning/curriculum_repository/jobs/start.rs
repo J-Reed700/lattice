@@ -11,7 +11,7 @@ use super::{
     check_program_open, validate_program_and_lessons, NOT_HELD_FOR_REVIEW, PREPARABLE_LESSON,
 };
 use crate::curriculum::{
-    self, LearningGenerationJob, LearningGenerationJobKind, LearningGenerationJobStatus,
+    LearningGenerationJob, LearningGenerationJobKind, LearningGenerationJobStatus,
 };
 use crate::persistence::hash;
 use crate::plan_dto::{

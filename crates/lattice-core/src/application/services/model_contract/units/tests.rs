@@ -778,11 +778,11 @@ fn inserted_and_moved_list_items_keep_line_breaks_while_inline_sentences_join_wi
     let inserted_ordered = edited(ordered, Grain::Sentence, |u, change| {
         change
             .insert
-            .push((after(&u[1]), "2b. Inserted step.".to_owned()));
+            .push((after(&u[1]), "4. Inserted step.".to_owned()));
     });
     assert_eq!(
         inserted_ordered,
-        "1. First step.\n2. Second step.\n2b. Inserted step.\n3. Third step."
+        "1. First step.\n2. Second step.\n4. Inserted step.\n3. Third step."
     );
 
     let bullets = "- First bullet.\n- Second bullet.\n* Star bullet.\n+ Plus bullet.";

@@ -532,7 +532,7 @@ pub(super) fn company_source_catalog(
 
 /// The learner sees the skills being assessed, without private signals or
 /// worked-answer details accidentally becoming public rubric instructions.
-pub(super) fn public_interview_activity(
+pub(in crate::practice) fn public_interview_activity(
     plan: &LearningInterviewPlanDto,
     sources: &[LearningSourceVersionDto],
 ) -> super::ActivityJson {

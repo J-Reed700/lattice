@@ -217,11 +217,11 @@ fn flow_system(contrast_orphan: bool) -> String {
 
 fn refuse_outside_gap(
     unit: &lattice_core::application::services::model_contract::shown::Picked<
-        lattice_core::application::services::model_contract::edit::Unit,
+        lattice_core::application::services::model_contract::units::Unit,
     >,
-    verified: &[lattice_core::application::services::model_contract::edit::UnitRef],
-    before: Option<lattice_core::application::services::model_contract::edit::UnitRef>,
-    after: Option<lattice_core::application::services::model_contract::edit::UnitRef>,
+    verified: &[lattice_core::application::services::model_contract::units::UnitRef],
+    before: Option<lattice_core::application::services::model_contract::units::UnitRef>,
+    after: Option<lattice_core::application::services::model_contract::units::UnitRef>,
 ) -> std::result::Result<(), Refusal> {
     if verified.contains(&unit.reference) {
         return Err(Refusal(format!(

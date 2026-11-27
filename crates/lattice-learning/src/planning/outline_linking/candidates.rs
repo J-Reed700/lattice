@@ -1,4 +1,5 @@
 use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::model_contract::packed::Packed;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::hash::sha256_hex;
 use serde_json::{json, Value};
@@ -6,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::{Mutex, PoisonError};
 
 use super::spans::{citable_span, is_prose};
-use super::{CitationReceipt, CitationReceipts, ItemKind, LinkLog, POLICY};
+use super::{CitationReceipt, CitationReceipts, Input, Item, ItemKind, LinkLog, Passage, POLICY};
 use crate::{
     dto::LearningSourceDto,
     generation,
@@ -351,4 +352,36 @@ pub(super) fn apply(
             }
         }
     }
+}
+
+pub(super) fn input_for(open: &[&Item], passages: &[Passage], costs: &[usize]) -> Input {
+    let mut taken: Vec<usize> = Vec::new();
+    let mut list: Vec<Passage> = Vec::new();
+    for item in open {
+        for place in item.candidates.value() {
+            if !taken.contains(place) {
+                taken.push(*place);
+                list.extend(passages.get(*place).cloned());
+            }
+        }
+    }
+    Input {
+        items: open.iter().map(|item| (*item).clone()).collect(),
+        passages: Packed::new(list, |passage| costs.get(passage.at).copied().unwrap_or(0)),
+    }
+}
+
+/// An item no usable decision reached: its unverified author citation does
+/// not stay, and no receipt is written, so a later run asks again.
+pub(super) fn leave_undecided(draft: &mut OutlineDraft, item: &Pending, log: &mut LinkLog) {
+    if item.author.is_some() {
+        if let Some(field) = draft.candidate.pointer_mut(&item.path) {
+            strip(field);
+        }
+        log.removed_unchosen += 1;
+    }
+    tracing::info!(
+        path = %item.path,
+        "Evidence linking gave no usable decision; the item stays unlinked for now"
+    );
 }
