@@ -291,14 +291,14 @@ fn touches_other_failed(
     own: &[UnitRef],
     edits: &rows::Edits,
 ) -> bool {
-    let mut other_failed: BTreeSet<UnitRef> = BTreeSet::new();
+    let mut other_failed: Vec<UnitRef> = Vec::new();
     for item in &input.items {
         if item.id == id {
             continue;
         }
         for unit in units_of(rows, part, item.targets.value()) {
-            if !own.contains(&unit) {
-                other_failed.insert(unit);
+            if !own.contains(&unit) && !other_failed.contains(&unit) {
+                other_failed.push(unit);
             }
         }
     }

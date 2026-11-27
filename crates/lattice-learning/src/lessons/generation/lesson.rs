@@ -33,8 +33,7 @@ mod requirements;
 pub(crate) use answer::scripted_lesson;
 #[cfg(test)]
 pub(crate) use answer::LessonWriter;
-#[cfg(test)]
-use requirements::WRONG_CHOICES;
+pub(super) use requirements::WRONG_CHOICES;
 use requirements::{requirements, Answering};
 
 /// What the prose step of a lesson works through. Solving the questions here

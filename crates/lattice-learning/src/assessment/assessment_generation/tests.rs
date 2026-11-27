@@ -140,6 +140,7 @@ async fn passages_twice_as_dense_as_estimated_are_packed_until_the_request_fits(
     let collection = ReferenceCollection::lexical(&documents)?;
     let batch = Batch {
         need: &need,
+        companies: &[],
         count: 1,
         notes: vec![],
         repair: None,
@@ -221,6 +222,7 @@ async fn a_batch_cut_off_asks_for_fewer_and_a_single_item_cut_off_is_refused() -
     let collection = ReferenceCollection::lexical(&documents)?;
     let batch = |count| Batch {
         need: &need,
+        companies: &[],
         count,
         notes: vec![],
         repair: None,
@@ -291,6 +293,7 @@ async fn a_single_item_cut_off_is_asked_again_with_twice_the_room() -> Result<()
     let collection = ReferenceCollection::lexical(&documents)?;
     let batch = Batch {
         need: &need,
+        companies: &[],
         count: 1,
         notes: vec![],
         repair: None,
@@ -362,6 +365,7 @@ async fn writer_instructions() -> Result<String> {
     let collection = ReferenceCollection::lexical(&documents)?;
     let batch = Batch {
         need: &need,
+        companies: &[],
         count: 1,
         notes: vec![],
         repair: None,
@@ -465,6 +469,7 @@ fn do_not_repeat_holds_every_existing_prompt_in_full() {
         .all(|p| p.chars().count() > 160));
     let batch = Batch {
         need: &need,
+        companies: &[],
         count: 1,
         notes: vec![],
         repair: None,

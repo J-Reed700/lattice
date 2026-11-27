@@ -1187,10 +1187,11 @@ async fn lesson_material_strips_code_fences_and_preserves_verbatim_contiguous_ru
         .execute(&mut *tx)
         .await?;
     let prov = EventProvenance {
-        actor: Actor::System,
-        model: Some("test-model".into()),
-        run_id: Some("run-1".into()),
-        timestamp_ms: 1_700_000_000_000,
+        actor: Actor::Machine,
+        at: 1_700_000_000_000,
+        job_id: Some("job-1".into()),
+        app_version: "0.1.0".into(),
+        checker_model: Some("test-model".into()),
     };
     crate::lessons::claim_reviews::repository::append_for_test_in(
         &mut tx,
@@ -1215,7 +1216,7 @@ async fn lesson_material_strips_code_fences_and_preserves_verbatim_contiguous_ru
         &ClaimId("c-mid".into()),
         prov,
         ClaimEvent::PublishedUnverified {
-            reason: UnverifiedReason::NoSource,
+            reason: UnverifiedReason::Unsupported,
         },
     )
     .await?;

@@ -12,7 +12,9 @@ use std::collections::BTreeSet;
 mod candidate;
 #[cfg(test)]
 pub(crate) use candidate::part_quote;
-pub(crate) use candidate::{leaves, new_sentences, sentences_in, sentences_of, unit};
+pub(crate) use candidate::{
+    leaves, new_sentences, part_at, sentences_in, sentences_of, site_sha256, unit,
+};
 
 /// What raised a finding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

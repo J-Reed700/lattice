@@ -683,6 +683,7 @@ async fn save_together(pages: [(&str, &str); 2]) -> Result<(usize, usize)> {
         database: db.clone(),
         program_id: program.summary.id.clone(),
         topic: program.summary.goal.clone(),
+        prior_knowledge: String::new(),
         web: web(false),
         searched: Default::default(),
     };

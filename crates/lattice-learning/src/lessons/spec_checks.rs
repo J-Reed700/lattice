@@ -432,7 +432,7 @@ fn collect_declared_types(code: &str, out: &mut HashSet<String>) {
             continue;
         }
         if in_import
-            && trimmed.starts_with([
+            && [
                 "@",
                 "class ",
                 "interface ",
@@ -444,7 +444,9 @@ fn collect_declared_types(code: &str, out: &mut HashSet<String>) {
                 "let ",
                 "var ",
                 "abstract ",
-            ])
+            ]
+            .iter()
+            .any(|prefix| trimmed.starts_with(prefix))
         {
             in_import = false;
         }

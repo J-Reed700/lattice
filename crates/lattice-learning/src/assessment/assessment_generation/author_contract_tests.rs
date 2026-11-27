@@ -405,6 +405,7 @@ async fn an_answer_cut_off_after_an_item_keeps_it_and_asks_for_the_rest() -> Res
     ]);
     let batch = Batch {
         need: &need,
+        companies: &[],
         count: 2,
         notes: vec![],
         repair: None,
@@ -436,6 +437,7 @@ async fn a_rewrite_keeps_the_difficulty_of_the_item_it_replaces_and_does_not_wri
     let llm = queued(vec![(bare.to_string(), "stop")]);
     let batch = Batch {
         need: &need,
+        companies: &[],
         count: 1,
         notes: vec![],
         repair: Some(Repair {
@@ -465,6 +467,7 @@ async fn a_rewrite_that_cannot_be_read_gives_no_replacement() -> Result<()> {
     let llm = queued(vec![("{\"unrelated\": 1}".to_owned(), "stop")]);
     let batch = Batch {
         need: &need,
+        companies: &[],
         count: 1,
         notes: vec![],
         repair: Some(Repair {
@@ -487,6 +490,7 @@ async fn a_batch_asks_for_difficulty_but_names_no_index_or_block() -> Result<()>
     let llm = queued(vec![("{\"items\":[]}".to_owned(), "stop")]);
     let batch = Batch {
         need: &need,
+        companies: &[],
         count: 1,
         notes: vec![],
         repair: None,
@@ -532,6 +536,7 @@ async fn enforced_item_schema(format: LearningItemFormat) -> Value {
     let llm = enforcing(vec![("{\"items\":[]}".to_owned(), "stop")]);
     let batch = Batch {
         need: &need,
+        companies: &[],
         count: 1,
         notes: vec![],
         repair: None,

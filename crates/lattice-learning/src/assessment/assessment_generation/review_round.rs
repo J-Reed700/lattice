@@ -1,6 +1,6 @@
 //! Review and single-shot repair for one authored quiz-item batch.
-use super::item_review::{self, Context, Entry, Findings, RepeatOf};
-use super::{formats::to_candidate_for, AuthoredItem, AuthoringNeed, Batch, Repair, Written};
+use super::{AuthoredItem, AuthoringNeed, Batch, Repair, Written};
+use crate::assessment::item_review::{self, Context, Entry, Findings, RepeatOf};
 use crate::assessment_engine::LearningAssessmentCandidate;
 use crate::model_call::ErrorClass;
 use crate::reference_collection::ReferenceCollection;

@@ -311,12 +311,13 @@ fn extract_public_subject(text: &str, companies: &[String]) -> Option<String> {
             .iter()
             .any(|company| company_framing::contains_whole_phrase(phrase, company))
     };
+    fn clean_cap_token(raw: &str) -> &str {
+        raw.trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '.')
+    }
+
     let tokens: Vec<&str> = text.split_whitespace().collect();
     for index in 0..tokens.len() {
-        let clean = |raw: &str| {
-            raw.trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '.')
-        };
-        let word = clean(tokens[index]);
+        let word = clean_cap_token(tokens[index]);
         let word_lower = word.to_ascii_lowercase();
         let is_tech_cap = word
             .chars()
@@ -329,7 +330,7 @@ fn extract_public_subject(text: &str, companies: &[String]) -> Option<String> {
         }
         let mut span = vec![word];
         for next_raw in tokens.iter().skip(index + 1).take(2) {
-            let next = clean(next_raw);
+            let next = clean_cap_token(next_raw);
             let next_lower = next.to_ascii_lowercase();
             let cont = next
                 .chars()

@@ -4,6 +4,8 @@
 //!
 //! Every call goes through `model_call`: sized to the model's window (a batch
 //! halves until it fits), never timed. Answer keys stay internal.
+#[cfg(test)]
+use super::item_review::{self, Context, Entry};
 use super::item_review::{
     defect_answer_pickable, defect_option_by_position, defect_source_mentioned,
     defect_value_missing,
