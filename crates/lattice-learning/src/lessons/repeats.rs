@@ -337,15 +337,15 @@ fn flush_consecutive_unit(
                 out.push(found);
             }
         }
-        if history.len() >= 3 && !words.is_empty() {
-            let offset = history.len() - 3;
-            let (s0, s1, s2) = (&history[offset], &history[offset + 1], &history[offset + 2]);
-            if s0.1 == s2.1 && s1.1 == words && s0.1 != s1.1 {
-                out.push(ConsecutiveRepeat {
-                    first: s0.0.clone(),
-                    second: s2.0.clone(),
-                    prefix_stutter: false,
-                });
+        if !words.is_empty() {
+            if let [.., s0, s1, s2] = history.as_slice() {
+                if s0.1 == s2.1 && s1.1 == words && s0.1 != s1.1 {
+                    out.push(ConsecutiveRepeat {
+                        first: s0.0.clone(),
+                        second: s2.0.clone(),
+                        prefix_stutter: false,
+                    });
+                }
             }
         }
         history.push((piece.to_owned(), words));

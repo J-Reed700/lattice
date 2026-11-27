@@ -941,7 +941,7 @@ fn repeat_descriptors_and_overlap_guard_catch_duplicate_matching_and_cloze_decis
     assert!(held_cloze.contains("[blanks: "), "{held_cloze}");
     assert!(crate::assessment::item_review::repeat_overlap_reason(
         &dup_cloze,
-        &[held_cloze.clone()]
+        std::slice::from_ref(&held_cloze)
     )
     .is_some());
     assert!(!crate::assessment::item_review::overrepresented_topics(&[

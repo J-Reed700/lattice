@@ -335,6 +335,39 @@ fn has_version_profile_claim(lower: &str) -> bool {
         .any(|cue| lower.contains(cue))
 }
 
+/// How many samples gave `verdict`.
+fn count(knowledge: &KnowledgeOutcome, verdict: KnowledgeVerdict) -> usize {
+    knowledge
+        .samples
+        .iter()
+        .filter(|sample| sample.verdict == verdict)
+        .count()
+}
+
+/// Why a statement the model does not call false passes the veto.
+fn not_false(knowledge: &KnowledgeOutcome) -> String {
+    format!(
+        "Asked on its own, the model does not call this false ({} of {}).",
+        count(knowledge, KnowledgeVerdict::False),
+        knowledge.samples.len()
+    )
+}
+
+/// Why a statement the model will not call standard knowledge needs a source.
+fn not_common(knowledge: &KnowledgeOutcome) -> String {
+    let reason = knowledge
+        .samples
+        .iter()
+        .find(|sample| sample.verdict != KnowledgeVerdict::TrueCommon)
+        .map(|sample| sample.reason.as_str())
+        .unwrap_or_default();
+    format!(
+        "Asked on its own, the model does not call this standard knowledge ({} of {}): {reason}",
+        count(knowledge, KnowledgeVerdict::TrueCommon),
+        knowledge.samples.len()
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -380,37 +413,4 @@ mod tests {
             &refs
         ));
     }
-}
-
-/// How many samples gave `verdict`.
-fn count(knowledge: &KnowledgeOutcome, verdict: KnowledgeVerdict) -> usize {
-    knowledge
-        .samples
-        .iter()
-        .filter(|sample| sample.verdict == verdict)
-        .count()
-}
-
-/// Why a statement the model does not call false passes the veto.
-fn not_false(knowledge: &KnowledgeOutcome) -> String {
-    format!(
-        "Asked on its own, the model does not call this false ({} of {}).",
-        count(knowledge, KnowledgeVerdict::False),
-        knowledge.samples.len()
-    )
-}
-
-/// Why a statement the model will not call standard knowledge needs a source.
-fn not_common(knowledge: &KnowledgeOutcome) -> String {
-    let reason = knowledge
-        .samples
-        .iter()
-        .find(|sample| sample.verdict != KnowledgeVerdict::TrueCommon)
-        .map(|sample| sample.reason.as_str())
-        .unwrap_or_default();
-    format!(
-        "Asked on its own, the model does not call this standard knowledge ({} of {}): {reason}",
-        count(knowledge, KnowledgeVerdict::TrueCommon),
-        knowledge.samples.len()
-    )
 }
