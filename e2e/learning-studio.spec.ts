@@ -296,7 +296,7 @@ test("Learning Studio citations trace saved evidence and support clean reading a
   const citationSummary = page.locator('.studio-lesson-reading summary:visible').filter({ hasText: 'View citation' }).first();
   const outlineCitation = citationSummary.locator('..');
   await citationSummary.click();
-  await expect(outlineCitation.getByText(excerptSentinel, { exact: true })).toBeVisible();
+  await expect(outlineCitation.getByText(`“${excerptSentinel}”`, { exact: true })).toBeVisible();
   await expectNoUnsupportedIpc(page);
 });
 
