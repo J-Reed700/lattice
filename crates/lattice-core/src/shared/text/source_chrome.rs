@@ -181,8 +181,7 @@ mod tests {
             "[View a markdown version of this page](https://a.md)\n\nBody\n\n";
         assert_eq!(strip_scraped_chrome(top_with_eof_blanks), "Body\n\n");
 
-        let trailing_without_eof_nl =
-            "Body\n[View a markdown version of this page](https://a.md)";
+        let trailing_without_eof_nl = "Body\n[View a markdown version of this page](https://a.md)";
         assert_eq!(strip_scraped_chrome(trailing_without_eof_nl), "Body");
 
         let trailing_sep_without_eof_nl =

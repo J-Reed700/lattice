@@ -1,8 +1,8 @@
 //! Lesson generation jobs: starting, cancelling, retrying and reading them with their scope.
 use super::generation_recovery::{ENDED_BY_UPDATE, LESSON_PREPARATION};
 use super::{
-    curriculum_operation, lesson_rank_in, stable_job_operation_id, validate_operation_id,
-    JobScope, LearningCurriculumRepository,
+    curriculum_operation, lesson_rank_in, stable_job_operation_id, validate_operation_id, JobScope,
+    LearningCurriculumRepository,
 };
 use crate::course_plan::COURSE_PLAN;
 use crate::curriculum::{
@@ -571,7 +571,8 @@ impl LearningCurriculumRepository {
         &self,
         request: &LearningGenerationJobActionRequestDto,
     ) -> Result<LearningGenerationJob> {
-        self.standard_job_action(request, JobAction::ContinueReview).await
+        self.standard_job_action(request, JobAction::ContinueReview)
+            .await
     }
 
     async fn standard_job_action(

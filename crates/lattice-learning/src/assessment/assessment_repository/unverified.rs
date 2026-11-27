@@ -207,12 +207,11 @@ async fn unverified_candidates_inner(
     .filter_map(|(lesson_id, count)| usize::try_from(count).ok().map(|n| (lesson_id, n)))
     .collect();
 
-    let lesson_ids: Vec<String> = sqlx::query_scalar(
-        "SELECT id FROM learning_lessons WHERE program_id=?",
-    )
-    .bind(program_id)
-    .fetch_all(&mut *connection)
-    .await?;
+    let lesson_ids: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM learning_lessons WHERE program_id=?")
+            .bind(program_id)
+            .fetch_all(&mut *connection)
+            .await?;
 
     let mut unverified_questions: HashSet<(String, usize)> = HashSet::new();
     let mut unverified_quotes: HashMap<String, Vec<String>> = HashMap::new();

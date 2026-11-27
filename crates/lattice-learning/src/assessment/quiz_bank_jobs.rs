@@ -450,8 +450,8 @@ mod repository;
 pub(crate) use repository::{queue_grading_in, queue_lesson_bank_in};
 
 pub use grading::{grade_written_answer, judge_short_answer, QuizGradingWorker};
+#[cfg(test)]
+pub(crate) use lesson_stage::lesson_seed_items;
 pub(crate) use lesson_stage::{
     lesson_bank_stage, lesson_question_item, lesson_seed_items_verified, LessonBank,
 };
-#[cfg(test)]
-pub(crate) use lesson_stage::lesson_seed_items;

@@ -1933,7 +1933,9 @@ async fn work_exit_wakes_dispatcher_after_registration_drops_without_poll_delay(
         .register(KIND, handler, JobKindConfig::new(RecoveryPolicy::Requeue))
         .await?;
 
-    let job = runtime.submit(&new_job(KIND, "wake-after-drop", None)).await?;
+    let job = runtime
+        .submit(&new_job(KIND, "wake-after-drop", None))
+        .await?;
     assert_eq!(next(&mut started).await, job.id);
 
     runtime.begin_cancel(&job.id);
@@ -1988,7 +1990,10 @@ async fn batch_runtime_cancel_helpers_stop_and_recover_all_jobs() -> Result<()> 
     runtime.finish_cancel_many(&ids).await;
     for id in &ids {
         finished(&runtime, id).await;
-        assert_eq!(runtime.store().get_summary(id).await?.status, JobStatus::Cancelled);
+        assert_eq!(
+            runtime.store().get_summary(id).await?.status,
+            JobStatus::Cancelled
+        );
     }
     Ok(())
 }

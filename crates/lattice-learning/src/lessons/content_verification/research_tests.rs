@@ -1839,28 +1839,27 @@ async fn expand_forwards_trust_gap_metadata_and_falls_back_to_alternatives() -> 
                 input.identifier.clone(),
                 input.ecosystem.clone(),
             ));
-            let results = if input.query.contains("RFC 7523")
-                && input.kind.as_deref() == Some("web")
-            {
-                vec![
-                    WebSearchResult {
-                        title: "Existing blog mirror".into(),
-                        url: "https://mirror.example.com/jwt".into(),
-                        snippet: "mirror".into(),
-                        published_date: None,
-                        source: None,
-                    },
-                    WebSearchResult {
-                        title: "IETF RFC 7523".into(),
-                        url: "https://www.rfc-editor.org/rfc/rfc7523.html".into(),
-                        snippet: "JWT profile".into(),
-                        published_date: None,
-                        source: None,
-                    },
-                ]
-            } else {
-                Vec::new()
-            };
+            let results =
+                if input.query.contains("RFC 7523") && input.kind.as_deref() == Some("web") {
+                    vec![
+                        WebSearchResult {
+                            title: "Existing blog mirror".into(),
+                            url: "https://mirror.example.com/jwt".into(),
+                            snippet: "mirror".into(),
+                            published_date: None,
+                            source: None,
+                        },
+                        WebSearchResult {
+                            title: "IETF RFC 7523".into(),
+                            url: "https://www.rfc-editor.org/rfc/rfc7523.html".into(),
+                            snippet: "JWT profile".into(),
+                            published_date: None,
+                            source: None,
+                        },
+                    ]
+                } else {
+                    Vec::new()
+                };
             Ok(WebSearchOutput {
                 query: input.query.clone(),
                 results,

@@ -28,11 +28,14 @@ pub(crate) async fn cancel_generation_job(
     jobs: &lattice_core::shared::runtime::jobs::JobRuntime,
     request: &LearningGenerationJobActionRequestDto,
 ) -> Result<LearningGenerationJob, ApiError> {
-    let repo =
-        crate::features::learning::curriculum_repository::LearningCurriculumRepository::new(
-            db.clone(),
-        );
-    match repo.preflight_cancel(request).await.map_err(ApiError::from)? {
+    let repo = crate::features::learning::curriculum_repository::LearningCurriculumRepository::new(
+        db.clone(),
+    );
+    match repo
+        .preflight_cancel(request)
+        .await
+        .map_err(ApiError::from)?
+    {
         crate::features::learning::curriculum_repository::CancelPreflight::Replayed(job) => {
             return Ok(*job);
         }
@@ -159,10 +162,10 @@ mod tests {
     use lattice_core::shared::runtime::jobs::{
         JobContext, JobHandler, JobKindConfig, JobOutcome, JobRuntime, JobStatus, RecoveryPolicy,
     };
-    use lattice_learning::curriculum::{
-        LearningGenerationJobKind, LearningGenerationJobStatus,
+    use lattice_learning::curriculum::{LearningGenerationJobKind, LearningGenerationJobStatus};
+    use lattice_learning::curriculum_repository::{
+        LearningCurriculumRepository, LESSON_PREPARATION,
     };
-    use lattice_learning::curriculum_repository::{LearningCurriculumRepository, LESSON_PREPARATION};
     use lattice_learning::dto::LearningProgramStatus;
     use lattice_learning::plan_dto::{
         LearningGenerationJobActionRequestDto, StartLearningGenerationJobRequestDto,
@@ -250,7 +253,9 @@ mod tests {
             job_id: job1.id.clone(),
             expected_revision: program.summary.revision + 99,
         };
-        assert!(cancel_generation_job(&db, &runtime, &stale_req).await.is_err());
+        assert!(cancel_generation_job(&db, &runtime, &stale_req)
+            .await
+            .is_err());
 
         let bad_op_req = LearningGenerationJobActionRequestDto {
             operation_id: "not-a-uuid".into(),
@@ -258,7 +263,9 @@ mod tests {
             job_id: job1.id.clone(),
             expected_revision: program.summary.revision,
         };
-        assert!(cancel_generation_job(&db, &runtime, &bad_op_req).await.is_err());
+        assert!(cancel_generation_job(&db, &runtime, &bad_op_req)
+            .await
+            .is_err());
 
         let wrong_prog_req = LearningGenerationJobActionRequestDto {
             operation_id: uuid::Uuid::new_v4().to_string(),
@@ -266,10 +273,15 @@ mod tests {
             job_id: job1.id.clone(),
             expected_revision: program.summary.revision,
         };
-        assert!(cancel_generation_job(&db, &runtime, &wrong_prog_req).await.is_err());
+        assert!(cancel_generation_job(&db, &runtime, &wrong_prog_req)
+            .await
+            .is_err());
 
         tokio::time::sleep(Duration::from_millis(40)).await;
-        assert_eq!(runtime.store().get_summary(&job1.id).await?.status, JobStatus::Running);
+        assert_eq!(
+            runtime.store().get_summary(&job1.id).await?.status,
+            JobStatus::Running
+        );
         release.notify_waiters();
         tokio::time::timeout(Duration::from_secs(2), async {
             while runtime.store().get_summary(&job1.id).await?.status == JobStatus::Running {
@@ -291,7 +303,9 @@ mod tests {
             job_id: job1.id.clone(),
             expected_revision: program.summary.revision,
         };
-        assert!(cancel_generation_job(&db, &runtime, &completed_req).await.is_err());
+        assert!(cancel_generation_job(&db, &runtime, &completed_req)
+            .await
+            .is_err());
 
         // Valid cancel succeeds and subsequent replay returns Cancelled cleanly.
         let job2 = start_job(&lesson_ids[1]).await?;
@@ -304,9 +318,13 @@ mod tests {
             job_id: job2.id.clone(),
             expected_revision: program.summary.revision,
         };
-        let cancelled = cancel_generation_job(&db, &runtime, &valid_req).await.unwrap();
+        let cancelled = cancel_generation_job(&db, &runtime, &valid_req)
+            .await
+            .unwrap();
         assert_eq!(cancelled.status, LearningGenerationJobStatus::Cancelled);
-        let replayed = cancel_generation_job(&db, &runtime, &valid_req).await.unwrap();
+        let replayed = cancel_generation_job(&db, &runtime, &valid_req)
+            .await
+            .unwrap();
         assert_eq!(replayed.status, LearningGenerationJobStatus::Cancelled);
         Ok(())
     }

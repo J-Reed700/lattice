@@ -392,6 +392,9 @@ fn consecutive_chips_with_judge_verdict_both_quote_and_deduplicate_quoted_piece(
     for reference in refs {
         let support = reference.support.as_ref().unwrap();
         assert_eq!(support.relation, RelationDto::Quotes);
-        assert_eq!(support.anchors[0].exact, "Hold the mitigation for 20 seconds");
+        assert_eq!(
+            support.anchors[0].exact,
+            "Hold the mitigation for 20 seconds"
+        );
     }
 }

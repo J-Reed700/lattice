@@ -35,8 +35,8 @@ mod preparation;
 mod prioritize;
 mod programs;
 mod reset;
-pub(crate) use prioritize::lesson_rank_in;
 pub use jobs::CancelPreflight;
+pub(crate) use prioritize::lesson_rank_in;
 pub use programs::ProgramVerifierAudit;
 
 use diagnostics::decode_diagnostic_row;

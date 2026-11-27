@@ -649,7 +649,7 @@ async fn a_statement_carries_the_address_of_its_sentence() -> Result<()> {
 #[tokio::test]
 async fn editing_a_disputed_question_syncs_its_bank_status_across_partial_edits_and_revert(
 ) -> Result<()> {
-    use lattice_core::domain::learning::claim_review::{HumanBinding, ReopenCause};
+    use lattice_core::domain::learning::claim_review::{HumanBinding, ReopenCause, UserAction};
     use lattice_core::shared::edits::RevertContentEditRequest;
 
     let course = unchecked().await?;
@@ -727,7 +727,10 @@ async fn editing_a_disputed_question_syncs_its_bank_status_across_partial_edits_
     apply_edit(
         &course,
         keys::question_ref(&question_id),
-        vec![replace("/prompt", "What happens to whitespace in DictReader headers?")],
+        vec![replace(
+            "/prompt",
+            "What happens to whitespace in DictReader headers?",
+        )],
     )
     .await?;
     let partial_status: String =
@@ -741,7 +744,10 @@ async fn editing_a_disputed_question_syncs_its_bank_status_across_partial_edits_
     let second = apply_edit(
         &course,
         keys::question_ref(&question_id),
-        vec![replace("/explanation", "DictReader keeps header spaces verbatim.")],
+        vec![replace(
+            "/explanation",
+            "DictReader keeps header spaces verbatim.",
+        )],
     )
     .await?;
     let agreed_status: String =
