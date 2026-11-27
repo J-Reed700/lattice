@@ -316,8 +316,8 @@ fn extract_public_subject(text: &str, companies: &[String]) -> Option<String> {
     }
 
     let tokens: Vec<&str> = text.split_whitespace().collect();
-    for index in 0..tokens.len() {
-        let word = clean_cap_token(tokens[index]);
+    for (index, raw_token) in tokens.iter().enumerate() {
+        let word = clean_cap_token(raw_token);
         let word_lower = word.to_ascii_lowercase();
         let is_tech_cap = word
             .chars()

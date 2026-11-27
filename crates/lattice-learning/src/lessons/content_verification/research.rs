@@ -48,6 +48,7 @@ struct Context {
 
 tokio::task_local! { static CURRENT:Context; }
 
+#[cfg(test)]
 pub(crate) async fn run<T>(
     database: Database,
     program_id: String,

@@ -399,6 +399,7 @@ pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()>
 /// Checks freshly authored quiz items and lesson questions for course/lesson
 /// meta-talk, phantom build/version numbers absent from the item and `quote`,
 /// and ungrounded external company framing when `companies` is non-empty.
+#[cfg(test)]
 pub(crate) fn authored_content_faults(
     candidate: &LearningAssessmentCandidate,
     quote: &str,

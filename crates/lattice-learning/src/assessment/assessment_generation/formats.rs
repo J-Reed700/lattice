@@ -535,8 +535,10 @@ fn quoted<'a>(
                 .into(),
         );
     }
-    if let Some((passage, units)) = sentences.iter().find(|(p, _)| std::ptr::eq(*p, homes[0])) {
-        return Ok((homes, single_passage_quote(passage, units, cited)?));
+    if let Some(&home) = homes.first() {
+        if let Some((passage, units)) = sentences.iter().find(|(p, _)| std::ptr::eq(*p, home)) {
+            return Ok((homes, single_passage_quote(passage, units, cited)?));
+        }
     }
     Err("The item's quote cites no sentence of the supplied passages.".into())
 }
@@ -609,6 +611,7 @@ fn single_passage_quote(
 }
 
 /// Turn one model item into a validated candidate, or say every fault it has.
+#[cfg(test)]
 pub(super) fn to_candidate(
     raw: RawItem,
     need: &AuthoringNeed,

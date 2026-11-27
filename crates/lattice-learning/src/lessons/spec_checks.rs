@@ -360,11 +360,14 @@ fn mentions_smart_fhir_context(text: &str, sources_text: &[&str]) -> bool {
 fn contains_ascii_word(haystack: &str, word: &str) -> bool {
     let bytes = haystack.as_bytes();
     let mut from = 0;
-    while let Some(rel) = haystack[from..].find(word) {
+    while let Some(rel) = haystack.get(from..).and_then(|s| s.find(word)) {
         let start = from + rel;
         let end = start + word.len();
-        let left_ok = start == 0 || !bytes[start - 1].is_ascii_alphanumeric();
-        let right_ok = end == bytes.len() || !bytes[end].is_ascii_alphanumeric();
+        let left_ok = start
+            .checked_sub(1)
+            .and_then(|idx| bytes.get(idx))
+            .is_none_or(|b| !b.is_ascii_alphanumeric());
+        let right_ok = bytes.get(end).is_none_or(|b| !b.is_ascii_alphanumeric());
         if left_ok && right_ok {
             return true;
         }
@@ -551,13 +554,16 @@ fn undeclared_injected_types(code: &str, declared: &HashSet<String>) -> Vec<Stri
 fn contains_ident(code: &str, ident: &str) -> bool {
     let bytes = code.as_bytes();
     let mut from = 0;
-    while let Some(rel) = code[from..].find(ident) {
+    while let Some(rel) = code.get(from..).and_then(|s| s.find(ident)) {
         let start = from + rel;
         let end = start + ident.len();
-        let left_ok =
-            start == 0 || !(bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_');
-        let right_ok =
-            end == bytes.len() || !(bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_');
+        let left_ok = start
+            .checked_sub(1)
+            .and_then(|idx| bytes.get(idx))
+            .is_none_or(|b| !(b.is_ascii_alphanumeric() || *b == b'_'));
+        let right_ok = bytes
+            .get(end)
+            .is_none_or(|b| !(b.is_ascii_alphanumeric() || *b == b'_'));
         if left_ok && right_ok {
             return true;
         }
@@ -582,10 +588,9 @@ fn collect_prose_expiry_buffers(body: &str, out: &mut Vec<usize>) {
 }
 
 fn code_buffer_mismatch(code: &str, prose_buffers: &[usize]) -> Option<(String, String)> {
-    if prose_buffers.len() != 1 {
+    let [expected] = *prose_buffers else {
         return None;
-    }
-    let expected = prose_buffers[0];
+    };
     let normalized = code.replace(' ', "");
     for needle in ["expires_in-"] {
         let mut search = normalized.as_str();

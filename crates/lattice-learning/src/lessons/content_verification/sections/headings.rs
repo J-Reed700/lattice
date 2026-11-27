@@ -33,24 +33,32 @@ pub(in crate::lessons::content_verification) fn prune_empty_headings(text: &str)
     loop {
         let mut changed = false;
         for index in 0..lines.len() {
-            if drop[index] || lines[index].1 || is_reveal_heading(lines[index].0) {
+            let Some(&(line, fenced)) = lines.get(index) else {
+                continue;
+            };
+            if drop.get(index).copied().unwrap_or(false) || fenced || is_reveal_heading(line) {
                 continue;
             }
-            let Some(level) = heading_level(lines[index].0) else {
+            let Some(level) = heading_level(line) else {
                 continue;
             };
-            let next = (index + 1..lines.len())
-                .find(|&later| !drop[later] && !lines[later].0.trim().is_empty());
+            let next = (index + 1..lines.len()).find(|&later| {
+                !drop.get(later).copied().unwrap_or(false)
+                    && lines
+                        .get(later)
+                        .is_some_and(|&(later_line, _)| !later_line.trim().is_empty())
+            });
             let empty = match next {
                 None => true,
-                Some(later) => {
-                    !lines[later].1
-                        && heading_level(lines[later].0)
-                            .is_some_and(|next_level| next_level <= level)
-                }
+                Some(later) => lines.get(later).is_some_and(|&(later_line, later_fenced)| {
+                    !later_fenced
+                        && heading_level(later_line).is_some_and(|next_level| next_level <= level)
+                }),
             };
             if empty {
-                drop[index] = true;
+                if let Some(slot) = drop.get_mut(index) {
+                    *slot = true;
+                }
                 changed = true;
             }
         }
@@ -65,7 +73,7 @@ pub(in crate::lessons::content_verification) fn prune_empty_headings(text: &str)
 
     let mut kept: Vec<&str> = Vec::new();
     for (index, &(line, fenced)) in lines.iter().enumerate() {
-        if drop[index] {
+        if drop.get(index).copied().unwrap_or(false) {
             continue;
         }
         if !fenced

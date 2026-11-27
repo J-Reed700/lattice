@@ -1225,6 +1225,7 @@ async fn lesson_material_strips_code_fences_and_preserves_verbatim_contiguous_ru
     let mut read = db.begin_read().await?;
     let material = LearningAssessmentRepository::lesson_material_in(&mut read, lesson_id).await?;
     read.commit().await?;
+    assert!(!material.is_empty());
     let text = &material[0].text;
     assert!(!text.contains("```"), "{text}");
     assert!(!text.contains("return true;"), "{text}");
@@ -1269,6 +1270,9 @@ fn lesson_question_item_clears_right_choice_rationale_before_bank_validation() {
         ],
     };
     let candidate = crate::quiz_bank_jobs::lesson_question_item(&q, &key, vec!["o-1".into()]);
-    assert_eq!(candidate.distractor_rationales[0], "");
-    crate::assessment_engine::validate_candidate(&candidate).unwrap();
+    assert_eq!(
+        candidate.distractor_rationales.first().map(String::as_str),
+        Some("")
+    );
+    assert!(crate::assessment_engine::validate_candidate(&candidate).is_ok());
 }

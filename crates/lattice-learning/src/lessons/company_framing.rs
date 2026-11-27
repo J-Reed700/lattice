@@ -347,11 +347,17 @@ pub(crate) fn contains_whole_phrase(haystack: &str, phrase: &str) -> bool {
     }
     let bytes = lower_haystack.as_bytes();
     let mut from = 0;
-    while let Some(rel) = lower_haystack[from..].find(&lower_phrase) {
+    while let Some(rel) = lower_haystack
+        .get(from..)
+        .and_then(|s| s.find(&lower_phrase))
+    {
         let start = from + rel;
         let end = start + lower_phrase.len();
-        let left_ok = start == 0 || !bytes[start - 1].is_ascii_alphanumeric();
-        let right_ok = end == bytes.len() || !bytes[end].is_ascii_alphanumeric();
+        let left_ok = start
+            .checked_sub(1)
+            .and_then(|idx| bytes.get(idx))
+            .is_none_or(|b| !b.is_ascii_alphanumeric());
+        let right_ok = bytes.get(end).is_none_or(|b| !b.is_ascii_alphanumeric());
         if left_ok && right_ok {
             return true;
         }
@@ -457,7 +463,7 @@ fn window_has_cue_matching(
     predicate: impl Fn(&str) -> bool,
 ) -> bool {
     let start = prep_idx.saturating_sub(5);
-    for raw in tokens[start..prep_idx].iter().rev() {
+    for raw in tokens.get(start..prep_idx).into_iter().flatten().rev() {
         if has_clause_break(raw) {
             break;
         }
@@ -502,7 +508,7 @@ fn sentence_attributes_company(normalized: &str, company_lower: &str) -> bool {
     }
 
     for index in 0..=words.len() - company_words.len() {
-        if words[index..index + company_words.len()] != company_words[..] {
+        if words.get(index..index + company_words.len()) != Some(company_words.as_slice()) {
             continue;
         }
         let after = index + company_words.len();
@@ -522,17 +528,22 @@ fn sentence_attributes_company(normalized: &str, company_lower: &str) -> bool {
                         words.get(verb_index + 1).copied(),
                         Some("a" | "an" | "the" | "not" | "mentioned" | "named")
                     )
-                    && words[verb_index + 1..].iter().take(4).any(|next| {
-                        matches!(
-                            *next,
-                            "company"
-                                | "employer"
-                                | "organization"
-                                | "organisation"
-                                | "firm"
-                                | "goal"
-                        )
-                    });
+                    && words
+                        .get(verb_index + 1..)
+                        .into_iter()
+                        .flatten()
+                        .take(4)
+                        .any(|next| {
+                            matches!(
+                                *next,
+                                "company"
+                                    | "employer"
+                                    | "organization"
+                                    | "organisation"
+                                    | "firm"
+                                    | "goal"
+                            )
+                        });
                 if !allowed_identity {
                     return true;
                 }
@@ -540,8 +551,10 @@ fn sentence_attributes_company(normalized: &str, company_lower: &str) -> bool {
         }
         // `<transitive verb> ... <company> to ...` (for example `permit Documo to do`)
         if words.get(after).copied() == Some("to")
-            && words[index.saturating_sub(3)..index]
-                .iter()
+            && words
+                .get(index.saturating_sub(3)..index)
+                .into_iter()
+                .flatten()
                 .any(|prev| TRANSITIVE_VERBS.contains(prev))
         {
             return true;
