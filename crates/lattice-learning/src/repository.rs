@@ -84,13 +84,13 @@ impl LearningRepository {
         let comparisons = compare_sources(&self.db, &s.id, &program.sources, references).await?;
         let mut tx = self.db.begin_write().await?;
         sqlx::query("INSERT INTO learning_programs(id,title,goal,status,revision,prior_knowledge,minutes_per_session,model_name,current_lesson_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
-            .bind(&s.id).bind(&s.title).bind(&s.goal).bind(status(s.status.clone())).bind(s.revision).bind(&program.prior_knowledge).bind(program.minutes_per_session).bind(&program.model_name).bind(&s.current_lesson_id).bind(s.created_at).execute(&mut *tx).await?;
+            .bind(&s.id).bind(&s.title).bind(&s.goal).bind(status(s.status)).bind(s.revision).bind(&program.prior_knowledge).bind(program.minutes_per_session).bind(&program.model_name).bind(&s.current_lesson_id).bind(s.created_at).execute(&mut *tx).await?;
         for (mi, m) in program.modules.iter().enumerate() {
             sqlx::query("INSERT INTO learning_modules(id,program_id,ordinal,title,summary,outcomes_json,prerequisite_ids_json,project_json) VALUES(?,?,?,?,?,?,?,?)")
                 .bind(&m.id).bind(&s.id).bind(mi as i64).bind(&m.title).bind(&m.summary).bind(json(&m.outcomes)?).bind(json(&m.prerequisite_module_ids)?).bind(json(&m.project)?).execute(&mut *tx).await?;
             for (li, l) in m.lessons.iter().enumerate() {
                 sqlx::query("INSERT INTO learning_lessons(id,program_id,module_id,ordinal,title,objective,estimated_minutes,preparation,completed) VALUES(?,?,?,?,?,?,?,?,?)")
-                    .bind(&l.id).bind(&s.id).bind(&m.id).bind(li as i64).bind(&l.title).bind(&l.objective).bind(l.estimated_minutes).bind(prep(l.preparation.clone())).bind(l.completed as i64).execute(&mut *tx).await?;
+                    .bind(&l.id).bind(&s.id).bind(&m.id).bind(li as i64).bind(&l.title).bind(&l.objective).bind(l.estimated_minutes).bind(prep(l.preparation)).bind(l.completed as i64).execute(&mut *tx).await?;
             }
         }
         for (source, comparison) in program.sources.iter().zip(&comparisons) {

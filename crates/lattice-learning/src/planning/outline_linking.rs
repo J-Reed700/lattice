@@ -40,8 +40,6 @@ use candidates::{
 };
 pub use candidates::{cited_count, item_count};
 pub(crate) use candidates::{is_verified, receipt_key, source_hashes, strip_unmatched};
-#[cfg(test)]
-use contract::Choice;
 pub(crate) use contract::{Input, Item, ItemKind, OutlineLinking, Passage};
 #[cfg(test)]
 use spans::{citable_span, is_prose};

@@ -747,7 +747,7 @@ mod tests {
             part_results: vec![],
             contest: None,
         }];
-        apply_unlive_grading_feedback(&mut results, Some("cancelled"), None);
+        apply_unlive_grading_feedback(&mut results, Some(JobStatus::Cancelled), None);
         assert_eq!(
             results[0].feedback,
             "Grading stopped. Resume grading to finish."

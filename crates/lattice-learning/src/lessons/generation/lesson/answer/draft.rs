@@ -6,7 +6,7 @@ use lattice_core::application::services::model_contract::units::Quoted;
 use serde_json::{json, Map, Value};
 
 /// First `[q<digits>]` source-excerpt handle leaked into learner-facing prose, if any.
-fn find_leaked_quote_handle(text: &str) -> Option<String> {
+pub(super) fn find_leaked_quote_handle(text: &str) -> Option<String> {
     let bytes = text.as_bytes();
     let mut i = 0;
     while i + 3 < bytes.len() {
@@ -71,7 +71,7 @@ pub(super) fn quotes_of(input: &Input) -> Quotes {
 }
 
 /// A part's source and quotation, and the sentences it cites, as a saved draft holds them.
-fn cite_into(
+pub(super) fn cite_into(
     quotes: &Quotes,
     part: &mut Map<String, Value>,
     cites: &[Picked<Quoted>],

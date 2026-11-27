@@ -2,14 +2,17 @@ use super::*;
 use crate::content_verification::research::{self, tests as research_tests};
 use crate::lessons::course_generation_tests::ScriptedModel;
 use crate::lessons::structured_call::is_draft_request;
+use crate::reference_collection::PASSAGE_CHARS;
 use crate::repository::LearningRepository;
 use futures::future::BoxFuture;
 use lattice_core::application::ports::llm_port::CompletionResponse;
+use lattice_core::application::services::model_contract::packed::Packed;
 use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
 use lattice_core::application::services::model_contract::test_support::{
     ScriptedModel as Scripted, Sent,
 };
 use lattice_core::shared::persistence::Database;
+use serde_json::json;
 use std::sync::Mutex;
 
 fn scripted(outputs: Vec<String>) -> ScriptedModel {

@@ -29,7 +29,7 @@ pub use query::select_references;
 use query::SELECT_SYSTEM;
 pub(crate) use query::{selection_cost, selection_room};
 #[cfg(test)]
-pub(crate) use query::{Hit, Input, Keep, ResearchQuery};
+pub(crate) use query::{Hit, Input, ResearchQuery};
 use saving::Saving;
 
 #[derive(Clone)]

@@ -233,8 +233,8 @@ fn classify_consecutive(prev: &str, next: &str) -> Option<ConsecutiveRepeat> {
             prev_words.len() >= 3 && has_clause_after_prefix(next, prev_words.len(), true);
         let punct_pair = prev_words.len() >= 2
             && !matches!(
-                prev_words[0].as_str(),
-                "it" | "this" | "that" | "these" | "those" | "they" | "there"
+                prev_words.first().map(String::as_str),
+                Some("it" | "this" | "that" | "these" | "those" | "they" | "there")
             )
             && has_clause_after_prefix(next, prev_words.len(), false);
         if long_stutter || clause_stutter || punct_pair {

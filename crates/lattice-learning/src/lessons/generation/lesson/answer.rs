@@ -26,9 +26,9 @@ mod draft;
 #[cfg(test)]
 mod scripted;
 
-#[cfg(test)]
-use draft::question;
 use draft::quotes_of;
+#[cfg(test)]
+use draft::{cite_into, find_leaked_quote_handle, question};
 #[cfg(test)]
 pub(crate) use scripted::scripted_lesson;
 

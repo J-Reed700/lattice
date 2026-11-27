@@ -363,7 +363,9 @@ impl Answered for FlowRepair {
         let section = repair::shown_section(&rows, &shown, input.part.value());
         let mut task = json!({"section": section, "gaps": gaps, "verifiedSentences": verified});
         if contrast_orphan {
-            task["contrastOrphanRemoval"] = json!(true);
+            if let Some(object) = task.as_object_mut() {
+                object.insert("contrastOrphanRemoval".into(), json!(true));
+            }
         }
         let mut says = Says::new(flow_system(contrast_orphan), task.to_string());
         says.output_tokens = input.output_tokens;

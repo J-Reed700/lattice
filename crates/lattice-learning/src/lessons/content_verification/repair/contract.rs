@@ -48,7 +48,7 @@ impl Kind for Failed {
 
 impl Failed {
     /// The places of the evidence passages its claims name, each once, in recorded order.
-    fn needs(&self) -> Vec<usize> {
+    pub(super) fn needs(&self) -> Vec<usize> {
         let mut places: Vec<usize> = Vec::new();
         for place in self.claims.iter().flat_map(|claim| claim.evidence.value()) {
             if !places.contains(place) {
