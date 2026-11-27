@@ -242,7 +242,9 @@ async fn long_reviewer_note_keeps_domain_passages_and_cuts_single_word_boilerpla
     .await?;
     let shown = passages_of(&asks(&model)[0]);
     assert!(
-        shown.iter().any(|text| text.contains("FHIR DocumentReference Binary payload")),
+        shown
+            .iter()
+            .any(|text| text.contains("FHIR DocumentReference Binary payload")),
         "expected FHIR DocumentReference Binary passages to be kept, got {:?}",
         shown
     );

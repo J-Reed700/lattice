@@ -148,7 +148,10 @@ fn distinct_content_terms(query: &str) -> Vec<String> {
 }
 
 impl ReferenceCollection<'_> {
-    async fn term_counts_and_total(&self, terms: &[String]) -> Result<(HashMap<String, usize>, usize)> {
+    async fn term_counts_and_total(
+        &self,
+        terms: &[String],
+    ) -> Result<(HashMap<String, usize>, usize)> {
         let store = self.store().await?;
         let counts = store.term_counts(terms).await?;
         let passages = store.counts("").await?.passages_total as usize;
