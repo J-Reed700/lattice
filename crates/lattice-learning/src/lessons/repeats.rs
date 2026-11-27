@@ -316,16 +316,6 @@ fn high_similarity_prefix_stutter(prev_words: &[String], next_words: &[String]) 
     if aligned_diffs < 2 {
         return false;
     }
-    let code_tokens = |words: &[String]| -> Vec<&str> {
-        words
-            .iter()
-            .filter(|w| {
-                w.bytes()
-                    .any(|b| b.is_ascii_digit() || matches!(b, b'/' | b'.' | b':' | b'-' | b'_'))
-            })
-            .map(String::as_str)
-            .collect()
-    };
     if code_tokens(prev_words) != code_tokens(next_words) {
         return false;
     }
@@ -335,6 +325,17 @@ fn high_similarity_prefix_stutter(prev_words: &[String], next_words: &[String]) 
     let long_shared = shared.iter().filter(|word| word.len() >= 5).count();
     let min_len = prev_words.len().min(next_words.len());
     shared.len() >= 4 && long_shared >= 2 && shared.len() * 11 >= min_len * 5
+}
+
+fn code_tokens(words: &[String]) -> Vec<&str> {
+    words
+        .iter()
+        .filter(|w| {
+            w.bytes()
+                .any(|b| b.is_ascii_digit() || matches!(b, b'/' | b'.' | b':' | b'-' | b'_'))
+        })
+        .map(String::as_str)
+        .collect()
 }
 
 fn flush_consecutive_unit(

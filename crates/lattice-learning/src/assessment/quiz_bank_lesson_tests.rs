@@ -1571,7 +1571,7 @@ async fn consistent_claims_count_as_grounded_against_minority_unverified_claims(
             &id,
             prov.clone(),
             ClaimEvent::PublishedUnverified {
-                reason: UnverifiedReason::NoSource,
+                reason: UnverifiedReason::Unsupported,
             },
         )
         .await?;
