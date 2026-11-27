@@ -13,7 +13,7 @@ import replay_condense_ab as replay
 ROOT = Path(__file__).resolve().parent.parent
 NOTES_RS = ROOT / "crates/lattice-desktop/src/features/conversation/chat/tool_loop/research_notes.rs"
 NOTES_TESTS_RS = ROOT / "crates/lattice-desktop/src/features/conversation/chat/tool_loop/research_notes/tests.rs"
-ASK_RS = ROOT / "crates/lattice-core/src/application/services/model_contract/ask.rs"
+ASK_DIAGNOSTICS_RS = ROOT / "crates/lattice-core/src/application/services/model_contract/ask/diagnostics.rs"
 SCRIPTED_RS = ROOT / "crates/lattice-core/src/application/services/model_contract/test_support/scripted.rs"
 LLM_PORT_RS = ROOT / "crates/lattice-core/src/application/ports/llm_port.rs"
 SNAPSHOT = ROOT / "crates/lattice-desktop/tests/prompt-snapshots/research-notes.txt"
@@ -65,7 +65,7 @@ class Literals(unittest.TestCase):
         self.assertEqual(replay.NOTHING_KEPT, rust_string(rs, "NOTHING_KEPT"))
 
     def test_the_corrections_are_the_apps(self):
-        rs = text_of(ASK_RS)
+        rs = text_of(ASK_DIAGNOSTICS_RS)
         for name in ("NOT_READ", "CUT_OFF", "UNPLACED"):
             self.assertEqual(getattr(replay, name), rust_string(rs, name), name)
         self.assertIn('"' + replay.MISSING + '"', rs)
