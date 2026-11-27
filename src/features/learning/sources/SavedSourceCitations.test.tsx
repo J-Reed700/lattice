@@ -293,7 +293,7 @@ describe('SavedSourceCitations', () => {
 
     expect(screen.getAllByRole('button', { name: /Citation \d/ })).toHaveLength(1);
     expect(screen.getByRole('button', { name: /Citation 4/ })).toBeInTheDocument();
-    expect(screen.getByText('Library beta')).toBeInTheDocument();
+    expect(await screen.findByText('Library beta')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'View source' }));
     await waitFor(() => expect(useReaderStore.getState().session?.citations).toHaveLength(2));
     expect(useReaderStore.getState().session?.index).toBe(1);
