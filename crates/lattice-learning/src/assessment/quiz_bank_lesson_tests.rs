@@ -808,8 +808,9 @@ async fn unverified_material_checks_span_quotes_unlinked_bank_items_and_partial_
     )
     .unwrap();
     let verified_first = "Verified systems rotate client keys using explicit kid headers.";
+    let unverified_word_exp = "Each assertion sets exp strictly.";
     let unverified_later = "The default token expiry in this profile is 420 seconds.";
-    let new_body = format!("{verified_first} {unverified_later}");
+    let new_body = format!("{verified_first} {unverified_word_exp} {unverified_later}");
     sqlx::query("UPDATE learning_blocks SET body=? WHERE lesson_id=? AND ordinal=0")
         .bind(&new_body)
         .bind(lesson_id)
@@ -965,6 +966,11 @@ async fn unverified_material_checks_span_quotes_unlinked_bank_items_and_partial_
     let material = LearningAssessmentRepository::lesson_material_in(&mut read, lesson_id).await?;
     assert!(
         material[0].text.contains(verified_first),
+        "{}",
+        material[0].text
+    );
+    assert!(
+        !material[0].text.contains("sets exp strictly"),
         "{}",
         material[0].text
     );

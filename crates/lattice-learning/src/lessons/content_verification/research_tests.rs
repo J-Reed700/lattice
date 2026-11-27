@@ -1825,23 +1825,30 @@ async fn expand_forwards_trust_gap_metadata_and_falls_back_to_alternatives() -> 
         NextStep, PassageKind, SourceDates, SubjectKind, Support, TemporalScope, Trust, TrustLevel,
     };
 
+    #[derive(Debug)]
+    struct RecordedWebQuery {
+        query: String,
+        kind: Option<String>,
+        identifier: Option<String>,
+        ecosystem: Option<String>,
+    }
+
     struct FallbackWeb {
         base: MockWebService,
-        queries: Mutex<Vec<(String, Option<String>, Option<String>, Option<String>)>>,
+        queries: Mutex<Vec<RecordedWebQuery>>,
     }
 
     #[async_trait::async_trait]
     impl WebServiceTrait for FallbackWeb {
         async fn search_web(&self, input: &WebSearchInput) -> Result<WebSearchOutput> {
-            self.queries.lock().unwrap().push((
-                input.query.clone(),
-                input.kind.clone(),
-                input.identifier.clone(),
-                input.ecosystem.clone(),
-            ));
-            let results = if input.query.contains("RFC 7523")
-                && input.kind.as_deref() == Some("web")
-            {
+            self.queries.lock().unwrap().push(RecordedWebQuery {
+                query: input.query.clone(),
+                kind: input.kind.clone(),
+                identifier: input.identifier.clone(),
+                ecosystem: input.ecosystem.clone(),
+            });
+            let is_web = input.query.contains("RFC 7523") && input.kind.as_deref() == Some("web");
+            let results = if is_web {
                 vec![
                     WebSearchResult {
                         title: "Existing blog mirror".into(),
@@ -2017,19 +2024,19 @@ async fn expand_forwards_trust_gap_metadata_and_falls_back_to_alternatives() -> 
             assert!(prompts[1].contains("rfc-editor.org"), "{}", prompts[1]);
             let seen_queries = web.queries.lock().unwrap();
             assert!(
-                seen_queries.iter().any(|(q, kind, ident, _)| {
-                    q == "RFC 7523 client_assertion exp"
-                        && kind.as_deref() == Some("standard")
-                        && ident.as_deref() == Some("rfc:7523")
+                seen_queries.iter().any(|q| {
+                    q.query == "RFC 7523 client_assertion exp"
+                        && q.kind.as_deref() == Some("standard")
+                        && q.identifier.as_deref() == Some("rfc:7523")
                 }),
                 "{seen_queries:?}"
             );
             assert!(
-                seen_queries.iter().any(|(q, kind, ident, eco)| {
-                    q == "RFC 7523 client_assertion exp"
-                        && kind.as_deref() == Some("web")
-                        && ident.is_none()
-                        && eco.is_none()
+                seen_queries.iter().any(|q| {
+                    q.query == "RFC 7523 client_assertion exp"
+                        && q.kind.as_deref() == Some("web")
+                        && q.identifier.is_none()
+                        && q.ecosystem.is_none()
                 }),
                 "{seen_queries:?}"
             );
