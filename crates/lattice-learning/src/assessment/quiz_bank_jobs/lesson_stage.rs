@@ -168,7 +168,7 @@ pub(crate) async fn lesson_bank_stage(
     material: Vec<MaterialPassage>,
     seeds: Vec<StoredItem>,
 ) -> Result<LessonBank> {
-    let (outcome_id, settings, quiz_formats) = {
+    let (outcome_id, settings, quiz_formats, program) = {
         let mut tx = database.begin_read().await?;
         let existing =
             quiz_blueprints::repository::lesson_outcome_in(&mut tx, program_id, lesson_id).await?;
@@ -176,12 +176,26 @@ pub(crate) async fn lesson_bank_stage(
         let quiz_formats =
             quiz_blueprints::lesson_quiz_formats_in(&mut tx, program_id, lesson_id).await?;
         tx.commit().await?;
+        let program = crate::repository::LearningRepository::new(database.clone())
+            .get(program_id)
+            .await
+            .ok();
         (
             existing.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             settings,
             quiz_formats,
+            program,
         )
     };
+    let companies = program
+        .as_ref()
+        .map(|program| {
+            crate::lessons::company_framing::ungrounded_companies(
+                &[&program.summary.goal, &program.prior_knowledge],
+                &program.sources,
+            )
+        })
+        .unwrap_or_default();
     let facts = CourseFacts {
         program_title: String::new(),
         modules: vec![],
@@ -241,7 +255,7 @@ pub(crate) async fn lesson_bank_stage(
     let mut dropped: Vec<String> = Vec::new();
     let mut writing = BankWriting::new(needs);
     while let Some(need) = writing.next() {
-        let authored = generation::author_items(llm, &need).await?;
+        let authored = generation::author_items_for(llm, &need, &companies).await?;
         writing.wrote(&need, &authored);
         written.extend(authored.items);
         dropped.extend(authored.dropped);

@@ -1,6 +1,7 @@
 //! Gap metadata formatting, independent-source filtering, and alternative-query
 //! fallback for lesson reference research.
 use super::*;
+use crate::lessons::company_framing;
 use crate::lessons::content_verification::provenance_gate::FindingTrust;
 use lattice_core::domain::provenance::{ClaimKind, Decision, Missing, NextStep, TemporalScope};
 use std::collections::BTreeSet;
@@ -8,16 +9,25 @@ use std::collections::BTreeSet;
 /// Builds the planner/selector JSON gap object for `finding`, including any
 /// trust-profile metadata (claim kind, subject, owner hints, independence, and
 /// staleness) so `web_research::plan_needs` can target primary sources directly.
+/// When `finding.trust` is absent (`no_source` claim gaps), infers `kind` and
+/// a public `subject` without leaking ungrounded company names.
 pub(super) fn claim_gap(
     finding: &Finding,
     missing_reason: &str,
     sources: &[LearningSourceDto],
+    topic: &str,
+    companies: &[String],
 ) -> Value {
     let mut gap = serde_json::Map::new();
     gap.insert("claim".into(), json!(finding.statement));
     gap.insert("missingEvidence".into(), json!(missing_reason));
 
     let Some(trust) = &finding.trust else {
+        let (kind, subject) = infer_gap_metadata(&finding.statement, topic, companies);
+        gap.insert("kind".into(), json!(kind.as_str()));
+        if let Some(subject) = subject {
+            gap.insert("subject".into(), json!(subject));
+        }
         return Value::Object(gap);
     };
 
@@ -66,6 +76,294 @@ pub(super) fn claim_gap(
     }
 
     Value::Object(gap)
+}
+
+/// Returns true when a `no_source` finding (`trust: None`) only expresses an
+/// invented scenario narrative or proprietary claim about an ungrounded external
+/// company without making a checkable public protocol, API, or specification
+/// assertion.
+pub(super) fn is_scenario_local_gap(finding: &Finding, companies: &[String]) -> bool {
+    if finding.trust.is_some() {
+        return false;
+    }
+    let statement = finding.statement.trim();
+    if has_checkable_spec_or_code(statement) {
+        return false;
+    }
+    if !company_framing::company_framing_faults(statement, companies).is_empty() {
+        return true;
+    }
+    let lower = statement.replace('\u{2019}', "'").to_ascii_lowercase();
+    const SCENARIO_CUES: &[&str] = &[
+        "for this example",
+        "in this scenario",
+        "fictionalized",
+        "fictional",
+        "our delivery service",
+        "our connector",
+        "we receive ",
+        "the clinic's",
+        "the example clinic",
+        "suppose ",
+    ];
+    SCENARIO_CUES.iter().any(|cue| lower.contains(cue))
+}
+
+fn has_checkable_spec_or_code(statement: &str) -> bool {
+    if statement.contains('`') || statement.contains("://") {
+        return true;
+    }
+    let has_snake_or_dot = statement.split_whitespace().any(|raw| {
+        let token = raw.trim_matches(|ch: char| {
+            !ch.is_ascii_alphanumeric() && !matches!(ch, '_' | '.' | '/' | '-')
+        });
+        (token.contains('_') && token.chars().any(|ch| ch.is_ascii_alphabetic()))
+            || (token.contains('.')
+                && !token.ends_with('.')
+                && token.split('.').all(|part| {
+                    !part.is_empty()
+                        && part
+                            .chars()
+                            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+                }))
+            || (token.starts_with('/') && token.len() > 1)
+            || token.starts_with("system/")
+            || token.starts_with("patient/")
+            || token.starts_with("user/")
+    });
+    if has_snake_or_dot {
+        return true;
+    }
+    let lower = statement.to_ascii_lowercase();
+    const SPEC_TERMS: &[&str] = &[
+        "rfc ",
+        "ietf",
+        "w3c",
+        "hl7",
+        "smart",
+        "oauth",
+        "oidc",
+        "jwt",
+        "jwk",
+        "jwks",
+        "jws",
+        "jwe",
+        "mllp",
+        "rs256",
+        "es384",
+        "tls",
+        "https",
+        "client_assertion",
+        "grant_type",
+        "expires_in",
+        "token_endpoint",
+        "well-known",
+        "specification",
+        "standard",
+    ];
+    SPEC_TERMS.iter().any(|term| {
+        if term.contains(' ') {
+            lower.contains(term)
+        } else {
+            company_framing::contains_whole_phrase(&lower, term)
+        }
+    })
+}
+
+fn infer_gap_metadata(
+    statement: &str,
+    topic: &str,
+    companies: &[String],
+) -> (ClaimKind, Option<String>) {
+    let lower = statement.to_ascii_lowercase();
+    let kind = if contains_version_signal(&lower) {
+        ClaimKind::VersionBound
+    } else if has_checkable_spec_or_code(statement)
+        || [
+            "scope",
+            "scopes",
+            "endpoint",
+            "header",
+            "parameter",
+            "payload",
+            "token",
+            "signature",
+            "key",
+            "algorithm",
+            "status code",
+            "protocol",
+            "schema",
+            "api",
+            "method",
+            "function",
+        ]
+        .iter()
+        .any(|term| company_framing::contains_whole_phrase(&lower, term))
+    {
+        ClaimKind::Specification
+    } else if contains_measurement_signal(&lower) {
+        ClaimKind::Measurement
+    } else if [" is defined as ", " means ", " refers to "]
+        .iter()
+        .any(|cue| lower.contains(cue))
+    {
+        ClaimKind::Definition
+    } else {
+        ClaimKind::General
+    };
+    let subject = extract_public_subject(statement, companies)
+        .or_else(|| extract_public_subject(topic, companies));
+    (kind, subject)
+}
+
+fn contains_version_signal(lower: &str) -> bool {
+    [
+        "version ",
+        "since v",
+        "deprecated",
+        "introduced in",
+        "added in",
+    ]
+    .iter()
+    .any(|cue| lower.contains(cue))
+        || lower.split_whitespace().any(|word| {
+            let trimmed = word.trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '.');
+            let body = trimmed.strip_prefix('v').unwrap_or(trimmed);
+            body.contains('.')
+                && body.chars().any(|ch| ch.is_ascii_digit())
+                && body.chars().all(|ch| ch.is_ascii_digit() || ch == '.')
+        })
+}
+
+fn contains_measurement_signal(lower: &str) -> bool {
+    const UNITS: &[&str] = &[
+        "%", "ms", "second", "seconds", "minute", "minutes", "hour", "hours", "byte", "bytes",
+        "kb", "mb", "gb",
+    ];
+    lower.chars().any(|ch| ch.is_ascii_digit())
+        && UNITS.iter().any(|unit| {
+            if *unit == "%" {
+                lower.contains('%')
+            } else {
+                company_framing::contains_whole_phrase(lower, unit)
+            }
+        })
+}
+
+fn extract_public_subject(text: &str, companies: &[String]) -> Option<String> {
+    let lower = text.to_ascii_lowercase();
+    if let Some(at) = lower.find("rfc ") {
+        let digits: String = text[at + 4..]
+            .chars()
+            .take_while(|ch| ch.is_ascii_digit())
+            .collect();
+        if !digits.is_empty() {
+            return Some(format!("RFC {digits}"));
+        }
+    }
+    const STOP_CAPS: &[&str] = &[
+        "the",
+        "this",
+        "that",
+        "these",
+        "those",
+        "before",
+        "after",
+        "when",
+        "where",
+        "why",
+        "how",
+        "if",
+        "now",
+        "more",
+        "notice",
+        "here",
+        "for",
+        "in",
+        "at",
+        "on",
+        "to",
+        "with",
+        "by",
+        "as",
+        "and",
+        "or",
+        "but",
+        "we",
+        "you",
+        "your",
+        "our",
+        "its",
+        "step",
+        "section",
+        "module",
+        "lesson",
+        "scenario",
+        "example",
+        "prepare",
+        "preparing",
+        "role",
+        "backend",
+        "engineer",
+    ];
+    let is_company = |phrase: &str| {
+        companies
+            .iter()
+            .any(|company| company_framing::contains_whole_phrase(phrase, company))
+    };
+    let tokens: Vec<&str> = text.split_whitespace().collect();
+    for index in 0..tokens.len() {
+        let clean = |raw: &str| {
+            raw.trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '.')
+        };
+        let word = clean(tokens[index]);
+        let word_lower = word.to_ascii_lowercase();
+        let is_tech_cap = word
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_uppercase())
+            && !STOP_CAPS.contains(&word_lower.as_str())
+            && !is_company(word);
+        if !is_tech_cap {
+            continue;
+        }
+        let mut span = vec![word];
+        for next_raw in tokens.iter().skip(index + 1).take(2) {
+            let next = clean(next_raw);
+            let next_lower = next.to_ascii_lowercase();
+            let cont = next
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_uppercase())
+                && !STOP_CAPS.contains(&next_lower.as_str())
+                && !is_company(next);
+            if cont {
+                span.push(next);
+            } else {
+                break;
+            }
+        }
+        let joined = span.join(" ");
+        if joined.len() >= 2 && !is_company(&joined) {
+            return Some(joined);
+        }
+    }
+    for raw in tokens {
+        let trimmed = raw
+            .trim_matches(|ch: char| ch == '`' || ch == '(' || ch == ')' || ch == ',' || ch == ';');
+        if let Some((pkg, member)) = trimmed.split_once('.') {
+            if !pkg.is_empty()
+                && !member.is_empty()
+                && pkg
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+                && !is_company(pkg)
+            {
+                return Some(pkg.to_owned());
+            }
+        }
+    }
+    None
 }
 
 /// Builds a topic-gap JSON object, preserving any planned keyword queries from

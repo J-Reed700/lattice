@@ -10,7 +10,7 @@ use lattice_core::domain::learning::claim_review::{ClaimLedgerEntry, ClaimState,
 use lattice_core::shared::error::Result;
 use lattice_core::shared::persistence::WriteTx;
 use lattice_core::shared::text::same_text::overlaps;
-use lattice_core::shared::text::segmentation::sentences;
+use lattice_core::shared::text::segmentation::{code_fences, sentences};
 use sqlx::{Row, SqliteConnection};
 use std::collections::{HashMap, HashSet};
 
@@ -21,11 +21,15 @@ struct UnverifiedClaim<'a> {
 }
 
 fn strip_unverified_sentences(body: &str, claims: &[UnverifiedClaim<'_>]) -> String {
-    if claims.is_empty() || body.trim().is_empty() {
+    let fences = code_fences(body);
+    if (claims.is_empty() && fences.is_empty()) || body.trim().is_empty() {
         return body.to_owned();
     }
     let sentence_spans = sentences(body);
     if sentence_spans.is_empty() {
+        if !fences.is_empty() {
+            return String::new();
+        }
         let covered = claims
             .iter()
             .any(|c| c.span.is_some() || quote_matches_sentence(body, c.quote));
@@ -36,25 +40,49 @@ fn strip_unverified_sentences(body: &str, claims: &[UnverifiedClaim<'_>]) -> Str
         };
     }
 
-    let kept: Vec<&str> = sentence_spans
-        .into_iter()
-        .filter_map(|(start, end)| {
-            let text = body.get(start..end)?;
-            let trimmed = text.trim();
-            if trimmed.is_empty() {
-                return None;
-            }
-            let blocked = claims.iter().any(|claim| {
+    let mut out = String::new();
+    let mut prev_end: Option<usize> = None;
+    let mut skipped_since_kept = false;
+    for (start, end) in sentence_spans {
+        let Some(text) = body.get(start..end) else {
+            continue;
+        };
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let in_fence = fences
+            .iter()
+            .any(|fence| overlaps((start, end), (fence.whole().start, fence.whole().end)));
+        let blocked = in_fence
+            || claims.iter().any(|claim| {
                 let span = claim
                     .span
                     .and_then(|s| valid_claim_span(body, s, claim.quote));
                 span.is_some_and(|s| overlaps((start, end), s))
                     || quote_matches_sentence(trimmed, claim.quote)
             });
-            (!blocked).then_some(trimmed)
-        })
-        .collect();
-    kept.join(" ")
+        if blocked {
+            skipped_since_kept = true;
+            continue;
+        }
+        if let Some(last_end) = prev_end {
+            let fence_between = fences
+                .iter()
+                .any(|fence| overlaps((last_end, start), (fence.whole().start, fence.whole().end)));
+            if skipped_since_kept || fence_between {
+                out.push_str("\n\n\n");
+            } else if let Some(between) = body.get(last_end..start) {
+                out.push_str(between);
+            } else {
+                out.push(' ');
+            }
+        }
+        out.push_str(text);
+        prev_end = Some(end);
+        skipped_since_kept = false;
+    }
+    out
 }
 
 /// Filters `learning_blocks` bodies for `lesson_id`, removing every sentence
@@ -81,7 +109,7 @@ fn filter_blocks_with_report(raw: &str, blocks: &[(usize, String)]) -> Option<Ve
                         .collect();
                     strip_unverified_sentences(body, &claims)
                 }
-                None => body.clone(),
+                None => strip_unverified_sentences(body, &[]),
             })
             .collect(),
     )
@@ -119,7 +147,7 @@ async fn verified_block_bodies_inner(
             .iter()
             .map(|(ordinal, body)| match by_block.get(ordinal) {
                 Some(claims) => strip_unverified_sentences(body, claims),
-                None => body.clone(),
+                None => strip_unverified_sentences(body, &[]),
             })
             .collect());
     }
@@ -136,7 +164,10 @@ async fn verified_block_bodies_inner(
         }
     }
 
-    Ok(blocks.iter().map(|(_, body)| body.clone()).collect())
+    Ok(blocks
+        .iter()
+        .map(|(_, body)| strip_unverified_sentences(body, &[]))
+        .collect())
 }
 
 /// Candidate IDs in `program_id` that depend on unverified/`no_source` claims:

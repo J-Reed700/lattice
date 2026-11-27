@@ -264,6 +264,26 @@ pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()>
             "An assessment item has more distractor rationales than options.",
         ));
     }
+    if !candidate.distractor_rationales.is_empty() {
+        let right_has_reason = match &candidate.key {
+            LearningAssessmentKey::Choice(right) => candidate
+                .distractor_rationales
+                .get(*right)
+                .is_some_and(|reason| !reason.trim().is_empty()),
+            LearningAssessmentKey::Choices(rights) => rights.iter().any(|right| {
+                candidate
+                    .distractor_rationales
+                    .get(*right)
+                    .is_some_and(|reason| !reason.trim().is_empty())
+            }),
+            _ => false,
+        };
+        if right_has_reason {
+            return Err(invalid(
+                "An assessment item keeps the right choice's distractor rationale empty.",
+            ));
+        }
+    }
     let no_left = candidate.left.is_empty();
     match (&candidate.format, &candidate.key) {
         (LearningItemFormat::SingleChoice, LearningAssessmentKey::Choice(_)) => {
@@ -377,19 +397,35 @@ pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()>
 }
 
 /// Checks freshly authored quiz items and lesson questions for course/lesson
-/// meta-talk and phantom build/version numbers absent from the item and `quote`.
+/// meta-talk, phantom build/version numbers absent from the item and `quote`,
+/// and ungrounded external company framing when `companies` is non-empty.
 pub(crate) fn authored_content_faults(
     candidate: &LearningAssessmentCandidate,
     quote: &str,
 ) -> Vec<String> {
+    authored_content_faults_for(candidate, quote, &[])
+}
+
+pub(crate) fn authored_content_faults_for(
+    candidate: &LearningAssessmentCandidate,
+    quote: &str,
+    companies: &[String],
+) -> Vec<String> {
     let mut faults = Vec::new();
-    let has_meta_talk = std::iter::once(candidate.prompt.as_str())
-        .chain(candidate.options.iter().map(String::as_str))
-        .chain(candidate.left.iter().map(String::as_str))
-        .chain(std::iter::once(candidate.explanation.as_str()))
-        .chain(candidate.distractor_rationales.iter().map(String::as_str))
-        .any(contains_course_meta_talk);
-    if has_meta_talk {
+    let texts = || {
+        std::iter::once(candidate.prompt.as_str())
+            .chain(candidate.options.iter().map(String::as_str))
+            .chain(candidate.left.iter().map(String::as_str))
+            .chain(std::iter::once(candidate.explanation.as_str()))
+            .chain(candidate.distractor_rationales.iter().map(String::as_str))
+            .chain(
+                candidate
+                    .rubric
+                    .iter()
+                    .flat_map(|c| [c.title.as_str(), c.description.as_str()]),
+            )
+    };
+    if texts().any(contains_course_meta_talk) {
         faults.push(
             "The question or its feedback uses course or lesson meta-talk instead of domain terms."
                 .into(),
@@ -399,6 +435,50 @@ pub(crate) fn authored_content_faults(
         faults.push(format!(
             "The explanation or rationale introduces version {phantom}, which does not appear in the question or its answer."
         ));
+    }
+    if !companies.is_empty() {
+        for text in texts() {
+            for fault in crate::lessons::company_framing::company_framing_faults(text, companies) {
+                if !faults.contains(&fault) {
+                    faults.push(fault);
+                }
+            }
+        }
+    }
+    let scope_sources = (!quote.trim().is_empty()).then_some(quote);
+    let source_slice: &[&str] = match scope_sources {
+        Some(q) => &[q],
+        None => &[],
+    };
+    let right_indices: std::collections::HashSet<usize> = match &candidate.key {
+        LearningAssessmentKey::Choice(idx) => std::iter::once(*idx).collect(),
+        LearningAssessmentKey::Choices(idxs) => idxs.iter().copied().collect(),
+        _ => std::collections::HashSet::new(),
+    };
+    let checked_for_scopes = std::iter::once(candidate.prompt.as_str())
+        .chain(
+            candidate
+                .options
+                .iter()
+                .enumerate()
+                .filter(|(idx, _)| right_indices.contains(idx))
+                .map(|(_, opt)| opt.as_str()),
+        )
+        .chain(candidate.left.iter().map(String::as_str))
+        .chain(std::iter::once(candidate.explanation.as_str()))
+        .chain(candidate.distractor_rationales.iter().map(String::as_str))
+        .chain(
+            candidate
+                .rubric
+                .iter()
+                .flat_map(|c| [c.title.as_str(), c.description.as_str()]),
+        );
+    for text in checked_for_scopes {
+        for fault in crate::lessons::spec_checks::smart_scope_faults(text, source_slice) {
+            if !faults.contains(&fault) {
+                faults.push(fault);
+            }
+        }
     }
     faults
 }

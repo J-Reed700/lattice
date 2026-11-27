@@ -23,6 +23,22 @@ const FLOW: &str = "Sentences were taken out of this lesson section because they
 
 const CONTRAST_ORPHAN: &str = "contrastOrphanRemoval is true because this gap sits in a contrast or paired comparison. If removing the claim left one half of a two-part contrast stranded without its partner (for instance, a contrast lead-in, \"both are\", or \"the first\" with \"the second\" missing), remove those orphaned contrast sentences with edits.sentences.remove rather than rewriting checked claims or inventing replacement facts. Rewriting (replace) any sentence in verifiedSentences remains forbidden.";
 
+const HEADING_ORPHAN: &str = "headingOrphanCheck is true because a Markdown heading sits in or beside a gap left by cuts (listed under headings on that gap). Treat that heading as a section boundary: never write or rewrite text before the heading to introduce what comes after it, and never smooth across it as though it were not there. If cuts left a heading with nothing under it or stripped its intro directly above a bare list, remove the orphaned heading with edits.sentences.remove or add a short non-factual lead-in directly after the heading unit; otherwise leave the heading intact and add no edits across it. Rewriting any sentence in verifiedSentences remains forbidden.";
+
+fn gap_headings_for(section: &Value, gap: &Gap) -> Vec<String> {
+    section
+        .pointer(&format!("/{}", gap.field))
+        .and_then(Value::as_str)
+        .map(|text| {
+            super::headings::gap_headings(text, gap.before.as_deref(), gap.after.as_deref())
+        })
+        .unwrap_or_default()
+}
+
+fn has_heading_gap(section: &Value, gap: &Gap) -> bool {
+    !gap_headings_for(section, gap).is_empty()
+}
+
 const CONTRAST_CUES: &[&str] = &[
     "versus",
     "near-miss",
@@ -200,14 +216,17 @@ impl Contract for FlowRepair {
     type Input = FlowInput;
 }
 
-fn flow_system(contrast_orphan: bool) -> String {
-    let lead = if contrast_orphan {
-        format!("{FLOW} {CONTRAST_ORPHAN}")
-    } else {
-        FLOW.to_owned()
-    };
+fn flow_system(contrast_orphan: bool, heading_orphan: bool) -> String {
+    let mut parts = vec![FLOW];
+    if contrast_orphan {
+        parts.push(CONTRAST_ORPHAN);
+    }
+    if heading_orphan {
+        parts.push(HEADING_ORPHAN);
+    }
     format!(
-        "{lead} {} {} {} {}",
+        "{} {} {} {} {}",
+        parts.join(" "),
         words::SENTENCES,
         words::NO_KEYS,
         words::EDITING,
@@ -289,15 +308,24 @@ fn flow_check(input: &FlowInput, of: usize, fix: &Fix) -> std::result::Result<()
     } else {
         Vec::new()
     };
+    let gap_heading_units: Vec<_> = gap_headings_for(&input.section.0, gap)
+        .into_iter()
+        .filter_map(|line| rows.units_over(&field_pointer, &line).into_iter().next())
+        .collect();
     for unit in &change.remove {
         if contrast_orphan && field_units.contains(&unit.reference) {
+            continue;
+        }
+        if gap_heading_units.contains(&unit.reference) && !verified.contains(&unit.reference) {
             continue;
         }
         refuse_outside_gap(unit, &verified, before, after)?;
     }
     for (anchor, _) in &change.insert {
         if let Anchor::After(unit) = anchor {
-            if Some(unit.reference) != before {
+            let beside_before = Some(unit.reference) == before;
+            let after_gap_heading = gap_heading_units.contains(&unit.reference);
+            if !beside_before && !after_gap_heading {
                 return Err(Refusal(format!(
                     "New text after {} is not between the two sentences beside this gap. Add a sentence only directly after the sentence kept before the gap.",
                     unit.handle.written()
@@ -343,17 +371,30 @@ impl Answered for FlowRepair {
                 let beside = |sentence: &Option<String>| {
                     sentence.as_deref().and_then(|text| label(&gap.field, text))
                 };
-                json!({
+                let headings: Vec<String> = gap_headings_for(&input.section.0, gap)
+                    .into_iter()
+                    .filter_map(|line| label(&gap.field, &line))
+                    .collect();
+                let mut entry = json!({
                     "gap": handle.written(),
                     "field": gap.field,
                     "before": beside(&gap.before),
                     "after": beside(&gap.after),
-                })
+                });
+                if !headings.is_empty() {
+                    if let Some(object) = entry.as_object_mut() {
+                        object.insert("headings".into(), json!(headings));
+                    }
+                }
+                entry
             })
             .collect();
         let contrast_orphan = places
             .iter()
             .any(|(_, place)| has_contrast_gap(&input.section.0, place.gap.value()));
+        let heading_orphan = places
+            .iter()
+            .any(|(_, place)| has_heading_gap(&input.section.0, place.gap.value()));
         let verified: Vec<String> = input
             .verified
             .value()
@@ -367,7 +408,15 @@ impl Answered for FlowRepair {
                 object.insert("contrastOrphanRemoval".into(), json!(true));
             }
         }
-        let mut says = Says::new(flow_system(contrast_orphan), task.to_string());
+        if heading_orphan {
+            if let Some(object) = task.as_object_mut() {
+                object.insert("headingOrphanCheck".into(), json!(true));
+            }
+        }
+        let mut says = Says::new(
+            flow_system(contrast_orphan, heading_orphan),
+            task.to_string(),
+        );
         says.output_tokens = input.output_tokens;
         Ok(says)
     }
@@ -501,6 +550,16 @@ pub(super) async fn mend_section(
         }
         rows = trial;
     }
-    let repaired = rows.value().pointer(&part).cloned();
+    let mut repaired = rows.value().pointer(&part).cloned();
+    if let Some(Value::Object(ref mut fields)) = repaired {
+        for key in ["body", "prompt", "explain"] {
+            if let Some(Value::String(text)) = fields.get_mut(key) {
+                let cleaned = super::headings::prune_empty_headings(text);
+                if cleaned != *text && !cleaned.trim().is_empty() {
+                    *text = cleaned;
+                }
+            }
+        }
+    }
     Ok(repaired.filter(|repaired| repaired != section))
 }

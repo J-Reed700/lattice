@@ -659,3 +659,120 @@ fn candidate_with(
         distractor_rationales: rationales,
     }
 }
+
+#[test]
+fn right_choice_rationale_is_cleared_by_read_options_and_rejected_by_validation() {
+    let need = single_choice();
+    let held = passage("Firing", FIRING);
+    let mut item_json = kiln_choice(ASKED, &[0], &["u1"]);
+    item_json["options"][0]["reason"] = json!("Should never appear on the right answer.");
+    let raw = one_item(&[&held], &item_json);
+    let built = to_candidate(raw, &need, &[&held]).unwrap();
+    let LearningAssessmentKey::Choice(right_idx) = built.candidate.key else {
+        panic!("expected choice key");
+    };
+    assert_eq!(built.candidate.distractor_rationales[right_idx], "");
+
+    let invalid_right_reason = candidate_with(
+        LearningItemFormat::SingleChoice,
+        "Which option matches?",
+        "Alpha matches.",
+        vec![
+            "Non-empty right rationale.".into(),
+            "Wrong because B.".into(),
+            "Wrong because C.".into(),
+            "Wrong because D.".into(),
+        ],
+    );
+    let err = engine::validate_candidate(&invalid_right_reason)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("right choice's distractor rationale empty"),
+        "{err}"
+    );
+}
+
+#[test]
+fn authored_content_faults_for_catches_ungrounded_companies_and_invalid_smart_scopes() {
+    let company_faults = engine::checks::authored_content_faults_for(
+        &candidate_with(
+            LearningItemFormat::SingleChoice,
+            "Which capability would system/Binary.w permit Documo to do?",
+            "Documo\u{2019}s delivery service writes files.",
+            vec![
+                String::new(),
+                "system/DocumentReference.r allows reading, while .w allows writing.".into(),
+                "Wrong.".into(),
+                "Wrong.".into(),
+            ],
+        ),
+        "SMART v2 uses .c for create.",
+        &["Documo".to_owned()],
+    );
+    assert!(
+        company_faults.iter().any(|f| f.contains("Documo")),
+        "{company_faults:?}"
+    );
+    assert!(
+        company_faults.iter().any(|f| f.contains("system/Binary.w")),
+        "{company_faults:?}"
+    );
+
+    let distractor_ok = engine::checks::authored_content_faults_for(
+        &LearningAssessmentCandidate {
+            id: "id".into(),
+            outcome_ids: vec!["o".into()],
+            format: LearningItemFormat::SingleChoice,
+            difficulty: 2,
+            prompt: "Which SMART v2 scope requests create access on Binary?".into(),
+            options: vec![
+                "system/Binary.c".into(),
+                "system/Binary.w".into(),
+                "system/Binary.r".into(),
+                "system/Binary.d".into(),
+            ],
+            left: vec![],
+            source_version_ids: vec![],
+            rubric: vec![],
+            key: LearningAssessmentKey::Choice(0),
+            explanation: "SMART v2 uses .c for create; .w does not exist.".into(),
+            distractor_rationales: vec![
+                String::new(),
+                "system/Binary.w does not exist in SMART v2.".into(),
+                "system/Binary.r requests read access.".into(),
+                "system/Binary.d requests delete access.".into(),
+            ],
+        },
+        "SMART v2 uses .c for create.",
+        &["Documo".to_owned()],
+    );
+    assert!(distractor_ok.is_empty(), "{distractor_ok:?}");
+}
+
+#[test]
+fn single_passage_quote_picks_contiguous_verbatim_slice_and_rejects_disjoint_short_jumps() {
+    let need = single_choice();
+    let body = "First long sentence about pre-heating kiln trays safely.\n\n\nSecond short. Third sentence explains cooling delays before glazing.";
+    let held = passage("Firing", body);
+    // Citing u1 + u3 across the `\n\n\n` stripped-fence boundary picks the longest contiguous verbatim run.
+    let raw = one_item(&[&held], &kiln_choice(ASKED, &[0], &["u1", "u3"]));
+    let built = to_candidate(raw, &need, &[&held]).unwrap();
+    assert_eq!(
+        built.source_quote,
+        "First long sentence about pre-heating kiln trays safely."
+    );
+    assert!(crate::grade_rationale::verbatim(body, &built.source_quote));
+
+    // When all cited parts are short disjoint fragments separated by `\n\n\n`, refuse concatenation.
+    let disjoint = passage("Firing", "Too short.\n\n\nAlso brief.\n\n\nThird tiny.");
+    let bad_raw = one_item(&[&disjoint], &kiln_choice(ASKED, &[0], &["u1", "u3"]));
+    let err = to_candidate(bad_raw, &need, &[&disjoint]).unwrap_err();
+    assert!(
+        err.faults
+            .iter()
+            .any(|f| f.contains("consecutive prose sentences")),
+        "{:?}",
+        err.faults
+    );
+}

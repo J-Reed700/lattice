@@ -3,6 +3,7 @@
 mod block_kinds;
 pub(crate) mod call_plan;
 pub mod claim_reviews;
+pub mod company_framing;
 pub mod content_verification;
 mod copied_wording;
 #[cfg(test)]
@@ -26,6 +27,7 @@ mod rows_tests;
 #[cfg(test)]
 mod sentence_identity_tests;
 pub(crate) mod shape;
+pub mod spec_checks;
 pub(crate) mod structured_call;
 pub mod teaching;
 pub mod teaching_review;

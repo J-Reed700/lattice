@@ -283,15 +283,88 @@ impl Narrowed {
     }
 }
 
+fn touches_other_failed(
+    rows: &Rows,
+    part: &str,
+    input: &Input,
+    id: &str,
+    own: &[UnitRef],
+    edits: &rows::Edits,
+) -> bool {
+    let mut other_failed: BTreeSet<UnitRef> = BTreeSet::new();
+    for item in &input.items {
+        if item.id == id {
+            continue;
+        }
+        for unit in units_of(rows, part, item.targets.value()) {
+            if !own.contains(&unit) {
+                other_failed.insert(unit);
+            }
+        }
+    }
+    if other_failed.is_empty() {
+        return false;
+    }
+    let change = edits.sentences.change();
+    change
+        .replace
+        .iter()
+        .any(|(at, _)| other_failed.contains(&at.reference))
+        || change
+            .remove
+            .iter()
+            .any(|unit| other_failed.contains(&unit.reference))
+        || change
+            .moved
+            .iter()
+            .any(|(unit, _)| other_failed.contains(&unit.reference))
+        || edits
+            .cite
+            .iter()
+            .any(|cite| other_failed.contains(&cite.sentence.reference))
+        || edits.recite.iter().any(|recite| {
+            rows.covered_by(&recite.citation.reference)
+                .into_iter()
+                .any(|unit| other_failed.contains(&unit))
+        })
+        || edits.uncite.iter().any(|citation| {
+            rows.covered_by(&citation.reference)
+                .into_iter()
+                .any(|unit| other_failed.contains(&unit))
+        })
+        || edits
+            .keys
+            .iter()
+            .any(|key| other_failed.contains(&key.right.reference))
+}
+
 /// Why the entry for the failed sentence `id` is refused, when it is.
 fn check(input: &Input, id: &str, correction: &Correction) -> std::result::Result<(), Refusal> {
     let Some(item) = input.items.iter().find(|item| item.id == id) else {
         return Ok(());
     };
+    let mut rows = Rows::of_part(input.lesson.value(), input.part.value());
+    let own = units_of(&rows, input.part.value(), item.targets.value());
     if correction.edits.is_empty() {
+        if !own.is_empty() {
+            return Err(Refusal(format!(
+                "Your entry for {id} made no edits to its failed sentence; edit or remove only that sentence."
+            )));
+        }
         return Ok(());
     }
-    let mut rows = Rows::of_part(input.lesson.value(), input.part.value());
+    if touches_other_failed(
+        &rows,
+        input.part.value(),
+        input,
+        id,
+        &own,
+        &correction.edits,
+    ) {
+        return Err(Refusal(format!(
+            "Your edits for {id} also change another failed claim's sentence; put each failed claim's edits under its own entry id."
+        )));
+    }
     let narrowed = narrowed(&rows, input.part.value(), item, &correction.edits);
     let Some(remaining) = narrowed.remaining().filter(|_| narrowed.put_back.is_none()) else {
         return Ok(());

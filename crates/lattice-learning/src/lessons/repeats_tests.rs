@@ -41,4 +41,10 @@ fn consecutive_repeats_catch_short_duplicates_and_stutters_in_prose_and_list_ite
         "**Client assertion lifetimes**\n\nClient assertion lifetimes remain short."
     )
     .is_empty());
+
+    let dup_fallback = consecutive_repeats(
+        "If the EHR rejects system/Binary.c, fall back to standard documentation guidance. If the EHR rejects system/Binary.w, fall back to standard documentation guidance.",
+    );
+    assert_eq!(dup_fallback.len(), 1);
+    assert!(dup_fallback[0].prefix_stutter);
 }

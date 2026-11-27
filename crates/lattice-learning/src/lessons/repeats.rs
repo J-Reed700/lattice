@@ -245,6 +245,20 @@ fn classify_consecutive(prev: &str, next: &str) -> Option<ConsecutiveRepeat> {
             });
         }
     }
+    if prev_words.len() == next_words.len() && prev_words.len() >= 7 {
+        let mismatches = prev_words
+            .iter()
+            .zip(&next_words)
+            .filter(|(left, right)| left != right)
+            .count();
+        if mismatches == 1 {
+            return Some(ConsecutiveRepeat {
+                first: prev.to_owned(),
+                second: next.to_owned(),
+                prefix_stutter: true,
+            });
+        }
+    }
     None
 }
 

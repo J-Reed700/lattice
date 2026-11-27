@@ -23,6 +23,7 @@ use lattice_core::domain::learning::claim_review::ClaimId;
 use std::collections::{BTreeMap, BTreeSet};
 
 mod flow_repair;
+pub(in crate::lessons::content_verification) mod headings;
 mod units;
 
 use flow_repair::mend_section;

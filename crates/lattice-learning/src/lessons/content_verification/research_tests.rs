@@ -2045,3 +2045,104 @@ async fn expand_forwards_trust_gap_metadata_and_falls_back_to_alternatives() -> 
     )
     .await
 }
+
+#[tokio::test]
+async fn expand_filters_scenario_local_gaps_populates_bare_metadata_and_chunks_large_rounds(
+) -> Result<()> {
+    let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
+    let mut program = crate::tests::fixture();
+    program.summary.status = crate::dto::LearningProgramStatus::Active;
+    program.summary.goal =
+        "Prepare for an integrations engineering role at Documo building SMART Backend Services connectors.".into();
+    repo.create(&program).await?;
+    let sources = repo.verification_sources(&program.summary.id).await?;
+    let references = ReferenceCollection::lexical(&sources)?;
+
+    let mut findings: Vec<Finding> = vec![
+        Finding {
+            statement: "Documo\u{2019}s delivery service runs in the background on Kubernetes."
+                .into(),
+            quote: "Documo\u{2019}s delivery service runs in the background on Kubernetes.".into(),
+            ..gap()
+        },
+        Finding {
+            statement: "We receive a fax from a lab and push it to the clinic's local queue."
+                .into(),
+            quote: "We receive a fax from a lab and push it to the clinic's local queue.".into(),
+            ..gap()
+        },
+    ];
+    for idx in 0..10 {
+        let stmt =
+            format!("Under RFC 7523, client_assertion parameter #{idx} must pass validation.");
+        findings.push(Finding {
+            quote: stmt.clone(),
+            statement: stmt,
+            ..gap()
+        });
+    }
+    // Duplicate of item 0 should also be deduplicated before batching.
+    findings.push(Finding {
+        quote: findings[2].statement.clone(),
+        statement: findings[2].statement.clone(),
+        ..gap()
+    });
+
+    let llm = ScriptedModel {
+        outputs: Mutex::new(
+            [
+                crate::references::web_research::needs_answer(json!([
+                    {"gap": 0, "query": "RFC 7523 client_assertion parameter 0", "kind": "standard"}
+                ]))
+                .to_string(),
+                crate::references::web_research::needs_answer(json!([
+                    {"gap": 1, "query": "RFC 7523 client_assertion parameter 9", "kind": "standard"}
+                ]))
+                .to_string(),
+                selection(&[0]),
+                selection(&[0]),
+            ]
+            .into(),
+        ),
+        prompts: Mutex::new(vec![]),
+    };
+
+    let rfc_url = "https://www.rfc-editor.org/rfc/rfc7523";
+    let web = web_capture(false, rfc_url, CAPTURE);
+
+    run(
+        db,
+        program.summary.id,
+        program.summary.goal,
+        Some(web),
+        async {
+            let _expanded =
+                expand(&llm, &references, &findings, &[], &ClaimChecks::default()).await?;
+            let prompts = llm.prompts.lock().unwrap();
+            let batches: Vec<Vec<Value>> = prompts
+                .iter()
+                .filter_map(|prompt| {
+                    prompt.rsplit("\n\n").find_map(|chunk| {
+                        serde_json::from_str::<Value>(chunk)
+                            .ok()
+                            .and_then(|v| v.get("gaps").and_then(Value::as_array).cloned())
+                    })
+                })
+                .collect();
+            assert_eq!(batches.len(), 2, "10 technical claims batch into 8 + 2");
+            assert_eq!(batches[0].len(), 8);
+            assert_eq!(batches[1].len(), 2);
+            for item in batches.iter().flatten() {
+                assert_eq!(item["kind"], json!("specification"));
+                assert_eq!(item["subject"], json!("RFC 7523"));
+                let claim = item["claim"].as_str().unwrap();
+                assert!(!claim.contains("Documo"));
+                assert!(!claim.contains("clinic's local queue"));
+            }
+            Ok(())
+        },
+    )
+    .await
+}

@@ -357,7 +357,7 @@ async fn repair_sections(
                     reasoning: Some(ReasonFirst {
                         kind: CallKind::Authoring,
                         subject: "the section correction",
-                        brief: "Review each failed statement and the allowed references, choose the exact unit ids to edit or drop without touching verified claims or editing any unit twice, and write out the corrected wording.",
+                        brief: "Review each failed statement and the allowed references, choose the exact unit ids to edit or drop without touching verified claims or editing any unit twice, and draft one separate entry per failed claim entry id (never combine multiple failed entries into one).",
                     }),
                 },
                 &mut Scope::for_question(),

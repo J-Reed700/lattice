@@ -587,6 +587,86 @@ fn choice_findings(
     found
 }
 
+/// Checks lesson section titles and bodies for ungrounded proprietary claims
+/// about external companies named in the learner's goal (`Finding D.5`).
+pub(crate) fn company_framing_findings(lesson: &Value, companies: &[String]) -> Vec<ReviewFinding> {
+    if companies.is_empty() {
+        return Vec::new();
+    }
+    let Some(blocks) = lesson.get("blocks").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut findings = Vec::new();
+    for (index, block) in blocks.iter().enumerate() {
+        let site = FindingSite::Section(index);
+        for field in ["title", "body"] {
+            let value = text(block, field);
+            for fault in crate::lessons::company_framing::company_framing_faults(value, companies) {
+                findings.push(
+                    ReviewFinding::rule_about(
+                        Rule::Uncited,
+                        FindingKind::Teaching,
+                        site,
+                        value,
+                        format!("{} ({}): {fault}", site.note_label(), field),
+                    )
+                    .with_summary(format!(
+                        "{} presents unverified company internals as facts instead of a proposed scenario.",
+                        site.label()
+                    ))
+                    .with_passage(value),
+                );
+            }
+        }
+    }
+    findings
+}
+
+/// Checks lesson blocks for internal specification/code consistency defects
+/// (invalid SMART `.w`/`.rw` permissions, undeclared TypeScript injections,
+/// `refreshToken` naming on `client_credentials`, and expiry buffer drift).
+pub(crate) fn spec_consistency_findings(
+    lesson: &Value,
+    sources_text: &[&str],
+) -> Vec<ReviewFinding> {
+    let Some(blocks) = lesson.get("blocks").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut findings = Vec::new();
+    for (index, fault) in
+        crate::lessons::spec_checks::block_consistency_faults(lesson, sources_text)
+    {
+        if let Some(block) = blocks.get(index) {
+            let body = text(block, "body");
+            if text(block, "kind") == "check" && fault.contains("invalid SMART FHIR scope") {
+                if let Some((_, reveal)) = split_check(body) {
+                    if crate::lessons::spec_checks::smart_scope_faults(reveal, sources_text)
+                        .is_empty()
+                    {
+                        continue;
+                    }
+                }
+            }
+            let site = FindingSite::Section(index);
+            findings.push(
+                ReviewFinding::rule_about(
+                    Rule::Uncited,
+                    FindingKind::Teaching,
+                    site,
+                    &fault,
+                    format!("{}: {fault}", site.note_label()),
+                )
+                .with_summary(format!(
+                    "{} has a specification or code consistency issue.",
+                    site.label()
+                ))
+                .with_passage(body),
+            );
+        }
+    }
+    findings
+}
+
 #[cfg(test)]
 #[path = "lesson_rules_tests.rs"]
 mod tests;

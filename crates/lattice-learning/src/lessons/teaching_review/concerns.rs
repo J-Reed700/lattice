@@ -80,7 +80,7 @@ impl LessonConcern {
     /// What the reviewer is asked about this concern.
     pub(crate) fn asks(self) -> &'static str {
         match self {
-            Self::WorkedExample => "A worked example does not follow from its stated premises to its stated result: work it through yourself, inspecting its stated conditions, quantities, procedure and claimed result.",
+            Self::WorkedExample => "A worked example does not follow from its stated premises to its stated result: work it through yourself, inspecting its stated conditions, quantities, procedure, imports, library APIs, expiry/timing constants, protocol naming (never calling a client_credentials fetch a token refresh when no refresh tokens exist) and step cross-references.",
             Self::Exercise => "An exercise cannot be done as written, or its rubric does not evaluate the work it asks for: solve it yourself.",
             Self::AnswerGivenAway => "A check gives its answer away above its 'Check your thinking' line, which reveals the answer below it by design, or guided practice leaks its answer.",
             Self::CheckAnswer => "A check's answer, or its reasoning below its 'Check your thinking' line, is wrong.",

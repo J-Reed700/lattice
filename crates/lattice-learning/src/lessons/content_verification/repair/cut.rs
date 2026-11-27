@@ -6,7 +6,7 @@
 use super::super::claim_ledger::{field_pointer, field_text, ClaimLedger, CutOf};
 use super::super::repair_work::{withdraw, withdraw_resolved};
 use super::super::sections::{
-    answer_lost, gap_around_code, gaps, left_with_too_little, restore_units, unit_label,
+    answer_lost, gap_around_code, gaps, headings, left_with_too_little, restore_units, unit_label,
     unpublishable,
 };
 use super::super::*;
@@ -74,9 +74,7 @@ fn has_blank_line(separator: &str) -> bool {
 }
 
 fn is_heading(line: &str) -> bool {
-    let trimmed = line.trim_start();
-    let hashes = trimmed.bytes().take_while(|&b| b == b'#').count();
-    (1..=6).contains(&hashes) && trimmed.as_bytes().get(hashes) == Some(&b' ')
+    headings::heading_level(line).is_some()
 }
 
 fn is_rule(line: &str) -> bool {
@@ -165,7 +163,12 @@ fn sentence(text: &str, quote: &str) -> Cut {
         between = Some(separator);
     }
     out.push_str(text.get(text.trim_end().len()..).unwrap_or_default());
-    Cut::Done(out)
+    let cleaned = headings::prune_empty_headings(&out);
+    if cleaned.trim().is_empty() {
+        Cut::Refused
+    } else {
+        Cut::Done(cleaned)
+    }
 }
 
 /// What cutting `quote` out of `text` takes, in the first place it occurs
@@ -221,10 +224,11 @@ fn fence(text: &str, code: &str) -> Cut {
     } else {
         format!("{before}{after}")
     };
-    if left.trim().is_empty() {
+    let cleaned = headings::prune_empty_headings(&left);
+    if cleaned.trim().is_empty() {
         Cut::Refused
     } else {
-        Cut::Done(left)
+        Cut::Done(cleaned)
     }
 }
 

@@ -1130,3 +1130,32 @@ fn consecutive_duplicates_and_prefix_stutters_in_prose_and_lists_are_findings() 
         Some("Write the acknowledgement you expect back, and inspect MSA-2.")
     );
 }
+
+#[test]
+fn company_framing_and_spec_consistency_findings_flag_ungrounded_claims_and_bad_scopes() {
+    let mut candidate = lesson();
+    candidate["blocks"][0]["body"] = json!(
+        "Documo\u{2019}s PostgreSQL database stores tenant keys. Request system/Binary.w for upload."
+    );
+    candidate["blocks"][1]["body"] = json!(
+        "```typescript\nimport { Injectable } from '@nestjs/common';\n@Injectable()\nexport class TokenSvc {\n  constructor(private readonly cfg: ConfigService) {}\n}\n```"
+    );
+
+    let company_issues = company_framing_findings(&candidate, &["Documo".to_owned()]);
+    assert_eq!(company_issues.len(), 1, "{company_issues:?}");
+    assert_eq!(company_issues[0].place().site, FindingSite::Section(0));
+
+    let spec_issues = spec_consistency_findings(&candidate, &[]);
+    assert!(
+        spec_issues.iter().any(
+            |f| f.place().site == FindingSite::Section(0) && f.note.contains("system/Binary.w")
+        ),
+        "{spec_issues:?}"
+    );
+    assert!(
+        spec_issues
+            .iter()
+            .any(|f| f.place().site == FindingSite::Section(1) && f.note.contains("ConfigService")),
+        "{spec_issues:?}"
+    );
+}

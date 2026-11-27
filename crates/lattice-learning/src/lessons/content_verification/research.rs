@@ -1,6 +1,7 @@
 //! Supplement pinned evidence when a lesson's claim checks expose gaps, or
 //! when no saved reference covers a lesson topic before it is written.
 use super::*;
+use crate::lessons::company_framing;
 use crate::lessons::trace::{self, Stage};
 use crate::model_call;
 use crate::references::{admission, web_research};
@@ -22,7 +23,9 @@ const RESEARCH_KEYS: Protocol = lattice_core::protocol!("research", 1);
 mod gaps;
 mod query;
 mod saving;
-use gaps::{claim_gap as claim_gap_value, select_need_candidates, topic_gap};
+use gaps::{
+    claim_gap as claim_gap_value, is_scenario_local_gap, select_need_candidates, topic_gap,
+};
 pub(super) use query::select_noted;
 pub use query::select_references;
 #[cfg(test)]
@@ -185,10 +188,28 @@ pub(super) async fn expand<'a>(
     // searches that failed and the pages that could not be read are part of
     // what researching a claim costs.
     let started = Instant::now();
+    let companies =
+        company_framing::ungrounded_companies(&[context.topic.as_str()], &references.sources);
+    let mut seen_statements: HashSet<String> = HashSet::new();
     let looked_for: Vec<Finding> = findings
         .iter()
         .enumerate()
-        .filter(|(index, f)| f.wants_research() || hints.iter().any(|(at, _)| at == index))
+        .filter(|(index, f)| {
+            let hinted = hints.iter().any(|(at, _)| at == index);
+            hinted || (f.wants_research() && !is_scenario_local_gap(f, &companies))
+        })
+        .filter(|(index, f)| {
+            if hints.iter().any(|(at, _)| at == index) {
+                return true;
+            }
+            let normalized = f
+                .statement
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_ascii_lowercase();
+            seen_statements.insert(normalized)
+        })
         .map(|(_, f)| f.clone())
         .collect();
     let gaps: Vec<_> = looked_for
@@ -199,7 +220,7 @@ pub(super) async fn expand<'a>(
             } else {
                 HINTED
             };
-            claim_gap_value(f, missing, &references.sources)
+            claim_gap_value(f, missing, &references.sources, &context.topic, &companies)
         })
         .collect();
     if gaps.is_empty() {
@@ -235,6 +256,54 @@ pub(super) async fn expand<'a>(
     evidence_selection::record_research_scope(&expanded, &looked_for, &searched.chosen, checks)
         .await?;
     Ok(Expansion::Saved(Box::new(expanded), searched).timed(started.elapsed().checked_div(claims)))
+}
+
+/// Maximum number of claim gaps sent in a single planner request so large
+/// `no_source` rounds do not truncate output budgets or collapse to empty plans.
+const CLAIM_GAP_BATCH: usize = 8;
+
+async fn plan_needs_batched(
+    llm: &dyn LLMPort,
+    topic: &str,
+    kind: Gaps,
+    gaps: &[Value],
+    catalog: Value,
+    already_searched: &[String],
+) -> Result<Vec<web_research::GapNeed>> {
+    if kind != Gaps::Claims || gaps.len() <= CLAIM_GAP_BATCH {
+        return web_research::plan_needs(llm, topic, gaps, catalog, already_searched).await;
+    }
+    let mut searched = already_searched.to_vec();
+    let mut combined = Vec::new();
+    let mut any_ok = false;
+    let mut last_held_error: Option<AppError> = None;
+    for (batch_idx, chunk) in gaps.chunks(CLAIM_GAP_BATCH).enumerate() {
+        let offset = batch_idx * CLAIM_GAP_BATCH;
+        match web_research::plan_needs(llm, topic, chunk, catalog.clone(), &searched).await {
+            Ok(planned) => {
+                any_ok = true;
+                for mut item in planned {
+                    let query = item.need.line();
+                    if !searched.contains(&query) {
+                        searched.push(query);
+                    }
+                    item.gap += offset;
+                    combined.push(item);
+                }
+            }
+            Err(error) if leaves_held(&error) => {
+                tracing::warn!(%error, batch = batch_idx + 1, "Claim research batch gave no usable plan; continuing remaining batches");
+                last_held_error = Some(error);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    if !any_ok {
+        if let Some(error) = last_held_error {
+            return Err(error);
+        }
+    }
+    Ok(combined)
 }
 
 /// Whether a failed research round only leaves its gaps open: its answer
@@ -391,9 +460,10 @@ async fn research<'a>(
         .iter()
         .cloned()
         .collect();
-    let planned = web_research::plan_needs(
+    let planned = plan_needs_batched(
         llm,
         &context.topic,
+        kind,
         gaps,
         references.catalog(llm),
         &already_searched,

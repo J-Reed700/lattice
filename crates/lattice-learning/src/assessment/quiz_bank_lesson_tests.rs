@@ -1162,3 +1162,82 @@ async fn unverified_material_checks_span_quotes_unlinked_bank_items_and_partial_
     tx2.commit().await?;
     Ok(())
 }
+
+#[tokio::test]
+async fn lesson_material_strips_code_fences_and_preserves_verbatim_contiguous_runs() -> Result<()> {
+    use lattice_core::domain::learning::claim_review::{
+        Actor, ClaimEvent, ClaimId, ClaimLocation, EventProvenance, UnitKind, UnverifiedReason,
+    };
+    let pool = crate::tests::pool().await?;
+    let db = Database::new(pool);
+    let (published, _) = published(&db).await?;
+    let lesson_id = &published.lesson_id;
+
+    let verified_a = "First verified sentence explains token discovery clearly.";
+    let verified_b = "Second verified sentence explains client_assertion expiration.";
+    let unverified_mid = "Unverified middle claim missing a source.";
+    let verified_c = "Third verified sentence covers bearer authorization headers.";
+    let raw_body = format!(
+        "{verified_a}\n\n```typescript\nasync function demo() {{\n  return true;\n}}\n```\n\n{verified_b} {unverified_mid} {verified_c}"
+    );
+    let mut tx = db.begin_write().await?;
+    sqlx::query("UPDATE learning_blocks SET body=? WHERE lesson_id=? AND ordinal=0")
+        .bind(&raw_body)
+        .bind(lesson_id)
+        .execute(&mut *tx)
+        .await?;
+    let prov = EventProvenance {
+        actor: Actor::System,
+        model: Some("test-model".into()),
+        run_id: Some("run-1".into()),
+        timestamp_ms: 1_700_000_000_000,
+    };
+    crate::lessons::claim_reviews::repository::append_for_test_in(
+        &mut tx,
+        lesson_id,
+        &ClaimId("c-mid".into()),
+        prov.clone(),
+        ClaimEvent::Extracted {
+            location: ClaimLocation::locate(
+                0,
+                UnitKind::Block,
+                "body",
+                unverified_mid,
+                unverified_mid,
+            ),
+            statement: unverified_mid.into(),
+        },
+    )
+    .await?;
+    crate::lessons::claim_reviews::repository::append_for_test_in(
+        &mut tx,
+        lesson_id,
+        &ClaimId("c-mid".into()),
+        prov,
+        ClaimEvent::PublishedUnverified {
+            reason: UnverifiedReason::NoSource,
+        },
+    )
+    .await?;
+    tx.commit().await?;
+
+    let mut read = db.begin_read().await?;
+    let material = LearningAssessmentRepository::lesson_material_in(&mut read, lesson_id).await?;
+    read.commit().await?;
+    let text = &material[0].text;
+    assert!(!text.contains("```"), "{text}");
+    assert!(!text.contains("return true;"), "{text}");
+    assert!(!text.contains(unverified_mid), "{text}");
+    assert!(
+        text.contains(&format!("{verified_a}\n\n\n{verified_b}")),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!("{verified_b}\n\n\n{verified_c}")),
+        "{text}"
+    );
+    assert!(crate::grade_rationale::verbatim(&raw_body, verified_a));
+    assert!(crate::grade_rationale::verbatim(&raw_body, verified_b));
+    assert!(crate::grade_rationale::verbatim(&raw_body, verified_c));
+    Ok(())
+}

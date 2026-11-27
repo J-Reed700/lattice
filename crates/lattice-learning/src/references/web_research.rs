@@ -492,7 +492,7 @@ impl Answered for ReferenceNeeds {
             format!("{PLAN_SYSTEM} {NEED_GUIDE} {UNSET_FIELD} Return the searches as items."),
             task,
         );
-        says.output_tokens = 1200;
+        says.output_tokens = (input.gaps.len().saturating_mul(600)).clamp(1200, 4800);
         Ok(says)
     }
 

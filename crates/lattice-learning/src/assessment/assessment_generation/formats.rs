@@ -220,9 +220,11 @@ fn read_options(fields: &mut Fields<'_, '_>, raw: &mut RawItem) -> Option<()> {
     for (at, option) in fields.list::<Choice>("options")?.into_iter().enumerate() {
         if option.verdict == Mark::Right {
             raw.right.push(at);
+            raw.distractor_rationales.push(String::new());
+        } else {
+            raw.distractor_rationales.push(option.reason);
         }
         raw.options.push(option.text);
-        raw.distractor_rationales.push(option.reason);
     }
     Some(())
 }
@@ -531,7 +533,79 @@ fn quoted<'a>(
     if homes.is_empty() {
         return Err("The item's quote cites no sentence of the supplied passages.".into());
     }
+    if homes.len() == 1 {
+        if let Some((passage, units)) = sentences.iter().find(|(p, _)| std::ptr::eq(*p, homes[0])) {
+            return Ok((homes, single_passage_quote(passage, units, cited)?));
+        }
+    }
     Ok((homes, said.join(" ")))
+}
+
+fn single_passage_quote(
+    passage: &MaterialPassage,
+    units: &Units,
+    cited: &[Picked<Unit>],
+) -> std::result::Result<String, String> {
+    let spans = units.spans();
+    let mut picks: Vec<(usize, std::ops::Range<usize>)> = cited
+        .iter()
+        .filter_map(|cite| {
+            spans
+                .iter()
+                .enumerate()
+                .find(|(_, (unit, _))| *unit == cite.reference)
+                .map(|(index, (_, range))| (index, range.clone()))
+        })
+        .collect();
+    picks.sort_by_key(|(index, _)| *index);
+    picks.dedup_by_key(|(index, _)| *index);
+
+    let mut runs: Vec<String> = Vec::new();
+    let mut run_range: Option<(usize, std::ops::Range<usize>)> = None;
+    for (index, range) in picks {
+        match &mut run_range {
+            Some((last_idx, current))
+                if index == *last_idx + 1
+                    && !passage
+                        .text
+                        .get(current.end..range.start)
+                        .is_some_and(|gap| gap.contains("\n\n\n")) =>
+            {
+                *last_idx = index;
+                current.end = range.end;
+            }
+            Some((_, current)) => {
+                if let Some(slice) = passage.text.get(current.start..current.end) {
+                    let trimmed = slice.trim();
+                    if !trimmed.is_empty() {
+                        runs.push(trimmed.to_owned());
+                    }
+                }
+                run_range = Some((index, range));
+            }
+            None => run_range = Some((index, range)),
+        }
+    }
+    if let Some((_, current)) = run_range {
+        if let Some(slice) = passage.text.get(current.start..current.end) {
+            let trimmed = slice.trim();
+            if !trimmed.is_empty() {
+                runs.push(trimmed.to_owned());
+            }
+        }
+    }
+
+    if let Some(best) = runs
+        .iter()
+        .filter(|run| long_enough_quote(run))
+        .max_by_key(|run| run.len())
+    {
+        return Ok(best.clone());
+    }
+    if runs.len() == 1 {
+        return Ok(runs.into_iter().next().unwrap_or_default());
+    }
+    Err("The item's quote must cite consecutive prose sentences from a single continuous stretch without skipping intermediate sentences or code blocks.".into())
 }
 
 /// Turn one model item into a validated candidate, or say every fault it has.
@@ -539,6 +613,15 @@ pub(super) fn to_candidate(
     raw: RawItem,
     need: &AuthoringNeed,
     passages: &[&MaterialPassage],
+) -> std::result::Result<AuthoredItem, Unbuilt> {
+    to_candidate_for(raw, need, passages, &[])
+}
+
+pub(super) fn to_candidate_for(
+    raw: RawItem,
+    need: &AuthoringNeed,
+    passages: &[&MaterialPassage],
+    companies: &[String],
 ) -> std::result::Result<AuthoredItem, Unbuilt> {
     let prompt = raw.prompt.trim().to_string();
     let said = raw.options.clone();
@@ -566,7 +649,9 @@ pub(super) fn to_candidate(
         }
     };
     faults.extend(engine::checks::item_faults(&candidate));
-    faults.extend(engine::checks::authored_content_faults(&candidate, &quote));
+    faults.extend(engine::checks::authored_content_faults_for(
+        &candidate, &quote, companies,
+    ));
     if let (true, Err(error)) = (faults.is_empty(), engine::validate_candidate(&candidate)) {
         faults.push(error.to_string());
     }

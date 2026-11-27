@@ -232,7 +232,34 @@ impl Subject for LessonSubject<'_> {
 
     async fn find(&mut self, llm: &dyn LLMPort, pass: &Pass<'_>) -> Result<Found> {
         let review_prompt = review_prompt(pass, LESSON_PRIORITY, self.reference_versions());
-        let structure = structural_findings(pass.schema, pass.candidate, &self.wording)?;
+        let goal = pass
+            .authoring
+            .get("programGoal")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let prior = pass
+            .authoring
+            .get("priorKnowledge")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let companies = crate::lessons::company_framing::ungrounded_companies(
+            &[goal, prior],
+            &self.references.sources,
+        );
+        let mut structure = structural_findings(pass.schema, pass.candidate, &self.wording)?;
+        structure.extend(crate::generation::company_framing_findings(
+            pass.value, &companies,
+        ));
+        let source_texts: Vec<&str> = self
+            .references
+            .sources
+            .iter()
+            .map(|source| source.excerpt.as_str())
+            .collect();
+        structure.extend(crate::generation::spec_consistency_findings(
+            pass.value,
+            &source_texts,
+        ));
         // A rewrite of the whole lesson changes the sentences its checked
         // claims stand on, so once there are any, what only a rewrite can
         // answer waits for the user (claim classes design §3.10).
@@ -246,10 +273,11 @@ impl Subject for LessonSubject<'_> {
         self.held_up = blocking;
         let issues = if !blocking {
             self.step(Step::CheckingKeys);
-            let question_issues = crate::question_review::check(
+            let question_issues = crate::question_review::check_for(
                 llm,
                 pass.value,
                 crate::question_review::Outcome::of_lesson(pass.authoring),
+                &companies,
             )
             .await?;
             let round = self.standing.round(pass.value);

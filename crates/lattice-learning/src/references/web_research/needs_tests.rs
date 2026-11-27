@@ -251,3 +251,28 @@ async fn no_item_written_means_no_research_is_needed() -> Result<()> {
     assert!(planned.is_empty());
     Ok(())
 }
+
+#[tokio::test]
+async fn output_tokens_scales_with_gap_count_up_to_4800_and_keeps_1200_floor() -> Result<()> {
+    let observed = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = observed.clone();
+    let model = ScriptedModel::new().on_request::<ReferenceNeeds>(move |sent, _| {
+        seen.lock()
+            .unwrap()
+            .push(sent.request.max_output_tokens().unwrap_or_default());
+        reply(needs_answer(json!([])).to_string())
+    });
+
+    plan_needs(&model, "harbour", &gaps(), json!([]), &[]).await?;
+    let eight: Vec<_> = (0..8)
+        .map(|idx| json!({"claim": format!("Spec rule {idx} uses JWT.")}))
+        .collect();
+    plan_needs(&model, "oauth", &eight, json!([]), &[]).await?;
+    let twelve: Vec<_> = (0..12)
+        .map(|idx| json!({"claim": format!("Spec rule {idx} uses JWT.")}))
+        .collect();
+    plan_needs(&model, "oauth", &twelve, json!([]), &[]).await?;
+
+    assert_eq!(*observed.lock().unwrap(), vec![1200, 4800, 4800]);
+    Ok(())
+}

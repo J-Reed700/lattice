@@ -1775,7 +1775,10 @@ async fn a_correction_that_also_removes_another_failed_sentence_leaves_that_sent
     let merging = json!({"edits":[
         {"path":"/blocks/0/body","before":format!("{ALPHA} {BETA}"),"after":ALPHA_AND_BETA},
     ]});
-    let llm = recording(vec![merging.to_string()]);
+    let unchanged_beta = json!({"edits":[
+        {"path":"/blocks/0/body","before":BETA,"after":BETA},
+    ]});
+    let llm = recording(vec![merging.to_string(), unchanged_beta.to_string()]);
     let mut ledger = rewriting(&llm, &body, &[("alpha", ALPHA), ("beta", BETA)]).await?;
     let context = context_of(
         &body,
@@ -1896,5 +1899,78 @@ async fn section_repair_shows_surrounding_lesson_context_and_forbids_contradicti
     // Immediate neighbor (unit 2) and non-adjacent contrast block (unit 3) both surface context.
     assert_eq!(sections[2]["context"], unrelated_practice);
     assert_eq!(sections[3]["context"], contrast);
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_entry_with_empty_edits_is_refused_and_asked_again_alone() -> Result<()> {
+    let body = format!("{FIRST_OLD} {STEADY}");
+    let empty = json!({"entries":[{"of":"f1","edits":{"sentences":{"replace":[],"insert":[],"remove":[],"move":[]},"cite":[],"recite":[],"uncite":[],"keys":[]}}]});
+    let fixed = json!({"edits":[{"path":"/blocks/0/body","before":FIRST_OLD,"after":FIRST_NEW}]});
+    let llm = recording(vec![empty.to_string(), fixed.to_string()]);
+    let mut ledger = rewriting(&llm, &body, &[("a", FIRST_OLD)]).await?;
+    let context = context_of(&body, vec![failed_row("a", FIRST_OLD, &[])], Vec::new());
+
+    let after = repaired(&llm, &mut ledger, (context, schema()), 4_000).await?;
+
+    assert_eq!(after["blocks"][0]["body"], format!("{FIRST_NEW} {STEADY}"));
+    assert!(rejections(ledger.entry(&ClaimId("a".into())).unwrap()).is_empty());
+    let sent = llm.sent.lock().unwrap().clone();
+    assert_eq!(sent.len(), 2);
+    let second = messages(&sent[1]);
+    assert!(second
+        .iter()
+        .any(|(_, text)| text.contains("made no edits to its failed sentence")));
+    Ok(())
+}
+
+#[tokio::test]
+async fn bundling_other_failed_claims_into_one_entry_is_refused_and_reasked_separately(
+) -> Result<()> {
+    let body = format!("{FIRST_OLD} {STEADY} {THIRD_OLD}");
+    // Simulates Step 2 dumping both failed edits into f1 while leaving f2 empty.
+    let bundled = json!({"entries":[
+        {"of":"f1","edits":{
+            "sentences":{
+                "replace":[
+                    {"at":"u1","with":{"text":FIRST_NEW,"from":[]}},
+                    {"at":"u3","with":{"text":THIRD_NEW,"from":[]}}
+                ],
+                "insert":[],"remove":[],"move":[]
+            },
+            "cite":[],"recite":[],"uncite":[],"keys":[]
+        }},
+        {"of":"f2","edits":{
+            "sentences":{"replace":[],"insert":[],"remove":[],"move":[]},
+            "cite":[],"recite":[],"uncite":[],"keys":[]
+        }}
+    ]});
+    let only_first =
+        json!({"edits":[{"path":"/blocks/0/body","before":FIRST_OLD,"after":FIRST_NEW}]});
+    let only_third =
+        json!({"edits":[{"path":"/blocks/0/body","before":THIRD_OLD,"after":THIRD_NEW}]});
+    let llm = recording(vec![
+        bundled.to_string(),
+        only_first.to_string(),
+        only_third.to_string(),
+    ]);
+    let mut ledger = rewriting(&llm, &body, &[("a", FIRST_OLD), ("c", THIRD_OLD)]).await?;
+    let context = context_of(
+        &body,
+        vec![
+            failed_row("a", FIRST_OLD, &[]),
+            failed_row("c", THIRD_OLD, &[]),
+        ],
+        Vec::new(),
+    );
+
+    let after = repaired(&llm, &mut ledger, (context, schema()), 4_000).await?;
+
+    assert_eq!(
+        after["blocks"][0]["body"],
+        format!("{FIRST_NEW} {STEADY} {THIRD_NEW}")
+    );
+    assert!(rejections(ledger.entry(&ClaimId("a".into())).unwrap()).is_empty());
+    assert!(rejections(ledger.entry(&ClaimId("c".into())).unwrap()).is_empty());
     Ok(())
 }
