@@ -403,9 +403,7 @@ impl<'a> ReferenceCollection<'a> {
                     .map_or(top_score, |hit| hit.passage.score);
                 (top_score * TOP_SCORE_RATIO).max(anchor_score * ANCHOR_SCORE_RATIO)
             });
-            let below_floor = ranked
-                .last()
-                .is_some_and(|hit| hit.passage.score < floor);
+            let below_floor = ranked.last().is_some_and(|hit| hit.passage.score < floor);
             let mut passages: Vec<ReferencePassage> = ranked
                 .into_iter()
                 .take_while(|hit| hit.passage.score >= floor)
