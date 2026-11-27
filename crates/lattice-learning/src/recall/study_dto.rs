@@ -24,9 +24,9 @@ impl StudyCardFormat {
         match raw {
             "multiple_choice" => Ok(Self::MultipleChoice),
             "question_answer" => Ok(Self::QuestionAnswer),
-            other => Err(lattice_core::shared::error::AppError::InvalidState(format!(
-                "Invalid study card format: {other}"
-            ))),
+            other => Err(lattice_core::shared::error::AppError::InvalidState(
+                format!("Invalid study card format: {other}"),
+            )),
         }
     }
 }

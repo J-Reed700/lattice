@@ -6,7 +6,7 @@ use super::super::shape::{PerItem, Settled, Shape, Why};
 use super::super::shown::{Kind, Picked, Scope};
 use super::super::{tagged, ContractCall};
 use super::diagnostics::{ask_alone, trace};
-use super::fitting::{fitted, fits, render};
+use super::fitting::{fits, fitted, render};
 use super::{handle_of, written, Answered, Refusal, Statement, Transport};
 use crate::application::ports::llm_port::{Finish, LLMPort};
 use crate::application::services::grounded_generation::CallOptions;

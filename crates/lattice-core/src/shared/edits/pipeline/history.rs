@@ -83,7 +83,7 @@ fn field_changes(ops: &[EditOp], inverse: &[EditOp]) -> Vec<FieldChange> {
     changes
 }
 
-pub(super) async fn history(
+pub(in crate::shared::edits) async fn history(
     unit: &mut Reading<'_>,
     registry: &EditRegistry,
     content: &ContentRef,
@@ -139,7 +139,7 @@ pub(super) async fn history(
     })
 }
 
-pub(super) async fn list(
+pub(in crate::shared::edits) async fn list(
     unit: &mut Reading<'_>,
     query: &ContentEditQuery,
 ) -> Result<Vec<ContentEditSummary>> {
@@ -161,7 +161,7 @@ pub(super) async fn list(
         .collect())
 }
 
-pub(super) async fn newest(
+pub(in crate::shared::edits) async fn newest(
     unit: &mut Reading<'_>,
     registry: &EditRegistry,
     contents: &[ContentRef],
@@ -199,7 +199,7 @@ pub(super) async fn newest(
     Ok(found)
 }
 
-pub(super) async fn edited_paths(
+pub(in crate::shared::edits) async fn edited_paths(
     unit: &mut Reading<'_>,
     registry: &EditRegistry,
     content: &ContentRef,
@@ -212,7 +212,7 @@ pub(super) async fn edited_paths(
     edited_paths_at(unit, content, &rev).await
 }
 
-pub(super) async fn marks(
+pub(in crate::shared::edits) async fn marks(
     unit: &mut Reading<'_>,
     registry: &EditRegistry,
     contents: &[ContentRef],
@@ -232,7 +232,7 @@ pub(super) async fn marks(
     Ok(out)
 }
 
-pub(super) async fn moved(
+pub(in crate::shared::edits) async fn moved(
     unit: &mut Reading<'_>,
     registry: &EditRegistry,
     marks: &[ReadMark],

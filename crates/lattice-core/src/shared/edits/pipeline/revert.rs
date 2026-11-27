@@ -11,12 +11,10 @@ use super::super::revision::revision_of;
 use super::super::rules::form_problems;
 use super::super::store::{self, NewEditRow, StoredEditRow};
 use super::super::types::{
-    Consequence, ContentEditOutcome, ContentRef, EditOrigin, Editability,
-    RevertContentEditRequest, Uncommitted,
+    Consequence, ContentEditOutcome, ContentRef, EditOrigin, Editability, RevertContentEditRequest,
+    Uncommitted,
 };
-use super::{
-    now_ms, push_unique, request_digest, require_kind, CONFLICT_MESSAGE, MISSING_ENTITY,
-};
+use super::{now_ms, push_unique, request_digest, require_kind, CONFLICT_MESSAGE, MISSING_ENTITY};
 use crate::shared::error::{AppError, Result};
 use crate::shared::persistence::WriteTx;
 
@@ -95,11 +93,7 @@ async fn revert_one(
 ) -> Result<()> {
     let reverted_receipts =
         store::receipts_for_edit(&mut tx.reading(), &step.target_row.id).await?;
-    let (after, new_inverse) = apply_ops(
-        &state.doc,
-        &ctx.loaded.form,
-        &step.target_row.inverse,
-    )?;
+    let (after, new_inverse) = apply_ops(&state.doc, &ctx.loaded.form, &step.target_row.inverse)?;
     let mut problems = form_problems(&ctx.loaded.form, &after);
     problems.extend(
         ctx.kind
@@ -195,7 +189,7 @@ async fn revert_one(
     Ok(())
 }
 
-pub(super) async fn revert_in(
+pub(in crate::shared::edits) async fn revert_in(
     tx: &mut WriteTx,
     registry: &EditRegistry,
     app_version: &str,

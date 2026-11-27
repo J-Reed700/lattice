@@ -8,23 +8,35 @@ use super::super::{Authored, Count, Held, Schema, STATEMENTS};
 use super::satisfiable::{field_satisfiable, form_satisfiable, shown_written};
 use super::{Among, Field, Form, Showing};
 
-pub(super) fn value_schema<V: Authored>(showing: &Showing<'_>, pointers: Held) -> Option<Schema> {
+pub(in crate::application::services::model_contract::shape) fn value_schema<V: Authored>(
+    showing: &Showing<'_>,
+    pointers: Held,
+) -> Option<Schema> {
     Some(made(form_object(&V::form(), showing, pointers)))
 }
 
-pub(super) fn pick_schema<K: Kind>(showing: &Showing<'_>, pointers: Held) -> Option<Schema> {
+pub(in crate::application::services::model_contract::shape) fn pick_schema<K: Kind>(
+    showing: &Showing<'_>,
+    pointers: Held,
+) -> Option<Schema> {
     let pick = point_schema(K::PREFIX, Among::Shown, &["none"], showing, pointers);
     Some(made(closed(vec![("pick".to_owned(), pick)])))
 }
 
-pub(super) fn pick_some_schema<K: Kind>(showing: &Showing<'_>, pointers: Held) -> Option<Schema> {
+pub(in crate::application::services::model_contract::shape) fn pick_some_schema<K: Kind>(
+    showing: &Showing<'_>,
+    pointers: Held,
+) -> Option<Schema> {
     Some(made(closed(vec![(
         "picks".to_owned(),
         handles_schema(K::PREFIX, showing, pointers),
     )])))
 }
 
-pub(super) fn new_schema<V: Authored>(showing: &Showing<'_>, pointers: Held) -> Option<Schema> {
+pub(in crate::application::services::model_contract::shape) fn new_schema<V: Authored>(
+    showing: &Showing<'_>,
+    pointers: Held,
+) -> Option<Schema> {
     let items = array(form_object(&V::form(), showing, pointers));
     let items = asked_length(items, &STATEMENTS, showing, pointers);
     Some(made(closed(vec![("items".to_owned(), items)])))
@@ -49,7 +61,7 @@ fn asked_length(mut list: Value, count: &Count, showing: &Showing<'_>, held: Hel
     list
 }
 
-pub(super) fn each_schema<K: Kind, V: Authored>(
+pub(in crate::application::services::model_contract::shape) fn each_schema<K: Kind, V: Authored>(
     showing: &Showing<'_>,
     pointers: Held,
 ) -> Option<Schema> {
@@ -59,7 +71,10 @@ pub(super) fn each_schema<K: Kind, V: Authored>(
     )])))
 }
 
-pub(super) fn flagged_schema<K: Kind, V: Authored>(
+pub(in crate::application::services::model_contract::shape) fn flagged_schema<
+    K: Kind,
+    V: Authored,
+>(
     showing: &Showing<'_>,
     pointers: Held,
 ) -> Option<Schema> {
@@ -69,7 +84,10 @@ pub(super) fn flagged_schema<K: Kind, V: Authored>(
     )])))
 }
 
-pub(super) fn change_schema<K: Kind, W: Content>(
+pub(in crate::application::services::model_contract::shape) fn change_schema<
+    K: Kind,
+    W: Content,
+>(
     showing: &Showing<'_>,
     pointers: Held,
 ) -> Option<Schema> {

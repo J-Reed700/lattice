@@ -233,7 +233,7 @@ impl<K: Kind, C: Kind> KeepsReader<'_, '_, K, C> {
     }
 }
 
-pub(super) fn read_keeps<K: Kind, C: Kind>(
+pub(in crate::application::services::model_contract::shape) fn read_keeps<K: Kind, C: Kind>(
     written: &Written<'_>,
     showing: &Showing<'_>,
 ) -> Rows<K, Vec<Picked<C>>> {

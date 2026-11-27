@@ -1,5 +1,7 @@
 use lattice_core::application::services::model_contract::shown::{Drawn, Kind, Shown};
-use lattice_core::application::services::model_contract::units::{Grain, Quoted, Texts, UnitRef, Units};
+use lattice_core::application::services::model_contract::units::{
+    Grain, Quoted, Texts, UnitRef, Units,
+};
 use lattice_core::shared::text::same_text;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

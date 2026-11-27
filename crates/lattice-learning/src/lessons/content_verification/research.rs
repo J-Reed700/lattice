@@ -22,11 +22,11 @@ mod gaps;
 mod query;
 mod saving;
 use gaps::{claim_gap as claim_gap_value, select_need_candidates, topic_gap};
-pub use query::select_references;
 pub(super) use query::select_noted;
-pub(crate) use query::{selection_cost, selection_room, Hit, Input, Keep, ResearchQuery};
+pub use query::select_references;
 #[cfg(test)]
 use query::SELECT_SYSTEM;
+pub(crate) use query::{selection_cost, selection_room, Hit, Input, Keep, ResearchQuery};
 use saving::Saving;
 
 #[derive(Clone)]

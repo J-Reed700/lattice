@@ -16,11 +16,11 @@ mod recall;
 mod submission;
 mod unverified;
 
-pub use bank::{BankItem, CandidateReviewStatus};
 pub(crate) use bank::{
     candidate_review_status_in, content_hash, insert_bank_items_in, quoted_questions_in,
     set_candidate_review_status_in,
 };
+pub use bank::{BankItem, CandidateReviewStatus};
 pub use contests::{ContestInput, Regrade};
 pub use submission::ItemGrade;
 pub(crate) use unverified::{sync_disputed_questions_in, unverified_question_indices};

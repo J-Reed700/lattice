@@ -1,10 +1,6 @@
-use lattice_core::application::services::model_contract::ask::{
-    Alone, Answered, Refusal, Says,
-};
+use lattice_core::application::services::model_contract::ask::{Alone, Answered, Refusal, Says};
 use lattice_core::application::services::model_contract::packed::Packed;
-use lattice_core::application::services::model_contract::shape::{
-    self, Authored, Fields, Form,
-};
+use lattice_core::application::services::model_contract::shape::{self, Authored, Fields, Form};
 use lattice_core::application::services::model_contract::shown::{Internal, Picked, Showing, Told};
 use lattice_core::application::services::model_contract::units::{Grain, Unit, Units};
 use lattice_core::application::services::model_contract::{Contract, ContractId};

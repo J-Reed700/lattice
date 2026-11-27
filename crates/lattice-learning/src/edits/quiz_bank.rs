@@ -114,7 +114,8 @@ impl EditReactor for QuizBankReactor {
                 return Ok(Reaction::default());
             };
             let prior_status = CandidateReviewStatus::parse(prior)?;
-            let current = candidate_review_status_in(&mut tx.reading(), &change.content.key).await?;
+            let current =
+                candidate_review_status_in(&mut tx.reading(), &change.content.key).await?;
             set_candidate_review_status_in(tx, &change.content.key, prior_status).await?;
             return Ok(Reaction {
                 receipt: current.map(|status| json!({ "priorReviewStatus": status.as_str() })),
@@ -126,12 +127,8 @@ impl EditReactor for QuizBankReactor {
 
         let current = candidate_review_status_in(&mut tx.reading(), &change.content.key).await?;
         let receipt = if current == Some(CandidateReviewStatus::Dropped) {
-            set_candidate_review_status_in(
-                tx,
-                &change.content.key,
-                CandidateReviewStatus::Agreed,
-            )
-            .await?;
+            set_candidate_review_status_in(tx, &change.content.key, CandidateReviewStatus::Agreed)
+                .await?;
             Some(json!({ "priorReviewStatus": CandidateReviewStatus::Dropped.as_str() }))
         } else {
             None

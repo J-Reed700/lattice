@@ -2,14 +2,10 @@ use super::super::*;
 use super::confine::Protected;
 use crate::lessons::copied_wording::Wording;
 use crate::lessons::rows::{self, Held, Left, Quotes, Rows};
-use lattice_core::application::services::model_contract::ask::{
-    Alone, Answered, Refusal, Says,
-};
+use lattice_core::application::services::model_contract::ask::{Alone, Answered, Refusal, Says};
 use lattice_core::application::services::model_contract::edit::{consistent, Anchor, Change};
 use lattice_core::application::services::model_contract::packed::Packed;
-use lattice_core::application::services::model_contract::shape::{
-    Authored, Each, Fields, Form,
-};
+use lattice_core::application::services::model_contract::shape::{Authored, Each, Fields, Form};
 use lattice_core::application::services::model_contract::shown::{
     Drawn, Internal, Kind, Picked, Showing, Told,
 };
@@ -19,14 +15,14 @@ use std::collections::BTreeSet;
 
 /// One failed claim as the model reads it, and the places of its evidence passages among the section's.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct Claim {
+pub(in crate::lessons::content_verification) struct Claim {
     pub(super) row: Told<Value>,
     pub(super) evidence: Internal<Vec<usize>>,
 }
 
 /// The failed claims that stand on one sentence of the section, or one failed example: what an entry answers once.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct Failed {
+pub(in crate::lessons::content_verification) struct Failed {
     pub(super) id: String,
     pub(super) claims: Vec<Claim>,
     pub(super) ids: Internal<Vec<String>>,
@@ -73,7 +69,7 @@ impl Failed {
 
 /// An evidence passage a failed claim was checked against.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct Passage {
+pub(in crate::lessons::content_verification) struct Passage {
     pub(super) id: String,
     pub(super) title: Option<Told<String>>,
     pub(super) text: Told<String>,
@@ -98,7 +94,7 @@ impl Passage {
     }
 }
 
-pub(super) struct SectionRepair;
+pub(in crate::lessons::content_verification) struct SectionRepair;
 
 impl Contract for SectionRepair {
     const ID: ContractId = ContractId::new("section-repair");
@@ -106,7 +102,7 @@ impl Contract for SectionRepair {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct Input {
+pub(in crate::lessons::content_verification) struct Input {
     /// The writer's prompt.
     pub(super) requirements: Told<Value>,
     /// The kind and title of each block of the lesson.
@@ -130,7 +126,7 @@ pub(super) struct Input {
 
 /// What the model answers for one failed sentence.
 #[derive(Debug, Clone, PartialEq)]
-pub(super) struct Correction {
+pub(in crate::lessons::content_verification) struct Correction {
     pub(super) edits: rows::Edits,
 }
 

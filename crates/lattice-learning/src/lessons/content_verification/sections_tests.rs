@@ -1474,15 +1474,22 @@ async fn an_orphaned_half_contrast_can_remove_its_verified_partner_while_keeping
         if earlier == 0 {
             let mismatch = label(task, BODY, "The first is a claim mismatch.");
             let mut edits = replacing(&mismatch, "Wrong edit.");
-            edits["sentences"]["remove"] =
-                json!([label(task, BODY, "Near-miss one: declared versus observed.")]);
+            edits["sentences"]["remove"] = json!([label(
+                task,
+                BODY,
+                "Near-miss one: declared versus observed."
+            )]);
             return vec![entry(&gap_id, edits)];
         }
         let mut edits = no_edits();
         edits["sentences"]["remove"] = json!([
             label(task, BODY, "Near-miss one: declared versus observed."),
             label(task, BODY, "In one reported thread, an RTF payload failed."),
-            label(task, BODY, "The same thread shows a PDF part rejected with 400."),
+            label(
+                task,
+                BODY,
+                "The same thread shows a PDF part rejected with 400."
+            ),
             label(task, BODY, "Both are failures after a send."),
             label(task, BODY, "The first is a claim mismatch."),
         ]);
@@ -1499,7 +1506,10 @@ async fn an_orphaned_half_contrast_can_remove_its_verified_partner_while_keeping
     .await?
     .unwrap();
 
-    assert_eq!(repaired["body"], "Near-miss two: keep valid behavior clear.");
+    assert_eq!(
+        repaired["body"],
+        "Near-miss two: keep valid behavior clear."
+    );
     let sent = flow_structured(&llm);
     assert_eq!(sent.len(), 2);
     assert!(flow_prompt(&sent[0]).contains("contrastOrphanRemoval"));

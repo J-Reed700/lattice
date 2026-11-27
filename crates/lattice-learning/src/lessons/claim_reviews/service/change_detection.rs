@@ -14,7 +14,10 @@ impl ClaimReviewService {
 
     /// `changed_since_stop` over a loaded ledger. A different checker counts
     /// even when the user has not acted on a claim card.
-    pub(in crate::lessons::claim_reviews) async fn changed_in(&self, ledger: &Ledger) -> Result<bool> {
+    pub(in crate::lessons::claim_reviews) async fn changed_in(
+        &self,
+        ledger: &Ledger,
+    ) -> Result<bool> {
         let Some(review) = &ledger.review else {
             return Ok(false);
         };

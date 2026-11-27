@@ -64,8 +64,7 @@ fn supports_native_thinking_respects_model_policy_and_user_override() -> Result<
     let model_off = client_with(ThinkingPolicy::AlwaysOff, ThinkingOverrideDto::Auto)?;
     assert!(!model_off.supports_native_thinking());
 
-    let user_on_over_model_off =
-        client_with(ThinkingPolicy::AlwaysOff, ThinkingOverrideDto::On)?;
+    let user_on_over_model_off = client_with(ThinkingPolicy::AlwaysOff, ThinkingOverrideDto::On)?;
     assert!(user_on_over_model_off.supports_native_thinking());
 
     let non_thinking = client_for(

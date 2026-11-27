@@ -45,7 +45,9 @@ fn strip_unverified_sentences(body: &str, claims: &[UnverifiedClaim<'_>]) -> Str
                 return None;
             }
             let blocked = claims.iter().any(|claim| {
-                let span = claim.span.and_then(|s| valid_claim_span(body, s, claim.quote));
+                let span = claim
+                    .span
+                    .and_then(|s| valid_claim_span(body, s, claim.quote));
                 span.is_some_and(|s| overlaps((start, end), s))
                     || quote_matches_sentence(trimmed, claim.quote)
             });

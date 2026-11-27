@@ -43,8 +43,8 @@ mod settle;
 
 pub use change_detection::changed_since;
 pub use note_removal::NoteSentencesRemoved;
-pub(super) use refusals::user_resolution;
 pub(super) use refusals::add_kinds;
+pub(super) use refusals::user_resolution;
 use refusals::{action_kind, batch_refusal, not_now, plain, provenance};
 pub(super) use section_edit::{endings, record_edit, EditRecord, Ending};
 pub(super) use settle::settle_planned_in;

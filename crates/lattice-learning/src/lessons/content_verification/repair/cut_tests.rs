@@ -225,7 +225,11 @@ fn a_wrapped_list_item_keeps_its_marker_while_blank_lines_and_new_blocks_clear_i
         Some("# Heading")
     );
     assert_eq!(
-        done(sentence("3. Only sentence.\n> Quote line.", "Only sentence.")).as_deref(),
+        done(sentence(
+            "3. Only sentence.\n> Quote line.",
+            "Only sentence."
+        ))
+        .as_deref(),
         Some("> Quote line.")
     );
 }

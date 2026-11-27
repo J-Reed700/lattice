@@ -26,9 +26,9 @@ mod flow_repair;
 mod units;
 
 use flow_repair::mend_section;
+pub(super) use flow_repair::{gap_around_code, gaps};
 #[cfg(test)]
 use flow_repair::{FlowInput, FlowRepair, Place};
-pub(super) use flow_repair::{gap_around_code, gaps};
 #[cfg(test)]
 use units::too_little;
 pub(super) use units::{left_with_too_little, restore_units, unit_label};

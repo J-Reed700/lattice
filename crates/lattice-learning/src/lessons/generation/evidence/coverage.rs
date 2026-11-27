@@ -229,7 +229,7 @@ struct SavedTopic {
 /// Ask which passages cover each topic, for the passages `lists` names per
 /// topic. A topic the answer leaves unsettled is `None`: not judged, which is
 /// neither covered nor uncovered.
-pub(super) async fn judge(
+pub(in crate::lessons::generation) async fn judge(
     llm: &dyn LLMPort,
     topics: &[Topic],
     store: &[ReferencePassage],

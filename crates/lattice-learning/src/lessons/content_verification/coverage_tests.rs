@@ -254,8 +254,8 @@ fn the_fidelity_schema_bounds_no_text_but_a_blank() {
 
 #[test]
 fn the_fidelity_schema_accepts_only_a_sentence_of_the_passage() {
-    let judge = jsonschema::JSONSchema::compile(&fidelity_schema(&["a-sentence-0".to_owned()]))
-        .unwrap();
+    let judge =
+        jsonschema::JSONSchema::compile(&fidelity_schema(&["a-sentence-0".to_owned()])).unwrap();
     assert!(judge.is_valid(&json!({"missingAssertions":[],"reason":"Represented."})));
     assert!(judge.is_valid(&json!({"missingAssertions":[{"sentenceId":"a-sentence-0","statement":"A fact."}],"reason":"Absent."})));
     assert!(!judge.is_valid(&json!({"missingAssertions":[{"sentenceId":"b-sentence-0","statement":"A fact."}],"reason":"Absent."})));
@@ -287,7 +287,8 @@ async fn proposed_omissions_are_replaced_by_the_judges_own_list() {
         "p0-sentence-0",
         &["An unsupported assertion."],
     )]);
-    let unit = json!({"index":0,"passages":[{"id":"p0","text":"An unsupported assertion."}],"claims":[]});
+    let unit =
+        json!({"index":0,"passages":[{"id":"p0","text":"An unsupported assertion."}],"claims":[]});
     let checked = check_fidelity(&model, &unit, None).await.unwrap();
     assert!(!checked.complete);
     assert_eq!(

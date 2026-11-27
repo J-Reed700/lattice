@@ -165,7 +165,10 @@ pub(super) async fn job_scopes(
         .collect())
 }
 
-pub(in super::super) fn learning_job(job: JobRecord, scope: JobScope) -> Result<LearningGenerationJob> {
+pub(in super::super) fn learning_job(
+    job: JobRecord,
+    scope: JobScope,
+) -> Result<LearningGenerationJob> {
     use LearningGenerationJobStatus as S;
     let kind = match job.kind.as_str() {
         LESSON_PREPARATION => LearningGenerationJobKind::LessonPreparation,

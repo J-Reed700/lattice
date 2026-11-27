@@ -33,11 +33,11 @@ mod candidates;
 mod contract;
 mod spans;
 
+use candidates::{apply, candidates_for, citation};
 pub use candidates::{cited_count, item_count};
 #[cfg(test)]
 use candidates::{declined_key, fields, strip, Candidate, Pending};
 pub(crate) use candidates::{is_verified, receipt_key, source_hashes, strip_unmatched};
-use candidates::{apply, candidates_for, citation};
 #[cfg(test)]
 use contract::Choice;
 pub(crate) use contract::{Input, Item, ItemKind, OutlineLinking, Passage};

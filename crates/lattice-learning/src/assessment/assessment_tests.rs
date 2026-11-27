@@ -1955,7 +1955,7 @@ fn a_lesson_question_is_seeded_with_its_reasons_in_the_writers_order() {
     for _ in 0..30 {
         let seeded = crate::quiz_bank_jobs::lesson_seed_items(&id(), &id(), &questions, &keys);
         assert_eq!(seeded.len(), 1);
-        assert_eq!(seeded[0].review_status, "agreed");
+        assert_eq!(seeded[0].review_status, CandidateReviewStatus::Agreed);
         let candidate = LearningAssessmentCandidate::from(seeded[0].item.clone());
         assert_eq!(candidate.options, questions[0].options);
         assert_eq!(candidate.distractor_rationales, keys[0].rationales);
@@ -2037,19 +2037,34 @@ fn a_lesson_question_that_cannot_be_asked_is_stored_dropped_in_its_place() {
         })
         .unzip();
     let seeded = crate::quiz_bank_jobs::lesson_seed_items(&id(), &id(), &questions, &keys);
-    let seen: Vec<(&str, &str)> = seeded
+    let seen: Vec<(&str, CandidateReviewStatus)> = seeded
         .iter()
         .map(|item| (item.item.prompt.as_str(), item.review_status))
         .collect();
     assert_eq!(
         seen,
         [
-            ("Which layer holds most weather?", "agreed"),
-            ("  ", "dropped"),
-            ("Which of these is named first?", "dropped"),
-            ("Which of these is named second?", "dropped"),
-            ("Which of these is named third?", "dropped"),
-            ("Which of these is named last?", "agreed"),
+            (
+                "Which layer holds most weather?",
+                CandidateReviewStatus::Agreed
+            ),
+            ("  ", CandidateReviewStatus::Dropped),
+            (
+                "Which of these is named first?",
+                CandidateReviewStatus::Dropped
+            ),
+            (
+                "Which of these is named second?",
+                CandidateReviewStatus::Dropped
+            ),
+            (
+                "Which of these is named third?",
+                CandidateReviewStatus::Dropped
+            ),
+            (
+                "Which of these is named last?",
+                CandidateReviewStatus::Agreed
+            ),
         ]
     );
 }
@@ -2284,9 +2299,7 @@ async fn form_in_populates_item_source_citations_and_hydrates_criterion_rational
         .expect("hydrated rationale support");
     assert_eq!(crit_support.relation, RelationDto::Quotes);
     assert_eq!(
-        crit_support.anchors[0]
-            .span
-            .map(|s| (s.start, s.end)),
+        crit_support.anchors[0].span.map(|s| (s.start, s.end)),
         Some((prefix.len(), prefix.len() + quote.len()))
     );
     Ok(())

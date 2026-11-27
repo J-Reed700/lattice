@@ -26,9 +26,9 @@ mod draft;
 #[cfg(test)]
 mod scripted;
 
-use draft::quotes_of;
 #[cfg(test)]
 use draft::question;
+use draft::quotes_of;
 #[cfg(test)]
 pub(crate) use scripted::scripted_lesson;
 

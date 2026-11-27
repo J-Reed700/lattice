@@ -1,7 +1,7 @@
 //! Cancellation, retry, and review-continuation actions for generation jobs.
 
-use super::queries::{job_scope, preparable_in};
 use super::super::{curriculum_operation, validate_operation_id, LearningCurriculumRepository};
+use super::queries::{job_scope, preparable_in};
 use crate::curriculum::LearningGenerationJob;
 use crate::persistence::hash;
 use crate::plan_dto::LearningGenerationJobActionRequestDto;

@@ -798,19 +798,27 @@ fn inserted_and_moved_list_items_keep_line_breaks_while_inline_sentences_join_wi
     );
 
     // Inserting a bullet at Anchor::Start before a prose paragraph keeps a newline.
-    let before_prose = edited("Intro sentence. Next sentence.", Grain::Sentence, |_, change| {
-        change
-            .insert
-            .push((Anchor::Start, "- Lead item.".to_owned()));
-    });
+    let before_prose = edited(
+        "Intro sentence. Next sentence.",
+        Grain::Sentence,
+        |_, change| {
+            change
+                .insert
+                .push((Anchor::Start, "- Lead item.".to_owned()));
+        },
+    );
     assert_eq!(before_prose, "- Lead item.\nIntro sentence. Next sentence.");
 
     // Inserting a continuation sentence after a list item keeps inline space join.
-    let inline_follow = edited("- First item.\n- Second item.", Grain::Sentence, |u, change| {
-        change
-            .insert
-            .push((after(&u[0]), "Clarifying detail.".to_owned()));
-    });
+    let inline_follow = edited(
+        "- First item.\n- Second item.",
+        Grain::Sentence,
+        |u, change| {
+            change
+                .insert
+                .push((after(&u[0]), "Clarifying detail.".to_owned()));
+        },
+    );
     assert_eq!(
         inline_follow,
         "- First item. Clarifying detail.\n- Second item."

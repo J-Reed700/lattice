@@ -151,7 +151,10 @@ impl Events {
     }
 
     pub(super) fn observe(&self, observer: Observer) {
-        *self.observer.write().unwrap_or_else(PoisonError::into_inner) = Some(observer);
+        *self
+            .observer
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = Some(observer);
     }
 
     pub(super) async fn publish(&self, id: &str) {

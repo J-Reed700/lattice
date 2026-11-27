@@ -48,8 +48,8 @@ pub(crate) async fn card_row(
     let options: Vec<String> = serde_json::from_str(row.get("options_json"))
         .map_err(|error| AppError::InvalidState(format!("Invalid stored study data: {error}")))?;
     let correct_index = usize::try_from(row.get::<i64, _>("correct_index").max(0)).unwrap_or(0);
-    let multiple_choice =
-        StudyCardFormat::parse(&row.get::<String, _>("study_format"))? == StudyCardFormat::MultipleChoice;
+    let multiple_choice = StudyCardFormat::parse(&row.get::<String, _>("study_format"))?
+        == StudyCardFormat::MultipleChoice;
     let profile = match row.get::<Option<String>, _>("program_id") {
         Some(program_id) => {
             let format = parse_format(row.get("profile_format"))?;

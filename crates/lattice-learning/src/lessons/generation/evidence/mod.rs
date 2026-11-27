@@ -30,10 +30,10 @@ mod plan;
 pub(super) use coverage::judge;
 #[cfg(test)]
 use coverage::{EvidenceCoverage, Input, Passage, Subject};
-pub(super) use pack::{assemble, pack};
-use pack::{depth, retrieve};
 #[cfg(test)]
 use pack::passage_tokens;
+pub(super) use pack::{assemble, pack};
+use pack::{depth, retrieve};
 pub(super) use plan::plan;
 #[cfg(test)]
 use plan::{parse_plan, plan_schema, EvidencePlan, PlannedTopic};

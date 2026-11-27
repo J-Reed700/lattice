@@ -391,7 +391,10 @@ async fn stored_cards_preserve_non_cites_support_when_anchors_exist() -> Result<
     second.citation_id = 7;
     second.support = SupportDto {
         relation: RelationDto::Backs,
-        anchors: vec![AnchorDto { exact: quote.clone(), span: None }],
+        anchors: vec![AnchorDto {
+            exact: quote.clone(),
+            span: None,
+        }],
     };
     saved.cards[0].citations = vec![saved.cards[0].source.clone(), second];
     repo.save(&saved).await?;

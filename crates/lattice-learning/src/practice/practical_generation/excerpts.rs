@@ -28,7 +28,7 @@ pub(in crate::practice) async fn with_snapshots(
 
 /// A passage of a saved source the model may read.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct Excerpt {
+pub(in crate::practice) struct Excerpt {
     pub(super) source: Internal<String>,
     pub(super) version: Internal<String>,
     pub(super) title: Told<String>,
@@ -36,7 +36,7 @@ pub(super) struct Excerpt {
 }
 
 /// The passages of `sources` that `query` retrieves, the best first, each with the tokens showing it takes.
-pub(super) async fn ranked_excerpts(
+pub(in crate::practice) async fn ranked_excerpts(
     llm: &dyn LLMPort,
     sources: &[LearningSourceVersionDto],
     query: &str,
@@ -76,7 +76,9 @@ pub(super) async fn ranked_excerpts(
 }
 
 /// `held` grouped by source, the source met first first.
-pub(super) fn by_source<'a>(held: impl Iterator<Item = &'a Excerpt>) -> Vec<Vec<&'a Excerpt>> {
+pub(in crate::practice) fn by_source<'a>(
+    held: impl Iterator<Item = &'a Excerpt>,
+) -> Vec<Vec<&'a Excerpt>> {
     let mut groups: Vec<Vec<&Excerpt>> = Vec::new();
     for excerpt in held {
         let group = groups.iter_mut().find(|group| {
@@ -93,7 +95,7 @@ pub(super) fn by_source<'a>(held: impl Iterator<Item = &'a Excerpt>) -> Vec<Vec<
 }
 
 /// `held` as the `sourceSnapshots` entries: each passage's sentences, one to a row.
-pub(super) fn sentence_snapshots(
+pub(in crate::practice) fn sentence_snapshots(
     showing: &mut Showing<'_>,
     held: &[&Excerpt],
 ) -> Result<serde_json::Value> {

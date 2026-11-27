@@ -21,10 +21,7 @@ use futures::FutureExt;
 use std::{
     collections::{HashMap, HashSet},
     future::Future,
-    sync::{
-        atomic::AtomicBool,
-        Arc, Mutex, MutexGuard, PoisonError, RwLock, Weak,
-    },
+    sync::{atomic::AtomicBool, Arc, Mutex, MutexGuard, PoisonError, RwLock, Weak},
     time::Duration,
 };
 use tokio::sync::{Notify, Semaphore};

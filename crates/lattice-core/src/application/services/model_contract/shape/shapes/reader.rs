@@ -6,9 +6,7 @@ use super::super::super::edit::{Consistent, Content};
 use super::super::super::shown::{Kind, Picked, Showing};
 use super::super::document::{self, Document};
 use super::super::fields::trace;
-use super::super::{
-    Authored, Ended, Fields, Found, Led, Rows, Settled, Vocabulary, Why, Written,
-};
+use super::super::{Authored, Ended, Fields, Found, Led, Rows, Settled, Vocabulary, Why, Written};
 use super::{all_unanswered, per_item, says_none};
 
 /// Why an answer that cannot be used as a document leaves a statement unanswered.
@@ -66,7 +64,10 @@ fn listed<'d>(document: &'d Document, name: &str) -> Option<&'d [Value]> {
     }
 }
 
-pub(super) fn read_value<V: Authored>(written: &Written<'_>, showing: &Showing<'_>) -> Settled<V> {
+pub(in crate::application::services::model_contract::shape) fn read_value<V: Authored>(
+    written: &Written<'_>,
+    showing: &Showing<'_>,
+) -> Settled<V> {
     let document = match whole(written) {
         Ok(document) => document,
         Err(why) => return Settled::Unanswered(why),
@@ -78,7 +79,7 @@ pub(super) fn read_value<V: Authored>(written: &Written<'_>, showing: &Showing<'
     }
 }
 
-pub(super) fn read_pick<K: Kind>(
+pub(in crate::application::services::model_contract::shape) fn read_pick<K: Kind>(
     written: &Written<'_>,
     showing: &Showing<'_>,
 ) -> Settled<Option<Picked<K>>> {
@@ -120,7 +121,7 @@ fn read_handles<K: Kind>(
         .collect()
 }
 
-pub(super) fn read_pick_some<K: Kind>(
+pub(in crate::application::services::model_contract::shape) fn read_pick_some<K: Kind>(
     written: &Written<'_>,
     showing: &Showing<'_>,
 ) -> Settled<Vec<Picked<K>>> {
@@ -138,7 +139,10 @@ pub(super) fn read_pick_some<K: Kind>(
     }
 }
 
-pub(super) fn read_new<V: Authored>(written: &Written<'_>, showing: &Showing<'_>) -> Found<V> {
+pub(in crate::application::services::model_contract::shape) fn read_new<V: Authored>(
+    written: &Written<'_>,
+    showing: &Showing<'_>,
+) -> Found<V> {
     let document = match open(written) {
         Ok(document) => document,
         Err(why) => {
@@ -222,7 +226,10 @@ fn read_entries<K: Kind, V: Authored>(
     (entries, all_placed)
 }
 
-pub(super) fn read_each<K: Kind, V: Authored + PartialEq>(
+pub(in crate::application::services::model_contract::shape) fn read_each<
+    K: Kind,
+    V: Authored + PartialEq,
+>(
     written: &Written<'_>,
     showing: &Showing<'_>,
 ) -> Rows<K, V> {
@@ -241,7 +248,10 @@ pub(super) fn read_each<K: Kind, V: Authored + PartialEq>(
     })
 }
 
-pub(super) fn read_flagged<K: Kind, V: Authored + PartialEq>(
+pub(in crate::application::services::model_contract::shape) fn read_flagged<
+    K: Kind,
+    V: Authored + PartialEq,
+>(
     written: &Written<'_>,
     showing: &Showing<'_>,
 ) -> Rows<K, Option<V>> {
@@ -271,7 +281,7 @@ pub(super) fn read_flagged<K: Kind, V: Authored + PartialEq>(
     })
 }
 
-pub(super) fn read_change<K: Kind, W: Content>(
+pub(in crate::application::services::model_contract::shape) fn read_change<K: Kind, W: Content>(
     written: &Written<'_>,
     showing: &Showing<'_>,
 ) -> Settled<Consistent<K, W>> {
@@ -286,7 +296,7 @@ pub(super) fn read_change<K: Kind, W: Content>(
     }
 }
 
-pub(super) fn read_lead<W: Vocabulary, K: Kind>(
+pub(in crate::application::services::model_contract::shape) fn read_lead<W: Vocabulary, K: Kind>(
     written: &Written<'_>,
     showing: &Showing<'_>,
 ) -> Settled<Led<W, K>> {

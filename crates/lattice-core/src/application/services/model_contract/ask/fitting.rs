@@ -118,7 +118,10 @@ pub(super) async fn fitted<C: Answered>(
 }
 
 /// Whether `request` fits the window. A request the planner refuses does not.
-pub(super) async fn fits(llm: &dyn LLMPort, request: &GroundedRequest) -> bool {
+pub(in crate::application::services::model_contract) async fn fits(
+    llm: &dyn LLMPort,
+    request: &GroundedRequest,
+) -> bool {
     grounded_generation::measure(llm, request)
         .await
         .is_ok_and(|measured| measured.fits())

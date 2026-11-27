@@ -13,7 +13,7 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The event of a user's `action`, the accuracy label it gives and the
 /// verdict calibration records.
-pub(super) fn user_resolution(
+pub(in crate::lessons::claim_reviews) fn user_resolution(
     action: UserAction,
     note: Option<String>,
     label: Option<LabelSource>,
@@ -34,7 +34,10 @@ pub(super) fn user_resolution(
 }
 
 /// Adds the kinds in `more` that `kinds` lacks.
-pub(super) fn add_kinds(kinds: &mut Vec<ClaimKind>, more: Vec<ClaimKind>) {
+pub(in crate::lessons::claim_reviews) fn add_kinds(
+    kinds: &mut Vec<ClaimKind>,
+    more: Vec<ClaimKind>,
+) {
     for kind in more {
         if !kinds.contains(&kind) {
             kinds.push(kind);
@@ -95,12 +98,7 @@ pub(super) fn provenance(review: &LessonReview) -> EventProvenance {
 
 /// The refusal of a batch of which `refused` of its `chosen` items cannot be
 /// `verb`ed: nothing is written.
-pub(super) fn batch_refusal(
-    verb: &str,
-    refused: usize,
-    chosen: usize,
-    message: &str,
-) -> AppError {
+pub(super) fn batch_refusal(verb: &str, refused: usize, chosen: usize, message: &str) -> AppError {
     AppError::InvalidState(if refused == chosen {
         format!("None of these can be {verb}: {message}")
     } else {

@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 
-use lattice_core::application::services::model_contract::{Contract, ContractCall, ContractId, PromptInput};
+use lattice_core::application::services::model_contract::{
+    Contract, ContractCall, ContractId, PromptInput,
+};
 use serde_json::{json, Value};
 
 use super::{

@@ -255,9 +255,7 @@ fn a_claim_no_passage_supports_and_nobody_resolved_reads_not_verified_never_veri
 
         let view = report
             .learner_view(&lesson, &[], &ClaimStates::default())
-            .unwrap_or_else(|error| {
-                panic!("{verdict:?} makes the lesson unavailable: {error}")
-            });
+            .unwrap_or_else(|error| panic!("{verdict:?} makes the lesson unavailable: {error}"));
 
         let claim = &view.teaching_claims[0];
         assert_eq!(claim.resolution, LearningClaimResolutionDto::NotVerified);

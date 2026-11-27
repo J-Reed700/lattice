@@ -26,12 +26,12 @@ fn consecutive_repeats_catch_short_duplicates_and_stutters_in_prose_and_list_ite
         "Write the acknowledgement you expect back, and inspect MSA-2."
     );
 
-    let adjacent_items =
-        consecutive_repeats("- Send the ACK.\n- Send the ACK, and record MSA-2.");
+    let adjacent_items = consecutive_repeats("- Send the ACK.\n- Send the ACK, and record MSA-2.");
     assert_eq!(adjacent_items.len(), 1);
     assert!(adjacent_items[0].prefix_stutter);
 
-    let em_dash = consecutive_repeats("Check MSA-2 \u{2014} now. Check MSA-2 \u{2014} now, and log it.");
+    let em_dash =
+        consecutive_repeats("Check MSA-2 \u{2014} now. Check MSA-2 \u{2014} now, and log it.");
     assert_eq!(em_dash.len(), 1);
     assert!(em_dash[0].prefix_stutter);
 

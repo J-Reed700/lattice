@@ -1,5 +1,7 @@
 use super::super::{Backoff, Deferral, JobRecord, JobStatus};
-use super::{count, decode, encode, not_found, now, parse_status, record_event, JobStore, ERROR_LIMIT};
+use super::{
+    count, decode, encode, not_found, now, parse_status, record_event, JobStore, ERROR_LIMIT,
+};
 use crate::shared::error::{AppError, Result};
 use crate::shared::persistence::WriteTx;
 use sqlx::Row;

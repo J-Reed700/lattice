@@ -34,8 +34,8 @@ pub(super) use citation::{cite_where_supported, number_evidence, uncite, Cited};
 #[cfg(test)]
 pub(super) use citation::{quotation, Unwritten};
 pub(crate) use confine::{confine, Protected};
-pub(super) use contract::{Claim, Correction, Failed, Input, Passage, SectionRepair};
 use contract::{narrowed, quotes_of, units_of, CONFINEMENT, ENTRIES, NO_CHANGE, NO_ROOM};
+pub(super) use contract::{Claim, Correction, Failed, Input, Passage, SectionRepair};
 #[cfg(test)]
 pub(super) use cut::last_attempts;
 use taking::{section_input, Taking};

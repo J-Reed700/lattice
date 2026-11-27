@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 
-use super::super::kind::{Change, ContentKind};
+use super::super::kind::Change;
 use super::super::notices::markdown_notices;
 use super::super::ops::apply_ops;
 use super::super::registry::EditRegistry;
@@ -13,9 +13,7 @@ use super::super::types::{
     ContentEditOutcome, ContentEditRequest, EditOp, EditOrigin, Editability, FieldNotice,
     FieldSpec, TextFormat, Uncommitted,
 };
-use super::{
-    now_ms, push_unique, request_digest, require_kind, CONFLICT_MESSAGE, MISSING_ENTITY,
-};
+use super::{now_ms, push_unique, request_digest, require_kind, CONFLICT_MESSAGE, MISSING_ENTITY};
 use crate::shared::error::{AppError, Result};
 use crate::shared::persistence::WriteTx;
 
@@ -112,7 +110,7 @@ pub(super) fn collect_notices(form: &[FieldSpec], document: &Value) -> Vec<Field
     notices
 }
 
-pub(super) async fn apply_in(
+pub(in crate::shared::edits) async fn apply_in(
     tx: &mut WriteTx,
     registry: &EditRegistry,
     app_version: &str,

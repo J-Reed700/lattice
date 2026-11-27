@@ -15,10 +15,11 @@ use std::marker::PhantomData;
 /// The room the review's answer is given.
 const REVIEW_ANSWER_TOKENS: usize = 6000;
 
-pub(super) const ANSWER_FORM_HEAD: &str =
+pub(in crate::lessons) const ANSWER_FORM_HEAD: &str =
     "Answer with items. Each item holds one entry, and the entry's kind says what it is.";
 #[cfg(test)]
-pub(super) const CONCERN_FORM_HEAD: &str = "An issue's concern is the one concern it fails.";
+pub(in crate::lessons) const CONCERN_FORM_HEAD: &str =
+    "An issue's concern is the one concern it fails.";
 
 /// How the entries of an answer are written, given whether any passages or open findings are shown.
 pub(super) fn answer_form(has_passages: bool, has_open: bool) -> String {

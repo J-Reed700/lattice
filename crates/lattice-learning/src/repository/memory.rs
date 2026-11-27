@@ -349,7 +349,9 @@ async fn validate_memory_lesson(
     let row = sqlx::query("SELECT p.status,l.preparation FROM learning_programs p JOIN learning_lessons l ON l.program_id=p.id WHERE p.id=? AND l.id=?")
         .bind(program_id).bind(lesson_id).fetch_optional(&mut *tx).await?
         .ok_or_else(|| AppError::NotFound("Lesson does not belong to this learning program.".into()))?;
-    if LearningProgramStatus::parse(&row.get::<String, _>("status"))? != LearningProgramStatus::Active {
+    if LearningProgramStatus::parse(&row.get::<String, _>("status"))?
+        != LearningProgramStatus::Active
+    {
         return Err(AppError::InvalidInput(
             "Accept the program before using its memory tools.".into(),
         ));
@@ -423,7 +425,9 @@ pub(crate) async fn ensure_memory_resources(
             .fetch_optional(&mut **tx)
             .await?
             .ok_or_else(|| AppError::NotFound("Learning program not found.".into()))?;
-    if LearningProgramStatus::parse(&program.get::<String, _>("status"))? != LearningProgramStatus::Active {
+    if LearningProgramStatus::parse(&program.get::<String, _>("status"))?
+        != LearningProgramStatus::Active
+    {
         return Err(AppError::InvalidInput(
             "Accept the program before creating its memory workspace.".into(),
         ));

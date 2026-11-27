@@ -195,7 +195,10 @@ fn has_clause_after_prefix(next: &str, prefix_len: usize, allow_conjunction: boo
         .filter(|(_, w)| w.chars().any(char::is_alphanumeric))
         .map(|(idx, _)| idx)
         .collect();
-    let Some(&last_idx) = prefix_len.checked_sub(1).and_then(|idx| word_indices.get(idx)) else {
+    let Some(&last_idx) = prefix_len
+        .checked_sub(1)
+        .and_then(|idx| word_indices.get(idx))
+    else {
         return false;
     };
     let last = tokens.get(last_idx).copied().unwrap_or_default();

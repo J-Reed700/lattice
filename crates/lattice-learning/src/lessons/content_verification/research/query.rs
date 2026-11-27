@@ -214,7 +214,7 @@ pub async fn select_references(
 /// source's `selection_note` (claim sources design §4.4). A candidate the
 /// answer leaves unsettled is not selected, and when none fits beside the
 /// selector's instructions the gap stays open, as when search is unavailable.
-pub(super) async fn select_noted(
+pub(in crate::lessons::content_verification) async fn select_noted(
     llm: &dyn LLMPort,
     topic: &str,
     query: &str,

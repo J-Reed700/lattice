@@ -31,11 +31,11 @@ pub fn failed(why: &Why) -> AppError {
     }
 }
 
-pub(super) const NOT_READ: &str =
+pub(in crate::application::services::model_contract) const NOT_READ: &str =
     "Your answer could not be read. Answer again in the form asked for.";
-pub(super) const CUT_OFF: &str =
+pub(in crate::application::services::model_contract) const CUT_OFF: &str =
     "Your answer was cut off before it ended. Answer again, more briefly.";
-pub(super) const UNPLACED: &str = "Your answer pointed at something that is not shown. Point only at what is shown, by the name it is shown under.";
+pub(in crate::application::services::model_contract) const UNPLACED: &str = "Your answer pointed at something that is not shown. Point only at what is shown, by the name it is shown under.";
 
 /// What a correction tells the model about `why`; `None` when none is due.
 pub(super) fn told(why: &Why, handle: &str) -> Option<String> {

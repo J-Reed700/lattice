@@ -43,23 +43,25 @@ mod simulation_turn;
 #[path = "practical_generation_tests.rs"]
 mod tests;
 
-#[cfg(test)]
-use activity::{ActivityInput, PracticalActivity, PracticalDraft};
-pub use activity::generate_activity_with_plan;
-use activity::validate_files;
-pub(super) use excerpts::{by_source, ranked_excerpts, sentence_snapshots, with_snapshots, Excerpt};
-#[cfg(test)]
-use simulation::Turn;
-use simulation::{citations_of, Said, SimulationTurn, TurnInput};
-pub use simulation_turn::generate_simulation_turn;
 use super::interview_answers::InterviewAnswerGuides;
 use super::simulation_policy::{
     InterviewQuestionsPolicy, ScenarioPolicy, SimulationCue, SimulationEvent, SimulationState,
     TurnPolicy,
 };
+pub use activity::generate_activity_with_plan;
+use activity::validate_files;
+#[cfg(test)]
+use activity::{ActivityInput, PracticalActivity, PracticalDraft};
+pub(super) use excerpts::{
+    by_source, ranked_excerpts, sentence_snapshots, with_snapshots, Excerpt,
+};
 pub use interview_generation::generate_interview_plan;
 pub(super) use interview_generation::public_interview_activity;
 pub(crate) use interview_generation::validate_interviewer_reply;
+#[cfg(test)]
+use simulation::Turn;
+use simulation::{citations_of, Said, SimulationTurn, TurnInput};
+pub use simulation_turn::generate_simulation_turn;
 
 pub const INTERVIEW_PLAN_FILE_PATH: &str = "interview/plan.json";
 

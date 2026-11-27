@@ -24,10 +24,12 @@ impl JobStore {
         if statuses.is_empty() {
             return Err(not_found());
         }
-        if statuses
-            .iter()
-            .any(|raw| matches!(JobStatus::parse(raw), Some(JobStatus::Pending | JobStatus::Running)))
-        {
+        if statuses.iter().any(|raw| {
+            matches!(
+                JobStatus::parse(raw),
+                Some(JobStatus::Pending | JobStatus::Running)
+            )
+        }) {
             return Err(AppError::InvalidState(STILL_RUNNING.into()));
         }
         sqlx::query("WITH RECURSIVE chain(id) AS (SELECT id FROM jobs WHERE id=? UNION SELECT jobs.retry_of_job_id FROM jobs JOIN chain ON jobs.id=chain.id WHERE jobs.retry_of_job_id IS NOT NULL) DELETE FROM jobs WHERE id IN (SELECT id FROM chain)")
