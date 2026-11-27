@@ -646,8 +646,8 @@ fn candidate_with(
     rationales: Vec<String>,
 ) -> LearningAssessmentCandidate {
     LearningAssessmentCandidate {
-        id: "id".into(),
-        outcome_ids: vec!["o".into()],
+        id: uuid::Uuid::new_v4().to_string(),
+        outcome_ids: vec![uuid::Uuid::new_v4().to_string()],
         format,
         difficulty: 2,
         prompt: prompt.into(),

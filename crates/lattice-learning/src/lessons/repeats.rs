@@ -246,17 +246,35 @@ fn classify_consecutive(prev: &str, next: &str) -> Option<ConsecutiveRepeat> {
         }
     }
     if prev_words.len() == next_words.len() && prev_words.len() >= 7 {
-        let mismatches = prev_words
-            .iter()
-            .zip(&next_words)
-            .filter(|(left, right)| left != right)
-            .count();
-        if mismatches == 1 {
-            return Some(ConsecutiveRepeat {
-                first: prev.to_owned(),
-                second: next.to_owned(),
-                prefix_stutter: true,
-            });
+        let mut diff: Option<(&str, &str)> = None;
+        let mut multiple = false;
+        for (left, right) in prev_words.iter().zip(&next_words) {
+            if left != right {
+                if diff.is_some() {
+                    multiple = true;
+                    break;
+                }
+                diff = Some((left.as_str(), right.as_str()));
+            }
+        }
+        if !multiple {
+            if let Some((left, right)) = diff {
+                let code_or_protocol_token = |word: &str| {
+                    word.bytes().any(|b| {
+                        b.is_ascii_digit() || matches!(b, b'/' | b'.' | b':' | b'-' | b'_')
+                    })
+                };
+                if prev_words.len() >= 13
+                    || code_or_protocol_token(left)
+                    || code_or_protocol_token(right)
+                {
+                    return Some(ConsecutiveRepeat {
+                        first: prev.to_owned(),
+                        second: next.to_owned(),
+                        prefix_stutter: true,
+                    });
+                }
+            }
         }
     }
     None

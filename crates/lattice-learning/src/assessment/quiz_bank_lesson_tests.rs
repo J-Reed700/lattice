@@ -1189,7 +1189,7 @@ async fn lesson_material_strips_code_fences_and_preserves_verbatim_contiguous_ru
     let prov = EventProvenance {
         actor: Actor::Machine,
         at: 1_700_000_000_000,
-        job_id: Some("job-1".into()),
+        job_id: None,
         app_version: "0.1.0".into(),
         checker_model: Some("test-model".into()),
     };
@@ -1246,8 +1246,10 @@ async fn lesson_material_strips_code_fences_and_preserves_verbatim_contiguous_ru
 
 #[test]
 fn lesson_question_item_clears_right_choice_rationale_before_bank_validation() {
+    let question_id = uuid::Uuid::new_v4().to_string();
+    let outcome_id = uuid::Uuid::new_v4().to_string();
     let q = LessonQuestion {
-        id: "q-1".into(),
+        id: question_id.clone(),
         kind: LessonQuestionKind::Quiz,
         prompt: "Which scope creates a Binary resource?".into(),
         options: vec![
@@ -1259,7 +1261,7 @@ fn lesson_question_item_clears_right_choice_rationale_before_bank_validation() {
         source_ids: vec![],
     };
     let key = LessonAnswerKey {
-        question_id: "q-1".into(),
+        question_id,
         correct_index: 0,
         explanation: "SMART v2 uses .c for create permissions.".into(),
         rationales: vec![
@@ -1269,7 +1271,7 @@ fn lesson_question_item_clears_right_choice_rationale_before_bank_validation() {
             "Delete removes resources.".into(),
         ],
     };
-    let candidate = crate::quiz_bank_jobs::lesson_question_item(&q, &key, vec!["o-1".into()]);
+    let candidate = crate::quiz_bank_jobs::lesson_question_item(&q, &key, vec![outcome_id]);
     assert_eq!(
         candidate.distractor_rationales.first().map(String::as_str),
         Some("")

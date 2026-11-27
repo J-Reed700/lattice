@@ -1550,6 +1550,18 @@ fn empty_headings_are_pruned_while_nonempty_fences_and_check_reveals_stay() {
         sections::headings::prune_empty_headings(with_fence),
         with_fence
     );
+
+    assert_eq!(
+        sections::headings::prune_newly_empty_headings("3. Only sentence.\n# Heading", "# Heading"),
+        "# Heading"
+    );
+    assert_eq!(
+        sections::headings::prune_newly_empty_headings(
+            "# Outer\n\n## Inner\nCut sentence.",
+            "# Outer\n\n## Inner"
+        ),
+        ""
+    );
 }
 
 #[tokio::test]
@@ -1573,7 +1585,7 @@ async fn a_flow_repair_crossing_a_heading_surfaces_the_heading_and_allows_insert
         let mut edits = no_edits();
         edits["sentences"]["insert"] = json!([{
             "after": heading,
-            "add": [{"text": "Follow these four steps in sequence.", "from": []}]
+            "with": {"text": "Follow these four steps in sequence.", "from": []}
         }]);
         vec![entry(&gap_id, edits)]
     });

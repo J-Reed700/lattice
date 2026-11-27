@@ -348,16 +348,11 @@ fn check(
     let Some(item) = input.items.iter().find(|item| item.id == id) else {
         return Ok(());
     };
-    let mut rows = Rows::of_part(input.lesson.value(), input.part.value());
-    let own = units_of(&rows, input.part.value(), item.targets.value());
     if correction.edits.is_empty() {
-        if !own.is_empty() {
-            return Err(Refusal(format!(
-                "Your entry for {entry} made no edits to its failed sentence; edit or remove only that sentence."
-            )));
-        }
         return Ok(());
     }
+    let mut rows = Rows::of_part(input.lesson.value(), input.part.value());
+    let own = units_of(&rows, input.part.value(), item.targets.value());
     if touches_other_failed(
         &rows,
         input.part.value(),

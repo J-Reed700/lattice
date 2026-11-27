@@ -2128,6 +2128,7 @@ async fn expand_filters_scenario_local_gaps_populates_bare_metadata_and_chunks_l
                     prompt.rsplit("\n\n").find_map(|chunk| {
                         serde_json::from_str::<Value>(chunk)
                             .ok()
+                            .filter(|v| v.get("results").is_none())
                             .and_then(|v| v.get("gaps").and_then(Value::as_array).cloned())
                     })
                 })

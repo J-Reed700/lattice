@@ -1,6 +1,7 @@
 //! Markdown heading checks and empty-heading cleanup around section cuts.
 
 use lattice_core::shared::text::segmentation::code_fences;
+use std::collections::HashMap;
 
 const REVEAL_HEADING: &str = "### check your thinking";
 
@@ -15,20 +16,22 @@ fn is_reveal_heading(line: &str) -> bool {
     line.trim().eq_ignore_ascii_case(REVEAL_HEADING)
 }
 
-/// Removes Markdown headings left without body content after cuts (at EOF or
-/// immediately before another heading of the same or higher level), outside
-/// fenced code blocks. Preserves the check-reveal delimiter heading.
-pub(in crate::lessons::content_verification) fn prune_empty_headings(text: &str) -> String {
+fn split_marked_lines(text: &str) -> Vec<(&str, bool)> {
     let fences = code_fences(text);
     let in_fence = |offset: usize| fences.iter().any(|fence| fence.whole().contains(&offset));
-    let mut lines: Vec<(&str, bool)> = Vec::new();
+    let mut lines = Vec::new();
     let mut offset = 0;
     for raw in text.split('\n') {
         let line = raw.strip_suffix('\r').unwrap_or(raw);
         lines.push((line, in_fence(offset)));
         offset += raw.len() + 1;
     }
+    lines
+}
 
+fn empty_heading_drops(lines: &[(&str, bool)], preserve: &HashMap<&str, usize>) -> Vec<bool> {
+    let mut reserved = preserve.clone();
+    let mut kept_empty = vec![false; lines.len()];
     let mut drop = vec![false; lines.len()];
     loop {
         let mut changed = false;
@@ -36,7 +39,11 @@ pub(in crate::lessons::content_verification) fn prune_empty_headings(text: &str)
             let Some(&(line, fenced)) = lines.get(index) else {
                 continue;
             };
-            if drop.get(index).copied().unwrap_or(false) || fenced || is_reveal_heading(line) {
+            if drop.get(index).copied().unwrap_or(false)
+                || kept_empty.get(index).copied().unwrap_or(false)
+                || fenced
+                || is_reveal_heading(line)
+            {
                 continue;
             }
             let Some(level) = heading_level(line) else {
@@ -55,18 +62,31 @@ pub(in crate::lessons::content_verification) fn prune_empty_headings(text: &str)
                         && heading_level(later_line).is_some_and(|next_level| next_level <= level)
                 }),
             };
-            if empty {
-                if let Some(slot) = drop.get_mut(index) {
+            if !empty {
+                continue;
+            }
+            if let Some(left) = reserved.get_mut(line.trim()).filter(|left| **left > 0) {
+                *left -= 1;
+                if let Some(slot) = kept_empty.get_mut(index) {
                     *slot = true;
                 }
-                changed = true;
+                continue;
             }
+            if let Some(slot) = drop.get_mut(index) {
+                *slot = true;
+            }
+            changed = true;
         }
         if !changed {
             break;
         }
     }
+    drop
+}
 
+fn prune_with_preserved(text: &str, preserve: &HashMap<&str, usize>) -> String {
+    let lines = split_marked_lines(text);
+    let drop = empty_heading_drops(&lines, preserve);
     if !drop.iter().any(|&removed| removed) {
         return text.to_owned();
     }
@@ -94,6 +114,33 @@ pub(in crate::lessons::content_verification) fn prune_empty_headings(text: &str)
         let tail = text.get(text.trim_end().len()..).unwrap_or_default();
         format!("{joined}{tail}")
     }
+}
+
+/// Removes Markdown headings left without body content after cuts (at EOF or
+/// immediately before another heading of the same or higher level), outside
+/// fenced code blocks. Preserves the check-reveal delimiter heading.
+pub(in crate::lessons::content_verification) fn prune_empty_headings(text: &str) -> String {
+    prune_with_preserved(text, &HashMap::new())
+}
+
+/// Removes Markdown headings in `after` that became empty because of the edit
+/// from `before` to `after`, preserving any headings that were already empty
+/// in `before`.
+pub(in crate::lessons::content_verification) fn prune_newly_empty_headings(
+    before: &str,
+    after: &str,
+) -> String {
+    let before_lines = split_marked_lines(before);
+    let before_empty = empty_heading_drops(&before_lines, &HashMap::new());
+    let mut preserve: HashMap<&str, usize> = HashMap::new();
+    for (index, &is_empty) in before_empty.iter().enumerate() {
+        if is_empty {
+            if let Some(&(line, _)) = before_lines.get(index) {
+                *preserve.entry(line.trim()).or_insert(0) += 1;
+            }
+        }
+    }
+    prune_with_preserved(after, &preserve)
 }
 
 /// Non-reveal Markdown heading lines lying inside the byte span between `before`

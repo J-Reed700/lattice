@@ -163,7 +163,7 @@ fn sentence(text: &str, quote: &str) -> Cut {
         between = Some(separator);
     }
     out.push_str(text.get(text.trim_end().len()..).unwrap_or_default());
-    let cleaned = headings::prune_empty_headings(&out);
+    let cleaned = headings::prune_newly_empty_headings(text, &out);
     if cleaned.trim().is_empty() {
         Cut::Refused
     } else {
@@ -224,7 +224,7 @@ fn fence(text: &str, code: &str) -> Cut {
     } else {
         format!("{before}{after}")
     };
-    let cleaned = headings::prune_empty_headings(&left);
+    let cleaned = headings::prune_newly_empty_headings(text, &left);
     if cleaned.trim().is_empty() {
         Cut::Refused
     } else {
