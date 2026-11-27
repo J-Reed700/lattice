@@ -280,7 +280,7 @@ impl LearningPracticeRepository {
                 .fetch_optional(&mut *read)
                 .await?;
         read.commit().await?;
-        if program_status.as_deref() != Some("active") {
+        if program_status.as_deref() != Some(crate::dto::LearningProgramStatus::Active.as_str()) {
             return Err(invalid(
                 "Practice actions require an active learning program.",
             ));

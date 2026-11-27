@@ -8,6 +8,7 @@ use crate::practice::{
     interview_answers::{InterviewAnswerGuide, InterviewAnswerGuides, INTERVIEW_ANSWERS_FILE_PATH},
     practical_dto::{
         LearningInterviewPlanDto, LearningInterviewQuestionDto, LearningInterviewRoundKind,
+        LearningPracticalActivityKind, LearningPracticalActivityStatus,
     },
     practical_generation::INTERVIEW_PLAN_FILE_PATH,
 };
@@ -50,12 +51,12 @@ async fn load_in(
     let activity = interview::activity(read, program_id, activity_id)
         .await?
         .ok_or_else(|| AppError::NotFound("Interview activity not found".into()))?;
-    if activity.kind != "interview" {
+    if activity.kind != LearningPracticalActivityKind::Interview.as_str() {
         return Err(AppError::InvalidInput(
             "Only interview activities can become an interview drill.".into(),
         ));
     }
-    if activity.status != "ready" {
+    if activity.status != LearningPracticalActivityStatus::Ready.as_str() {
         return Err(AppError::InvalidInput(
             "This interview is not ready yet. Wait for it to finish preparing.".into(),
         ));

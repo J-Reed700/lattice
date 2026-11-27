@@ -73,6 +73,19 @@ describe('SourceCitations', () => {
     expect(screen.getByText('notes.md')).toBeInTheDocument();
   });
 
+  it('treats non-positive citationId as unnumbered rather than rendering Citation 0', async () => {
+    render(
+      <SourceCitations
+        sources={[source({ citationId: 0, fileName: 'legacy.md' })]}
+        onViewSource={vi.fn()}
+      />,
+    );
+    await expand();
+
+    expect(screen.queryByRole('group', { name: /Source 0/ })).not.toBeInTheDocument();
+    expect(screen.getByText('legacy.md')).toBeInTheDocument();
+  });
+
   it('renders CitationCard with relation, excerpts, and heading trail for anchored sources', async () => {
     const text = '# Guide\n\n## Methods\n\nThe sample size was 42 participants.';
     const exact = 'The sample size was 42 participants.';

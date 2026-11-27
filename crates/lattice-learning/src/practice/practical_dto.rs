@@ -22,12 +22,40 @@ pub enum LearningPracticalActivityKind {
     Custom,
 }
 
+impl LearningPracticalActivityKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::CodeLab => "code_lab",
+            Self::Exercise => "exercise",
+            Self::Debugging => "debugging",
+            Self::CodeReview => "code_review",
+            Self::Incident => "incident",
+            Self::SystemDesign => "system_design",
+            Self::Project => "project",
+            Self::Interview => "interview",
+            Self::Conversation => "conversation",
+            Self::WritingRevision => "writing_revision",
+            Self::Custom => "custom",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LearningPracticalActivityStatus {
     Draft,
     Ready,
     Retired,
+}
+
+impl LearningPracticalActivityStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Draft => "draft",
+            Self::Ready => "ready",
+            Self::Retired => "retired",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type, PartialEq, Eq)]

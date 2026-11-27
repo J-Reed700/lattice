@@ -21,38 +21,32 @@ export function QuizSourceLine({ citations = [], sources, label = 'Based on', pr
 }) {
   const visible = useCitationDisplayStore((state) => state.visible);
   if (!visible || citations.length === 0) return null;
-  const entries = citations.flatMap((citation) => {
+  const resolved = citations.flatMap((citation) => {
     const source = sources.find((candidate) => candidate.id === citation.versionId);
     if (!source) return [];
     return [{
-      citation,
+      number: typeof citation.number === 'number' && Number.isInteger(citation.number) && citation.number > 0
+        ? citation.number
+        : undefined,
+      versionId: citation.versionId,
+      sourceId: citation.sourceId || null,
+      quote: citation.quote,
+      support: citation.support,
       title: source.title,
     }];
   });
-  const numbered = entries.flatMap(({ citation, title }) =>
-    typeof citation.number === 'number' && citation.number > 0
-      ? [{
-          number: citation.number,
-          versionId: citation.versionId,
-          sourceId: citation.sourceId || null,
-          quote: citation.quote,
-          support: citation.support,
-          title,
-        }]
-      : [],
-  );
-  if (programId && ownerKey && numbered.length > 0) {
+  if (programId && ownerKey && resolved.length > 0) {
     return (
       <SavedSourceCitations
         programId={programId}
         ownerKey={ownerKey}
-        citations={numbered}
+        citations={resolved}
         label={label}
         className="mt-5"
       />
     );
   }
-  const titles = [...new Set(entries.map(({ title }) => title).filter(Boolean))];
+  const titles = [...new Set(resolved.map(({ title }) => title).filter(Boolean))];
   return <p className="mt-5 flex items-start gap-1.5 text-xs leading-5 text-text-muted">
     <BookOpen size={13} aria-hidden="true" className="mt-0.5 shrink-0" />
     <span>{label}: {titles.length ? titles.join(' · ') : 'the lesson'}</span>

@@ -14,8 +14,6 @@ interface CitationInteractionOptions {
   /** Whether the text's numbers stand for these sources (chat: an assistant message with sources). */
   numbered: boolean;
   showCitations: boolean;
-  /** Require explicit backend `citationId`s on sources instead of falling back to positional index + 1. */
-  strictIdsOnly?: boolean;
   /** Custom source opener when a surface uses a local preview modal instead of the docked reader pane. */
   onOpen?: (source: SourceWithMetadata, occurrence: number | null, excerptChunkId?: string) => void;
   /** The checked sentences, by the index the viewer's claim marks carry; only their cited numbers are read here. */
@@ -36,20 +34,11 @@ function chipOccurrence(chip: HTMLElement): number | null {
 
 /** Owns citation navigation and the text's delegated interactions. */
 export function useCitationInteractions({
-  sources, ownerKey, conversationId = null, numbered, showCitations, strictIdsOnly = false, onOpen, claims, codeRefs,
+  sources, ownerKey, conversationId = null, numbered, showCitations, onOpen, claims, codeRefs,
 }: CitationInteractionOptions) {
   const openReader = useReaderStore((state) => state.open);
   const readerSession = useReaderStore((state) => state.session);
-  const citationMap = useMemo(() => {
-    if (!strictIdsOnly) return createCitationMap(sources);
-    const map = new Map<number, SourceWithMetadata>();
-    for (const source of sources) {
-      if (typeof source.citationId === 'number' && !map.has(source.citationId)) {
-        map.set(source.citationId, source);
-      }
-    }
-    return map;
-  }, [sources, strictIdsOnly]);
+  const citationMap = useMemo(() => createCitationMap(sources), [sources]);
   // The ordered list behind the citation numbers — what `[` / `]` travel over.
   const citationSources = useMemo(
     () =>

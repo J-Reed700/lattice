@@ -65,6 +65,65 @@ fn touched(
     Some((found, touching))
 }
 
+/// Whether `separator` contains at least one blank line between `\n` breaks.
+fn has_blank_line(separator: &str) -> bool {
+    let mut lines = separator.split('\n');
+    lines.next();
+    lines.next_back();
+    lines.any(|line| line.trim().is_empty())
+}
+
+fn is_heading(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    let hashes = trimmed.bytes().take_while(|&b| b == b'#').count();
+    (1..=6).contains(&hashes) && trimmed.as_bytes().get(hashes) == Some(&b' ')
+}
+
+fn is_rule(line: &str) -> bool {
+    let mut marks = line.chars().filter(|c| !c.is_whitespace());
+    let Some(first) = marks.next().filter(|c| matches!(c, '-' | '*' | '_' | '=')) else {
+        return false;
+    };
+    let rest: Vec<_> = marks.collect();
+    rest.len() >= 2 && rest.iter().all(|&c| c == first)
+}
+
+fn opens_block(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    item_marker_end(line).is_some()
+        || is_heading(line)
+        || is_rule(line)
+        || trimmed.starts_with(['>', '|'])
+        || trimmed.starts_with("```")
+        || trimmed.starts_with("~~~")
+}
+
+fn next_line_at(text: &str, offset: usize) -> &str {
+    let start = text
+        .get(..offset)
+        .and_then(|head| head.rfind('\n'))
+        .map_or(0, |nl| nl + 1);
+    text.get(start..)
+        .and_then(|rest| rest.split('\n').next())
+        .unwrap_or_default()
+}
+
+/// Whether crossing `separator` after a cut sentence ends the open list item:
+/// true only on blank lines, at EOF, or when the next line opens a new list
+/// item or Markdown block.
+fn marker_breaks(text: &str, spans: &[(usize, usize)], index: usize, separator: &str) -> bool {
+    if !separator.contains('\n') {
+        return false;
+    }
+    if has_blank_line(separator) {
+        return true;
+    }
+    let Some(&(next_start, _)) = spans.get(index + 1) else {
+        return true;
+    };
+    opens_block(next_line_at(text, next_start))
+}
+
 /// `text` without the sentences the first occurrence of `quote` touches; the
 /// sentences left keep the separators a paragraph break needs, and the first
 /// sentence kept on the line of a cut list item takes the item's marker.
@@ -95,7 +154,7 @@ fn sentence(text: &str, quote: &str) -> Cut {
         if gone(index) {
             between = between.map(|kept| stronger(kept, separator));
             marker = marker_of(text, (start, end)).or(marker);
-            if separator.contains('\n') {
+            if marker_breaks(text, &spans, index, separator) {
                 marker = None;
             }
             continue;
@@ -125,7 +184,8 @@ pub(super) fn cut_place(text: &str, quote: &str) -> Option<CutPlace> {
             && (first..=last).all(|index| {
                 let next = spans.get(index + 1).map_or(text.len(), |span| span.0);
                 let end = spans.get(index).map_or(0, |span| span.1);
-                !text.get(end..next).unwrap_or_default().contains('\n')
+                let separator = text.get(end..next).unwrap_or_default();
+                !marker_breaks(text, &spans, index, separator)
             })
     });
     Some(CutPlace {

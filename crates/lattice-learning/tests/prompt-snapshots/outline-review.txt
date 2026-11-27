@@ -124,7 +124,7 @@ Answer in two steps. Step 1, now: work through the task in prose. First give eac
   "include_reasoning": false,
   "sampling": null,
   "thinking": "off",
-  "max_output_tokens": 112131,
+  "max_output_tokens": 112141,
   "stop": [],
   "want_logprobs": false,
   "priority": "background",

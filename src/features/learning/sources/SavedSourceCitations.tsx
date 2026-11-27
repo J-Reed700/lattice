@@ -8,21 +8,15 @@ import { visibleText } from '@/features/reading/model/inlineMarkdown';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import type { SourceWithMetadata } from '@/types/conversation';
 
-export interface SavedSourceCitation extends SavedSourceTarget {
-  /** Backend-assigned citation number for this citation (1-based). */
-  number: number;
-  /** The source's title when the caller already has it; else the course library's. */
-  title?: string | null;
+function validCitationNumber(value?: number | null): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined;
 }
 
-/** Narrow backend citation DTOs with valid 1-based numbers to saved-source targets. */
-export function numberedSavedSourceCitations<
-  T extends { sourceId?: string | null; versionId: string; quote?: string | null; number?: number; support?: SavedSourceTarget['support'] },
->(citations: readonly T[]): (T & SavedSourceCitation)[] {
-  return citations.filter(
-    (citation): citation is T & SavedSourceCitation =>
-      typeof citation.number === 'number' && citation.number > 0,
-  );
+export interface SavedSourceCitation extends Omit<SavedSourceTarget, 'number'> {
+  /** Backend-assigned citation number for this citation (1-based), when present. */
+  number?: number | null;
+  /** The source's title when the caller already has it; else the course library's. */
+  title?: string | null;
 }
 
 /**
@@ -55,6 +49,7 @@ function shownQuote(citation: SavedSourceCitation): string {
 function chipSource(citation: SavedSourceCitation, title: string): SourceWithMetadata {
   const quote = shownQuote(citation);
   const support = citation.support;
+  const citationNumber = validCitationNumber(citation.number);
   const anchoredBy = support
     ? [
         {
@@ -70,7 +65,7 @@ function chipSource(citation: SavedSourceCitation, title: string): SourceWithMet
     : undefined;
   return {
     documentId: `course:${citation.versionId}`,
-    chunkId: `${citation.versionId}#cite-${citation.number}`,
+    chunkId: citationNumber !== undefined ? `${citation.versionId}#cite-${citationNumber}` : citation.versionId,
     fileName: title,
     filePath: '',
     mimeType: 'text/html',
@@ -80,7 +75,7 @@ function chipSource(citation: SavedSourceCitation, title: string): SourceWithMet
     score: 1,
     fileSizeBytes: 0,
     modifiedAt: new Date(0).toISOString(),
-    citationId: citation.number,
+    ...(citationNumber !== undefined ? { citationId: citationNumber } : {}),
     anchoredBy,
     anchorBase: 0,
   };
@@ -106,7 +101,7 @@ export function SavedSourceCitations({
   ...opener
 }: {
   programId: string;
-  citations: SavedSourceCitation[];
+  citations: readonly SavedSourceCitation[];
   quotes?: boolean;
   label?: string;
   disabledReason?: string;
@@ -122,36 +117,72 @@ export function SavedSourceCitations({
     () => citations.map((citation) => chipSource(citation, citation.title?.trim() || titleOf(citation.versionId) || 'Saved source')),
     [citations, titleOf],
   );
+  const readerTargets = useMemo<SavedSourceTarget[]>(
+    () => citations.map((citation) => ({ ...citation, number: validCitationNumber(citation.number) })),
+    [citations],
+  );
   if (citations.length === 0) return null;
   if (!citationsVisible) return null;
 
   const view = (index: number) => {
     if (onOpen) onOpen(citations[index]!, index);
-    else if (ownerKey !== null) void reader.open(ownerKey, citations, { index });
+    else if (ownerKey !== null) void reader.open(ownerKey, readerTargets, { index });
   };
-  const chip = (index: number) => (
-    <CitationFootnote
-      number={citations[index]!.number}
-      source={chips[index]!}
-      onViewFile={() => view(index)}
-      disabledReason={disabledReason}
-    />
-  );
+  const unnumberedAction = (index: number) =>
+    disabledReason ? (
+      <span className="text-text-muted">{disabledReason}</span>
+    ) : (
+      <button
+        type="button"
+        onClick={() => view(index)}
+        className="font-medium text-accent underline-offset-2 hover:underline"
+      >
+        View source
+      </button>
+    );
 
   if (!quotes) {
+    const numberedEntries = citations.flatMap((citation, index) => {
+      const citationNumber = validCitationNumber(citation.number);
+      if (citationNumber === undefined) return [];
+      return [{
+        key: `${citation.versionId}-${citationNumber}-${index}`,
+        number: citationNumber,
+        source: chips[index]!,
+        onView: () => view(index),
+        disabledReason,
+        title: chips[index]!.fileName,
+      }];
+    });
+    const unnumberedIndices = citations.flatMap((citation, index) =>
+      validCitationNumber(citation.number) === undefined ? [index] : [],
+    );
+
+    if (unnumberedIndices.length === 0) {
+      return (
+        <CitationSourcesRow
+          label={label}
+          className={className}
+          entries={numberedEntries}
+        />
+      );
+    }
+
     return (
-      <CitationSourcesRow
-        label={label}
-        className={className}
-        entries={citations.map((citation, index) => ({
-          key: `${citation.versionId}-${citation.number}-${index}`,
-          number: citation.number,
-          source: chips[index]!,
-          onView: () => view(index),
-          disabledReason,
-          title: chips[index]!.fileName,
-        }))}
-      />
+      <div className={`${className} space-y-1.5 text-xs`}>
+        {numberedEntries.length > 0 && (
+          <CitationSourcesRow label={label} className="" entries={numberedEntries} />
+        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {numberedEntries.length === 0 && <span className="text-xxs text-text-muted">{label}</span>}
+          {unnumberedIndices.map((index) => (
+            <span key={`${citations[index]!.versionId}-unnumbered-${index}`} className="inline-flex items-center gap-1.5">
+              <span className="max-w-[18rem] truncate text-text-secondary">{chips[index]!.fileName}</span>
+              {unnumberedAction(index)}
+            </span>
+          ))}
+        </div>
+      </div>
     );
   }
 
@@ -160,9 +191,21 @@ export function SavedSourceCitations({
       {citations.map((citation, index) => {
         const quote = shownQuote(citation);
         const isVerbatimQuote = citation.support?.relation === 'quotes';
+        const citationNumber = validCitationNumber(citation.number);
         return (
-          <li key={`${citation.versionId}-${citation.number}-${index}`} className="flex items-start gap-2 text-xs leading-5">
-            <span className="mt-px shrink-0">{chip(index)}</span>
+          <li key={`${citation.versionId}-${citationNumber ?? 'unnumbered'}-${index}`} className="flex items-start gap-2 text-xs leading-5">
+            <span className="mt-px shrink-0">
+              {citationNumber !== undefined ? (
+                <CitationFootnote
+                  number={citationNumber}
+                  source={chips[index]!}
+                  onViewFile={() => view(index)}
+                  disabledReason={disabledReason}
+                />
+              ) : (
+                unnumberedAction(index)
+              )}
+            </span>
             <span className="min-w-0">
               {quote && (isVerbatimQuote
                 ? <q className="italic text-text-secondary">{quote}</q>

@@ -12,13 +12,86 @@ use crate::dto::{LearningQuizScopeDto, LearningQuizScopeKind};
 use crate::lessons::claim_reviews::repository::waiting_questions_in;
 use crate::persistence::now;
 use crate::quiz_blueprints;
-use lattice_core::shared::error::Result;
+use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::{Database, WriteTx};
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqliteConnection};
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
+
+/// Persisted review standing of a quiz candidate question in `learning_assessment_candidates`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CandidateReviewStatus {
+    Agreed,
+    Disputed,
+    Dropped,
+    Reported,
+}
+
+impl CandidateReviewStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Agreed => "agreed",
+            Self::Disputed => "disputed",
+            Self::Dropped => "dropped",
+            Self::Reported => "reported",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Result<Self> {
+        match raw {
+            "agreed" => Ok(Self::Agreed),
+            "disputed" => Ok(Self::Disputed),
+            "dropped" => Ok(Self::Dropped),
+            "reported" => Ok(Self::Reported),
+            other => Err(AppError::InvalidState(format!(
+                "Unknown candidate review status: {other}"
+            ))),
+        }
+    }
+}
+
+pub(crate) async fn candidate_review_status_in(
+    connection: &mut SqliteConnection,
+    candidate_id: &str,
+) -> Result<Option<CandidateReviewStatus>> {
+    let raw: Option<String> =
+        sqlx::query_scalar("SELECT review_status FROM learning_assessment_candidates WHERE id=?")
+            .bind(candidate_id)
+            .fetch_optional(&mut *connection)
+            .await?;
+    raw.as_deref().map(CandidateReviewStatus::parse).transpose()
+}
+
+pub(crate) async fn set_candidate_review_status_in(
+    tx: &mut WriteTx,
+    candidate_id: &str,
+    status: CandidateReviewStatus,
+) -> Result<()> {
+    sqlx::query("UPDATE learning_assessment_candidates SET review_status=? WHERE id=?")
+        .bind(status.as_str())
+        .bind(candidate_id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+pub(crate) async fn mark_candidate_reported_in(
+    tx: &mut WriteTx,
+    candidate_id: &str,
+    program_id: &str,
+) -> Result<()> {
+    sqlx::query(
+        "UPDATE learning_assessment_candidates SET review_status=? WHERE id=? AND program_id=?",
+    )
+    .bind(CandidateReviewStatus::Reported.as_str())
+    .bind(candidate_id)
+    .bind(program_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
 
 /// An item on its way into the bank.
 #[derive(Debug, Clone)]
@@ -31,7 +104,7 @@ pub struct BankItem {
     pub origin: &'static str,
     /// `agreed` for items forms may draw, `dropped` for a lesson question the
     /// bank's checks reject, kept so the lesson's questions keep their places.
-    pub review_status: &'static str,
+    pub review_status: CandidateReviewStatus,
 }
 
 /// A stable content token: same format, stem and options, same item.
@@ -65,7 +138,7 @@ pub(crate) async fn insert_bank_items_in(
             continue;
         };
         let mut hash = content_hash(item);
-        let mut review_status = entry.review_status;
+        let mut review_status = entry.review_status.as_str();
         let id_taken: Option<i64> = sqlx::query_scalar(
             "SELECT 1 FROM learning_assessment_candidates WHERE program_id=? AND id=?",
         )
@@ -88,7 +161,7 @@ pub(crate) async fn insert_bank_items_in(
                 continue;
             }
             hash = sha256_hex(format!("{hash}\0{}", item.id));
-            review_status = "dropped";
+            review_status = CandidateReviewStatus::Dropped.as_str();
         }
         sqlx::query("INSERT INTO learning_assessment_candidates(id,program_id,outcome_id,format,difficulty,prompt,options_json,artifact_kind,rubric_json,source_version_ids_json,authored_by,author_model,content_sha256,created_at,review_status,origin,lesson_id,source_quote,left_items_json) VALUES(?,?,?,?,?,?,?,NULL,?,?,'model',?,?,?,?,?,?,?,?)")
             .bind(&item.id)

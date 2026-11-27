@@ -1440,3 +1440,88 @@ async fn a_flow_repair_that_does_not_fit_keeps_the_cut_text() -> Result<()> {
     assert!(ledger.cuts.mended[&0].checked);
     Ok(())
 }
+
+#[tokio::test]
+async fn an_orphaned_half_contrast_can_remove_its_verified_partner_while_keeping_edits_confined(
+) -> Result<()> {
+    let body = "Near-miss one: declared versus observed. In one reported thread, an RTF payload failed. The same thread shows a PDF part rejected with 400. Both are failures after a send. The first is a claim mismatch. Near-miss two: keep valid behavior clear.";
+    let section = block("contrast", "Watch out for", body);
+    let taken = Taken {
+        label: "Watch out for".into(),
+        gaps: vec![gap(
+            Some("The first is a claim mismatch."),
+            Some("Near-miss two: keep valid behavior clear."),
+        )],
+        answer_lost: false,
+    };
+    let protected = vec![
+        Protected {
+            unit: 0,
+            field: "body".into(),
+            quote: "The same thread shows a PDF part rejected with 400.".into(),
+            released: false,
+        },
+        Protected {
+            unit: 0,
+            field: "body".into(),
+            quote: "The first is a claim mismatch.".into(),
+            released: false,
+        },
+    ];
+    let lesson = json!({"blocks": [section.clone()], "questions": []});
+    let llm = flow_model(|task, earlier| {
+        let gap_id = task["gaps"][0]["gap"].as_str().unwrap().to_owned();
+        if earlier == 0 {
+            let mismatch = label(task, BODY, "The first is a claim mismatch.");
+            let mut edits = replacing(&mismatch, "Wrong edit.");
+            edits["sentences"]["remove"] =
+                json!([label(task, BODY, "Near-miss one: declared versus observed.")]);
+            return vec![entry(&gap_id, edits)];
+        }
+        let mut edits = no_edits();
+        edits["sentences"]["remove"] = json!([
+            label(task, BODY, "Near-miss one: declared versus observed."),
+            label(task, BODY, "In one reported thread, an RTF payload failed."),
+            label(task, BODY, "The same thread shows a PDF part rejected with 400."),
+            label(task, BODY, "Both are failures after a send."),
+            label(task, BODY, "The first is a claim mismatch."),
+        ]);
+        vec![entry(&gap_id, edits)]
+    });
+
+    let repaired = mend_section(
+        &llm,
+        (&json!({"type": "object"}), 4_000),
+        (0, true, &section),
+        (&taken, &protected),
+        (&lesson, &Default::default()),
+    )
+    .await?
+    .unwrap();
+
+    assert_eq!(repaired["body"], "Near-miss two: keep valid behavior clear.");
+    let sent = flow_structured(&llm);
+    assert_eq!(sent.len(), 2);
+    assert!(flow_prompt(&sent[0]).contains("contrastOrphanRemoval"));
+    assert_eq!(flow_task(&sent[0])["contrastOrphanRemoval"], json!(true));
+    assert!(flow_prompt(&sent[1]).contains("states a checked claim"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_explanation_section_still_refuses_removing_a_checked_sentence() -> Result<()> {
+    let (_, mut taken, protected) = mended_section();
+    taken.gaps = vec![gap(Some("This follows from it."), Some("Kept claim."))];
+    let llm = flow_model(|task, _| {
+        let gap_id = task["gaps"][0]["gap"].as_str().unwrap().to_owned();
+        let mut edits = no_edits();
+        edits["sentences"]["remove"] = json!([label(task, BODY, "Kept claim.")]);
+        vec![entry(&gap_id, edits)]
+    });
+
+    assert_eq!(mend(&llm, &taken, &protected).await?, None);
+    let sent = flow_structured(&llm);
+    assert_eq!(sent.len(), 2);
+    assert!(flow_prompt(&sent[1]).contains("states a checked claim"));
+    Ok(())
+}

@@ -17,6 +17,7 @@ describe('createCitationMap', () => {
       score: 0.95,
       fileSizeBytes: 1024,
       modifiedAt: '2025-01-01T00:00:00Z',
+      citationId: 1,
     },
     {
       documentId: 'doc2',
@@ -29,10 +30,11 @@ describe('createCitationMap', () => {
       score: 0.85,
       fileSizeBytes: 512,
       modifiedAt: '2025-01-02T00:00:00Z',
+      citationId: 2,
     },
   ];
 
-  it('maps sources to 1-indexed numbers', () => {
+  it('maps sources by their backend citationId', () => {
     const map = createCitationMap(mockSources);
 
     expect(map.get(1)?.fileName).toBe('file1.pdf');
@@ -62,17 +64,23 @@ describe('createCitationMap', () => {
   });
 
   it('handles single source', () => {
-    const map = createCitationMap([mockSources[0]]);
+    const map = createCitationMap([mockSources[0]!]);
 
     expect(map.size).toBe(1);
     expect(map.get(1)?.fileName).toBe('file1.pdf');
   });
 
-  it('does not use 0-based indexing', () => {
-    const map = createCitationMap(mockSources);
+  it('ignores sources without a positive integer citationId instead of inventing positional numbers', () => {
+    const unnumbered: SourceWithMetadata = { ...mockSources[0]!, citationId: undefined };
+    const zero: SourceWithMetadata = { ...mockSources[1]!, citationId: 0 };
+    const negative: SourceWithMetadata = { ...mockSources[1]!, citationId: -3 };
+    const fractional: SourceWithMetadata = { ...mockSources[1]!, citationId: 1.5 };
 
+    const map = createCitationMap([unnumbered, zero, negative, fractional]);
+
+    expect(map.size).toBe(0);
     expect(map.get(0)).toBeUndefined();
-    expect(map.get(1)).toBeDefined();
+    expect(map.get(1)).toBeUndefined();
   });
 
   it('handles many sources', () => {
@@ -87,6 +95,7 @@ describe('createCitationMap', () => {
       score: 0.9 - i * 0.01,
       fileSizeBytes: 1024,
       modifiedAt: '2025-01-01T00:00:00Z',
+      citationId: i + 1,
     }));
 
     const map = createCitationMap(manySources);

@@ -122,6 +122,17 @@ describe('conversationToMarkdown', () => {
     expect(markdown).toContain('3. What the heat maps leave out — https://example.org/heat-equity');
   });
 
+  it('lists legacy sources without backend numbers as bullets rather than numbering by position', () => {
+    const legacy = source({ citationId: undefined });
+    const markdown = conversationToMarkdown({ title: 'Canopy' }, [
+      message({ sources: [legacy, { ...transect, citationId: 9 }] }),
+    ], { now: AT });
+
+    expect(markdown).toContain('9. Riverside Transect - July.md — § Afternoon pass');
+    expect(markdown).toContain('- Halvorsen 2024.pdf — PDF p. 14');
+    expect(markdown).not.toContain('1. Halvorsen 2024.pdf');
+  });
+
   it('says what the sentence check found, and names what it could not ground', () => {
     const markdown = conversationToMarkdown({ title: 'Canopy' }, [
       message({ metadata: JSON.stringify({ verification }) }),

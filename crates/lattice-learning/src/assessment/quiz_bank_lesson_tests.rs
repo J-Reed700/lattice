@@ -3,7 +3,9 @@
 use crate::{
     assessment_engine::{LearningAssessmentKey, LearningItemFormat},
     assessment_generation::{AuthoredItem, StoredItem},
-    assessment_repository::{insert_bank_items_in, BankItem, LearningAssessmentRepository},
+    assessment_repository::{
+        insert_bank_items_in, BankItem, CandidateReviewStatus, LearningAssessmentRepository,
+    },
     dto::*,
     generation_jobs::overlap_tests::{quiz_jobs, run_lesson_job, Published, Recorder, BODY_MARK},
     quiz_bank_jobs::{lesson_stage_report, LessonBank, QuizBankWorker, LESSON_BANK_CHECKPOINT},
@@ -140,7 +142,7 @@ async fn the_quiz_job_does_nothing_when_the_lessons_bank_is_already_written() ->
                 source_quote: String::new(),
                 lesson_id: Some(published.lesson_id.clone()),
                 origin: "lesson",
-                review_status: "agreed",
+                review_status: CandidateReviewStatus::Agreed,
             })
         })
         .collect();
@@ -563,7 +565,7 @@ async fn a_quiz_job_over_a_bank_short_of_a_format_but_full_of_the_outcome_can_st
                 source_quote: String::new(),
                 lesson_id: Some(published.lesson_id.clone()),
                 origin: "lesson",
-                review_status: "agreed",
+                review_status: CandidateReviewStatus::Agreed,
             })
         })
         .collect();
@@ -812,7 +814,7 @@ async fn unverified_claims_are_stripped_from_material_and_exclude_seed_and_bank_
             source_quote: poisoned_sentence.into(),
             lesson_id: Some(lesson_id.clone()),
             origin: "bank",
-            review_status: "agreed",
+            review_status: CandidateReviewStatus::Agreed,
         }],
         None,
     )
@@ -1041,7 +1043,7 @@ async fn unverified_material_checks_span_quotes_unlinked_bank_items_and_partial_
                 source_quote: unverified_later.into(),
                 lesson_id: None,
                 origin: "bank",
-                review_status: "agreed",
+                review_status: CandidateReviewStatus::Agreed,
             },
             BankItem {
                 item: stored(
@@ -1053,7 +1055,7 @@ async fn unverified_material_checks_span_quotes_unlinked_bank_items_and_partial_
                 source_quote: "Validate client_assertion expiration claims strictly.".into(),
                 lesson_id: None,
                 origin: "bank",
-                review_status: "agreed",
+                review_status: CandidateReviewStatus::Agreed,
             },
         ],
         None,

@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef } from 'react';
 import { BookOpen, ChevronRight } from 'lucide-react';
 
 import { StatusLine } from '@/features/learning/practice/shared/StatusLine';
-import { numberedSavedSourceCitations, SavedSourceCitations } from '@/features/learning/sources/SavedSourceCitations';
+import { SavedSourceCitations } from '@/features/learning/sources/SavedSourceCitations';
 import { useLearningSourceWorkspace } from '@/features/learning/sources/useLearningSources';
 import { useSavedSourceReader } from '@/features/learning/sources/useSavedSourceReader';
 import { useReaderClosesWithOwner } from '@/features/reading/hooks/useReaderClosesWithOwner';
@@ -114,15 +114,14 @@ export function PracticeCitations({
   /** Why sources cannot be opened right now; the chips still show what is cited. */
   disabledReason?: string;
 }) {
-  const numbered = numberedSavedSourceCitations(citations);
   return (
     <SavedSourceCitations
       programId={programId}
-      citations={numbered}
+      citations={citations}
       quotes
       label="Saved sources cited"
       disabledReason={disabledReason}
-      onOpen={(_citation, index) => onOpen(numbered[index]!)}
+      onOpen={(_citation, index) => onOpen(citations[index]!)}
     />
   );
 }

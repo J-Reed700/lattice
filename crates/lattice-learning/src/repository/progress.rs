@@ -34,7 +34,9 @@ impl LearningRepository {
                 .fetch_optional(&mut *tx)
                 .await?
                 .ok_or_else(|| AppError::NotFound("Lesson not found in this program".into()))?;
-        if row.get::<String, _>("preparation") == "ready" {
+        if LearningPreparation::parse(&row.get::<String, _>("preparation"))?
+            == LearningPreparation::Ready
+        {
             tx.rollback().await?;
             return Err(AppError::InvalidInput(
                 "Ready lessons are immutable.".into(),

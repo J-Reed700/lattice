@@ -457,7 +457,7 @@ async fn insert_question(
         source_quote: String::new(),
         lesson_id: lesson_id.map(str::to_owned),
         origin,
-        review_status: "agreed",
+        review_status: crate::assessment_repository::CandidateReviewStatus::Agreed,
     };
     let mut tx = course.db.begin_write().await?;
     insert_bank_items_in(&mut tx, &course.program_id, &[item], None).await?;
@@ -680,6 +680,17 @@ async fn editing_a_disputed_question_syncs_its_bank_status_across_partial_edits_
                 ClaimEvent::Extracted {
                     location: ClaimLocation::locate(2, UnitKind::AnswerKey, field, stmt, stmt),
                     statement: stmt.into(),
+                },
+                rev,
+            )
+            .await?;
+        rev = store
+            .append(
+                &course.lesson_id,
+                id,
+                prov.clone(),
+                ClaimEvent::PublishedUnverified {
+                    reason: UnverifiedReason::Unsupported,
                 },
                 rev,
             )

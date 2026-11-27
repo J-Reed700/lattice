@@ -10,6 +10,7 @@ use crate::persistence::now;
 use crate::quiz_blueprints;
 use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::runtime::jobs::JobStatus;
 use sqlx::{Row, SqliteConnection};
 use std::collections::HashMap;
 
@@ -463,23 +464,19 @@ impl LearningAssessmentRepository {
             .bind(form_id)
             .fetch_optional(&mut *connection)
             .await?;
-        let live = job.as_ref().is_some_and(|j| {
-            matches!(j.get::<String, _>("status").as_str(), "pending" | "running")
-        });
+        let job_status = job
+            .as_ref()
+            .and_then(|j| JobStatus::parse(&j.get::<String, _>("status")));
+        let live = job_status.is_some_and(|status| !status.is_finished());
         let grading_job_id = job
             .as_ref()
             .filter(|_| live)
             .map(|j| j.get::<String, _>("id"));
         if !live {
-            let status = job.as_ref().map(|j| j.get::<String, _>("status"));
             let error_message = job
                 .as_ref()
                 .and_then(|j| j.get::<Option<String>, _>("error_message"));
-            apply_unlive_grading_feedback(
-                &mut results,
-                status.as_deref(),
-                error_message.as_deref(),
-            );
+            apply_unlive_grading_feedback(&mut results, job_status, error_message.as_deref());
         }
         Ok(Some(LearningAssessmentSubmissionDto {
             score: r.get("score"),
@@ -706,13 +703,13 @@ fn hydrate_rationale_citations(
 
 fn apply_unlive_grading_feedback(
     results: &mut [LearningAssessmentItemResultDto],
-    job_status: Option<&str>,
+    job_status: Option<JobStatus>,
     error_message: Option<&str>,
 ) {
-    let cancelled = matches!(job_status, Some("cancelled"));
+    let cancelled = job_status == Some(JobStatus::Cancelled);
     let reason = match job_status {
-        Some("cancelled") => "Grading stopped. Resume grading to finish.".to_string(),
-        Some("failed") => format!(
+        Some(JobStatus::Cancelled) => "Grading stopped. Resume grading to finish.".to_string(),
+        Some(JobStatus::Failed) => format!(
             "Couldn't grade yet: {}",
             error_message.unwrap_or("the grader stopped with an error.")
         ),

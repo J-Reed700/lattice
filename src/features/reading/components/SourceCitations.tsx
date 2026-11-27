@@ -230,7 +230,9 @@ export function SourceCitations({
                         pageNumber: chunk.pageNumber,
                       }),
                   ].filter(Boolean);
-                  const passageNumber = chunk.source.citationId ?? source.citationId;
+                  const citationIdOf = (value?: number | null) =>
+                    typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null;
+                  const passageNumber = citationIdOf(chunk.source.citationId) ?? citationIdOf(source.citationId);
 
                   return (
                     <div
@@ -253,7 +255,7 @@ export function SourceCitations({
                           else onViewSource(chunk.source);
                         }}
                       >
-                        {passageNumber != null ? `View passage [${passageNumber}]` : 'View passage'}
+                        {passageNumber !== null ? `View passage [${passageNumber}]` : 'View passage'}
                       </button>
                       <p className="text-sm text-[hsl(var(--text-secondary))] leading-relaxed line-clamp-4 wrap-break-word">
                         {chunk.excerpt}
@@ -264,32 +266,39 @@ export function SourceCitations({
               </div>
             );
 
+            const citationNumber =
+              typeof source.citationId === 'number' && Number.isInteger(source.citationId) && source.citationId > 0
+                ? source.citationId
+                : null;
+            const metaLine = metaParts.length > 0 && (
+              <div className={`${citationNumber !== null ? 'mt-1.5' : 'mt-0.5'} text-xs text-[hsl(var(--text-muted))]`}>
+                {metaParts.join(' · ')}
+              </div>
+            );
+            const viewButton = (shrink: boolean) => (
+              <button
+                type="button"
+                onClick={() => onViewSource(source)}
+                className={`${shrink ? 'shrink-0 ' : ''}text-xs text-[hsl(var(--accent))] underline-offset-2 hover:underline`}
+                title={`Open ${source.fileName}`}
+              >
+                View source
+              </button>
+            );
+
             return (
               <li key={group.key} className="space-y-2 rounded-lg border border-border-subtle bg-surface px-4 py-4">
-                {source.citationId != null ? (
+                {citationNumber !== null ? (
                   <CitationCard
-                    number={source.citationId}
+                    number={citationNumber}
                     title={source.fileName}
                     relation={relation}
                     excerpts={excerpts}
                     trail={trail}
                     footer={
                       <>
-                        {metaParts.length > 0 && (
-                          <div className="mt-1.5 text-xs text-[hsl(var(--text-muted))]">
-                            {metaParts.join(' · ')}
-                          </div>
-                        )}
-                        <div className="mt-2">
-                          <button
-                            type="button"
-                            onClick={() => onViewSource(source)}
-                            className="text-xs text-[hsl(var(--accent))] underline-offset-2 hover:underline"
-                            title={`Open ${source.fileName}`}
-                          >
-                            View source
-                          </button>
-                        </div>
+                        {metaLine}
+                        <div className="mt-2">{viewButton(false)}</div>
                         {chunksBody}
                       </>
                     }
@@ -301,20 +310,9 @@ export function SourceCitations({
                         <span className="text-sm font-semibold text-[hsl(var(--text-primary))] wrap-break-word">
                           {source.fileName}
                         </span>
-                        {metaParts.length > 0 && (
-                          <div className="mt-0.5 text-xs text-[hsl(var(--text-muted))]">
-                            {metaParts.join(' · ')}
-                          </div>
-                        )}
+                        {metaLine}
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => onViewSource(source)}
-                        className="shrink-0 text-xs text-[hsl(var(--accent))] underline-offset-2 hover:underline"
-                        title={`Open ${source.fileName}`}
-                      >
-                        View source
-                      </button>
+                      {viewButton(true)}
                     </div>
                     {chunksBody}
                   </>

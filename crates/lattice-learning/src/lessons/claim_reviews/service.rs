@@ -5,13 +5,12 @@
 //! checker-accuracy examples (§15) and trust calibration (source provenance
 //! §13). Design: docs/design/2026-10-16-lesson-claim-review.md.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
-    span_of, Actor, ClaimActionKind, ClaimCounts, ClaimEvent, ClaimId, ClaimLedgerEntry,
-    EventProvenance, HumanBinding, Ledger, LessonReview, LessonReviewState, Revision, TrustVerdict,
-    UserAction,
+    span_of, ClaimActionKind, ClaimCounts, ClaimEvent, ClaimId, ClaimLedgerEntry, HumanBinding,
+    Ledger, LessonReview, LessonReviewState, Revision, TrustVerdict, UserAction,
 };
 use lattice_core::domain::provenance::ClaimKind;
 use lattice_core::shared::edits::{ContentEdits, Uncommitted};
@@ -26,26 +25,30 @@ use super::published_edit::{self, placed};
 use super::published_undo;
 use super::put_back;
 use super::repository::{
-    append_in, blocks, bump_revision, check_revision, reviews, revision_conflict, revision_in,
+    append_in, bump_revision, check_revision, reviews, revision_conflict, revision_in,
     ClaimReviewRepository,
 };
-use super::teaching_claims::name_claims;
-use super::teaching_findings::{TeachingFindingDto, TeachingFindingsRepository};
-use crate::edits::keys;
-
-mod section_edit;
-mod settle;
 use crate::content_verification::located_quote;
 use crate::curriculum::{LearningGenerationJob, LearningGenerationJobStatus};
 use crate::curriculum_repository::LearningCurriculumRepository;
-use crate::persistence::now;
 use crate::plan_dto::LearningGenerationJobActionRequestDto;
 use lattice_core::shared::text::plain_text;
 use lattice_core::shared::text::same_text::whole_sentences;
+
+mod change_detection;
+mod note_removal;
+mod refusals;
+mod section_edit;
+mod settle;
+
+pub use change_detection::changed_since;
+pub use note_removal::NoteSentencesRemoved;
+pub(super) use refusals::user_resolution;
+pub(super) use refusals::add_kinds;
+use refusals::{action_kind, batch_refusal, not_now, plain, provenance};
 pub(super) use section_edit::{endings, record_edit, EditRecord, Ending};
 pub(super) use settle::settle_planned_in;
 
-const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// §6.2: Resume reruns nothing that has not changed.
 pub const NOTHING_CHANGED: &str =
     "Nothing changed since the last pass. Resolve a statement or add evidence first.";
@@ -56,17 +59,13 @@ const NO_STATEMENTS: &str = "Choose the statements first.";
 /// Why an Undo of a batch is refused once anything else was done.
 const MOVED: &str = "Something changed since then. Undo them one at a time.";
 const NEEDS_NOTE: &str = "It needs a note before it can be accepted.";
-const NO_NOTES: &str = "Choose the teaching notes first.";
-const ONLY_PUBLISHED: &str = "Only a published lesson's sentences can be taken out this way.";
-const NOT_A_SENTENCE: &str =
-    "This note isn't about one whole sentence of a section, so there's no sentence to remove.";
 
 #[derive(Clone)]
 pub struct ClaimReviewService {
     pub(super) database: Database,
-    store: ClaimReviewRepository,
+    pub(super) store: ClaimReviewRepository,
     drafts: LearningCurriculumRepository,
-    checker_model: Option<String>,
+    pub(super) checker_model: Option<String>,
 }
 
 /// One claim's event, the accuracy label it gives (§15) or, on Undo, the
@@ -78,14 +77,6 @@ pub(super) struct Resolution {
     pub(super) unlabel: Option<LabelSource>,
     pub(super) trust: Option<TrustVerdict>,
     pub(super) forget: Option<TrustVerdict>,
-}
-
-/// What `remove_note_sentences` did.
-pub struct NoteSentencesRemoved {
-    /// The review's revision after the removal.
-    pub revision: i64,
-    /// The claims the removal ended, in the order it ended them.
-    pub claim_ids: Vec<String>,
 }
 
 /// A claim and the action checked for it, ready to write.
@@ -313,125 +304,6 @@ impl ClaimReviewService {
             .await
     }
 
-    /// Takes the sentence of every teaching note in `finding_keys` out of its
-    /// published section, all or nothing, under one revision. Returns the
-    /// revision after and the claims the removals ended, in the order they
-    /// ended: an Undo of them through `resolve_many` puts everything back.
-    pub async fn remove_note_sentences(
-        &self,
-        lesson_id: &str,
-        finding_keys: &[String],
-        expected_revision: i64,
-    ) -> Result<NoteSentencesRemoved> {
-        let ledger = self.store.load(lesson_id).await?;
-        let review = ledger
-            .review
-            .clone()
-            .ok_or_else(|| AppError::NotFound("This lesson has no statement review.".into()))?;
-        if ledger.revision != Revision(expected_revision) {
-            return Err(revision_conflict());
-        }
-        if review.state != LessonReviewState::Ready {
-            return Err(AppError::InvalidState(ONLY_PUBLISHED.into()));
-        }
-        let mut findings = TeachingFindingsRepository::new(self.database.clone())
-            .list(lesson_id)
-            .await?;
-        let edits = crate::edits::content_edits(&self.database)?;
-        let (bodies, newest) = {
-            let mut read = self.database.begin_read().await?;
-            let bodies = blocks::section_bodies_in(&mut read, lesson_id).await?;
-            let refs: Vec<_> = bodies
-                .keys()
-                .map(|&unit| keys::section_ref(lesson_id, unit))
-                .collect();
-            let map: HashMap<usize, _> = edits
-                .newest(&mut read.reading(), &refs, keys::CLAIMS_REACTOR)
-                .await?
-                .into_iter()
-                .filter_map(|item| {
-                    let unit = keys::section_key(&item.content.key)?.1;
-                    Some((unit, item))
-                })
-                .collect();
-            read.commit().await?;
-            (bodies, map)
-        };
-        name_claims(&ledger, &bodies, &newest, &mut findings);
-        let mut chosen: Vec<&TeachingFindingDto> = Vec::new();
-        for key in finding_keys {
-            let finding = findings
-                .iter()
-                .find(|finding| finding.finding_key == *key)
-                .ok_or_else(|| {
-                    AppError::NotFound("No teaching note with that key in this lesson.".into())
-                })?;
-            if !chosen
-                .iter()
-                .any(|seen| seen.finding_key == finding.finding_key)
-            {
-                chosen.push(finding);
-            }
-        }
-        if chosen.is_empty() {
-            return Err(AppError::InvalidInput(NO_NOTES.into()));
-        }
-        let refused = chosen.iter().filter(|finding| !finding.removable).count();
-        if refused > 0 {
-            return Err(batch_refusal(
-                "removed",
-                refused,
-                chosen.len(),
-                NOT_A_SENTENCE,
-            ));
-        }
-
-        let (ended, moved, mut revision, uncommitted) = self
-            .remove_sentences(&edits, &review, &ledger, &chosen)
-            .await?;
-        for pending in uncommitted {
-            let _ = edits.committed(pending).await;
-        }
-        if self.redecide(lesson_id, moved).await? {
-            revision = self.store.load(lesson_id).await?.revision;
-        }
-        Ok(NoteSentencesRemoved {
-            revision: revision.0,
-            claim_ids: ended.into_iter().map(|id| id.0).collect(),
-        })
-    }
-
-    /// Takes the chosen notes' sentences out of the published text, ends the
-    /// claims they stood on and settles what the removals give the checker
-    /// examples and calibration, in one unit of work under the ledger's
-    /// revision. Returns the claims it ended, the kinds whose bar moved,
-    /// the revision it left, and pending edit follow-ups.
-    async fn remove_sentences(
-        &self,
-        edits: &ContentEdits,
-        review: &LessonReview,
-        ledger: &Ledger,
-        chosen: &[&TeachingFindingDto],
-    ) -> Result<(Vec<ClaimId>, Vec<ClaimKind>, Revision, Vec<Uncommitted>)> {
-        let lesson_id = ledger.lesson_id.as_str();
-        let mut tx = self.database.begin_write().await?;
-        check_revision(&mut tx, lesson_id, ledger.revision).await?;
-        let (ended, through_claims, written, uncommitted) =
-            published_undo::remove_note_sentences_in(&mut tx, edits, ledger, chosen).await?;
-        let mut moved = Vec::new();
-        for id in &through_claims {
-            if let Some(entry) = ledger.claims.iter().find(|entry| entry.claim_id() == id) {
-                let resolution =
-                    user_resolution(UserAction::Remove, None, Some(LabelSource::UserRemove));
-                let item = Planned { entry, resolution };
-                let kinds = settle::settle_in(&mut tx, review, lesson_id, &item).await?;
-                add_kinds(&mut moved, kinds);
-            }
-        }
-        tx.commit().await?;
-        Ok((ended, moved, written, uncommitted))
-    }
-
     /// One claim's action checked against the claim and, in a published
     /// lesson, the lesson's text, with nothing written: what `resolve` and
     /// `resolve_many` both write.
@@ -594,40 +466,6 @@ impl ClaimReviewService {
         }
         tx.commit().await?;
         Ok((written, moved, uncommitted))
-    }
-
-    /// Whether claim activity or a different checker gives verification new
-    /// work since the lesson stopped.
-    pub async fn changed_since_stop(&self, lesson_id: &str) -> Result<bool> {
-        let ledger = self.store.load(lesson_id).await?;
-        self.changed_in(&ledger).await
-    }
-
-    /// `changed_since_stop` over a loaded ledger. A different checker counts
-    /// even when the user has not acted on a claim card.
-    pub(super) async fn changed_in(&self, ledger: &Ledger) -> Result<bool> {
-        let Some(review) = &ledger.review else {
-            return Ok(false);
-        };
-        if !matches!(
-            review.state,
-            LessonReviewState::NeedsReview | LessonReviewState::Stopped
-        ) {
-            return Ok(false);
-        }
-        if self
-            .checker_model
-            .as_ref()
-            .is_some_and(|model| model != &review.checker_model)
-        {
-            return Ok(true);
-        }
-        let stopped_at = self
-            .store
-            .review_written_at(&ledger.lesson_id)
-            .await?
-            .unwrap_or(i64::MAX);
-        Ok(changed_since(ledger, stopped_at))
     }
 
     async fn resolution(
@@ -843,116 +681,4 @@ impl ClaimReviewService {
                 AppError::NotFound("The statement's section is not in the draft.".into())
             })
     }
-}
-
-/// The event of a user's `action`, the accuracy label it gives and the
-/// verdict calibration records.
-pub(super) fn user_resolution(
-    action: UserAction,
-    note: Option<String>,
-    label: Option<LabelSource>,
-) -> Resolution {
-    let trust = match &action {
-        UserAction::Confirm { .. } => Some(TrustVerdict::Confirm),
-        UserAction::Edit { .. } => Some(TrustVerdict::Edit),
-        UserAction::Remove => Some(TrustVerdict::Remove),
-        _ => None,
-    };
-    Resolution {
-        event: ClaimEvent::UserAction { action, note },
-        label,
-        unlabel: None,
-        trust,
-        forget: None,
-    }
-}
-
-/// Adds the kinds in `more` that `kinds` lacks.
-pub(super) fn add_kinds(kinds: &mut Vec<ClaimKind>, more: Vec<ClaimKind>) {
-    for kind in more {
-        if !kinds.contains(&kind) {
-            kinds.push(kind);
-        }
-    }
-}
-
-/// The text of a refusal as the user reads it, without the error's kind.
-fn plain(error: &AppError) -> String {
-    match error {
-        AppError::InvalidInput(message)
-        | AppError::InvalidState(message)
-        | AppError::NotFound(message) => message.clone(),
-        other => other.to_string(),
-    }
-}
-
-/// Why the claim's state does not allow `action`.
-fn not_now(action: ClaimActionKind) -> &'static str {
-    match action {
-        ClaimActionKind::Confirm => "It is not waiting to be accepted.",
-        ClaimActionKind::Edit | ClaimActionKind::Remove => {
-            "It has already been removed or replaced."
-        }
-        ClaimActionKind::PutBack => "Only a sentence the machine took out can be put back.",
-        ClaimActionKind::RestoreOriginal => {
-            "Only a sentence the machine rewrote has an original to restore."
-        }
-        ClaimActionKind::Unconfirm => "It has not been accepted.",
-        ClaimActionKind::ResearchWithHint => "It is not waiting for a search.",
-        ClaimActionKind::AttachEvidence | ClaimActionKind::Undo => "That can't be done to it now.",
-    }
-}
-
-fn action_kind(action: &ClaimActionRequestDto) -> ClaimActionKind {
-    match action {
-        ClaimActionRequestDto::Confirm { .. } => ClaimActionKind::Confirm,
-        ClaimActionRequestDto::Unconfirm => ClaimActionKind::Unconfirm,
-        ClaimActionRequestDto::Edit { .. } => ClaimActionKind::Edit,
-        ClaimActionRequestDto::Remove => ClaimActionKind::Remove,
-        ClaimActionRequestDto::ResearchWithHint { .. } => ClaimActionKind::ResearchWithHint,
-        ClaimActionRequestDto::PutBack { .. } => ClaimActionKind::PutBack,
-        ClaimActionRequestDto::RestoreOriginal => ClaimActionKind::RestoreOriginal,
-        ClaimActionRequestDto::Undo => ClaimActionKind::Undo,
-    }
-}
-
-/// A user action's provenance (§5.1): no job, the checker the review names.
-pub(super) fn provenance(review: &LessonReview) -> EventProvenance {
-    EventProvenance {
-        actor: Actor::User,
-        at: now(),
-        job_id: None,
-        app_version: APP_VERSION.into(),
-        checker_model: Some(review.checker_model.clone()),
-    }
-}
-
-/// Whether the user acted on any claim at or after `at` (§6.2), a trust
-/// change re-decided one (source provenance §18.7: an override or a moved
-/// bar is the user's doing too), or a claim was checked outside the
-/// preparation job (against a source the user added or attached, or by an
-/// audit the user ran).
-pub fn changed_since(ledger: &Ledger, at: i64) -> bool {
-    ledger.claims.iter().any(|entry| {
-        entry.events().iter().any(|record| {
-            let changed = record.provenance.actor == Actor::User
-                || matches!(
-                    record.event,
-                    ClaimEvent::StandingAssessed { cause: Some(_), .. }
-                )
-                || (matches!(record.event, ClaimEvent::Checked(_))
-                    && record.provenance.job_id.is_none());
-            changed && record.provenance.at >= at
-        })
-    })
-}
-
-/// The refusal of a batch of which `refused` of its `chosen` items cannot be
-/// `verb`ed: nothing is written.
-fn batch_refusal(verb: &str, refused: usize, chosen: usize, message: &str) -> AppError {
-    AppError::InvalidState(if refused == chosen {
-        format!("None of these can be {verb}: {message}")
-    } else {
-        format!("{refused} of these can't be {verb}: {message} Nothing was changed.")
-    })
 }

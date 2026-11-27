@@ -8,7 +8,8 @@ use crate::{
     },
     assessment_generation::StoredItem,
     assessment_repository::{
-        insert_bank_items_in, BankItem, ItemGrade, LearningAssessmentRepository, Regrade,
+        insert_bank_items_in, BankItem, CandidateReviewStatus, ItemGrade,
+        LearningAssessmentRepository, Regrade,
     },
     dto::*,
     grade_rationale::{self, Checked, GraderCriterion, GraderItem, GraderVerdict},
@@ -675,7 +676,7 @@ pub(crate) async fn fill_bank(
                 source_quote: String::new(),
                 lesson_id: lesson_id.clone(),
                 origin: "bank",
-                review_status: "agreed",
+                review_status: CandidateReviewStatus::Agreed,
             });
         }
     }
@@ -1882,7 +1883,7 @@ async fn bank_items_sharing_most_of_their_words_are_both_stored() -> Result<()> 
                 source_quote: String::new(),
                 lesson_id: None,
                 origin: "bank",
-                review_status: "agreed",
+                review_status: CandidateReviewStatus::Agreed,
             }
         })
         .collect();
@@ -2155,7 +2156,7 @@ async fn form_in_populates_item_source_citations_and_hydrates_criterion_rational
                 source_quote: item_quote,
                 lesson_id: req_lesson.clone(),
                 origin: "bank",
-                review_status: "agreed",
+                review_status: CandidateReviewStatus::Agreed,
             });
         }
     }
@@ -2193,7 +2194,7 @@ async fn form_in_populates_item_source_citations_and_hydrates_criterion_rational
         .span
         .expect("item quote UTF-8 span");
     assert_eq!(
-        (span.start as usize, span.end as usize),
+        (span.start, span.end),
         (prefix.len(), prefix.len() + quote.len())
     );
     assert_eq!(target_item.source_citations[1].number, 2);
@@ -2202,13 +2203,29 @@ async fn form_in_populates_item_source_citations_and_hydrates_criterion_rational
         RelationDto::Cites
     );
 
+    let mut answer = engine::LearningAssessmentResponse::empty(item_id.clone());
+    answer.text = Some("Competition raises apparent Km.".into());
+    let answered = repo
+        .save_response(
+            &SaveLearningAssessmentResponseRequestDto {
+                operation_id: id(),
+                program_id: program_id.clone(),
+                form_id: form_id.clone(),
+                expected_revision: started.revision,
+                response: answer,
+                assistance: vec![],
+            },
+            "answer",
+        )
+        .await?;
+
     let (submitted, _) = repo
         .submit(
             &MutateLearningAssessmentFormRequestDto {
                 operation_id: id(),
                 program_id,
                 form_id: form_id.clone(),
-                expected_revision: started.revision,
+                expected_revision: answered.revision,
             },
             "submit",
         )
@@ -2269,7 +2286,7 @@ async fn form_in_populates_item_source_citations_and_hydrates_criterion_rational
     assert_eq!(
         crit_support.anchors[0]
             .span
-            .map(|s| (s.start as usize, s.end as usize)),
+            .map(|s| (s.start, s.end)),
         Some((prefix.len(), prefix.len() + quote.len()))
     );
     Ok(())

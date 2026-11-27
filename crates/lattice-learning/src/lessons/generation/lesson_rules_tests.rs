@@ -1101,3 +1101,27 @@ fn a_lesson_question_whose_key_is_in_its_prompt_is_a_finding() {
     let ids = rule_ids(&lesson_rules(&candidate));
     assert_eq!(ids, ["rule/answer-in-prompt/question-0"], "{ids:?}");
 }
+
+#[test]
+fn consecutive_duplicates_and_prefix_stutters_in_prose_and_lists_are_findings() {
+    let mut candidate = lesson();
+    candidate["blocks"][7]["body"] = json!(
+        "1. Parse the header.\n5. Write the acknowledgement you expect back. Write the acknowledgement you expect back, and inspect MSA-2."
+    );
+    candidate["blocks"][0]["body"] = json!("Check MSA-2. Check MSA-2.");
+    let findings = lesson_rules(&candidate);
+    let ids = rule_ids(&findings);
+    assert_eq!(
+        ids,
+        [
+            "rule/sentence-repeated/section-0",
+            "rule/sentence-repeated/section-7",
+        ],
+        "{ids:?}"
+    );
+    assert_eq!(findings[0].passage.as_deref(), Some("Check MSA-2."));
+    assert_eq!(
+        findings[1].passage.as_deref(),
+        Some("Write the acknowledgement you expect back, and inspect MSA-2.")
+    );
+}

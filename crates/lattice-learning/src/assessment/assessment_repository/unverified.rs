@@ -390,17 +390,18 @@ async fn sync_disputed_questions_inner(tx: &mut WriteTx, lesson_id: &str) -> Res
     .await?;
     for (index, (id, status)) in own.into_iter().enumerate() {
         let is_unverified = unverified_questions.contains(&(lesson_id.to_owned(), index));
-        let next = match (status.as_str(), is_unverified) {
-            ("disputed", false) => Some("agreed"),
-            ("agreed", true) => Some("disputed"),
+        let parsed = super::bank::CandidateReviewStatus::parse(&status)?;
+        let next = match (parsed, is_unverified) {
+            (super::bank::CandidateReviewStatus::Disputed, false) => {
+                Some(super::bank::CandidateReviewStatus::Agreed)
+            }
+            (super::bank::CandidateReviewStatus::Agreed, true) => {
+                Some(super::bank::CandidateReviewStatus::Disputed)
+            }
             _ => None,
         };
         if let Some(target_status) = next {
-            sqlx::query("UPDATE learning_assessment_candidates SET review_status=? WHERE id=?")
-                .bind(target_status)
-                .bind(id)
-                .execute(&mut **tx)
-                .await?;
+            super::bank::set_candidate_review_status_in(tx, &id, target_status).await?;
         }
     }
     Ok(())

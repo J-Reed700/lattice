@@ -771,3 +771,48 @@ fn a_quoted_unit_that_is_not_shown_is_written_without_a_handle() {
         "[q1] Cy hid.\n\nDi won. [q2] Ed lost."
     );
 }
+
+#[test]
+fn inserted_and_moved_list_items_keep_line_breaks_while_inline_sentences_join_with_spaces() {
+    let ordered = "1. First step.\n2. Second step.\n3. Third step.";
+    let inserted_ordered = edited(ordered, Grain::Sentence, |u, change| {
+        change
+            .insert
+            .push((after(&u[1]), "2b. Inserted step.".to_owned()));
+    });
+    assert_eq!(
+        inserted_ordered,
+        "1. First step.\n2. Second step.\n2b. Inserted step.\n3. Third step."
+    );
+
+    let bullets = "- First bullet.\n- Second bullet.\n* Star bullet.\n+ Plus bullet.";
+    let inserted_at_start = edited(bullets, Grain::Sentence, |u, change| {
+        change
+            .insert
+            .push((Anchor::Start, "- Zero bullet.".to_owned()));
+        change.moved.push((u[2].clone(), after(&u[0])));
+    });
+    assert_eq!(
+        inserted_at_start,
+        "- Zero bullet.\n- First bullet.\n* Star bullet.\n- Second bullet.\n+ Plus bullet."
+    );
+
+    // Inserting a bullet at Anchor::Start before a prose paragraph keeps a newline.
+    let before_prose = edited("Intro sentence. Next sentence.", Grain::Sentence, |_, change| {
+        change
+            .insert
+            .push((Anchor::Start, "- Lead item.".to_owned()));
+    });
+    assert_eq!(before_prose, "- Lead item.\nIntro sentence. Next sentence.");
+
+    // Inserting a continuation sentence after a list item keeps inline space join.
+    let inline_follow = edited("- First item.\n- Second item.", Grain::Sentence, |u, change| {
+        change
+            .insert
+            .push((after(&u[0]), "Clarifying detail.".to_owned()));
+    });
+    assert_eq!(
+        inline_follow,
+        "- First item. Clarifying detail.\n- Second item."
+    );
+}

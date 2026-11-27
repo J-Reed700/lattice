@@ -396,11 +396,7 @@ impl LearningAssessmentRepository {
             .bind(now())
             .execute(&mut *tx)
             .await?;
-        sqlx::query("UPDATE learning_assessment_candidates SET review_status='reported' WHERE id=? AND program_id=?")
-            .bind(&req.item_id)
-            .bind(&req.program_id)
-            .execute(&mut *tx)
-            .await?;
+        super::bank::mark_candidate_reported_in(&mut tx, &req.item_id, &req.program_id).await?;
         operation.record(&mut tx, &()).await?;
         tx.commit().await?;
         self.get_form(&req.form_id).await

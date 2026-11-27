@@ -16,8 +16,11 @@ mod recall;
 mod submission;
 mod unverified;
 
-pub use bank::BankItem;
-pub(crate) use bank::{content_hash, insert_bank_items_in, quoted_questions_in};
+pub use bank::{BankItem, CandidateReviewStatus};
+pub(crate) use bank::{
+    candidate_review_status_in, content_hash, insert_bank_items_in, quoted_questions_in,
+    set_candidate_review_status_in,
+};
 pub use contests::{ContestInput, Regrade};
 pub use submission::ItemGrade;
 pub(crate) use unverified::{sync_disputed_questions_in, unverified_question_indices};
@@ -448,7 +451,7 @@ impl LearningAssessmentRepository {
                 .bind(program_id)
                 .fetch_optional(&mut *connection)
                 .await?;
-        if status.as_deref() != Some("active") {
+        if status.as_deref() != Some(LearningProgramStatus::Active.as_str()) {
             return Err(invalid("Quizzes need an active course."));
         }
         Ok(())

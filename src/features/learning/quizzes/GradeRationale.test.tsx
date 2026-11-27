@@ -189,6 +189,23 @@ describe('a criterion’s source quote', () => {
     expect(quote).toHaveTextContent('“inhibitors bind the enzyme” — Field notes');
   });
 
+  it('treats non-positive sourceNumber as unnumbered rather than drawing Source 0', () => {
+    const zero = rationale({
+      criteria: [criterion({
+        criterionId: 'example', title: 'Example', verdict: 'missed', points: 0, maxPoints: 2,
+        whatWasMissing: 'No example given.', fullCreditIncludes: 'Names an inhibitor.',
+        sourceQuote: 'inhibitors bind the enzyme', sourceVersionId: 'version-1',
+        sourceNumber: 0, sourceSupport: null,
+      })],
+    });
+    render(
+      <GradeRationale rationale={zero} answer={ANSWER} lostPoints statusWord="provisional" sources={sources} programId="program-1" ownerKey="answer-1" />,
+      { wrapper },
+    );
+    expect(screen.queryByRole('group', { name: /Source 0/ })).not.toBeInTheDocument();
+    expect(document.querySelector('blockquote')).toHaveTextContent('“inhibitors bind the enzyme” — Field notes');
+  });
+
   it('shows neither the citation nor the blockquote in reading mode', () => {
     useCitationDisplayStore.setState({ visible: false });
     renderRationale({ programId: 'program-1', ownerKey: 'answer-1' });

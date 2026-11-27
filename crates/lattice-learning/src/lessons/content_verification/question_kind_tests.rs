@@ -53,7 +53,7 @@ fn single_choice(outcome_id: &str, prompt: &str, options: &[&str], right: usize)
         source_quote: String::new(),
         lesson_id: None,
         origin: "lesson",
-        review_status: "agreed",
+        review_status: crate::assessment_repository::CandidateReviewStatus::Agreed,
     }
 }
 
@@ -121,7 +121,7 @@ async fn course_with_questions() -> Result<(Course, String, Vec<String>)> {
         source_quote: String::new(),
         lesson_id: Some(course.lesson_id.clone()),
         origin: "lesson",
-        review_status: "agreed",
+        review_status: crate::assessment_repository::CandidateReviewStatus::Agreed,
     };
 
     let short = BankItem {
@@ -146,7 +146,7 @@ async fn course_with_questions() -> Result<(Course, String, Vec<String>)> {
         source_quote: String::new(),
         lesson_id: Some(course.lesson_id.clone()),
         origin: "lesson",
-        review_status: "agreed",
+        review_status: crate::assessment_repository::CandidateReviewStatus::Agreed,
     };
 
     let ids: Vec<String> = [&q0, &q1, &tf, &short]

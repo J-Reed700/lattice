@@ -112,9 +112,9 @@ fn lesson_seed_items_with_unverified(
                             "Question relies on unverified or no-source claims.",
                         );
                     });
-                    "disputed"
+                    crate::assessment_repository::CandidateReviewStatus::Disputed
                 }
-                Ok(()) => "agreed",
+                Ok(()) => crate::assessment_repository::CandidateReviewStatus::Agreed,
                 Err(error) => {
                     tracing::info!(question = %q.id, %error, "A lesson question was kept out of the quiz bank's draws");
                     crate::lessons::trace::lesson_span(lesson_id).in_scope(|| {
@@ -125,7 +125,7 @@ fn lesson_seed_items_with_unverified(
                             &error.to_string(),
                         );
                     });
-                    "dropped"
+                    crate::assessment_repository::CandidateReviewStatus::Dropped
                 }
             };
             Some(BankItem {

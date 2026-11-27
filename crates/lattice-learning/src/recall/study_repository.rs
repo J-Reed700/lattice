@@ -182,10 +182,12 @@ fn normalize_study_sources(sources: &mut [StudySourceDto]) {
             used.insert(next);
             next += 1;
         }
-        if source.support.anchors.is_empty() && !source.excerpt.trim().is_empty() {
-            source.support = SupportDto::cites([source.excerpt.as_str()]);
-        } else {
-            source.support.relation = RelationDto::Cites;
+        if source.support.anchors.is_empty() {
+            if !source.excerpt.trim().is_empty() {
+                source.support = SupportDto::cites([source.excerpt.as_str()]);
+            } else {
+                source.support.relation = RelationDto::Cites;
+            }
         }
     }
 }

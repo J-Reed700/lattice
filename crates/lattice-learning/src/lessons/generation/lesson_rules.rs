@@ -360,7 +360,8 @@ pub(crate) fn lesson_rules(
     let mut seen = HashSet::new();
     for (index, block) in blocks.iter().enumerate() {
         let mut reported = HashSet::new();
-        for sentence in repeats::comparable(text(block, "body")) {
+        let body = text(block, "body");
+        for sentence in repeats::comparable(body) {
             let key = repeats::key(&sentence);
             if !seen.insert(key.clone()) && reported.insert(key) {
                 let site = FindingSite::Section(index);
@@ -374,6 +375,52 @@ pub(crate) fn lesson_rules(
                     )
                     .with_summary(format!("{} repeats a sentence the lesson already has: \u{201c}{sentence}\u{201d}", site.label()))
                     .with_passage(&sentence),
+                );
+            }
+        }
+        for repeat in repeats::consecutive_repeats(body) {
+            let key = repeats::key(&repeat.second);
+            if reported.insert(key.clone()) {
+                seen.insert(key);
+                let site = FindingSite::Section(index);
+                let (summary, note) = if repeat.prefix_stutter {
+                    (
+                        format!(
+                            "{} opens a sentence by repeating the previous sentence: \u{201c}{}\u{201d}",
+                            site.label(),
+                            repeat.second
+                        ),
+                        format!(
+                            "{} starts \"{}\" by repeating the previous sentence \"{}\"; remove the repeated opening or merge them cleanly.",
+                            site.note_label(),
+                            repeat.second,
+                            repeat.first
+                        ),
+                    )
+                } else {
+                    (
+                        format!(
+                            "{} repeats a sentence right after itself: \u{201c}{}\u{201d}",
+                            site.label(),
+                            repeat.second
+                        ),
+                        format!(
+                            "{} says \"{}\" twice in a row; say it once and remove the duplicate.",
+                            site.note_label(),
+                            repeat.second
+                        ),
+                    )
+                };
+                findings.push(
+                    ReviewFinding::rule_about(
+                        Rule::SentenceRepeated,
+                        FindingKind::Teaching,
+                        site,
+                        &repeat.second,
+                        note,
+                    )
+                    .with_summary(summary)
+                    .with_passage(&repeat.second),
                 );
             }
         }

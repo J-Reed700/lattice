@@ -101,22 +101,22 @@ impl ContentKind for LessonKind {
             .after
             .get("title")
             .and_then(Value::as_str)
-            .ok_or_else(|| AppError::InvalidState("Lesson title must be a string.".into()))?;
+            .ok_or_else(|| AppError::InvalidInput("Lesson title must be a string.".into()))?;
         let objective = change
             .after
             .get("objective")
             .and_then(Value::as_str)
-            .ok_or_else(|| AppError::InvalidState("Lesson objective must be a string.".into()))?;
+            .ok_or_else(|| AppError::InvalidInput("Lesson objective must be a string.".into()))?;
         let estimated_minutes = match change.after.get("estimatedMinutes") {
             Some(value) => {
                 let raw = value.as_i64().ok_or_else(|| {
-                    AppError::InvalidState("Lesson time must be a positive integer.".into())
+                    AppError::InvalidInput("Lesson time must be a positive integer.".into())
                 })?;
                 let mins = u32::try_from(raw)
                     .ok()
                     .filter(|minutes| *minutes >= 1)
                     .ok_or_else(|| {
-                        AppError::InvalidState("Lesson time must be at least 1 minute.".into())
+                        AppError::InvalidInput("Lesson time must be at least 1 minute.".into())
                     })?;
                 Some(mins)
             }

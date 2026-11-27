@@ -56,4 +56,14 @@ describe('useCitationInteractions hover', () => {
 
     expect(result.current.citationHover).toMatchObject({ number: 2, occurrence: 3 });
   });
+
+  it('ignores sources without backend citationIds instead of inventing positional numbers', () => {
+    const unnumbered: SourceWithMetadata = { ...source, citationId: undefined };
+    const { result } = renderHook(() =>
+      useCitationInteractions({ sources: [unnumbered], ownerKey: 'answer', numbered: true, showCitations: true, claims: [] }),
+    );
+
+    expect(result.current.citationMap.size).toBe(0);
+    expect(result.current.citationNumbers).toEqual([]);
+  });
 });

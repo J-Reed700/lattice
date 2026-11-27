@@ -374,14 +374,37 @@ describe('sourceAdapter canonical mappings', () => {
         trust: null,
       };
 
-      const target = fromLearningEvidencePassage(passage, 0, 'Full backpropagation textbook text');
+      const target = fromLearningEvidencePassage(passage, 4, 'Full backpropagation textbook text');
       expect(target.source.documentId).toBe('web:https://learn.example.com/backprop');
       expect(target.source.fileName).toBe('Evidence on Backpropagation');
+      expect(target.source.citationId).toBe(4);
       expect(target.source.webSnapshot?.text).toBe('Full backpropagation textbook text');
       expect(target.locator).toEqual({
         text: 'Backpropagation computes the gradient of the loss function.',
         chunkId: 'sv-123:100-165',
       });
+    });
+
+    it('omits citationId and positional fallback names when called without a backend citation number', () => {
+      const passage: LearningEvidencePassageDto = {
+        sourceVersionId: '',
+        title: '',
+        text: 'Excerpt without title.',
+        startByte: 0,
+        endByte: 22,
+        url: null,
+        retrievalKind: 'source',
+        trust: null,
+      };
+
+      const unnumbered = fromLearningEvidencePassage(passage);
+      expect(unnumbered.source.citationId).toBeUndefined();
+      expect(unnumbered.source.documentId).toBe('passage');
+      expect(unnumbered.source.fileName).toBe('Saved source');
+
+      const numbered = fromLearningEvidencePassage(passage, 3);
+      expect(numbered.source.citationId).toBe(3);
+      expect(numbered.source.fileName).toBe('Source 3');
     });
 
     it('keeps the passage as what a reader marks once the saved page has loaded', () => {
@@ -397,7 +420,7 @@ describe('sourceAdapter canonical mappings', () => {
       };
 
       for (const url of ['https://learn.example.com/backprop', null]) {
-        const { source } = fromLearningEvidencePassage({ ...passage, url }, 0, 'Full backpropagation textbook text');
+        const { source } = fromLearningEvidencePassage({ ...passage, url }, undefined, 'Full backpropagation textbook text');
         expect(locatorFromSource(source, source.chunkId).text).toBe(passage.text);
         expect(source.content).toBe(passage.text);
       }
@@ -416,21 +439,21 @@ describe('sourceAdapter canonical mappings', () => {
       };
 
       it('keeps a saved page exactly as given and starts at byte 0', () => {
-        const { source } = fromLearningEvidencePassage(passage, 0, '\n\nThe whole saved page.\n');
+        const { source } = fromLearningEvidencePassage(passage, undefined, '\n\nThe whole saved page.\n');
 
         expect(source.webSnapshot?.text).toBe('\n\nThe whole saved page.\n');
         expect(source.anchorBase).toBe(0);
       });
 
       it('keeps a web passage shown alone exactly as given and starts at its own byte', () => {
-        const { source } = fromLearningEvidencePassage(passage, 0);
+        const { source } = fromLearningEvidencePassage(passage);
 
         expect(source.webSnapshot?.text).toBe(passage.text);
         expect(source.anchorBase).toBe(100);
       });
 
       it('starts a passage with no page at its own byte', () => {
-        const { source } = fromLearningEvidencePassage({ ...passage, url: null }, 0);
+        const { source } = fromLearningEvidencePassage({ ...passage, url: null });
 
         expect(source.anchorBase).toBe(100);
         expect(source.content.trim()).toBe('Backpropagation computes the gradient.');
@@ -442,7 +465,7 @@ describe('sourceAdapter canonical mappings', () => {
         sourceVersionId: 'sv-123', title: 'Lecture notes', text: '', startByte: 0, endByte: 0, url: null, retrievalKind: 'source', trust: null,
       };
 
-      const target = fromLearningEvidencePassage(passage, 0, 'The whole of the lecture notes.');
+      const target = fromLearningEvidencePassage(passage, undefined, 'The whole of the lecture notes.');
       expect(target.source.content).toBe('The whole of the lecture notes.');
       expect(target.locator).toBeNull();
     });

@@ -6,10 +6,12 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
+use crate::dto::LearningBlockKind;
 use crate::edits::keys::{self, affected, learning_scope, section_key};
 use crate::edits::BEING_PREPARED;
 use crate::lessons::claim_reviews::repository::blocks;
 use crate::lessons::generation::split_check;
+use lattice_core::domain::learning::claim_review::LessonReviewState;
 use lattice_core::shared::edits::{
     Change, ContentKind, EditRegistry, Editability, FieldProblem, FieldSpec, Loaded, TextFormat,
 };
@@ -63,7 +65,7 @@ impl ContentKind for SectionKind {
         let editability = if row
             .review_state
             .as_deref()
-            .is_some_and(|state| state != "ready")
+            .is_some_and(|state| state != LessonReviewState::Ready.as_str())
         {
             Editability::NotNow {
                 reason: BEING_PREPARED.into(),
@@ -97,7 +99,7 @@ impl ContentKind for SectionKind {
         let Some(row) = blocks::section_row(&mut *unit, lesson_id, ordinal).await? else {
             return Ok(Vec::new());
         };
-        if row.kind != "check" {
+        if LearningBlockKind::parse(&row.kind) != Some(LearningBlockKind::Check) {
             return Ok(Vec::new());
         }
         let before_body = before.get("body").and_then(Value::as_str).unwrap_or("");

@@ -24,32 +24,16 @@ pub(crate) use memory::ensure_memory_resources;
 pub use memory::lesson_note_draft;
 
 fn status(v: LearningProgramStatus) -> &'static str {
-    match v {
-        LearningProgramStatus::Draft => "draft",
-        LearningProgramStatus::Active => "active",
-    }
+    v.as_str()
 }
 fn prep(v: LearningPreparation) -> &'static str {
-    match v {
-        LearningPreparation::Outline => "outline",
-        LearningPreparation::Ready => "ready",
-    }
+    v.as_str()
 }
 fn parse_status(s: &str) -> Result<LearningProgramStatus> {
-    match s {
-        "draft" => Ok(LearningProgramStatus::Draft),
-        "active" => Ok(LearningProgramStatus::Active),
-        _ => Err(AppError::Database("Invalid learning program status".into())),
-    }
+    LearningProgramStatus::parse(s)
 }
 fn parse_prep(s: &str) -> Result<LearningPreparation> {
-    match s {
-        "outline" => Ok(LearningPreparation::Outline),
-        "ready" => Ok(LearningPreparation::Ready),
-        _ => Err(AppError::Database(
-            "Invalid lesson preparation state".into(),
-        )),
-    }
+    LearningPreparation::parse(s)
 }
 fn parse_block(s: &str) -> Result<LearningBlockKind> {
     LearningBlockKind::parse(s)

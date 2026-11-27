@@ -37,24 +37,29 @@ export function FlashcardSource({ sources }: { sources: StudySourceDto[] }) {
           const excerpts = source.support?.anchors.map((anchor) => anchor.exact).filter(Boolean) ?? [];
           const passage = excerpts.length === 0 ? (source.excerpt?.trim() || undefined) : undefined;
           const site = href ? new URL(href).hostname : undefined;
-          const openButton = hasTarget && href ? (
+          const citationNumber =
+            typeof source.citationId === 'number' && Number.isInteger(source.citationId) && source.citationId > 0
+              ? source.citationId
+              : null;
+          const openButton = hasTarget && (href || citationNumber === null) ? (
             <Button
               className="mt-2"
               variant="secondary"
               size="sm"
               onClick={() => setOpenIndex(index)}
             >
-              Open reference
+              {href ? 'Open reference' : 'Open source'}
             </Button>
           ) : !hasTarget ? (
             <p className="mt-2 text-xs text-text-muted">Saved source snapshot</p>
           ) : undefined;
           const title = source.fileName?.trim() || 'Saved source';
+          const fallbackText = excerpts[0] ?? passage;
           return (
-            <div key={`${source.chunkId}-${source.citationId ?? 'unnumbered'}-${index}`}>
-              {typeof source.citationId === 'number' && source.citationId > 0 ? (
+            <div key={`${source.chunkId}-${citationNumber ?? 'unnumbered'}-${index}`}>
+              {citationNumber !== null ? (
                 <CitationCard
-                  number={source.citationId}
+                  number={citationNumber}
                   title={title}
                   site={site}
                   relation={source.support?.relation}
@@ -66,19 +71,10 @@ export function FlashcardSource({ sources }: { sources: StudySourceDto[] }) {
               ) : (
                 <div>
                   <p className="mb-2 text-xs font-medium text-text-primary">{title}</p>
-                  {source.excerpt && (
-                    <p className="leading-relaxed text-text-secondary">{source.excerpt}</p>
+                  {fallbackText && (
+                    <p className="leading-relaxed text-text-secondary">{fallbackText}</p>
                   )}
-                  {hasTarget && !href ? (
-                    <Button
-                      className="mt-2"
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => setOpenIndex(index)}
-                    >
-                      Open source
-                    </Button>
-                  ) : openButton}
+                  {openButton}
                 </div>
               )}
             </div>

@@ -12,7 +12,7 @@ import { questionLabel } from '@/features/learning/practice/practical/practicalW
 import { PracticeThread, type ThreadMessage } from '@/features/learning/practice/shared/PracticeThread';
 import { StatusLine, type StatusState } from '@/features/learning/practice/shared/StatusLine';
 import { useRetry } from '@/features/learning/practice/shared/useRetry';
-import { numberedSavedSourceCitations, SavedSourceCitations } from '@/features/learning/sources/SavedSourceCitations';
+import { SavedSourceCitations } from '@/features/learning/sources/SavedSourceCitations';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
 import { newId, unwrap } from '@/lib/api';
 import type {
@@ -214,7 +214,7 @@ export function SimulationPanel({
           <SavedSourceCitations
             programId={programId}
             ownerKey={`simulation:${current.id}:${item.id}`}
-            citations={numberedSavedSourceCitations(item.citations)}
+            citations={item.citations}
             quotes
             label="Saved sources cited"
             className="mt-2"

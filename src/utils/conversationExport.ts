@@ -123,17 +123,21 @@ export function sourceLine(source: SourceWithMetadata): string {
   return location ? `${name} — ${location}` : name;
 }
 
-/** The numbered source list under an answer, keyed by the number each source reference shows. */
+/** The source list under an answer, keyed by each source's backend number (never positional index). */
 function sourcesBlock(sources: readonly SourceWithMetadata[]): string[] {
   if (sources.length === 0) return [];
-  const numbered = Array.from(createCitationMap([...sources]).entries()).sort(
+  const numbered = Array.from(createCitationMap(sources).entries()).sort(
     ([a], [b]) => a - b,
   );
-  if (numbered.length === 0) return [];
+  const unnumbered = sources.filter(
+    (source) => !(typeof source.citationId === 'number' && Number.isInteger(source.citationId) && source.citationId > 0),
+  );
+  if (numbered.length === 0 && unnumbered.length === 0) return [];
   return [
     '**Sources**',
     '',
     ...numbered.map(([number, source]) => `${number}. ${sourceLine(source)}`),
+    ...unnumbered.map((source) => `- ${sourceLine(source)}`),
     '',
   ];
 }

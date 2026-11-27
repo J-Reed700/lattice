@@ -41,6 +41,11 @@ function CriterionRow({ criterion, quotes, sources, programId, ownerKey }: { cri
   const showCitations = useCitationDisplayStore((state) => state.visible);
   const lost = criterion.verdict !== 'met';
   const share = criterion.points === null ? 'not graded' : `${points(criterion.points)} of ${points(criterion.maxPoints)}`;
+  const sourceNumber =
+    typeof criterion.sourceNumber === 'number' && Number.isInteger(criterion.sourceNumber) && criterion.sourceNumber > 0
+      ? criterion.sourceNumber
+      : null;
+  const citationExcerpts = criterion.sourceSupport?.anchors.map((anchor) => anchor.exact).filter(Boolean) ?? [];
   return <li className="rounded-xl border border-border bg-surface px-4 py-3">
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
       <CriterionVerdict verdict={criterion.verdict} />
@@ -50,11 +55,11 @@ function CriterionRow({ criterion, quotes, sources, programId, ownerKey }: { cri
     {quotes.length > 0 && <p className="mt-1.5 text-xs text-text-secondary">Rests on {quotes.length === 1 ? 'quote' : 'quotes'} {listNumbers(quotes)}, in your words.</p>}
     {lost && criterion.whatWasMissing.trim() && <p className="mt-1.5 text-sm leading-6 text-text-secondary"><span className="font-semibold text-text-primary">What was missing: </span>{criterion.whatWasMissing}</p>}
     {lost && criterion.fullCreditIncludes.trim() && <p className="mt-1 text-sm leading-6 text-text-secondary"><span className="font-semibold text-text-primary">Full credit includes: </span>{criterion.fullCreditIncludes}</p>}
-    {showCitations && criterion.sourceQuote && programId && ownerKey && criterion.sourceVersionId && criterion.sourceNumber != null ? <SavedSourceCitations
+    {showCitations && criterion.sourceQuote && programId && ownerKey && criterion.sourceVersionId && sourceNumber !== null ? <SavedSourceCitations
       programId={programId}
       ownerKey={`${ownerKey}:criterion:${criterion.criterionId}`}
       citations={[{
-        number: criterion.sourceNumber,
+        number: sourceNumber,
         versionId: criterion.sourceVersionId,
         quote: criterion.sourceQuote,
         support: criterion.sourceSupport,
@@ -63,17 +68,13 @@ function CriterionRow({ criterion, quotes, sources, programId, ownerKey }: { cri
       quotes
       label="Source"
       className="mt-2"
-    /> : showCitations && criterion.sourceQuote && (criterion.sourceNumber != null ? (
+    /> : showCitations && criterion.sourceQuote && (sourceNumber !== null ? (
       <div className="mt-2 rounded-lg border border-border/70 bg-background/60 px-3 py-2">
         <CitationCard
-          number={criterion.sourceNumber}
+          number={sourceNumber}
           title={sourceTitle(sources, criterion.sourceVersionId)}
           relation={criterion.sourceSupport?.relation}
-          excerpts={
-            criterion.sourceSupport?.anchors.map((a) => a.exact).filter(Boolean).length
-              ? criterion.sourceSupport.anchors.map((a) => a.exact).filter(Boolean)
-              : [criterion.sourceQuote]
-          }
+          excerpts={citationExcerpts.length > 0 ? citationExcerpts : [criterion.sourceQuote]}
         />
       </div>
     ) : <blockquote className="mt-2 border-l-2 border-accent/40 pl-3 text-xs italic leading-5 text-text-muted">“{criterion.sourceQuote}” <span className="not-italic">— {sourceTitle(sources, criterion.sourceVersionId)}</span></blockquote>)}

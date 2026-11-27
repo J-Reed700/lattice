@@ -17,7 +17,7 @@ export function ReviewSourceReader({ programId, request, onClose }: { programId:
   const passage: LearningEvidencePassageDto | null = request
     ? request.passage ?? { sourceVersionId: request.source.sourceVersionId, title: request.source.title, url: request.source.url, text: '', startByte: 0, endByte: 0, retrievalKind: 'source', trust: null }
     : null;
-  const target = passage ? fromLearningEvidencePassage(passage, 0, detail.data?.fullText ?? null) : null;
+  const target = passage ? fromLearningEvidencePassage(passage, undefined, detail.data?.fullText ?? null) : null;
   const locator = target && request?.quote ? { ...(target.locator ?? { chunkId: target.source.chunkId }), text: request.quote } : target?.locator ?? null;
   return <FilePreviewModal isOpen={request !== null} onClose={onClose} source={target?.source ?? null} initialLocator={locator} />;
 }

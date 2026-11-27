@@ -18,7 +18,9 @@ use lattice_core::application::services::grounded_generation::{
 };
 use lattice_core::application::services::model_contract::legacy;
 use lattice_core::domain::conversation::memory::{SuppressedSpan, SuppressionsByMessage};
-use lattice_core::domain::conversation::{ConversationMessage, MessageRole};
+use lattice_core::domain::conversation::{
+    ConversationMessage, ConversationMessageStatus, MessageRole,
+};
 use lattice_core::shared::{error::AppError, ipc::ApiError};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -30,7 +32,10 @@ use std::time::Duration;
 fn transcript_passages(messages: &[ConversationMessage]) -> Vec<EvidencePassage> {
     messages
         .iter()
-        .filter(|message| !message.content.trim().is_empty() && message.status != "failed")
+        .filter(|message| {
+            !message.content.trim().is_empty()
+                && message.status != ConversationMessageStatus::FAILED
+        })
         .map(|message| EvidencePassage {
             id: message.id.clone(),
             label: format!("{}:", message.role.to_string().to_uppercase()),

@@ -117,6 +117,23 @@ describe('QuizSourceLine with openable sources', () => {
     expect(screen.getByText('Lab manual')).toBeInTheDocument();
   });
 
+  it('keeps unnumbered entries visible alongside numbered ones without fabricating chips', () => {
+    render(
+      <QuizSourceLine
+        citations={[cite(0, 'version-1', 'source-1'), cite(6, 'version-2', 'source-2')]}
+        sources={sources}
+        programId="program-1"
+        ownerKey="answer-1"
+      />,
+      { wrapper },
+    );
+
+    expect(screen.getAllByRole('button', { name: /^Citation \d/ })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: /Citation 6/ })).toBeInTheDocument();
+    expect(screen.getByText('Field notes')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'View source' })).toBeInTheDocument();
+  });
+
   it('opens the docked reader for the owner on that version with backend citation number', async () => {
     render(
       <QuizSourceLine

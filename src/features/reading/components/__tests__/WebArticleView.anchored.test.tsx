@@ -177,4 +177,22 @@ describe('WebArticleView over anchored chips', () => {
 
     await waitFor(() => expect(lit()).toBe('Leaves stay dry in a tin.'));
   });
+
+  it('does not leak an unanchored sibling occurrence wholePassage onto an anchored chip click', async () => {
+    const herbs = anchorOn('Herbs keep on any windowsill.');
+    renderReader(
+      {
+        ...baseSource,
+        anchoredBy: [
+          { occurrence: 0, relation: 'backs', anchors: [] },
+          { occurrence: 1, relation: 'quotes', anchors: [herbs] },
+        ],
+      },
+      1,
+      { locatorText: 'Leaves stay dry in a tin.' },
+    );
+
+    await waitFor(() => expect(lit()).toBe('Herbs keep on any windowsill.'));
+    expect(marked()).toEqual(['Herbs keep on any windowsill.']);
+  });
 });

@@ -9,7 +9,9 @@ use crate::assessment_generation::{
     self as generation, AuthoredItem, AuthoringNeed, MaterialPassage, RawGrade, ShortAnswer,
     StoredItem, WrittenAnswer,
 };
-use crate::assessment_repository::{BankItem, ItemGrade, LearningAssessmentRepository};
+use crate::assessment_repository::{
+    BankItem, CandidateReviewStatus, ItemGrade, LearningAssessmentRepository,
+};
 use crate::bank_writing::BankWriting;
 use crate::curriculum_repository::lesson_rank_in;
 use crate::dto::{
@@ -118,7 +120,7 @@ pub async fn prepare_bank_now(
                 source_quote: item.source_quote,
                 lesson_id: item.lesson_id,
                 origin: "bank",
-                review_status: "agreed",
+                review_status: CandidateReviewStatus::Agreed,
             })
             .collect();
         report.written += LearningAssessmentRepository::insert_bank_items(
@@ -286,7 +288,7 @@ impl JobHandler for QuizBankWorker {
                     source_quote: item.source_quote,
                     lesson_id: item.lesson_id,
                     origin: "bank",
-                    review_status: "agreed",
+                    review_status: CandidateReviewStatus::Agreed,
                 })
                 .collect();
             written += LearningAssessmentRepository::insert_bank_items(
@@ -386,7 +388,7 @@ impl QuizBankWorker {
                         source_quote: authored.source_quote.clone(),
                         lesson_id: Some(lesson_id.to_owned()),
                         origin: "bank",
-                        review_status: "agreed",
+                        review_status: CandidateReviewStatus::Agreed,
                     }
                 })
                 .collect();

@@ -63,7 +63,6 @@ export function InsightMessage({ message, onOpenSource }: InsightMessageProps) {
     ownerKey: `insight:${message.id}`,
     numbered: sources.length > 0,
     showCitations,
-    strictIdsOnly: true,
     onOpen: (source, occurrence) => onOpenSource(source, occurrence),
     claims: [],
   });

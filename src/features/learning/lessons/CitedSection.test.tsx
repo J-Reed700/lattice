@@ -18,7 +18,7 @@ const citation = (number: number, title: string): LearningCitationDto => ({
   passage: { sourceVersionId: `version-${number}`, title, url: null, text: `Passage of ${title}`, startByte: 0, endByte: 20, retrievalKind: 'hybrid', trust: null },
 });
 const citations = [citation(1, 'Steam tables'), citation(2, 'Field guide'), citation(3, 'Lecture notes')];
-const sources = citations.map((entry) => fromLearningEvidencePassage(entry.passage, entry.number - 1).source);
+const sources = citations.map((entry) => fromLearningEvidencePassage(entry.passage, entry.number).source);
 
 const claim = (overrides: Partial<LearningClaimEvidenceDto>): LearningClaimEvidenceDto => ({
   sectionIndex: 1, contentQuote: BOILING, claim: BOILING, verdict: 'supported', reason: 'Checked.', supportingQuote: null,

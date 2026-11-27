@@ -355,3 +355,54 @@ async fn stored_cards_without_numbers_or_support_hydrate_cites_and_sequential_id
     assert_eq!(card.source.support.relation, RelationDto::Cites);
     Ok(())
 }
+
+#[tokio::test]
+async fn stored_cards_preserve_non_cites_support_when_anchors_exist() -> Result<()> {
+    use lattice_core::application::contracts::replies::{
+        AnchorDto, ByteSpanDto, RelationDto, SupportDto,
+    };
+
+    let pool = fk_pool().await?;
+    let db = Database::new(pool);
+    let repo = StudyRepository::new(db);
+    let mut saved = deck(10, |d| {
+        vec![card(
+            d,
+            StudyCardFormat::MultipleChoice,
+            &["Basil", "Mint"],
+            0,
+            10,
+        )]
+    });
+    let quote = saved.cards[0].source.excerpt.clone();
+    let span = ByteSpanDto {
+        start: 0,
+        end: quote.len(),
+    };
+    saved.cards[0].source.citation_id = 3;
+    saved.cards[0].source.support = SupportDto {
+        relation: RelationDto::Quotes,
+        anchors: vec![AnchorDto {
+            exact: quote.clone(),
+            span: Some(span),
+        }],
+    };
+    let mut second = source();
+    second.citation_id = 7;
+    second.support = SupportDto {
+        relation: RelationDto::Backs,
+        anchors: vec![AnchorDto { exact: quote.clone(), span: None }],
+    };
+    saved.cards[0].citations = vec![saved.cards[0].source.clone(), second];
+    repo.save(&saved).await?;
+
+    let reloaded = repo.get(&saved.id).await?;
+    let card = &reloaded.cards[0];
+    assert_eq!(card.source.citation_id, 3);
+    assert_eq!(card.source.support.relation, RelationDto::Quotes);
+    assert_eq!(card.source.support.anchors[0].exact, quote);
+    assert_eq!(card.source.support.anchors[0].span, Some(span));
+    assert_eq!(card.citations[1].citation_id, 7);
+    assert_eq!(card.citations[1].support.relation, RelationDto::Backs);
+    Ok(())
+}

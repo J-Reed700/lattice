@@ -245,7 +245,9 @@ export function WebArticleView({
   // A chip that names no sentence marks the source's own passage, as a chip does without anchoring.
   const needsWholePassage =
     anchored &&
-    (anchoredOccurrences.some((entry) => !entry.hasAnchors) || (occurrence !== null && !clickedOccurrence));
+    (occurrence !== null
+      ? !clickedOccurrence?.hasAnchors
+      : anchoredOccurrences.some((entry) => !entry.hasAnchors));
   const wholePassage = useMemo<TextSpan | null>(() => {
     if (!needsWholePassage || !pageText || !locatorTarget) return null;
     return findQuoteSpan(pageText, locatorTarget) ?? findSourcedPassages(pageText, [locatorTarget])[0] ?? null;

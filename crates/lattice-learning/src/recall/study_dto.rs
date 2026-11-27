@@ -12,6 +12,25 @@ pub enum StudyCardFormat {
     QuestionAnswer,
 }
 
+impl StudyCardFormat {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::MultipleChoice => "multiple_choice",
+            Self::QuestionAnswer => "question_answer",
+        }
+    }
+
+    pub fn parse(raw: &str) -> lattice_core::shared::error::Result<Self> {
+        match raw {
+            "multiple_choice" => Ok(Self::MultipleChoice),
+            "question_answer" => Ok(Self::QuestionAnswer),
+            other => Err(lattice_core::shared::error::AppError::InvalidState(format!(
+                "Invalid study card format: {other}"
+            ))),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct StudySourceDto {

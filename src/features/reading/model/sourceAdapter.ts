@@ -442,7 +442,7 @@ export function learningPassageUrl(passage: Pick<LearningEvidencePassageDto, 'ur
 /** Learning Studio lesson evidence passage (`LearningEvidencePassageDto`) -> unified reader target. A web passage's saved page is its snapshot; its content is the passage, which a reader marks, or the whole text when there is no passage. */
 export function fromLearningEvidencePassage(
   passage: LearningEvidencePassageDto,
-  index = 0,
+  citationNumber?: number,
   fullText?: string | null,
 ): ResolvedReaderTarget {
   const url = learningPassageUrl(passage);
@@ -450,14 +450,24 @@ export function fromLearningEvidencePassage(
   const passageText = passage.text ?? '';
   const text = passageText.trim() ? passageText : '';
   const savedText = fullText?.trim() ? fullText : '';
-  const documentId = url ? `web:${url}` : passage.sourceVersionId || `passage-${index}`;
+  const validCitationNumber =
+    typeof citationNumber === 'number' && Number.isInteger(citationNumber) && citationNumber > 0
+      ? citationNumber
+      : undefined;
+  const documentId = url ? `web:${url}` : passage.sourceVersionId || 'passage';
   const chunkId = `${passage.sourceVersionId}:${passage.startByte}-${passage.endByte}`;
 
   return {
     source: {
       documentId,
       chunkId,
-      fileName: passage.title?.trim() || (url ? fileNameFromPathOrUrl(url) : `Source ${index + 1}`),
+      fileName:
+        passage.title?.trim() ||
+        (url
+          ? fileNameFromPathOrUrl(url)
+          : validCitationNumber !== undefined
+            ? `Source ${validCitationNumber}`
+            : 'Saved source'),
       filePath: url ?? passage.sourceVersionId,
       mimeType: web ? 'text/html' : 'text/plain',
       category: web ? 'web' : 'document',
@@ -476,7 +486,7 @@ export function fromLearningEvidencePassage(
       score: 1,
       fileSizeBytes: 0,
       modifiedAt: new Date(0).toISOString(),
-      citationId: index + 1,
+      ...(validCitationNumber !== undefined ? { citationId: validCitationNumber } : {}),
       anchorBase: web && savedText ? 0 : passage.startByte,
     },
     locator: text

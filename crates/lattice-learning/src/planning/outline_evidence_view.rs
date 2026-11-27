@@ -656,7 +656,7 @@ mod tests {
                 .span
                 .expect("verified byte span");
             assert_eq!(
-                &program.sources[0].excerpt[span.start as usize..span.end as usize],
+                &program.sources[0].excerpt[span.start..span.end],
                 citation.quote
             );
         }
@@ -671,12 +671,39 @@ mod tests {
         let full_text = format!("{prefix}{quote} Extra detail beyond the short excerpt.");
         program.sources[0].excerpt = format!("{prefix}{quote}");
         let mut draft = bound_fixture().1;
-        draft.candidate = json!({"modules":[{
-            "title": program.modules[0].title,
-            "summary": {"text": program.modules[0].summary, "sourceIndex": 0, "quote": quote},
-            "outcomes": [],
-            "lessons": []
-        }]});
+        let modules: Vec<_> = program
+            .modules
+            .iter()
+            .enumerate()
+            .map(|(index, module)| {
+                let lessons: Vec<_> = module
+                    .lessons
+                    .iter()
+                    .map(|lesson| {
+                        json!({
+                            "title": lesson.title,
+                            "objective": lesson.objective,
+                            "estimatedMinutes": 30
+                        })
+                    })
+                    .collect();
+                if index == 0 {
+                    json!({
+                        "title": module.title,
+                        "summary": {"text": module.summary, "sourceIndex": 0, "quote": quote},
+                        "outcomes": [],
+                        "lessons": lessons
+                    })
+                } else {
+                    json!({
+                        "title": module.title,
+                        "outcomes": [],
+                        "lessons": lessons
+                    })
+                }
+            })
+            .collect();
+        draft.candidate = json!({ "modules": modules });
         draft.bindings = None;
         draft.source_ids = vec![program.sources[0].id.clone()];
         let db = Database::new(pool.clone());

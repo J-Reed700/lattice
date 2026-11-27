@@ -328,23 +328,33 @@ impl Units {
         };
         let mut out = String::from(lead);
         let mut lays = Vec::new();
-        let mut previous: Option<(Option<usize>, bool)> = None;
+        let mut previous: Option<(Option<usize>, bool, bool)> = None;
         for place in self.edited.places() {
-            let (held, text, wrote) = match place.laid {
+            let (held, text, wrote, inserted_item) = match place.laid {
                 Laid::Kept(unit) if positions.contains(&unit.index) => continue,
-                Laid::Kept(unit) => (Some(*unit), self.text_of(*unit).unwrap_or_default(), false),
-                Laid::Wrote { content, replaces } => (replaces.copied(), content.as_str(), true),
+                Laid::Kept(unit) => (
+                    Some(*unit),
+                    self.text_of(*unit).unwrap_or_default(),
+                    false,
+                    false,
+                ),
+                Laid::Wrote { content, replaces } => (
+                    replaces.copied(),
+                    content.as_str(),
+                    true,
+                    replaces.is_none() && starts_list_item(content),
+                ),
             };
-            if let Some((before, ended)) = previous {
+            if let Some((before, ended, prev_inserted_item)) = previous {
                 let begins = wrote && (text.starts_with('\n') || text.starts_with("\r\n"));
                 if !begins && !ended {
-                    out.push_str(self.between(before, place.at));
+                    out.push_str(self.separator(before, place.at, prev_inserted_item, text));
                 }
             }
             let start = out.len();
             out.push_str(text);
             lays.push((held, start..out.len()));
-            previous = Some((place.at, wrote && text.ends_with('\n')));
+            previous = Some((place.at, wrote && text.ends_with('\n'), inserted_item));
         }
         out.push_str(tail);
         (out, lays)
@@ -374,17 +384,31 @@ impl Units {
         }
     }
 
-    /// What separates a place standing at `before` from the next, standing at
-    /// `after`: the strongest of the gaps the text showed from just after
-    /// `before` up to `after`, so a paragraph break beside a changed unit stays.
-    fn between(&self, before: Option<usize>, after: Option<usize>) -> &str {
-        let Some(after) = after else {
-            return self.joiner();
-        };
-        if before == Some(after) {
-            return self.joiner();
+    fn separator(
+        &self,
+        before: Option<usize>,
+        after: Option<usize>,
+        prev_inserted_item: bool,
+        next_text: &str,
+    ) -> &str {
+        if let Some(gap) = self.between(before, after) {
+            return gap;
         }
-        let first = before.map_or(1, |at| at.saturating_add(1));
+        if self.grain == Grain::Sentence && (prev_inserted_item || starts_list_item(next_text)) {
+            return "\n";
+        }
+        self.joiner()
+    }
+
+    /// What separates a place standing at `before` from a later shown unit at
+    /// `after` in the original text, when `before < after`.
+    fn between(&self, before: Option<usize>, after: Option<usize>) -> Option<&str> {
+        let before = before?;
+        let after = after?;
+        if before >= after {
+            return None;
+        }
+        let first = before.saturating_add(1);
         let mut strongest: Option<&str> = None;
         for gap in self.gaps.get(first..=after).unwrap_or_default() {
             let gap = gap.as_str();
@@ -393,8 +417,13 @@ impl Units {
                 _ => strongest = Some(gap),
             }
         }
-        strongest.unwrap_or_else(|| self.joiner())
+        strongest
     }
+}
+
+fn starts_list_item(text: &str) -> bool {
+    let first = text.trim_start_matches(['\r', '\n']).lines().next();
+    first.is_some_and(|line| crate::shared::text::item_marker_end(line).is_some())
 }
 
 /// Several texts shown in one request, each as units, and what each is a text of.

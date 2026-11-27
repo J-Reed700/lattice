@@ -282,6 +282,31 @@ describe('SavedSourceCitations', () => {
     expect(screen.queryByRole('button', { name: 'View source' })).not.toBeInTheDocument();
   });
 
+  it('renders unnumbered entries explicitly without dropping them or fabricating citation numbers', async () => {
+    const mixed: SavedSourceCitation[] = [
+      { ...citations[0]!, number: 4 },
+      { versionId: 'vb', quote: 'unnumbered legacy quote', number: undefined },
+    ];
+    const { rerenderWith } = renderWith(
+      <SavedSourceCitations programId="program-1" citations={mixed} ownerKey="owner-1" label="Sources" />,
+    );
+
+    expect(screen.getAllByRole('button', { name: /Citation \d/ })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: /Citation 4/ })).toBeInTheDocument();
+    expect(screen.getByText('Library beta')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'View source' }));
+    await waitFor(() => expect(useReaderStore.getState().session?.citations).toHaveLength(2));
+    expect(useReaderStore.getState().session?.index).toBe(1);
+    expect(useReaderStore.getState().session?.citations[1]?.citationId).toBeUndefined();
+
+    rerenderWith(
+      <SavedSourceCitations programId="program-1" citations={mixed} quotes ownerKey="owner-1" label="Passages" />,
+    );
+    expect(screen.getAllByRole('button', { name: /Citation \d/ })).toHaveLength(1);
+    expect(screen.getByText('unnumbered legacy quote')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'View source' })).toBeInTheDocument();
+  });
+
   it('requires exactly one of ownerKey or onOpen', () => {
     const noop = () => {};
     const both = (
