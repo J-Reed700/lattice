@@ -530,6 +530,19 @@ struct Taking<'a, 'r> {
     rows: Rows,
     /// The id of each entry that stands and the parts it changed.
     standing: Vec<(String, BTreeSet<String>)>,
+    /// Normalized non-empty texts already inserted in this repair batch.
+    seen_inserts: std::collections::BTreeSet<String>,
+}
+
+fn normalized_inserts(edits: &rows::Edits) -> Vec<String> {
+    edits
+        .sentences
+        .change()
+        .insert
+        .into_iter()
+        .map(|(_, with)| with.0.text.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|text| !text.is_empty())
+        .collect()
 }
 
 impl Taking<'_, '_> {
@@ -550,6 +563,15 @@ impl Taking<'_, '_> {
         let declined = || (Outcome::Declined(repair.plan.clone()), Vec::new());
         if repair.edits.is_empty() {
             return Ok(declined());
+        }
+        let inserts = normalized_inserts(&repair.edits);
+        if inserts.iter().any(|text| self.seen_inserts.contains(text)) {
+            return Ok((
+                Outcome::NotApplied(vec![
+                    "Another finding in this repair already inserted the same text.".into(),
+                ]),
+                Vec::new(),
+            ));
         }
         let mut trial = self.rows.clone();
         let held = Held {
@@ -573,6 +595,7 @@ impl Taking<'_, '_> {
         if let Some(reasons) = self.request.keeps.refuses(self.request, &made, &taken)? {
             return Ok((refusal(&reasons), Vec::new()));
         }
+        self.seen_inserts.extend(inserts);
         self.rows = trial;
         self.standing.push((id.to_owned(), took.parts));
         Ok((Outcome::Applied, took.written))
@@ -617,6 +640,7 @@ pub(super) async fn mend(llm: &dyn LLMPort, request: &Request<'_>) -> Result<Men
         quotes: Quotes::of(excerpts.iter().map(|excerpt| &excerpt.entry.0)),
         rows: Rows::of(request.candidate),
         standing: Vec::new(),
+        seen_inserts: std::collections::BTreeSet::new(),
     };
     let mut results: Vec<(String, Outcome, Vec<String>)> = Vec::new();
     for (sent, settled) in sents.iter().zip(settled) {

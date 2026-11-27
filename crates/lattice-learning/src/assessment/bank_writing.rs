@@ -78,9 +78,11 @@ impl BankWriting {
             self.short.push(need.requirement.clone());
         }
         self.written.extend(authored.items.iter().map(|item| {
+            let candidate =
+                crate::assessment_engine::LearningAssessmentCandidate::from(item.candidate.clone());
             (
                 item.candidate.outcome_ids.clone(),
-                item.candidate.prompt.clone(),
+                crate::assessment::item_review::item_repeat_descriptor(&candidate),
             )
         }));
     }

@@ -1290,3 +1290,181 @@ fn lesson_question_item_clears_right_choice_rationale_before_bank_validation() {
     );
     assert!(crate::assessment_engine::validate_candidate(&candidate).is_ok());
 }
+
+#[tokio::test]
+async fn block_dominated_by_no_source_claims_excludes_orphan_scenario_and_taints_bank() -> Result<()>
+{
+    use lattice_core::domain::learning::claim_review::{
+        Actor, ClaimEvent, ClaimId, ClaimLocation, EventProvenance, Outcome as StepOutcome, Step,
+        Then, UnitKind, UnverifiedReason,
+    };
+
+    let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
+    let (published, _job_id) = published(&db).await?;
+    let lesson_id = &published.lesson_id;
+    let outcome_id = lesson_outcome(&pool, lesson_id).await;
+    let mut tx = db.begin_write().await?;
+    let now = 1_700_000_200i64;
+    let prov = EventProvenance {
+        actor: Actor::Machine,
+        at: now,
+        job_id: None,
+        app_version: "test".into(),
+        checker_model: Some("test-model".into()),
+    };
+
+    let scenario_setup =
+        "Scenario A: You omit the configuration flag assuming R4 works by default.";
+    let unverified_c1 = "Proprietary validation fails at onboarding when this setting is omitted.";
+    let unverified_c2 = "Some endpoints silently fall back to legacy defaults.";
+    let block0_body = format!("{scenario_setup} {unverified_c1} {unverified_c2}");
+    sqlx::query("UPDATE learning_blocks SET body=? WHERE lesson_id=? AND ordinal=0")
+        .bind(&block0_body)
+        .bind(lesson_id)
+        .execute(&mut *tx)
+        .await?;
+
+    let mut clean_ordinal = None;
+    let blocks: Vec<(i64,)> = sqlx::query_as(
+        "SELECT ordinal FROM learning_blocks WHERE lesson_id=? AND ordinal > 0 ORDER BY ordinal",
+    )
+    .bind(lesson_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    if let Some((ord,)) = blocks.first() {
+        clean_ordinal = Some(*ord);
+        let clean_claim_text =
+            "HTTP 429 responses may return a Retry-After header dictating wait time.";
+        sqlx::query("UPDATE learning_blocks SET body=? WHERE lesson_id=? AND ordinal=?")
+            .bind(clean_claim_text)
+            .bind(lesson_id)
+            .bind(ord)
+            .execute(&mut *tx)
+            .await?;
+        let cid = ClaimId("c-clean".into());
+        crate::lessons::claim_reviews::repository::append_for_test_in(
+            &mut tx,
+            lesson_id,
+            &cid,
+            prov.clone(),
+            ClaimEvent::Extracted {
+                location: ClaimLocation::locate(
+                    usize::try_from(*ord).unwrap_or(1),
+                    UnitKind::Block,
+                    "body",
+                    clean_claim_text,
+                    clean_claim_text,
+                ),
+                statement: clean_claim_text.into(),
+            },
+        )
+        .await?;
+        crate::lessons::claim_reviews::repository::append_for_test_in(
+            &mut tx,
+            lesson_id,
+            &cid,
+            prov.clone(),
+            ClaimEvent::Stepped {
+                policy: "acceptance-v4".into(),
+                step: Step::CheckConsistency,
+                outcome: StepOutcome::Stands,
+                then: Then::Consistent,
+                reason: "Consistent fallback".into(),
+            },
+        )
+        .await?;
+    }
+
+    let c_scenario = ClaimId("c-scenario".into());
+    crate::lessons::claim_reviews::repository::append_for_test_in(
+        &mut tx,
+        lesson_id,
+        &c_scenario,
+        prov.clone(),
+        ClaimEvent::Extracted {
+            location: ClaimLocation::locate(
+                0,
+                UnitKind::Block,
+                "body",
+                scenario_setup,
+                scenario_setup,
+            ),
+            statement: scenario_setup.into(),
+        },
+    )
+    .await?;
+    crate::lessons::claim_reviews::repository::append_for_test_in(
+        &mut tx,
+        lesson_id,
+        &c_scenario,
+        prov.clone(),
+        ClaimEvent::Stepped {
+            policy: "acceptance-v4".into(),
+            step: Step::CheckConsistency,
+            outcome: StepOutcome::Stands,
+            then: Then::Consistent,
+            reason: "Internal scenario setup".into(),
+        },
+    )
+    .await?;
+
+    for (cid, sentence) in [("c-u1", unverified_c1), ("c-u2", unverified_c2)] {
+        let id = ClaimId(cid.into());
+        crate::lessons::claim_reviews::repository::append_for_test_in(
+            &mut tx,
+            lesson_id,
+            &id,
+            prov.clone(),
+            ClaimEvent::Extracted {
+                location: ClaimLocation::locate(0, UnitKind::Block, "body", sentence, sentence),
+                statement: sentence.into(),
+            },
+        )
+        .await?;
+        crate::lessons::claim_reviews::repository::append_for_test_in(
+            &mut tx,
+            lesson_id,
+            &id,
+            prov.clone(),
+            ClaimEvent::PublishedUnverified {
+                reason: UnverifiedReason::Unsupported,
+            },
+        )
+        .await?;
+    }
+
+    let orphan_bank_id = uuid::Uuid::new_v4().to_string();
+    insert_bank_items_in(
+        &mut tx,
+        &published.program_id,
+        &[BankItem {
+            item: stored(
+                &orphan_bank_id,
+                &outcome_id,
+                LearningItemFormat::SingleChoice,
+                2,
+            ),
+            source_quote: scenario_setup.into(),
+            lesson_id: Some(lesson_id.clone()),
+            origin: "bank",
+            review_status: CandidateReviewStatus::Agreed,
+        }],
+        None,
+    )
+    .await?;
+    tx.commit().await?;
+
+    let mut read = db.begin_read().await?;
+    let material = LearningAssessmentRepository::lesson_material_in(&mut read, lesson_id).await?;
+    assert!(
+        clean_ordinal.is_none() || material.iter().all(|m| !m.text.contains("Scenario A")),
+        "orphan scenario block should be excluded when clean blocks remain: {material:?}"
+    );
+    let bank = LearningAssessmentRepository::bank_in(&mut read, &published.program_id).await?;
+    assert!(
+        bank.iter().all(|b| b.candidate.id != orphan_bank_id),
+        "bank item quoting orphan scenario from unverified-dominated block should be held back"
+    );
+    Ok(())
+}

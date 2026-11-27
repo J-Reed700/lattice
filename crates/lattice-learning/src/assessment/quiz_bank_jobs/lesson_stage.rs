@@ -270,7 +270,10 @@ pub(crate) async fn lesson_bank_stage(
                 count,
                 pass,
                 material: material.clone(),
-                existing_prompts: seeds.iter().map(|s| s.prompt.clone()).collect(),
+                existing_prompts: seed_items
+                    .iter()
+                    .map(crate::assessment::item_review::item_repeat_descriptor)
+                    .collect(),
             })
         })
         .collect();

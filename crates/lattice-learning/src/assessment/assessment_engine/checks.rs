@@ -482,6 +482,24 @@ pub(crate) fn authored_content_faults_for(
             }
         }
     }
+    if crate::lessons::spec_checks::mentions_403_scope_error(quote)
+        && !quote.contains("401")
+        && (crate::lessons::spec_checks::asserts_401_for_scope_error(
+            &candidate.explanation.to_ascii_lowercase(),
+        ) || candidate
+            .options
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| right_indices.contains(idx))
+            .any(|(_, opt)| {
+                crate::lessons::spec_checks::asserts_401_for_scope_error(&opt.to_ascii_lowercase())
+            }))
+    {
+        faults.push(
+            "Claims HTTP `401` for a scope validation failure when the grounded lesson passage specifies `403 Forbidden`."
+                .into(),
+        );
+    }
     faults
 }
 
@@ -500,8 +518,34 @@ fn contains_course_meta_talk(text: &str) -> bool {
         "from this lesson",
         "nothing in this lesson",
         "taught in this lesson",
+        "based on the provided",
+        "the provided passage",
+        "the provided excerpt",
+        "the provided text",
+        "the provided principles",
     ];
-    PHRASES.iter().any(|phrase| normalized.contains(phrase))
+    if PHRASES.iter().any(|phrase| normalized.contains(phrase)) {
+        return true;
+    }
+    const SOURCE_REFS: &[&str] = &[
+        "the passage's",
+        "this passage's",
+        "the passage",
+        "this passage",
+        "that passage",
+        "the excerpt's",
+        "the excerpt",
+        "this excerpt",
+        "that excerpt",
+    ];
+    SOURCE_REFS.iter().any(|phrase| {
+        normalized.match_indices(phrase).any(|(pos, _)| {
+            let before = normalized[..pos].chars().next_back();
+            let after = normalized[pos + phrase.len()..].chars().next();
+            before.is_none_or(|c| !c.is_ascii_alphanumeric())
+                && after.is_none_or(|c| !c.is_ascii_alphanumeric())
+        })
+    })
 }
 
 fn find_phantom_version(candidate: &LearningAssessmentCandidate, quote: &str) -> Option<String> {

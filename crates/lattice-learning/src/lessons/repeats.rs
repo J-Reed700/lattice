@@ -9,7 +9,7 @@ use lattice_core::shared::text::same_text::{fold, long_enough_quote};
 use lattice_core::shared::text::segmentation::code_fences;
 use lattice_core::shared::text::{item_marker_end, sentences};
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Two consecutive sentences in the same block where the second repeats the
 /// first verbatim or opens by stuttering the first sentence's wording.
@@ -101,18 +101,19 @@ fn paragraphs(text: &str) -> Vec<String> {
         let structural = line.starts_with(['#', '|']) || opens_fence;
         if let Some(marker) = item {
             if at > marker {
-                lazy = !opens_fence;
+                lazy = !opens_fence && !ends_terminal_sentence(line);
                 continue;
             }
             if is_item(line) && !opens_fence {
                 item = Some(at);
-                lazy = true;
+                lazy = !ends_terminal_sentence(line);
                 continue;
             }
             if lazy && !structural {
                 continue;
             }
             item = None;
+            lazy = false;
         }
         if !current.is_empty() && (structural || is_item(line)) {
             found.push(std::mem::take(&mut current));
@@ -122,7 +123,7 @@ fn paragraphs(text: &str) -> Vec<String> {
         }
         if is_item(line) {
             item = Some(at);
-            lazy = true;
+            lazy = !ends_terminal_sentence(line);
         } else if !structural {
             current.push_str(line);
             current.push('\n');
@@ -277,12 +278,40 @@ fn classify_consecutive(prev: &str, next: &str) -> Option<ConsecutiveRepeat> {
             }
         }
     }
+    if prev_words.len() >= 8
+        && next_words.len() >= 8
+        && prev_words.get(..2) == next_words.get(..2)
+        && high_similarity_prefix_stutter(&prev_words, &next_words)
+    {
+        return Some(ConsecutiveRepeat {
+            first: prev.to_owned(),
+            second: next.to_owned(),
+            prefix_stutter: true,
+        });
+    }
     None
+}
+
+fn ends_terminal_sentence(line: &str) -> bool {
+    let trimmed = line
+        .trim_end()
+        .trim_end_matches(['"', '\'', '\u{201d}', '\u{2019}', ')', ']', '`', '*']);
+    trimmed.ends_with(['.', '?', '!'])
+}
+
+fn high_similarity_prefix_stutter(prev_words: &[String], next_words: &[String]) -> bool {
+    let prev_unique: HashSet<&str> = prev_words.iter().map(String::as_str).collect();
+    let next_unique: HashSet<&str> = next_words.iter().map(String::as_str).collect();
+    let shared: Vec<&str> = prev_unique.intersection(&next_unique).copied().collect();
+    let long_shared = shared.iter().filter(|word| word.len() >= 5).count();
+    let min_len = prev_words.len().min(next_words.len());
+    shared.len() >= 4 && long_shared >= 2 && shared.len() * 11 >= min_len * 5
 }
 
 fn flush_consecutive_unit(
     unit: &mut String,
     prev: &mut Option<String>,
+    history: &mut Vec<(String, Vec<String>)>,
     out: &mut Vec<ConsecutiveRepeat>,
 ) {
     let body = std::mem::take(unit);
@@ -292,6 +321,7 @@ fn flush_consecutive_unit(
     }
     if is_bold_label_only(trimmed) {
         *prev = None;
+        history.clear();
         return;
     }
     for (from, to) in sentences(trimmed) {
@@ -301,10 +331,26 @@ fn flush_consecutive_unit(
         if !has_prose_letter(piece) {
             continue;
         }
+        let words = sentence_words(piece);
         if let Some(earlier) = prev.as_deref() {
             if let Some(found) = classify_consecutive(earlier, piece) {
                 out.push(found);
             }
+        }
+        if history.len() >= 3 && !words.is_empty() {
+            let offset = history.len() - 3;
+            let (s0, s1, s2) = (&history[offset], &history[offset + 1], &history[offset + 2]);
+            if s0.1 == s2.1 && s1.1 == words && s0.1 != s1.1 {
+                out.push(ConsecutiveRepeat {
+                    first: s0.0.clone(),
+                    second: s2.0.clone(),
+                    prefix_stutter: false,
+                });
+            }
+        }
+        history.push((piece.to_owned(), words));
+        if history.len() > 4 {
+            history.remove(0);
         }
         *prev = Some(piece.to_owned());
     }
@@ -317,27 +363,30 @@ pub(crate) fn consecutive_repeats(text: &str) -> Vec<ConsecutiveRepeat> {
     let mut found = Vec::new();
     let mut current = String::new();
     let mut prev: Option<String> = None;
+    let mut history: Vec<(String, Vec<String>)> = Vec::new();
     let mut offset = 0;
     for raw in text.split_inclusive('\n') {
         let start = offset;
         offset += raw.len();
         if fences.iter().any(|fence| fence.whole().contains(&start)) {
-            flush_consecutive_unit(&mut current, &mut prev, &mut found);
+            flush_consecutive_unit(&mut current, &mut prev, &mut history, &mut found);
             prev = None;
+            history.clear();
             continue;
         }
         let line = raw.trim();
         if line.is_empty() {
-            flush_consecutive_unit(&mut current, &mut prev, &mut found);
+            flush_consecutive_unit(&mut current, &mut prev, &mut history, &mut found);
             continue;
         }
         if line.starts_with(['#', '|', '>']) || is_horizontal_rule(line) {
-            flush_consecutive_unit(&mut current, &mut prev, &mut found);
+            flush_consecutive_unit(&mut current, &mut prev, &mut history, &mut found);
             prev = None;
+            history.clear();
             continue;
         }
         if let Some(marker_end) = item_marker_end(raw) {
-            flush_consecutive_unit(&mut current, &mut prev, &mut found);
+            flush_consecutive_unit(&mut current, &mut prev, &mut history, &mut found);
             let content = raw.get(marker_end..).unwrap_or_default().trim();
             if !content.is_empty() {
                 current.push_str(content);
@@ -348,7 +397,7 @@ pub(crate) fn consecutive_repeats(text: &str) -> Vec<ConsecutiveRepeat> {
         current.push_str(line);
         current.push(' ');
     }
-    flush_consecutive_unit(&mut current, &mut prev, &mut found);
+    flush_consecutive_unit(&mut current, &mut prev, &mut history, &mut found);
     found
 }
 

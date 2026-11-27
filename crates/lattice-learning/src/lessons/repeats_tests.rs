@@ -47,4 +47,25 @@ fn consecutive_repeats_catch_short_duplicates_and_stutters_in_prose_and_list_ite
     );
     assert_eq!(dup_fallback.len(), 1);
     assert!(dup_fallback[0].prefix_stutter);
+
+    let similar_stutter = consecutive_repeats(
+        "This prevents multiple connectors from retrying at the exact same moment. This prevents thundering herds if multiple connectors hit the limit simultaneously.",
+    );
+    assert_eq!(similar_stutter.len(), 1);
+    assert!(similar_stutter[0].prefix_stutter);
+
+    let two_sentence_block = "6. Write unit tests verifying the retry behavior.\n\nTo implement this in NestJS, create an HTTP interceptor that wraps your outgoing requests. In your unit tests, mock the HTTP client to simulate 429 responses.\nTo implement this in NestJS, create an HTTP interceptor that wraps your outgoing requests. In your unit tests, mock the HTTP client to simulate 429 responses.";
+    let period_two = consecutive_repeats(two_sentence_block);
+    assert_eq!(period_two.len(), 1, "{period_two:?}");
+    assert!(!period_two[0].prefix_stutter);
+
+    let unindented_after_list =
+        "6. Write unit tests verifying the retry behavior.\nTo implement this in NestJS, create an HTTP interceptor that wraps your outgoing requests.";
+    let extracted = comparable(unindented_after_list);
+    assert_eq!(
+        extracted,
+        vec![
+            "To implement this in NestJS, create an HTTP interceptor that wraps your outgoing requests."
+        ]
+    );
 }

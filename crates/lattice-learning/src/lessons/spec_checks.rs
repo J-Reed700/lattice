@@ -236,12 +236,16 @@ pub(crate) fn block_consistency_fault_entries(
     };
     let mut declared_types: HashSet<String> = HashSet::new();
     let mut prose_buffers: Vec<usize> = Vec::new();
+    let mut lesson_uses_403_for_scope = false;
 
     for block in blocks {
         let body = block
             .get("body")
             .and_then(Value::as_str)
             .unwrap_or_default();
+        if mentions_403_scope_error(body) {
+            lesson_uses_403_for_scope = true;
+        }
         for fence in code_fences(body) {
             let lang = fence.language.trim().to_ascii_lowercase();
             if JS_TS_LANGS.contains(&lang.as_str()) {
@@ -251,6 +255,14 @@ pub(crate) fn block_consistency_fault_entries(
         }
         collect_prose_expiry_buffers(body, &mut prose_buffers);
     }
+    let sources_use_403_for_scope = sources_text.iter().any(|src| mentions_403_scope_error(src));
+    let sources_mention_token_version_param = sources_text.iter().any(|src| {
+        let lower = src.to_ascii_lowercase();
+        lower.contains("version parameter")
+            || lower.contains("fhir_version")
+            || lower.contains("fhirversion")
+            || (lower.contains("appdefaultfhirversion") && lower.contains("/token"))
+    });
 
     let mut issues = Vec::new();
     for (index, block) in blocks.iter().enumerate() {
@@ -266,6 +278,14 @@ pub(crate) fn block_consistency_fault_entries(
                 message: fault,
             });
         }
+        collect_protocol_and_stack_faults(
+            index,
+            body,
+            sources_text,
+            lesson_uses_403_for_scope || sources_use_403_for_scope,
+            sources_mention_token_version_param,
+            &mut issues,
+        );
 
         let section_has_client_creds = body.contains("client_credentials")
             && !body.contains("'refresh_token'")
@@ -611,4 +631,128 @@ fn code_buffer_mismatch(code: &str, prose_buffers: &[usize]) -> Option<(String, 
         }
     }
     None
+}
+
+pub(crate) fn mentions_403_scope_error(text: &str) -> bool {
+    let lower = text.replace('\u{2019}', "'").to_ascii_lowercase();
+    contains_ascii_word(&lower, "403")
+        && (lower.contains("insufficient_scope")
+            || lower.contains("scope validation")
+            || lower.contains("invalid scope")
+            || lower.contains("missing scope")
+            || lower.contains("unprovisioned scope")
+            || lower.contains("scopes"))
+}
+
+pub(crate) fn asserts_401_for_scope_error(sentence_lower: &str) -> bool {
+    if !contains_ascii_word(sentence_lower, "401")
+        || sentence_lower.contains("not 401")
+        || sentence_lower.contains("rather than 401")
+        || sentence_lower.contains("instead of 401")
+        || contains_ascii_word(sentence_lower, "403")
+    {
+        return false;
+    }
+    let scope_cue = sentence_lower.contains("invalid scope")
+        || sentence_lower.contains("invalid scopes")
+        || sentence_lower.contains("insufficient_scope")
+        || sentence_lower.contains("insufficient scope")
+        || sentence_lower.contains("scope validation")
+        || sentence_lower.contains("missing scope")
+        || sentence_lower.contains("unprovisioned scope")
+        || (sentence_lower.contains("scope")
+            && (sentence_lower.contains("mismatch")
+                || sentence_lower.contains("reject")
+                || sentence_lower.contains("fail")
+                || sentence_lower.contains("unauthorized")));
+    let token_auth_cue = sentence_lower.contains("expired")
+        || sentence_lower.contains("invalid_token")
+        || sentence_lower.contains("invalid token")
+        || sentence_lower.contains("missing bearer");
+    scope_cue && !token_auth_cue
+}
+
+fn collect_protocol_and_stack_faults(
+    block_index: usize,
+    body: &str,
+    sources_text: &[&str],
+    expect_403_for_scope: bool,
+    sources_mention_token_version_param: bool,
+    issues: &mut Vec<BlockConsistencyFault>,
+) {
+    let smart_context = mentions_smart_fhir_context(body, sources_text);
+    for (start, end) in sentences(body) {
+        let Some(raw_sentence) = body.get(start..end) else {
+            continue;
+        };
+        let sentence = raw_sentence.trim();
+        let lower = sentence.replace('\u{2019}', "'").to_ascii_lowercase();
+
+        if expect_403_for_scope && asserts_401_for_scope_error(&lower) {
+            issues.push(BlockConsistencyFault {
+                block_index,
+                subject: sentence.to_owned(),
+                passage: sentence.to_owned(),
+                message: "Uses HTTP `401` for scope validation failures, conflicting with HTTP `403 Forbidden` (`insufficient_scope`); use `403` for insufficient/unprovisioned scopes and reserve `401` for missing, invalid, or expired authentication credentials."
+                    .to_owned(),
+            });
+        }
+
+        if smart_context
+            && (lower.contains("token endpoint")
+                || lower.contains("/token")
+                || lower.contains("exchange the authorization code"))
+            && (lower.contains("launch context parameter")
+                || lower.contains("launch parameter")
+                || lower.contains("`launch` parameter"))
+            && (lower.contains("includ")
+                || lower.contains("send")
+                || lower.contains("pass")
+                || lower.contains("submit")
+                || lower.contains("supply"))
+            && !lower.contains("response")
+            && !lower.contains("returned")
+            && !lower.contains("not sent")
+        {
+            issues.push(BlockConsistencyFault {
+                block_index,
+                subject: sentence.to_owned(),
+                passage: sentence.to_owned(),
+                message: "Places the SMART App Launch `launch` parameter at the token endpoint; in SMART App Launch, `launch` is sent to the `/authorize` endpoint and launch context parameters are returned in the `/token` response."
+                    .to_owned(),
+            });
+        }
+
+        if !sources_mention_token_version_param
+            && (lower.contains("token request")
+                || lower.contains("/token")
+                || lower.contains("token endpoint"))
+            && lower.contains("body")
+            && (lower.contains("version parameter")
+                || lower.contains("version parameters")
+                || lower.contains("fhir_version")
+                || lower.contains("fhirversion"))
+            && !lower.contains("no version parameter")
+            && !lower.contains("does not include a version")
+            && !lower.contains("do not send a version")
+        {
+            issues.push(BlockConsistencyFault {
+                block_index,
+                subject: sentence.to_owned(),
+                passage: sentence.to_owned(),
+                message: "Claims an OAuth2 `/token` request body takes a `version` parameter that the supplied specifications do not define; send only documented token parameters (such as `grant_type`, `scope`, `client_assertion_type`, and `client_assertion`)."
+                    .to_owned(),
+            });
+        }
+
+        if lower.contains("angular/nestjs") || lower.contains("nestjs/angular") {
+            issues.push(BlockConsistencyFault {
+                block_index,
+                subject: sentence.to_owned(),
+                passage: sentence.to_owned(),
+                message: "Combines frontend Angular and backend NestJS as `Angular/NestJS`; specify `NestJS` alone for backend service HTTP interceptors and connectors."
+                    .to_owned(),
+            });
+        }
+    }
 }

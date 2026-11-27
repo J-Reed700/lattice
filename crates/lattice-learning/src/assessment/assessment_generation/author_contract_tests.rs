@@ -831,3 +831,122 @@ fn single_passage_quote_picks_contiguous_verbatim_slice_and_rejects_disjoint_sho
         err.faults
     );
 }
+
+#[test]
+fn authored_content_faults_catches_passage_meta_talk_and_scope_401_contradiction() {
+    let passage_ref = candidate_with(
+        LearningItemFormat::SingleChoice,
+        "What happens when Retry-After is missing?",
+        "Based on the provided principles, the passage states that exponential backoff is required, while the passage does not mention 500 errors.",
+        vec![],
+    );
+    let meta_faults = engine::checks::authored_content_faults(&passage_ref, "");
+    assert!(
+        meta_faults.iter().any(|f| f.contains("meta-talk")),
+        "{meta_faults:?}"
+    );
+
+    let wrong_status = candidate_with(
+        LearningItemFormat::SingleChoice,
+        "Which HTTP status code occurs when scopes are missing?",
+        "A 401 Unauthorized error stems from an invalid scope mismatch.",
+        vec![],
+    );
+    let status_faults = engine::checks::authored_content_faults_for(
+        &wrong_status,
+        "Insufficient scopes return HTTP 403 Forbidden with insufficient_scope.",
+        &[],
+    );
+    assert!(
+        status_faults.iter().any(|f| f.contains("403 Forbidden")),
+        "{status_faults:?}"
+    );
+}
+
+#[test]
+fn repeat_descriptors_and_overlap_guard_catch_duplicate_matching_and_cloze_decisions() {
+    let first_match = LearningAssessmentCandidate {
+        id: "m1".into(),
+        outcome_ids: vec!["o1".into()],
+        format: LearningItemFormat::Matching,
+        difficulty: 3,
+        prompt: "Match each rate-limiting scenario to the connector action.".into(),
+        left: vec![
+            "429 with Retry-After header".into(),
+            "429 without Retry-After header".into(),
+            "Repeated retries violating Retry-After".into(),
+        ],
+        options: vec![
+            "Pause for the Retry-After duration".into(),
+            "Apply exponential backoff with jitter".into(),
+            "Risk API key suspension".into(),
+        ],
+        source_version_ids: vec![],
+        rubric: vec![],
+        key: LearningAssessmentKey::Matching(vec![0, 1, 2]),
+        explanation: "Respect Retry-After, use jittered backoff as fallback, and avoid suspension."
+            .into(),
+        distractor_rationales: vec![],
+    };
+    let dup_match = LearningAssessmentCandidate {
+        id: "m2".into(),
+        prompt: "A healthcare data connector faces HTTP 429 conditions. Match each condition to its outcome.".into(),
+        left: vec![
+            "Server returns Retry-After: 60".into(),
+            "Retry-After header omitted".into(),
+            "Sustained violation of rate contract".into(),
+        ],
+        options: vec![
+            "Pause for Retry-After duration specified".into(),
+            "Compute exponential backoff with random jitter".into(),
+            "API key suspension from sustained violation".into(),
+        ],
+        ..first_match.clone()
+    };
+    let held_desc = crate::assessment::item_review::item_repeat_descriptor(&first_match);
+    assert!(held_desc.contains("[pairs: "), "{held_desc}");
+    assert!(
+        crate::assessment::item_review::repeat_overlap_reason(&dup_match, &[held_desc]).is_some()
+    );
+
+    let first_cloze = LearningAssessmentCandidate {
+        id: "c1".into(),
+        outcome_ids: vec!["o1".into()],
+        format: LearningItemFormat::Cloze,
+        difficulty: 3,
+        prompt: "Parse the {{1}} header, or fall back to {{2}}.".into(),
+        left: vec![],
+        options: vec![],
+        source_version_ids: vec![],
+        rubric: vec![],
+        key: LearningAssessmentKey::Cloze(vec![
+            crate::assessment_engine::LearningTextKey {
+                variants: vec!["Retry-After".into()],
+                numeric: None,
+            },
+            crate::assessment_engine::LearningTextKey {
+                variants: vec!["exponential backoff with jitter".into()],
+                numeric: None,
+            },
+        ]),
+        explanation: "Parse Retry-After or apply exponential backoff with jitter.".into(),
+        distractor_rationales: vec![],
+    };
+    let dup_cloze = LearningAssessmentCandidate {
+        id: "c2".into(),
+        prompt: "When {{1}} is absent, the connector falls back to {{2}}.".into(),
+        ..first_cloze.clone()
+    };
+    let held_cloze = crate::assessment::item_review::item_repeat_descriptor(&first_cloze);
+    assert!(held_cloze.contains("[blanks: "), "{held_cloze}");
+    assert!(crate::assessment::item_review::repeat_overlap_reason(
+        &dup_cloze,
+        &[held_cloze.clone()]
+    )
+    .is_some());
+    assert!(!crate::assessment::item_review::overrepresented_topics(&[
+        held_cloze.clone(),
+        held_cloze
+    ])
+    .is_empty());
+}

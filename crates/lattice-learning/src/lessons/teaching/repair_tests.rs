@@ -799,3 +799,58 @@ fn system_forbids_deliverable_or_tooling_workflows_outside_practice_sections() {
     let instruction = prompt["instruction"].as_str().unwrap();
     assert!(instruction.contains(SECTION_ROLES), "{instruction}");
 }
+
+#[tokio::test]
+async fn duplicate_inserts_after_a_list_item_across_findings_land_only_once() -> Result<()> {
+    let body = "6. Write unit tests verifying the retry behavior.";
+    let inserted = "\nTo implement this in NestJS, create an HTTP interceptor that wraps your outgoing requests.";
+    let mat = json!({
+        "blocks": [block("Worked Example", body)],
+        "questions": []
+    });
+    let model = scripted(move |task, _| {
+        let labels = finding_labels(task);
+        let anchor = first_label(task, "/blocks/0/body").unwrap();
+        let insert_edits = |plan: &str, id: &str| {
+            entry(
+                id,
+                plan,
+                json!({
+                    "sentences": {
+                        "replace": [],
+                        "insert": [{"after": anchor, "with": {"text": inserted, "from": []}}],
+                        "remove": [],
+                        "move": []
+                    },
+                    "cite": [], "recite": [], "uncite": [], "keys": []
+                }),
+            )
+        };
+        vec![
+            insert_edits("First insert.", &labels[0]),
+            insert_edits("Duplicate insert.", &labels[1]),
+        ]
+    });
+    let findings = [
+        at(FindingSite::Section(0), 1),
+        at(FindingSite::Section(0), 2),
+    ];
+    let made = mended(&model, &findings, Keeps::Anything, &mat).await?;
+    assert!(
+        matches!(made.outcomes[0], Outcome::Applied),
+        "{:?}",
+        made.outcomes
+    );
+    assert!(
+        matches!(made.outcomes[1], Outcome::NotApplied(_)),
+        "{:?}",
+        made.outcomes
+    );
+    let final_body = made.candidate["blocks"][0]["body"].as_str().unwrap();
+    assert_eq!(
+        final_body.matches("HTTP interceptor").count(),
+        1,
+        "{final_body}"
+    );
+    Ok(())
+}
