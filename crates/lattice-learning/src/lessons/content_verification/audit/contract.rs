@@ -253,32 +253,37 @@ impl Ruling {
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Stated {
     cited: Vec<Picked<Unit>>,
-    ruling: Ruling,
     reason: String,
+    ruling: Ruling,
 }
 
 impl Authored for Stated {
     fn form() -> Form {
         Form::new()
             .cite::<Unit>("sentencesUsed")
-            .word::<Ruling>("verdict")
             .text("reason")
+            .word::<Ruling>("verdict")
     }
 
     fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
         Some(Self {
             cited: fields.cite("sentencesUsed"),
-            ruling: fields.word("verdict")?,
             reason: fields.text("reason")?,
+            ruling: fields.word("verdict")?,
         })
     }
+}
+
+fn passage_place(passage: &Passage) -> String {
+    let span = passage.reference();
+    format!("{}@{}-{}", span.version, span.start, span.end)
 }
 
 /// `passages` as blocks: the passage's handle and title, then its sentences one to a row.
 fn blocks(showing: &mut Showing<'_>, passages: &Shown<'_, Passage>) -> Result<String> {
     let mut text = String::new();
     for (handle, passage) in passages.iter() {
-        let units = Units::of(passage.text(), Grain::Sentence);
+        let units = Units::of_at(passage.text(), Grain::Sentence, &passage_place(passage));
         let rows = units.shown(showing)?;
         text.push_str(&format!(
             "{} {}\n{}\n\n",
@@ -397,7 +402,7 @@ impl Evidence {
                 .iter()
                 .any(|(seen, _)| seen.reference() == passage.reference())
             {
-                let units = Units::of(passage.text(), Grain::Sentence);
+                let units = Units::of_at(passage.text(), Grain::Sentence, &passage_place(passage));
                 passages.push((passage.clone(), units));
             }
         }

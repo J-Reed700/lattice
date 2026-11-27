@@ -30,8 +30,9 @@ import {
   type VisionPreset,
 } from '@/utils/visionGeometry';
 
-import { INPUT_CLASS, NUMBER_FIELD_CLASS } from './shared';
+import { NUMBER_FIELD_CLASS } from './shared';
 import { useLlmSettings } from './useLlmSettings';
+import { SettingsSelect } from '../SettingControls';
 
 type Choice = 'off' | 'conservative' | 'custom' | VisionPreset;
 
@@ -124,20 +125,21 @@ export function VisionDeclarationEditor({ value, defaultGeometry, onChange, mode
           Vision
           {modelName ? <span className="ml-1.5 font-mono font-normal text-text-muted">{modelName}</span> : null}
         </label>
-        <select
-          id={`${id}-choice`}
-          aria-label={selectLabel}
-          value={choice}
-          onChange={(event) => choose(event.target.value as Choice)}
-          className={cn(INPUT_CLASS, 'h-7 w-auto max-w-full py-0 text-xs')}
-        >
-          <option value="off">Off</option>
-          <option value="conservative">{CONSERVATIVE_LABEL}</option>
-          {VISION_PRESETS.map((preset) => (
-            <option key={preset.id} value={preset.id}>{preset.label}</option>
-          ))}
-          <option value="custom">Custom</option>
-        </select>
+        <div className="min-w-[11rem] max-w-full">
+          <SettingsSelect
+            id={`${id}-choice`}
+            aria-label={selectLabel}
+            value={choice}
+            onValueChange={(next) => choose(next as Choice)}
+            className="h-7 text-xs"
+            options={[
+              { value: 'off', label: 'Off' },
+              { value: 'conservative', label: CONSERVATIVE_LABEL },
+              ...VISION_PRESETS.map((preset) => ({ value: preset.id, label: preset.label })),
+              { value: 'custom', label: 'Custom' },
+            ]}
+          />
+        </div>
         {enabled ? (
           <button
             type="button"

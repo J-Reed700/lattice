@@ -42,7 +42,7 @@ for (const width of [1280, 390]) {
         cardCount: current.cards.length, dueCount: current.cards.filter((card) => card.dueAt <= Date.now()).length,
         quizAttempts: 0, quizCorrect: 0, targetAt: current.targetAt ?? null,
       });
-      const source = { chunkId: "guide", documentId: "", fileName: "Answer guide · Acme backend interview", filePath: "", excerpt: "Reference answer." };
+      const source = { chunkId: "guide", documentId: "", fileName: "Answer guide · Acme backend interview", filePath: "", excerpt: "Reference answer.", citationId: 1, support: { relation: "cites" as const, anchors: [{ exact: "Reference answer.", span: null }] } };
       return {
         create_interview_study_deck: (args) => {
           const request = args.request as CreateInterviewStudyDeckRequestDto;

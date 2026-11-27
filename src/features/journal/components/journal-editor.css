@@ -1,0 +1,29 @@
+/*
+ * Editorial writing canvas for Journal — Option A · Crisp Neutral
+ * architectural porcelain (light) & deep obsidian slate (dark),
+ * driven purely by Lattice design tokens.
+ */
+
+.journal-editorial-sheet {
+  container-type: inline-size;
+}
+
+@container (max-width: 640px) {
+  .journal-page-header h1 textarea {
+    font-size: 28px;
+  }
+}
+
+.journal-editorial-prose .tiptap-editor {
+  min-height: 48vh;
+}
+
+.journal-editorial-prose .tiptap-editor p {
+  line-height: 1.85;
+}
+
+.journal-editorial-prose blockquote {
+  border-left: 2px solid hsl(var(--accent) / 0.5);
+  font-style: italic;
+  color: hsl(var(--text-secondary));
+}

@@ -24,8 +24,18 @@ const card: StudyCardDto = {
   id: 'card', format: 'multiple_choice', deckId: 'deck', question: 'What absorbs light in photosynthesis?', answer: 'Chlorophyll',
   options: ['Chlorophyll', 'Water', 'Oxygen', 'Glucose', 'Carbon dioxide'], correctIndex: 0,
   explanation: 'Chlorophyll absorbs the light used in photosynthesis.', topic: 'Chlorophyll',
-  source: { chunkId: 'chunk', documentId: 'document', fileName: 'biology.md', filePath: '/biology.md', excerpt: 'Chlorophyll absorbs the light used in photosynthesis.' },
-  citations: [{ chunkId: 'chunk', documentId: 'document', fileName: 'biology.md', filePath: '/biology.md', excerpt: 'Chlorophyll absorbs the light used in photosynthesis.' }],
+  source: {
+    chunkId: 'chunk', documentId: 'document', fileName: 'biology.md', filePath: '/biology.md',
+    excerpt: 'Chlorophyll absorbs the light used in photosynthesis.',
+    citationId: 1,
+    support: { relation: 'cites', anchors: [{ exact: 'Chlorophyll absorbs the light used in photosynthesis.', span: null }] },
+  },
+  citations: [{
+    chunkId: 'chunk', documentId: 'document', fileName: 'biology.md', filePath: '/biology.md',
+    excerpt: 'Chlorophyll absorbs the light used in photosynthesis.',
+    citationId: 1,
+    support: { relation: 'cites', anchors: [{ exact: 'Chlorophyll absorbs the light used in photosynthesis.', span: null }] },
+  }],
   dueAt: 0, intervalDays: 0, reviewCount: 0, lapses: 0,
 };
 // Studio's own switch: a deck or the new-deck form replaces the landing page.
@@ -177,13 +187,20 @@ describe('Flashcards', () => {
       ...card,
       citations: [
         card.source,
-        { chunkId: 'chunk-2', documentId: 'document-2', fileName: 'botany.md', filePath: '/botany.md', excerpt: 'A second passage independently supports the verified claim.' },
+        {
+          chunkId: 'chunk-2', documentId: 'document-2', fileName: 'botany.md', filePath: '/botany.md',
+          excerpt: 'A second passage independently supports the verified claim.',
+          citationId: 5,
+          support: { relation: 'cites', anchors: [{ exact: 'A second passage independently supports the verified claim.', span: null }] },
+        },
       ],
     };
     show(<FlashcardSession cards={[citedCard]} mode="flashcard" title="Biology" onClose={vi.fn()} />);
     await user.click(screen.getByRole('button', { name: 'Reveal answer: Not sure' }));
     await user.click(screen.getByText('Citations · 2 sources'));
-    expect(screen.getByText('A second passage independently supports the verified claim.')).toBeVisible();
+    const secondCard = screen.getByRole('group', { name: 'Source 5, cited (not checked) in botany.md' });
+    expect(secondCard).toHaveTextContent('A second passage independently supports the verified claim.');
+    expect(secondCard.textContent).not.toContain('“');
   });
   it('generates from selected documents with a separate optional learning goal', async () => {
     const user = userEvent.setup();

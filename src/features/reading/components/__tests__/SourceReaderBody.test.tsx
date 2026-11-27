@@ -526,4 +526,84 @@ describe('SourceReaderBody saved web articles', () => {
       expect(mocks.getWebPageSnapshot).toHaveBeenCalledWith('tangent-9', 'https://example.com/tangent-page'),
     );
   });
+
+  it('keeps local vault file viewers when anchoredBy is attached without a web snapshot', async () => {
+    mocks.resolveSourcePath.mockResolvedValue({ ok: true, data: '/vault/paper.txt' });
+    mocks.readFileContent.mockResolvedValue({
+      ok: true,
+      data: 'Full local vault text.\nAnchored evidence sentence.',
+    });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Dialog open onOpenChange={() => undefined}>
+          <DialogContent>
+            <SourceReaderBody
+              presentation="docked"
+              source={source({
+                anchoredBy: [
+                  {
+                    occurrence: 0,
+                    relation: 'backs',
+                    anchors: [{ exact: 'Anchored evidence sentence.' }],
+                  },
+                ],
+              })}
+              occurrence={0}
+              initialLocator={{ text: 'Anchored evidence sentence.' }}
+              onClose={vi.fn()}
+            />
+          </DialogContent>
+        </Dialog>
+      </QueryClientProvider>,
+    );
+
+    const fileView = await screen.findByTestId('file-content');
+    expect(fileView).toHaveTextContent('Anchored evidence sentence.');
+    expect(screen.queryByTestId('web-article')).not.toBeInTheDocument();
+  });
+
+  it('renders anchored web snapshot sources through WebArticleView', async () => {
+    mocks.getWebPageSnapshot.mockResolvedValue({ ok: true, data: null });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Dialog open onOpenChange={() => undefined}>
+          <DialogContent>
+            <SourceReaderBody
+              presentation="docked"
+              source={source({
+                documentId: 'web:https://example.org/guide',
+                filePath: 'https://example.org/guide',
+                fileName: 'Operations Guide',
+                mimeType: 'text/html',
+                category: 'Web article',
+                webSnapshot: {
+                  url: 'https://example.org/guide',
+                  title: 'Operations Guide',
+                  text: '# Guide\n\nHold the mitigation for 20 seconds.',
+                  fetchedAt: null,
+                  truncated: false,
+                },
+                anchoredBy: [
+                  {
+                    occurrence: 0,
+                    relation: 'quotes',
+                    anchors: [{ exact: 'Hold the mitigation for 20 seconds.' }],
+                  },
+                ],
+              })}
+              occurrence={0}
+              initialLocator={{ text: 'Hold the mitigation for 20 seconds.' }}
+              onClose={vi.fn()}
+            />
+          </DialogContent>
+        </Dialog>
+      </QueryClientProvider>,
+    );
+
+    const webView = await screen.findByTestId('web-article');
+    expect(webView).toHaveAttribute('data-text', '# Guide\n\nHold the mitigation for 20 seconds.');
+    expect(screen.queryByTestId('file-content')).not.toBeInTheDocument();
+  });
 });

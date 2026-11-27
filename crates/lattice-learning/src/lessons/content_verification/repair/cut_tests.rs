@@ -197,3 +197,39 @@ fn a_quote_after_a_longer_fence_closes_is_cut() {
         "{out:?}"
     );
 }
+
+#[test]
+fn a_wrapped_list_item_keeps_its_marker_while_blank_lines_and_new_blocks_clear_it() {
+    let wrapped = "2. Step two.\n3. First sentence.\nSecond sentence.\n4. Step four.";
+    assert_eq!(
+        done(sentence(wrapped, "First sentence.")).as_deref(),
+        Some("2. Step two.\n3. Second sentence.\n4. Step four.")
+    );
+    let place = cut_place(wrapped, "First sentence.").unwrap();
+    assert_eq!(place.sentence, "First sentence.");
+    assert_eq!(place.after.as_deref(), Some("Second sentence."));
+
+    let indented = "- First sentence.\n  Second sentence.\n- Next item.";
+    assert_eq!(
+        done(sentence(indented, "First sentence.")).as_deref(),
+        Some("- Second sentence.\n- Next item.")
+    );
+
+    let blank = "3. Only sentence.\n   \nNext paragraph.";
+    assert_eq!(
+        done(sentence(blank, "Only sentence.")).as_deref(),
+        Some("Next paragraph.")
+    );
+    assert_eq!(
+        done(sentence("3. Only sentence.\n# Heading", "Only sentence.")).as_deref(),
+        Some("# Heading")
+    );
+    assert_eq!(
+        done(sentence(
+            "3. Only sentence.\n> Quote line.",
+            "Only sentence."
+        ))
+        .as_deref(),
+        Some("> Quote line.")
+    );
+}

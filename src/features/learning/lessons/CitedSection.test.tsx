@@ -5,8 +5,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CitedSection } from '@/features/learning/lessons/CitedSection';
 import { fromLearningEvidencePassage } from '@/features/reading/model/sourceAdapter';
 import { useReaderStore } from '@/features/reading/stores/readerStore';
-import type { LearningCitationDto, LearningClaimEvidenceDto, LearningLessonEvidenceDto } from '@/lib/bindings';
+import type { AnchorDto, LearningCitationDto, LearningClaimEvidenceDto, LearningLessonEvidenceDto, RelationDto } from '@/lib/bindings';
 import { cites, said } from '@/tests/replyFixtures';
+import type { ReplyPiece } from '@/utils/replyPieces';
 
 const BOILING = 'Boiling needs a vapour pressure that meets the air pressure.';
 const ICE = 'Ice floats on water because it is less dense.';
@@ -17,7 +18,7 @@ const citation = (number: number, title: string): LearningCitationDto => ({
   passage: { sourceVersionId: `version-${number}`, title, url: null, text: `Passage of ${title}`, startByte: 0, endByte: 20, retrievalKind: 'hybrid', trust: null },
 });
 const citations = [citation(1, 'Steam tables'), citation(2, 'Field guide'), citation(3, 'Lecture notes')];
-const sources = citations.map((entry) => fromLearningEvidencePassage(entry.passage, entry.number - 1).source);
+const sources = citations.map((entry) => fromLearningEvidencePassage(entry.passage, entry.number).source);
 
 const claim = (overrides: Partial<LearningClaimEvidenceDto>): LearningClaimEvidenceDto => ({
   sectionIndex: 1, contentQuote: BOILING, claim: BOILING, verdict: 'supported', reason: 'Checked.', supportingQuote: null,
@@ -40,6 +41,14 @@ const report = (overrides: Partial<LearningLessonEvidenceDto> = {}): LearningLes
   ],
   ...overrides,
 });
+
+const anchor = (exact: string): AnchorDto => ({ exact, span: { start: 0, end: exact.length } });
+/** A chip as the backend sends one that says how its sentence uses the source. */
+const citesAs = (number: number, relation: RelationDto, anchors: AnchorDto[] = []): ReplyPiece => {
+  const piece = cites(number);
+  if (piece.type !== 'reference') throw new Error('a reference piece was expected');
+  return { ...piece, reference: { ...piece.reference, support: { relation, anchors } } };
+};
 
 const BODY = `${BOILING} ${ICE} ${HEAT}`;
 // A mark runs from a sentence's first letter to its last, as chat draws it.
@@ -119,6 +128,76 @@ describe('a lesson section drawn like a chat answer', () => {
     expect(card).toHaveTextContent('Not verified');
     expect(card).toHaveTextContent('Checked.');
     expect(card).toHaveTextContent('Lecture notes');
+  });
+
+  it('gives the reader each source’s chips of this section that say how, counted as the chips are drawn', async () => {
+    const guideSentence = anchor('Passage of Field guide');
+    const data = report({
+      sections: [
+        { sectionIndex: 0, pieces: [said('Section zero says something else entirely.'), citesAs(2, 'quotes', [anchor('Other passage of Field guide')])] },
+        { sectionIndex: 1, pieces: [said(BOILING), citesAs(2, 'restates', [guideSentence]), said(` ${ICE}`), cites(3), said(` ${HEAT}`), citesAs(2, 'summarizes', [guideSentence])] },
+      ],
+    });
+    show({ data });
+    await waitFor(() => expect(document.querySelectorAll('[data-cite]')).toHaveLength(3));
+    fireEvent.click(document.querySelector('[data-cite="2"]')!);
+    const opened = useReaderStore.getState().session?.citations;
+    expect(opened?.map((source) => source.anchoredBy)).toEqual([
+      undefined,
+      [{ occurrence: 0, relation: 'restates', anchors: [guideSentence] }, { occurrence: 1, relation: 'summarizes', anchors: [guideSentence] }],
+      undefined,
+    ]);
+  });
+
+  it('carries anchored occurrences for citations in other sections while leaving uncited passages unanchored', async () => {
+    const steamSentence = anchor('Passage of Steam tables');
+    const guideSentence = anchor('Passage of Field guide');
+    const data = report({
+      sections: [
+        { sectionIndex: 0, pieces: [said('Section zero cites Steam tables.'), citesAs(1, 'quotes', [steamSentence])] },
+        { sectionIndex: 1, pieces: [said(BOILING), citesAs(2, 'restates', [guideSentence]), said(` ${ICE} ${HEAT}`)] },
+      ],
+    });
+    show({ data });
+    await waitFor(() => expect(document.querySelectorAll('[data-cite]')).toHaveLength(1));
+    fireEvent.click(document.querySelector('[data-cite="2"]')!);
+    const opened = useReaderStore.getState().session?.citations;
+    expect(opened?.map((source) => source.anchoredBy)).toEqual([
+      [{ occurrence: 0, relation: 'quotes', anchors: [steamSentence] }],
+      [{ occurrence: 0, relation: 'restates', anchors: [guideSentence] }],
+      undefined,
+    ]);
+  });
+
+  it('draws the chip after a quoted sentence and lists its source', async () => {
+    const data = report({
+      sections: [
+        { sectionIndex: 0, pieces: [said('Section zero says something else entirely.'), cites(1)] },
+        { sectionIndex: 1, pieces: [{ type: 'quoted', text: BOILING }, citesAs(2, 'quotes', [anchor(BOILING)]), said(` ${ICE} ${HEAT}`)] },
+      ],
+    });
+    show({ data });
+    await waitFor(() => expect(document.querySelector('[data-cite="2"]')).not.toBeNull());
+    expect(screen.getByTestId('wrapped')).toHaveTextContent(BOILING);
+    const row = (await screen.findByText('Sources')).parentElement!;
+    expect(within(row).getAllByRole('button').map((button) => button.textContent)).toEqual(['2']);
+  });
+
+  it('says on hover how a sentence uses its source, and what follows from it without being stated', async () => {
+    const data = report({
+      teachingClaims: [
+        claim({ contentQuote: BOILING, cites: [2], relation: 'restates', parts: [
+          { part: 'Boiling needs a vapour pressure', kind: 'stated', sourceVersionId: 'version-2', anchors: [] },
+          { part: 'the air pressure is met', kind: 'follows', sourceVersionId: 'version-2', anchors: [] },
+        ] }),
+      ],
+    });
+    show({ data });
+    await waitFor(() => expect(document.querySelector('.claim-supported')).not.toBeNull());
+    fireEvent.mouseOver(document.querySelector('.claim-supported')!);
+    const card = await screen.findByRole('tooltip');
+    expect(card).toHaveTextContent('Paraphrased from');
+    expect(card).toHaveTextContent('Follows from the source: the air pressure is met');
   });
 
   it('shows no chip, no row and no card with citations hidden', async () => {

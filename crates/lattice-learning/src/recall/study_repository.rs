@@ -164,6 +164,34 @@ fn best_source_index(claim: &str, sources: &[StoredSource]) -> Option<usize> {
         .map(|(index, _)| index)
 }
 
+fn normalize_study_sources(sources: &mut [StudySourceDto]) {
+    use lattice_core::application::contracts::replies::{RelationDto, SupportDto};
+    let mut used = std::collections::HashSet::new();
+    for source in sources.iter() {
+        if source.citation_id > 0 {
+            used.insert(source.citation_id);
+        }
+    }
+    let mut next = 1u32;
+    for source in sources.iter_mut() {
+        if source.citation_id == 0 {
+            while used.contains(&next) {
+                next += 1;
+            }
+            source.citation_id = next;
+            used.insert(next);
+            next += 1;
+        }
+        if source.support.anchors.is_empty() {
+            if !source.excerpt.trim().is_empty() {
+                source.support = SupportDto::cites([source.excerpt.as_str()]);
+            } else {
+                source.support.relation = RelationDto::Cites;
+            }
+        }
+    }
+}
+
 fn study_source(source: &StoredSource) -> StudySourceDto {
     let excerpt = source
         .excerpt
@@ -183,15 +211,18 @@ fn study_source(source: &StoredSource) -> StudySourceDto {
         file_path: source.file_path.clone(),
         excerpt: excerpt.to_owned(),
         url: None,
+        citation_id: source.citation_id.unwrap_or(0),
+        support: lattice_core::application::contracts::replies::SupportDto::cites([excerpt]),
     }
 }
 
 fn card(row: &SqliteRow) -> Result<StudyCardDto> {
     let stored: StoredSources = serde_json::from_str(row.get("source_json")).map_err(json)?;
-    let citations = match stored {
+    let mut citations = match stored {
         StoredSources::One(source) => vec![source],
         StoredSources::Many(sources) => sources,
     };
+    normalize_study_sources(&mut citations);
     let source = citations
         .first()
         .cloned()
@@ -547,12 +578,13 @@ impl StudyRepository {
                     }
                 }
                 let mut seen_sources = std::collections::HashSet::new();
-                let citations = indices
+                let mut citations = indices
                     .into_iter()
                     .filter_map(|index| metadata.sources.get(index))
                     .filter(|source| seen_sources.insert(source.chunk_id.clone()))
                     .map(study_source)
                     .collect::<Vec<_>>();
+                normalize_study_sources(&mut citations);
                 if !citations.is_empty() {
                     claims.push(VerifiedConversationClaim {
                         answer: claim.to_owned(),

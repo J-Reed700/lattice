@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import { confirm as tauriConfirm } from '@tauri-apps/plugin-dialog';
-
 import { pageTitle as rawPageTitle } from '@/features/journal/components/PageList';
 import { defaultJournalTitle, UNTITLED_PAGE } from '@/features/journal/hooks/useJournalNote';
 import type { JournalNotify } from '@/features/journal/hooks/useJournalNotice';
@@ -73,19 +71,33 @@ export function useJournalPageActions(options: {
     [notify, renamePage],
   );
 
-  const handleDeletePage = useCallback(
-    async (page: WorkspaceNote) => {
-      const name = displayPageTitle(page);
-      const confirmed = await tauriConfirm(
-        'The page and its highlights are deleted. This cannot be undone.',
-        { title: `Delete "${name}"?`, kind: 'warning' },
-      );
-      if (!confirmed) return;
-      if (await deletePage(page.id)) notify('success', `Deleted "${name}".`);
-      else notify('error', 'Could not delete that page.');
-    },
-    [deletePage, displayPageTitle, notify],
-  );
+  const [pagePendingDelete, setPagePendingDelete] = useState<WorkspaceNote | null>(null);
+  const [isDeletingPage, setIsDeletingPage] = useState(false);
+
+  const handleDeletePage = useCallback((page: WorkspaceNote) => {
+    setPagePendingDelete(page);
+  }, []);
+
+  const cancelDeletePage = useCallback(() => {
+    setPagePendingDelete(null);
+  }, []);
+
+  const confirmDeletePage = useCallback(async () => {
+    if (!pagePendingDelete) return;
+    const page = pagePendingDelete;
+    const name = displayPageTitle(page);
+    setIsDeletingPage(true);
+    try {
+      if (await deletePage(page.id)) {
+        notify('success', `Deleted "${name}".`);
+        setPagePendingDelete(null);
+      } else {
+        notify('error', 'Could not delete that page.');
+      }
+    } finally {
+      setIsDeletingPage(false);
+    }
+  }, [deletePage, displayPageTitle, notify, pagePendingDelete]);
 
   // ⌘N from anywhere in the app (RootLayout) and `?new=1` deep links both
   // start a new page: writing is what a journal is for. (A `?new=1` that
@@ -114,5 +126,9 @@ export function useJournalPageActions(options: {
     handleNewPage,
     handleRenamePage,
     handleDeletePage,
+    pagePendingDelete,
+    isDeletingPage,
+    confirmDeletePage,
+    cancelDeletePage,
   };
 }

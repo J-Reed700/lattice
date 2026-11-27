@@ -3,8 +3,21 @@ import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 
 import type { FoundMark } from '@/utils/foundMark';
+import { QUOTE_END, QUOTE_START } from '@/utils/replyPieces';
 
 export const citationMarksKey = new PluginKey('citationMarks');
+
+const QUOTE_MARKS = new RegExp(`[${QUOTE_START}${QUOTE_END}]`, 'g');
+
+/** The quotation mark a private-use mark stands for, drawn in the text's own colour. */
+function quoteWidget(opening: boolean): () => HTMLElement {
+  return () => {
+    const glyph = document.createElement('span');
+    glyph.className = 'cite-quote';
+    glyph.textContent = opening ? '“' : '”';
+    return glyph;
+  };
+}
 
 export interface CitationMarksOptions {
   /** Decides, at draw time, whether source number `n` is one this answer has. */
@@ -17,6 +30,10 @@ export interface CitationMarksOptions {
   isVisible: () => boolean;
   /** Called when an editable or read-only citation chip is activated. */
   onCitationClick?: (number: number, occurrence: number) => void;
+  /** Called when the pointer enters a citation chip. */
+  onCitationHover?: (number: number, occurrence: number, rect: DOMRect) => void;
+  /** Called when the pointer leaves a citation chip. */
+  onCitationLeave?: () => void;
 }
 
 /**
@@ -29,16 +46,32 @@ export interface CitationMarksOptions {
  * one source from several sentences and each mark means its own sentence.
  * Whoever hosts the viewer handles clicks and hover. `sentencesByOccurrence`
  * counts the same way, from the same list of references.
+ *
+ * A quotation's pair of private-use marks is drawn as opening and closing
+ * quotation marks (`cite-quote`), whoever the host is and whether or not
+ * citations are shown.
  */
 export const CitationMarks = Extension.create<CitationMarksOptions>({
   name: 'citationMarks',
 
   addOptions() {
-    return { isCitation: () => false, findMarks: () => [], isVisible: () => true, onCitationClick: undefined };
+    return {
+      isCitation: () => false,
+      findMarks: () => [],
+      isVisible: () => true,
+      onCitationClick: undefined,
+      onCitationHover: undefined,
+      onCitationLeave: undefined,
+    };
   },
 
   addProseMirrorPlugins() {
-    const { isCitation, findMarks, copyText, isVisible, onCitationClick } = this.options;
+    const { isCitation, findMarks, copyText, isVisible, onCitationClick, onCitationHover, onCitationLeave } = this.options;
+    const chipOf = (target: EventTarget | null) => {
+      const el = target as Element | null;
+      return el?.closest?.<HTMLElement>('[data-cite][data-cite-at]')
+        ?? el?.parentElement?.closest<HTMLElement>('[data-cite][data-cite-at]');
+    };
     return [
       new Plugin({
         key: citationMarksKey,
@@ -61,9 +94,7 @@ export const CitationMarks = Extension.create<CitationMarksOptions>({
             },
             click(_view, event) {
               if (!isVisible() || !onCitationClick) return false;
-              const target = event.target as Element | null;
-              const chip = target?.closest?.<HTMLElement>('[data-cite][data-cite-at]')
-                ?? target?.parentElement?.closest<HTMLElement>('[data-cite][data-cite-at]');
+              const chip = chipOf(event.target);
               if (!chip) return false;
               const number = Number(chip.dataset.cite);
               const occurrence = Number(chip.dataset.citeAt);
@@ -71,6 +102,24 @@ export const CitationMarks = Extension.create<CitationMarksOptions>({
               event.preventDefault();
               onCitationClick(number, occurrence);
               return true;
+            },
+            mouseover(_view, event) {
+              if (!isVisible() || !onCitationHover) return false;
+              const chip = chipOf(event.target);
+              if (!chip) return false;
+              const number = Number(chip.dataset.cite);
+              const occurrence = Number(chip.dataset.citeAt);
+              if (!Number.isInteger(number) || !Number.isInteger(occurrence)) return false;
+              onCitationHover(number, occurrence, chip.getBoundingClientRect());
+              return false;
+            },
+            mouseout(_view, event) {
+              if (!onCitationLeave) return false;
+              const chip = chipOf(event.target);
+              if (!chip) return false;
+              if (chipOf(event.relatedTarget) === chip) return false;
+              onCitationLeave();
+              return false;
             },
           },
           decorations(state) {
@@ -81,6 +130,13 @@ export const CitationMarks = Extension.create<CitationMarksOptions>({
               if (!node.isText || !node.text) return;
               if (parent?.type.spec.code) return;
               if (node.marks.some((mark) => mark.type.spec.code)) return;
+              for (const quote of node.text.matchAll(QUOTE_MARKS)) {
+                const at = pos + (quote.index ?? 0);
+                decorations.push(
+                  Decoration.inline(at, at + 1, { class: 'citation-hidden', 'aria-hidden': 'true' }),
+                  Decoration.widget(at, quoteWidget(quote[0] === QUOTE_START), { side: -1, key: `quote-${at}` }),
+                );
+              }
               for (const found of findMarks(node.text)) {
                 const { number } = found;
                 const from = pos + found.index;

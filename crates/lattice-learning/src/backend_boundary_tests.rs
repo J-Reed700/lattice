@@ -35,6 +35,7 @@ fn job(status: LearningGenerationJobStatus) -> LearningGenerationJob {
         ended_by_update: false,
         lesson_ids: Vec::new(),
         held_lesson_ids: Vec::new(),
+        rank: None,
         retry_of_job_id: None,
         created_at: 10,
         started_at: None,

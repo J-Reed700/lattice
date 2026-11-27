@@ -3,6 +3,7 @@ import { useId, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
 import { useSpacesQuery } from '@/features/spaces/api/queries';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
 
@@ -90,7 +91,7 @@ export function FolderSettingsDialog({ folder, onCancel, onSave }: FolderSetting
 
         <div className="flex flex-col gap-1.5">
           <label htmlFor={instructionsId} className="text-sm font-medium text-text-primary">System prompt</label>
-          <textarea
+          <Textarea
             id={instructionsId}
             value={instructions}
             disabled={saving}
@@ -98,7 +99,6 @@ export function FolderSettingsDialog({ folder, onCancel, onSave }: FolderSetting
             rows={7}
             maxLength={20_000}
             placeholder="For example: This is a JUCE audio plugin in C++20. Explain at a senior level and point to files with line numbers."
-            className="w-full resize-y rounded-md border border-border-default bg-surface px-2.5 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-hidden focus:ring-2 focus:ring-[hsl(var(--ring))]"
           />
           <p className="text-xs text-text-muted">Used instead of the space’s prompt. Leave empty to use the space’s.</p>
         </div>

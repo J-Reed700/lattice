@@ -12,21 +12,9 @@ use serde::{Deserialize, Serialize};
 
 use super::ChatStreamEventDto;
 
-/// Steps one turn may record. More than this and the timeline is a log, not a
-/// record of what happened; a turn that hits the cap is pathological anyway.
-const MAX_STEPS: usize = 200;
-
-/// A step's `detail` is a hint, not a transcript: the query, the host, a tool's
-/// arguments. Anything longer is cut.
+/// A step's `detail`, `result`, and link `title` are compact inline UI hints
+/// rendered in the timeline row header without CSS truncation, not transcripts.
 const MAX_DETAIL_CHARS: usize = 200;
-
-/// Enough to inspect a substantial local-model trace without letting one
-/// verbose generation turn the message metadata into an unbounded transcript.
-const MAX_REASONING_CHARS: usize = 24_000;
-
-/// Links one step may carry. A search hands the model about ten results; past
-/// that the list stops being "where it looked" and becomes a results page.
-const MAX_STEP_LINKS: usize = 12;
 
 /// What kind of work a step was. Stable codes, not prose — the label is what a
 /// person reads, this is what the UI groups and tests match on.
@@ -208,8 +196,8 @@ pub struct TurnRecordDto {
 pub struct StepId(Option<String>);
 
 impl StepId {
-    /// A step the recorder refused (the cap) has no id, and finishing it is a
-    /// no-op rather than an error the caller has to think about.
+    /// Used when the step mutex is poisoned so callers can still finish a step
+    /// as a no-op rather than panicking.
     fn none() -> Self {
         Self(None)
     }
@@ -322,14 +310,11 @@ impl TurnRecorder {
             duration_ms: None,
             result: None,
             reasoning: None,
-            links: capped(links),
+            links: non_empty_links(links),
         };
         let Ok(mut steps) = self.steps.lock() else {
             return StepId::none();
         };
-        if steps.len() >= MAX_STEPS {
-            return StepId::none();
-        }
         let id = StepId(Some(step.id.clone()));
         steps.push(step.clone());
         drop(steps);
@@ -396,7 +381,7 @@ impl TurnRecorder {
         step.duration_ms = Some(self.elapsed_ms().saturating_sub(step.started_at_ms));
         step.result = result.map(|text| clip(&text));
         if !links.is_empty() {
-            step.links = capped(links);
+            step.links = non_empty_links(links);
         }
         let finished = step.clone();
         drop(steps);
@@ -422,7 +407,7 @@ impl TurnRecorder {
         let reasoning = reasoning
             .map(str::trim)
             .filter(|text| !text.is_empty())
-            .map(clip_reasoning);
+            .map(str::to_owned);
         if step.reasoning == reasoning {
             return;
         }
@@ -496,22 +481,14 @@ impl Drop for StepGuard<'_> {
     }
 }
 
-/// Longer than any address a person would recognise. The frontend schema is
-/// strict, so one pathological link would otherwise cost the whole step.
-const MAX_LINK_URL_BYTES: usize = 2048;
-
-fn capped(mut links: Vec<TurnStepLinkDto>) -> Vec<TurnStepLinkDto> {
-    links.retain(|link| !link.url.is_empty() && link.url.len() <= MAX_LINK_URL_BYTES);
-    links.truncate(MAX_STEP_LINKS);
+/// Drops links with empty URLs to satisfy the frontend schema (`url: z.string().min(1)`).
+fn non_empty_links(mut links: Vec<TurnStepLinkDto>) -> Vec<TurnStepLinkDto> {
+    links.retain(|link| !link.url.is_empty());
     links
 }
 
 fn clip(text: &str) -> String {
     lattice_core::shared::text::safe_truncate(text.trim(), MAX_DETAIL_CHARS)
-}
-
-fn clip_reasoning(text: &str) -> String {
-    lattice_core::shared::text::safe_truncate(text.trim(), MAX_REASONING_CHARS)
 }
 
 #[cfg(test)]
@@ -617,19 +594,20 @@ mod tests {
         assert!(recorder.steps()[0].detail.as_ref().unwrap().chars().count() <= MAX_DETAIL_CHARS);
     }
 
-    /// A runaway turn must not persist a megabyte of timeline, and finishing a
-    /// step the cap refused must not panic.
+    /// Long turns (such as deep-research turns with many tool calls) keep every
+    /// step they record without silently dropping later steps.
     #[test]
-    fn the_step_list_is_capped() {
+    fn all_recorded_steps_are_kept() {
         let (recorder, _) = capturing();
 
-        let mut refused = None;
-        for _ in 0..(MAX_STEPS + 10) {
-            refused = Some(recorder.begin(TurnStepKind::Tool, "Running something", None));
+        let mut last = None;
+        for _ in 0..210 {
+            last = Some(recorder.begin(TurnStepKind::Tool, "Running something", None));
         }
 
-        assert_eq!(recorder.steps().len(), MAX_STEPS);
-        recorder.end(refused.as_ref().unwrap(), TurnStepState::Done, None);
+        assert_eq!(recorder.steps().len(), 210);
+        recorder.end(last.as_ref().unwrap(), TurnStepState::Done, None);
+        assert_eq!(recorder.steps()[209].state, TurnStepState::Done);
     }
 
     /// A step the turn walked away from — a budget exhausted mid-generation, a
@@ -755,16 +733,34 @@ mod tests {
     }
 
     #[test]
-    fn a_step_carries_no_more_links_than_a_reader_can_take_in() {
+    fn long_reasoning_is_preserved_without_truncation() {
         let (recorder, _) = capturing();
-        let many = (0..40)
+        let step = recorder.begin_guarded(TurnStepKind::Generate, "Thinking", None);
+        let trace = "reasoning step ".repeat(2_500);
+        assert!(trace.chars().count() > 24_000);
+
+        step.set_reasoning(Some(&trace));
+        step.done(Some("done".into()));
+
+        assert_eq!(recorder.steps()[0].reasoning.as_deref(), Some(trace.trim()));
+    }
+
+    #[test]
+    fn a_step_keeps_all_non_empty_links_including_long_urls() {
+        let (recorder, _) = capturing();
+        let long_url = format!("https://example.com/{}", "q".repeat(3_000));
+        let mut many: Vec<TurnStepLinkDto> = (0..40)
             .map(|n| TurnStepLinkDto::new(format!("https://example.com/{n}"), None))
             .collect();
+        many.push(TurnStepLinkDto::new(long_url.clone(), Some("Long URL")));
+        many.push(TurnStepLinkDto::new("", Some("Empty URL")));
 
         recorder
             .begin_guarded(TurnStepKind::WebSearch, "Searching the web", None)
             .done_with_links(None, many);
 
-        assert_eq!(recorder.steps()[0].links.len(), MAX_STEP_LINKS);
+        let links = &recorder.steps()[0].links;
+        assert_eq!(links.len(), 41);
+        assert_eq!(links[40].url, long_url);
     }
 }

@@ -53,6 +53,9 @@ struct Recording {
 #[async_trait::async_trait]
 impl LLMPort for Recording {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        if request.schema().is_none() {
+            return Ok(CompletionResponse::from_text("Draft reasoning."));
+        }
         self.sent.lock().unwrap().push(request.clone());
         let answer = self.answers.lock().unwrap().pop_front().unwrap_or_default();
         Ok(CompletionResponse::from_text(scripted(request, answer)))
@@ -108,6 +111,9 @@ impl LLMPort for SmallWindow {
         &self,
         request: &lattice_core::application::ports::llm_port::CompletionRequest,
     ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+        if request.schema().is_none() {
+            return Ok(CompletionResponse::from_text("Draft reasoning."));
+        }
         let (system, user) = crate::lessons::structured_call::task_messages(request);
         let mut requests = self.requests.lock().unwrap();
         requests.push((system.to_owned(), user.to_owned()));
@@ -548,9 +554,11 @@ fn the_system_prompt_gives_its_rules_in_order_and_cites_only_when_the_lesson_doe
     );
     assert!(at.windows(2).all(|pair| pair[0] < pair[1]), "{at:?}");
     assert!(!rich.contains(words::NO_CITATIONS));
+    assert!(!rich.contains(words::NO_KEYS));
 
     let plain = system(false, false);
     assert!(plain.contains(words::NO_CITATIONS));
+    assert!(plain.contains(words::NO_KEYS));
     assert!(plain.contains(words::EDITING));
     assert!(!plain.contains(words::KEYS));
     assert!(!plain.contains(&citing));
@@ -1767,7 +1775,7 @@ async fn a_correction_that_also_removes_another_failed_sentence_leaves_that_sent
     let merging = json!({"edits":[
         {"path":"/blocks/0/body","before":format!("{ALPHA} {BETA}"),"after":ALPHA_AND_BETA},
     ]});
-    let llm = recording(vec![merging.to_string()]);
+    let llm = recording(vec![merging.to_string(), merging.to_string()]);
     let mut ledger = rewriting(&llm, &body, &[("alpha", ALPHA), ("beta", BETA)]).await?;
     let context = context_of(
         &body,
@@ -1788,6 +1796,7 @@ async fn a_correction_that_also_removes_another_failed_sentence_leaves_that_sent
         matches!(reasons.as_slice(), [reason] if reason == NO_CHANGE),
         "{reasons:?}"
     );
+    assert_eq!(llm.sent.lock().unwrap().len(), 2);
     Ok(())
 }
 
@@ -1824,6 +1833,124 @@ async fn a_statement_cut_after_two_rewrites_that_were_not_applied_records_its_th
     assert_eq!(
         attempts(ledger.entry(&only).unwrap()),
         [(1, false), (2, false), (3, true)]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn section_repair_shows_surrounding_lesson_context_and_forbids_contradictions_or_payload_extrapolation(
+) -> Result<()> {
+    let explanation =
+        "In HL7 v2, MSH-10 holds each message's own control ID and MSA-2 echoes the sent MSH-10.";
+    let worked = "Compare MSA-2 with the sent MSH-10.";
+    let unrelated_practice = "Practice in your own notes.";
+    let contrast = "Duplicate detection relies on the sender's store rather than broker-assigned producer sequences.";
+    let candidate = json!({
+        "blocks": [
+            {"kind": "explanation", "title": "ACK fields", "body": explanation, "citations": []},
+            {"kind": "worked_example", "title": "Check ACK", "body": worked, "citations": []},
+            {"kind": "guided_practice", "title": "Try it", "body": unrelated_practice, "citations": []},
+            {"kind": "contrast", "title": "Sender vs broker", "body": contrast, "citations": []}
+        ],
+        "questions": []
+    });
+    let llm = recording(vec![
+        json!({"edits": [{"path": "/blocks/0/body", "before": worked, "after": "Compare the reply fields with the sent ID."}]}).to_string(),
+    ]);
+    let mut ledger = rewriting(&llm, worked, &[("c1", worked)]).await?;
+    let context = json!({
+        "requirements": {},
+        "candidate": candidate,
+        "failedClaims": [{
+            "unit": 1usize,
+            "claimId": "c1",
+            "statement": worked,
+            "sentence": worked,
+            "verdict": "contradicted",
+            "reason": "Sample shows MSA|AA|20150503223000 without prose naming MSA-2.",
+            "evidence": ["ev-raw"]
+        }],
+        "evidence": [passage_row("ev-raw", "MSH|^~\\&|A|B|C|D|20150503223000||ACK|20150503223000|P|2.5\nMSA|AA|20150503223000")],
+        "executions": [],
+        "exampleClaims": [],
+        "repairHistory": []
+    });
+    let _ = repaired(&llm, &mut ledger, (context, schema()), 4_000).await?;
+
+    let sent = llm.sent.lock().unwrap().clone();
+    assert_eq!(sent.len(), 1);
+    let (system_prompt, _) = crate::lessons::structured_call::task_messages(&sent[0]);
+    assert!(
+        system_prompt.contains("never introduce a claim that contradicts another section"),
+        "{system_prompt}"
+    );
+    assert!(
+        system_prompt.contains("Never extrapolate a general protocol rule, field meaning, or architecture-wide mechanism from an unlabelled sample payload"),
+        "{system_prompt}"
+    );
+    let task = task_in(&sent[0]).unwrap();
+    let sections = task["lessonSections"].as_array().unwrap();
+    assert_eq!(sections.len(), 4);
+    assert_eq!(sections[0]["context"], explanation);
+    // Target section (unit 1) stays without duplicated context body.
+    assert!(sections[1].get("context").is_none());
+    // Immediate neighbor (unit 2) and non-adjacent contrast block (unit 3) both surface context.
+    assert_eq!(sections[2]["context"], unrelated_practice);
+    assert_eq!(sections[3]["context"], contrast);
+    Ok(())
+}
+
+#[tokio::test]
+async fn bundling_other_failed_claims_into_one_entry_is_refused_and_reasked_separately(
+) -> Result<()> {
+    let body = format!("{FIRST_OLD} {STEADY} {THIRD_OLD}");
+    let bundled = json!({"edits":[
+        {"finding":0,"path":"/blocks/0/body","before":FIRST_OLD,"after":FIRST_NEW},
+        {"finding":0,"path":"/blocks/0/body","before":THIRD_OLD,"after":THIRD_NEW},
+        {"finding":1,"path":"/blocks/0/body","before":FIRST_OLD,"after":""}
+    ]});
+    let only_first =
+        json!({"edits":[{"path":"/blocks/0/body","before":FIRST_OLD,"after":FIRST_NEW}]});
+    let only_third =
+        json!({"edits":[{"path":"/blocks/0/body","before":THIRD_OLD,"after":THIRD_NEW}]});
+    let llm = recording(vec![
+        bundled.to_string(),
+        only_first.to_string(),
+        only_third.to_string(),
+    ]);
+    let mut ledger = rewriting(&llm, &body, &[("a", FIRST_OLD), ("c", THIRD_OLD)]).await?;
+    let context = context_of(
+        &body,
+        vec![
+            failed_row("a", FIRST_OLD, &[]),
+            failed_row("c", THIRD_OLD, &[]),
+        ],
+        Vec::new(),
+    );
+
+    let after = repaired(&llm, &mut ledger, (context, schema()), 4_000).await?;
+
+    assert_eq!(
+        after["blocks"][0]["body"],
+        format!("{FIRST_NEW} {STEADY} {THIRD_NEW}")
+    );
+    assert!(rejections(ledger.entry(&ClaimId("a".into())).unwrap()).is_empty());
+    assert!(rejections(ledger.entry(&ClaimId("c".into())).unwrap()).is_empty());
+    assert_eq!(llm.sent.lock().unwrap().len(), 3);
+    let sent = llm.sent.lock().unwrap().clone();
+    assert!(
+        messages(&sent[1])
+            .iter()
+            .any(|(_, text)| text.contains("Your edits for f1")),
+        "{:?}",
+        messages(&sent[1])
+    );
+    assert!(
+        messages(&sent[2])
+            .iter()
+            .any(|(_, text)| text.contains("Your edits for f2")),
+        "{:?}",
+        messages(&sent[2])
     );
     Ok(())
 }

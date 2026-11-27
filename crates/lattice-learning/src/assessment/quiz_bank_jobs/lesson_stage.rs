@@ -35,7 +35,18 @@ pub(crate) fn lesson_question_item(
         rubric: vec![],
         key: engine::LearningAssessmentKey::Choice(key.correct_index),
         explanation: key.explanation.clone(),
-        distractor_rationales: key.rationales.clone(),
+        distractor_rationales: key
+            .rationales
+            .iter()
+            .enumerate()
+            .map(|(index, reason)| {
+                if index == key.correct_index {
+                    String::new()
+                } else {
+                    reason.clone()
+                }
+            })
+            .collect(),
     }
 }
 
@@ -45,19 +56,76 @@ pub(crate) fn lesson_question_item(
 /// address them by; every form draw shuffles them. A question that fails the
 /// bank's checks stays, marked `dropped`, so the lesson's questions keep their
 /// places.
+#[cfg(test)]
 pub(crate) fn lesson_seed_items(
     lesson_id: &str,
     outcome_id: &str,
     questions: &[LessonQuestion],
     keys: &[LessonAnswerKey],
 ) -> Vec<BankItem> {
+    lesson_seed_items_with_unverified(
+        lesson_id,
+        outcome_id,
+        questions,
+        keys,
+        &std::collections::HashSet::new(),
+    )
+}
+
+/// [`lesson_seed_items`] for a prepared lesson: any question whose unit
+/// carries an unverified/`no_source` claim is stored in place as `disputed`
+/// instead of `agreed`, keeping it out of quiz banks until verified or fixed.
+pub(crate) fn lesson_seed_items_verified(
+    lesson_id: &str,
+    outcome_id: &str,
+    prepared: &crate::dto::PreparedLearningLesson,
+) -> Vec<BankItem> {
+    let unverified =
+        prepared
+            .verification
+            .as_ref()
+            .map_or_else(std::collections::HashSet::new, |report| {
+                crate::assessment_repository::unverified_question_indices(
+                    prepared.blocks.len(),
+                    report,
+                )
+            });
+    lesson_seed_items_with_unverified(
+        lesson_id,
+        outcome_id,
+        &prepared.questions,
+        &prepared.keys,
+        &unverified,
+    )
+}
+
+fn lesson_seed_items_with_unverified(
+    lesson_id: &str,
+    outcome_id: &str,
+    questions: &[LessonQuestion],
+    keys: &[LessonAnswerKey],
+    unverified_indices: &std::collections::HashSet<usize>,
+) -> Vec<BankItem> {
     questions
         .iter()
-        .filter_map(|q| {
+        .enumerate()
+        .filter_map(|(index, q)| {
             let key = keys.iter().find(|k| k.question_id == q.id)?;
             let candidate = lesson_question_item(q, key, vec![outcome_id.to_string()]);
             let review_status = match engine::validate_candidate(&candidate) {
-                Ok(()) => "agreed",
+                Ok(()) if unverified_indices.contains(&index) => {
+                    tracing::info!(question = %q.id, "An unverified lesson question was kept out of the quiz bank's draws");
+                    crate::lessons::trace::lesson_span(lesson_id).in_scope(|| {
+                        crate::lessons::trace::decided(
+                            crate::lessons::trace::Stage::Quiz,
+                            &format!("question {}", q.prompt),
+                            "kept out of the bank's draws",
+                            "Question relies on unverified or no-source claims.",
+                        );
+                    });
+                    crate::assessment_repository::CandidateReviewStatus::Disputed
+                }
+                Ok(()) => crate::assessment_repository::CandidateReviewStatus::Agreed,
                 Err(error) => {
                     tracing::info!(question = %q.id, %error, "A lesson question was kept out of the quiz bank's draws");
                     crate::lessons::trace::lesson_span(lesson_id).in_scope(|| {
@@ -68,7 +136,7 @@ pub(crate) fn lesson_seed_items(
                             &error.to_string(),
                         );
                     });
-                    "dropped"
+                    crate::assessment_repository::CandidateReviewStatus::Dropped
                 }
             };
             Some(BankItem {
@@ -98,20 +166,32 @@ pub(crate) struct LessonBank {
     pub marks: Vec<lattice_core::shared::edits::ReadMark>,
 }
 
+/// Inputs for writing a prepared lesson's quiz bank around its reviewed seed questions.
+pub(crate) struct LessonBankRequest<'a> {
+    pub program_id: &'a str,
+    pub lesson_id: &'a str,
+    pub title: &'a str,
+    pub objective: &'a str,
+    pub material: Vec<MaterialPassage>,
+    pub seeds: Vec<StoredItem>,
+}
+
 /// Write the rest of a published lesson's quiz bank from its blocks
 /// (`material`), around its own reviewed questions (`seeds`).
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn lesson_bank_stage(
     llm: &dyn LLMPort,
     database: &Database,
-    program_id: &str,
-    lesson_id: &str,
-    title: &str,
-    objective: &str,
-    material: Vec<MaterialPassage>,
-    seeds: Vec<StoredItem>,
+    request: LessonBankRequest<'_>,
 ) -> Result<LessonBank> {
-    let (outcome_id, settings, quiz_formats) = {
+    let LessonBankRequest {
+        program_id,
+        lesson_id,
+        title,
+        objective,
+        material,
+        seeds,
+    } = request;
+    let (outcome_id, settings, quiz_formats, program) = {
         let mut tx = database.begin_read().await?;
         let existing =
             quiz_blueprints::repository::lesson_outcome_in(&mut tx, program_id, lesson_id).await?;
@@ -119,12 +199,26 @@ pub(crate) async fn lesson_bank_stage(
         let quiz_formats =
             quiz_blueprints::lesson_quiz_formats_in(&mut tx, program_id, lesson_id).await?;
         tx.commit().await?;
+        let program = crate::repository::LearningRepository::new(database.clone())
+            .get(program_id)
+            .await
+            .ok();
         (
             existing.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             settings,
             quiz_formats,
+            program,
         )
     };
+    let companies = program
+        .as_ref()
+        .map(|program| {
+            crate::lessons::company_framing::ungrounded_companies(
+                &[&program.summary.goal, &program.prior_knowledge],
+                &program.sources,
+            )
+        })
+        .unwrap_or_default();
     let facts = CourseFacts {
         program_title: String::new(),
         modules: vec![],
@@ -184,7 +278,7 @@ pub(crate) async fn lesson_bank_stage(
     let mut dropped: Vec<String> = Vec::new();
     let mut writing = BankWriting::new(needs);
     while let Some(need) = writing.next() {
-        let authored = generation::author_items(llm, &need).await?;
+        let authored = generation::author_items_for(llm, &need, &companies).await?;
         writing.wrote(&need, &authored);
         written.extend(authored.items);
         dropped.extend(authored.dropped);

@@ -40,7 +40,7 @@ export function useLessonCitationSources(
     const textOf = new Map(versions.map(([key], index) => [key, fullTexts[index]]));
     return (citations ?? []).map((citation) => {
       const text = citation.sourceId ? textOf.get(`${citation.sourceId}:${citation.passage.sourceVersionId}`) : undefined;
-      return fromLearningEvidencePassage(citation.passage, citation.number - 1, text).source;
+      return fromLearningEvidencePassage(citation.passage, citation.number, text).source;
     });
   }, [citations, versions, fullTexts]);
 }

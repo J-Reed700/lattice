@@ -5,19 +5,20 @@
 //! `/tokenize` and slot pinning. The two differ only in where the server is
 //! (the base URL), how it authenticates (default headers) and who owns its
 //! process: a sidecar's client holds the handle that keeps it running.
-use crate::features::llm::backend::{ignore_retry, ignore_text, ModelBackend, Progress};
+use crate::features::llm::backend::{
+    ignore_retry, ignore_text, read_bounded_json, ModelBackend, Progress,
+};
 use crate::features::llm::engine::sidecar_manager::SidecarHandle;
 use crate::features::llm::engine::GenerationConfig;
-use crate::features::llm::fitting::{Fitted, OutputLimits, Thinking};
-use crate::features::llm::openai_chat::openai_content_parts;
+use crate::features::llm::fitting::{Fitted, OutputLimits, ResponseBudget, Thinking};
 use crate::features::llm::scheduler::SchedulerRegistry;
 use async_trait::async_trait;
 use futures::StreamExt;
 use lattice_core::application::{
     contracts::settings::{LLMSettingsDto, LlamaCppSettingsDto},
     ports::llm_port::{
-        invalid_tool_arguments, CompletionInput, CompletionRequest, CompletionResponse, LLMPort,
-        RemoteHeader, ThinkingPolicy,
+        CompletionInput, CompletionRequest, CompletionResponse, LLMPort, RemoteHeader,
+        ThinkingPolicy,
     },
 };
 use lattice_core::domain::models::vision::VisionGeometry;
@@ -30,13 +31,28 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
 
+mod completion;
+mod messages;
+#[cfg(test)]
+#[path = "native_thinking_tests.rs"]
+mod native_thinking_tests;
+#[cfg(test)]
+mod props_tests;
+mod repetition;
 mod request;
 #[cfg(test)]
 mod request_tests;
 mod retry;
+#[cfg(test)]
+mod stream_guard_tests;
 pub(crate) mod streaming;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) use completion::parse_completion;
+pub(crate) use completion::parse_completion_with_budget;
+pub(crate) use messages::chat_messages;
 
 /// How long a bundled server may go silent once it has started answering.
 const SIDECAR_STALL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -57,6 +73,8 @@ pub(crate) struct ServerConfig {
     pub stall_timeout: Duration,
     /// Whether the model's chat template carries a native tool-call format.
     pub supports_tools: bool,
+    /// Whether the model supports native thinking (`<think>` / `enable_thinking`).
+    pub supports_thinking: bool,
     /// Whether the model itself pins thinking; the user's override beats it.
     pub model_thinking: ThinkingPolicy,
     /// Hold the server to [`retry::prefill_allowance`] before it starts
@@ -99,6 +117,8 @@ impl LlamaCppLlm {
                 context_window: settings.context_window as usize,
                 stall_timeout: Duration::from_secs(u64::from(settings.timeout_seconds.max(1))),
                 supports_tools: true,
+                // Determined from `/props` `chat_template` in `schedule`; never guessed by model name.
+                supports_thinking: false,
                 // A server the user runs names no file to read a header from.
                 model_thinking: ThinkingPolicy::PerRequest,
                 prefill_guard: false,
@@ -117,6 +137,7 @@ impl LlamaCppLlm {
         model: String,
         generation: GenerationConfig,
         supports_tools: bool,
+        supports_thinking: bool,
         model_thinking: ThinkingPolicy,
         vision: Option<VisionGeometry>,
     ) -> Result<Self> {
@@ -126,6 +147,7 @@ impl LlamaCppLlm {
             context_window: process.context_size() as usize,
             stall_timeout: SIDECAR_STALL_TIMEOUT,
             supports_tools,
+            supports_thinking,
             model_thinking,
             prefill_guard: true,
             vision,
@@ -139,6 +161,22 @@ impl LlamaCppLlm {
     pub fn with_vision(mut self, vision: Option<VisionGeometry>) -> Self {
         self.config.vision = vision;
         self
+    }
+
+    /// Whether this llama.cpp client can think natively on demand
+    /// (`ThinkingMode::On`), taking the model's thinking capability, its
+    /// policy, and the user's thinking override into account.
+    pub fn supports_native_thinking(&self) -> bool {
+        match self
+            .config
+            .generation
+            .thinking_override
+            .or(self.config.model_thinking)
+        {
+            ThinkingPolicy::AlwaysOn => true,
+            ThinkingPolicy::PerRequest => self.config.supports_thinking,
+            ThinkingPolicy::AlwaysOff => false,
+        }
     }
 
     /// A client for the llama-server at `endpoint` that authenticates with a
@@ -202,7 +240,16 @@ impl LlamaCppLlm {
             .await
             .map_err(network_error)?;
         let response = check_status(response).await?;
-        parse_completion(response.json().await.map_err(network_error)?)?;
+        let probe_budget = ResponseBudget::for_tokens(2048);
+        let value = read_bounded_json(
+            response,
+            probe_budget.max_whole_bytes,
+            || AppError::InvalidState("llama.cpp response exceeds output budget size limit".into()),
+            network_error,
+            |_| AppError::Network("llama.cpp returned invalid JSON".into()),
+        )
+        .await?;
+        parse_completion_with_budget(value, probe_budget.max_tool_calls)?;
         Ok(models)
     }
 
@@ -265,9 +312,11 @@ impl LlamaCppLlm {
                 (scheduler, true)
             }
             None => {
-                schedulers
+                let (scheduler, is_llama_server, supports_thinking) = schedulers
                     .remote_llama_cpp(&self.client, self.server_root(), self.config.context_window)
-                    .await
+                    .await;
+                self.config.supports_thinking = supports_thinking;
+                (scheduler, is_llama_server)
             }
         };
         if let Some(window) = scheduler.capacity().shared_window {
@@ -289,97 +338,6 @@ impl LlamaCppLlm {
             None => scheduled,
         })
     }
-}
-
-/// A typed request's input as OpenAI chat messages.
-///
-/// Shared with the bundled sidecar, which is the same llama-server behind the
-/// same `/v1/chat/completions` route: one translation means a tool round
-/// replays identically whichever of the two the model is reached through.
-pub(crate) fn chat_messages(input: &[CompletionInput]) -> Result<Vec<Value>> {
-    let mut messages: Vec<Value> = Vec::with_capacity(input.len());
-    // Whether the last message is a model turn that a call joins: its calls
-    // so far, or the text it wrote before them.
-    let mut calls_join_last = false;
-    for item in input {
-        let mut joins = false;
-        match item {
-            CompletionInput::Native { value } => messages.push(value.clone()),
-            // Chat templates know system, user, assistant and tool; a
-            // developer instruction is a system one to every one of them.
-            CompletionInput::Message { role, content } if role == "developer" => {
-                messages.push(json!({"role":"system","content":content}))
-            }
-            CompletionInput::Message { role, content } => {
-                messages.push(json!({"role":role,"content":content}));
-                joins = role == "assistant";
-            }
-            CompletionInput::Multimodal { role, parts } => {
-                messages.push(json!({"role":role,"content":openai_content_parts(role, parts)?}))
-            }
-            CompletionInput::ToolCall {
-                id,
-                name,
-                arguments,
-            } => {
-                let call = json!({"id":id,"type":"function",
-                    "function":{"name":name,"arguments":arguments.to_string()}});
-                // Calls made in one round are one assistant message, with
-                // the text the model wrote before them. Replayed as messages
-                // of their own, they break the role alternation that strict
-                // chat templates enforce.
-                match messages
-                    .last_mut()
-                    .filter(|_| calls_join_last)
-                    .and_then(Value::as_object_mut)
-                    .and_then(|turn| {
-                        turn.entry("tool_calls")
-                            .or_insert_with(|| Value::Array(Vec::new()))
-                            .as_array_mut()
-                    }) {
-                    Some(calls) => calls.push(call),
-                    None => messages
-                        .push(json!({"role":"assistant","content":null,"tool_calls":[call]})),
-                }
-                joins = true;
-            }
-            CompletionInput::ToolResult { id, output } => {
-                messages.push(json!({"role":"tool","tool_call_id":id,"content":output}))
-            }
-        }
-        calls_join_last = joins;
-    }
-    coalesce_system_messages(messages)
-}
-
-/// The server's chat template may allow only one system message at index zero.
-/// Normalize typed/native requests too, without changing history or tool payloads.
-fn coalesce_system_messages(messages: Vec<Value>) -> Result<Vec<Value>> {
-    let mut instructions = Vec::new();
-    let mut conversation = Vec::new();
-    for message in messages {
-        if message.get("role").and_then(Value::as_str) == Some("system") {
-            let content = message
-                .get("content")
-                .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    AppError::InvalidInput("llama.cpp system instructions must be text".into())
-                })?
-                .trim();
-            if !content.is_empty() && !instructions.iter().any(|existing| existing == content) {
-                instructions.push(content.to_owned());
-            }
-        } else {
-            conversation.push(message);
-        }
-    }
-    if !instructions.is_empty() {
-        conversation.insert(
-            0,
-            json!({"role":"system","content":instructions.join("\n\n")}),
-        );
-    }
-    Ok(conversation)
 }
 
 #[async_trait]
@@ -417,6 +375,9 @@ impl ModelBackend for LlamaCppLlm {
     }
     fn thinking(&self, request: &CompletionRequest) -> Thinking {
         Thinking::from(self.thinking_mode(request))
+    }
+    fn supports_native_thinking(&self) -> bool {
+        Self::supports_native_thinking(self)
     }
     /// A crashed bundled server leaves this client cached with a dead port;
     /// saying so lets the role cache drop it and start a fresh server.
@@ -549,178 +510,4 @@ async fn server_status(
         body.as_ref(),
         retry_after,
     ))
-}
-
-/// More calls than any round needs; past this a model is looping, not working.
-const MAX_TOOL_CALLS_PER_ROUND: usize = 128;
-
-/// Stands in for the name of a call that gave none, so the replayed history
-/// still has a name the chat template can render.
-const UNNAMED_TOOL: &str = "unnamed_tool";
-
-pub(crate) fn parse_completion(value: Value) -> Result<CompletionResponse> {
-    let choice = value
-        .get("choices")
-        .and_then(Value::as_array)
-        .and_then(|c| c.first())
-        .ok_or_else(|| AppError::Network("llama.cpp returned no completion choices".into()))?;
-    let message = choice
-        .get("message")
-        .filter(|m| m.is_object())
-        .ok_or_else(|| AppError::Network("llama.cpp returned no completion message".into()))?;
-    let finish_reason = choice
-        .get("finish_reason")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let raw_calls: Vec<&Value> = message
-        .get("tool_calls")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .take(MAX_TOOL_CALLS_PER_ROUND)
-        .collect();
-    let mut calls = Vec::new();
-    let mut ids = std::collections::HashSet::new();
-    let mut repaired = false;
-    for (index, call) in raw_calls.iter().enumerate() {
-        // A small model gets a call wrong often enough that failing the whole
-        // completion over it throws away a turn the model can recover: it is
-        // handed back as a call the tool loop answers with the error, and the
-        // model tries again next round.
-        let function = call.get("function");
-        let name = function
-            .and_then(|f| f.get("name"))
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|name| !name.is_empty());
-        let raw_arguments = function
-            .and_then(|f| f.get("arguments"))
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let id = match call
-            .get("id")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|id| !id.is_empty() && !ids.contains(*id))
-        {
-            Some(id) => id.to_owned(),
-            None => {
-                repaired = true;
-                format!("call_invalid_{index}")
-            }
-        };
-        ids.insert(id.clone());
-        // A call that parses whole was finished even when the round then hit
-        // its output limit; only the one whose arguments broke off was cut.
-        let cut_off = finish_reason == "length" && index + 1 == raw_calls.len();
-        let problem = match (name, serde_json::from_str::<Value>(raw_arguments)) {
-            (None, _) => Some("the call named no tool".to_owned()),
-            (Some(name), Ok(arguments)) if arguments.is_object() => {
-                calls.push(CompletionInput::ToolCall {
-                    id: id.clone(),
-                    name: name.into(),
-                    arguments,
-                });
-                None
-            }
-            (Some(_), Ok(_)) => Some("arguments must be a JSON object".to_owned()),
-            (Some(_), Err(error)) if cut_off => Some(format!(
-                "arguments were cut off by the output limit before the JSON closed ({error})"
-            )),
-            (Some(_), Err(error)) => Some(format!("arguments were not valid JSON: {error}")),
-        };
-        if let Some(problem) = problem {
-            repaired = true;
-            calls.push(CompletionInput::ToolCall {
-                id,
-                name: name.unwrap_or(UNNAMED_TOOL).into(),
-                arguments: invalid_tool_arguments(raw_arguments, &problem),
-            });
-        }
-    }
-    // The assistant message is replayed as the server returned it, so it has
-    // to agree with the calls the tool results will answer: the same ids, and
-    // arguments the chat template can parse again.
-    let mut assistant = message.clone();
-    let dropped = message
-        .get("tool_calls")
-        .and_then(Value::as_array)
-        .is_some_and(|all| all.len() > raw_calls.len());
-    if repaired || dropped {
-        if let Some(object) = assistant.as_object_mut() {
-            object.insert(
-                "tool_calls".into(),
-                Value::Array(
-                    calls
-                        .iter()
-                        .filter_map(|call| match call {
-                            CompletionInput::ToolCall {
-                                id,
-                                name,
-                                arguments,
-                            } => Some(json!({
-                                "id": id, "type": "function",
-                                "function": {"name": name, "arguments": arguments.to_string()}
-                            })),
-                            _ => None,
-                        })
-                        .collect(),
-                ),
-            );
-        }
-    }
-    let raw_content = message
-        .get("content")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let cleaned_content = streaming::strip_unmatched_think_close(raw_content);
-    // Reasoning is shown, not replayed. Carried through a tool loop it soon
-    // outweighs everything else in the prompt. Dropping it costs the server a
-    // re-read of the newest turn's visible output, which it cached with the
-    // reasoning still in place; that is small next to carrying every round's.
-    if let Some(object) = assistant.as_object_mut() {
-        object.remove("reasoning_content");
-        object.remove("reasoning");
-        if let Some(cleaned) = &cleaned_content {
-            object.insert("content".into(), json!(cleaned));
-        }
-    }
-    let reasoning = ["reasoning_content", "reasoning"]
-        .iter()
-        .find_map(|key| message.get(key).and_then(Value::as_str))
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
-        .map(str::to_owned);
-    Ok(CompletionResponse {
-        text: cleaned_content.unwrap_or_else(|| raw_content.to_owned()),
-        reasoning,
-        tool_calls: calls,
-        finish_reason: finish_reason.into(),
-        input_tokens: value
-            .pointer("/usage/prompt_tokens")
-            .and_then(Value::as_u64)
-            .unwrap_or_default(),
-        output_tokens: value
-            .pointer("/usage/completion_tokens")
-            .and_then(Value::as_u64)
-            .unwrap_or_default(),
-        replay: vec![CompletionInput::Native { value: assistant }],
-        // Non-streaming servers can include reasoning tokens in this array.
-        // Without token/channel alignment, do not treat them as verdict confidence.
-        first_token_logprobs: choice
-            .get("logprobs")
-            .filter(|_| {
-                !["reasoning_content", "reasoning"].iter().any(|key| {
-                    message
-                        .get(key)
-                        .and_then(Value::as_str)
-                        .is_some_and(|text| !text.is_empty())
-                })
-            })
-            .and_then(lattice_core::application::ports::llm_port::first_token_logprobs),
-        timing: value
-            .get("timings")
-            .and_then(streaming::ServerTimings::from_value)
-            .map(|timings| timings.served()),
-    })
 }

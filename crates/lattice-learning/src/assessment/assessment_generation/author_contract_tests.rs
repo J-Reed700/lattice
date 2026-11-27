@@ -219,7 +219,7 @@ fn a_quote_that_cites_no_shown_sentence_is_refused_and_the_item_is_told_so() {
 }
 
 #[test]
-fn a_quote_citing_two_passages_is_built_from_both_in_cited_order() {
+fn a_quote_citing_multiple_passages_is_refused_so_quotes_stay_verbatim() {
     let need = single_choice();
     let first_id = uuid::Uuid::new_v4().to_string();
     let second_id = uuid::Uuid::new_v4().to_string();
@@ -228,30 +228,39 @@ fn a_quote_citing_two_passages_is_built_from_both_in_cited_order() {
     let mut second = passage("Glazing", GLAZING);
     second.source_version_ids = vec![second_id.clone(), first_id.clone()];
     let raw = one_item(&[&first, &second], &kiln_choice(ASKED, &[0], &["u3", "u2"]));
-    let item = to_candidate(raw, &need, &[&first, &second]).unwrap();
-    assert_eq!(
-        item.source_quote,
-        format!("{GLAZING} A tray left inside past noon cracks along its base.")
+    let unbuilt = to_candidate(raw, &need, &[&first, &second]).unwrap_err();
+    assert!(
+        unbuilt
+            .faults
+            .iter()
+            .any(|f| f.contains("multiple passages")),
+        "{:?}",
+        unbuilt.faults
     );
-    assert_eq!(item.candidate.source_version_ids, vec![second_id, first_id]);
 }
 
 #[test]
-fn a_quote_citing_a_second_passage_after_the_first_lists_both_ids_once_in_cited_order() {
+fn a_quote_mixing_sentences_across_passages_after_first_is_refused() {
     let need = single_choice();
     let first_id = uuid::Uuid::new_v4().to_string();
     let second_id = uuid::Uuid::new_v4().to_string();
     let mut first = passage("Firing", FIRING);
-    first.source_version_ids = vec![first_id.clone()];
+    first.source_version_ids = vec![first_id];
     let mut second = passage("Glazing", GLAZING);
-    second.source_version_ids = vec![second_id.clone()];
+    second.source_version_ids = vec![second_id];
     let raw = one_item(
         &[&first, &second],
         &kiln_choice(ASKED, &[0], &["u1", "u3", "u2"]),
     );
-    let item = to_candidate(raw, &need, &[&first, &second]).unwrap();
-    assert_eq!(item.candidate.source_version_ids, vec![first_id, second_id]);
-    assert!(!item.source_quote.is_empty());
+    let unbuilt = to_candidate(raw, &need, &[&first, &second]).unwrap_err();
+    assert!(
+        unbuilt
+            .faults
+            .iter()
+            .any(|f| f.contains("multiple passages")),
+        "{:?}",
+        unbuilt.faults
+    );
 }
 
 #[test]
@@ -270,10 +279,11 @@ fn a_quote_citing_a_sentence_of_one_of_two_passages_keeps_only_that_passages_ids
 }
 
 #[test]
-fn the_author_is_told_items_rest_on_sentences_of_the_passages_not_of_one_passage() {
+fn the_author_is_told_items_rest_on_sentences_from_a_single_passage() {
     let said = system();
     assert!(said.contains("sentences of the passages"), "{said}");
-    assert!(!said.contains("one passage"), "{said}");
+    assert!(said.contains("from a single passage"), "{said}");
+    assert!(said.contains("without mixing passages"), "{said}");
 }
 
 #[test]
@@ -395,6 +405,7 @@ async fn an_answer_cut_off_after_an_item_keeps_it_and_asks_for_the_rest() -> Res
     ]);
     let batch = Batch {
         need: &need,
+        companies: &[],
         count: 2,
         notes: vec![],
         repair: None,
@@ -426,6 +437,7 @@ async fn a_rewrite_keeps_the_difficulty_of_the_item_it_replaces_and_does_not_wri
     let llm = queued(vec![(bare.to_string(), "stop")]);
     let batch = Batch {
         need: &need,
+        companies: &[],
         count: 1,
         notes: vec![],
         repair: Some(Repair {
@@ -455,6 +467,7 @@ async fn a_rewrite_that_cannot_be_read_gives_no_replacement() -> Result<()> {
     let llm = queued(vec![("{\"unrelated\": 1}".to_owned(), "stop")]);
     let batch = Batch {
         need: &need,
+        companies: &[],
         count: 1,
         notes: vec![],
         repair: Some(Repair {
@@ -477,6 +490,7 @@ async fn a_batch_asks_for_difficulty_but_names_no_index_or_block() -> Result<()>
     let llm = queued(vec![("{\"items\":[]}".to_owned(), "stop")]);
     let batch = Batch {
         need: &need,
+        companies: &[],
         count: 1,
         notes: vec![],
         repair: None,
@@ -522,6 +536,7 @@ async fn enforced_item_schema(format: LearningItemFormat) -> Value {
     let llm = enforcing(vec![("{\"items\":[]}".to_owned(), "stop")]);
     let batch = Batch {
         need: &need,
+        companies: &[],
         count: 1,
         notes: vec![],
         repair: None,
@@ -549,4 +564,270 @@ async fn a_cloze_asks_for_at_least_one_blank_and_one_accepted_answer_in_each() {
 
     assert_eq!(blanks, vec![Some(1)], "{schema}");
     assert_eq!(accepted, vec![Some(1)], "{schema}");
+}
+
+#[test]
+fn authored_content_faults_rejects_meta_talk_and_phantom_versions_but_allows_stated_or_standard_versions(
+) {
+    let mut meta = candidate_with(
+        LearningItemFormat::SingleChoice,
+        "Under the versioning rules of this course, which increment applies?",
+        "Minor increments apply for backward compatible additions.",
+        vec![],
+    );
+    meta.prompt = "Under the versioning rules of this course, which increment applies?".into();
+    let faults = engine::checks::authored_content_faults(&meta, "");
+    assert!(faults.iter().any(|f| f.contains("meta-talk")), "{faults:?}");
+
+    let phantom = candidate_with(
+        LearningItemFormat::Matching,
+        "Match each connector term to the meaning that fits it.",
+        "The pinned route version records which connector build owns a delivery, so a request for the 4.0.1 build keeps that number.",
+        vec![],
+    );
+    let phantom_faults = engine::checks::authored_content_faults(&phantom, "");
+    assert!(
+        phantom_faults.iter().any(|f| f.contains("4.0.1")),
+        "{phantom_faults:?}"
+    );
+
+    let trailing_dot_phantom = candidate_with(
+        LearningItemFormat::SingleChoice,
+        "Which header pins the route version?",
+        "Routes pin directly to 4.0.1.",
+        vec![],
+    );
+    let dot_faults = engine::checks::authored_content_faults(&trailing_dot_phantom, "");
+    assert!(
+        dot_faults.iter().any(|f| f.contains("4.0.1")),
+        "{dot_faults:?}"
+    );
+
+    let valid = candidate_with(
+        LearningItemFormat::ShortAnswer,
+        "Connector 6.2.3. adds an optional field. What version should it carry?",
+        "Adding an optional field raises minor from 2 to 3, giving 6.3.0 under SemVer 2.0.0, aligning with HL7 v2.5.1, FHIR R4 (4.0.1), and FHIR R4 4.0.1.",
+        vec![],
+    );
+    let valid_faults = engine::checks::authored_content_faults(&valid, "");
+    assert!(valid_faults.is_empty(), "{valid_faults:?}");
+}
+
+#[test]
+fn author_and_review_prompts_forbid_meta_talk_phantom_details_and_version_digit_mismatches() {
+    let author = system();
+    assert!(author.contains("meta-talk"), "{author}");
+    assert!(author.contains("digit by digit"), "{author}");
+    assert!(
+        author.contains("Never attribute invented routes"),
+        "{author}"
+    );
+
+    let review = crate::assessment::item_review::ITEM_REVIEW_SYSTEM;
+    assert!(
+        !review.contains("mention of the lesson is not a mention of a source"),
+        "{review}"
+    );
+    assert!(
+        review.contains("disagrees with the question's prompt or key"),
+        "{review}"
+    );
+    assert!(
+        review.contains("build or version number absent"),
+        "{review}"
+    );
+    assert!(review.contains("meta-talk"), "{review}");
+}
+
+fn candidate_with(
+    format: LearningItemFormat,
+    prompt: &str,
+    explanation: &str,
+    rationales: Vec<String>,
+) -> LearningAssessmentCandidate {
+    LearningAssessmentCandidate {
+        id: uuid::Uuid::new_v4().to_string(),
+        outcome_ids: vec![uuid::Uuid::new_v4().to_string()],
+        format,
+        difficulty: 2,
+        prompt: prompt.into(),
+        options: vec![
+            "Alpha".into(),
+            "Beta".into(),
+            "Gamma".into(),
+            "Delta".into(),
+        ],
+        left: vec![],
+        source_version_ids: vec![],
+        rubric: vec![],
+        key: match format {
+            LearningItemFormat::ShortAnswer => {
+                LearningAssessmentKey::Text(crate::assessment_engine::LearningTextKey {
+                    variants: vec!["6.3.0".into()],
+                    numeric: None,
+                })
+            }
+            LearningItemFormat::Matching => LearningAssessmentKey::Matching(vec![0, 1]),
+            _ => LearningAssessmentKey::Choice(0),
+        },
+        explanation: explanation.into(),
+        distractor_rationales: rationales,
+    }
+}
+
+#[test]
+fn right_choice_rationale_is_cleared_by_read_options_and_rejected_by_validation() {
+    let need = single_choice();
+    let held = passage("Firing", FIRING);
+    let mut item_json = kiln_choice(ASKED, &[0], &["u1"]);
+    item_json["options"][0]["reason"] = json!("Should never appear on the right answer.");
+    let raw = one_item(&[&held], &item_json);
+    let built = to_candidate(raw, &need, &[&held]).unwrap();
+    let LearningAssessmentKey::Choice(right_idx) = built.candidate.key else {
+        panic!("expected choice key");
+    };
+    assert_eq!(built.candidate.distractor_rationales[right_idx], "");
+
+    let invalid_right_reason = candidate_with(
+        LearningItemFormat::SingleChoice,
+        "Which option matches?",
+        "Alpha matches.",
+        vec![
+            "Non-empty right rationale.".into(),
+            "Wrong because B.".into(),
+            "Wrong because C.".into(),
+            "Wrong because D.".into(),
+        ],
+    );
+    let err = engine::validate_candidate(&invalid_right_reason)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("right choice's distractor rationale empty"),
+        "{err}"
+    );
+}
+
+#[test]
+fn authored_content_faults_for_catches_ungrounded_companies_and_invalid_smart_scopes() {
+    let company_faults = engine::checks::authored_content_faults_for(
+        &candidate_with(
+            LearningItemFormat::SingleChoice,
+            "Which capability would system/Binary.w permit Documo to do?",
+            "Documo\u{2019}s delivery service writes files.",
+            vec![
+                String::new(),
+                "system/DocumentReference.r allows reading, while .w allows writing.".into(),
+                "Wrong.".into(),
+                "Wrong.".into(),
+            ],
+        ),
+        "SMART v2 uses .c for create.",
+        &["Documo".to_owned()],
+    );
+    assert!(
+        company_faults.iter().any(|f| f.contains("Documo")),
+        "{company_faults:?}"
+    );
+    assert!(
+        company_faults.iter().any(|f| f.contains("system/Binary.w")),
+        "{company_faults:?}"
+    );
+
+    let distractor_ok = engine::checks::authored_content_faults_for(
+        &LearningAssessmentCandidate {
+            id: "id".into(),
+            outcome_ids: vec!["o".into()],
+            format: LearningItemFormat::SingleChoice,
+            difficulty: 2,
+            prompt: "Which SMART v2 scope requests create access on Binary?".into(),
+            options: vec![
+                "system/Binary.c".into(),
+                "system/Binary.w".into(),
+                "system/Binary.r".into(),
+                "system/Binary.d".into(),
+            ],
+            left: vec![],
+            source_version_ids: vec![],
+            rubric: vec![],
+            key: LearningAssessmentKey::Choice(0),
+            explanation: "SMART v2 uses .c for create; .w does not exist.".into(),
+            distractor_rationales: vec![
+                String::new(),
+                "system/Binary.w does not exist in SMART v2.".into(),
+                "system/Binary.r requests read access.".into(),
+                "system/Binary.d requests delete access.".into(),
+            ],
+        },
+        "SMART v2 uses .c for create.",
+        &["Documo".to_owned()],
+    );
+    assert!(distractor_ok.is_empty(), "{distractor_ok:?}");
+
+    let matching_faults = engine::checks::authored_content_faults_for(
+        &LearningAssessmentCandidate {
+            id: "match-id".into(),
+            outcome_ids: vec!["o".into()],
+            format: LearningItemFormat::Matching,
+            difficulty: 2,
+            prompt: "Match each SMART workflow with its scope.".into(),
+            left: vec![
+                "Read binary attachments".into(),
+                "Search observations".into(),
+                "Create documents".into(),
+            ],
+            options: vec![
+                "patient/Binary.rw".into(),
+                "patient/Observation.rs".into(),
+                "system/DocumentReference.c".into(),
+                "system/Binary.w".into(),
+            ],
+            source_version_ids: vec![],
+            rubric: vec![],
+            key: LearningAssessmentKey::Matching(vec![0, 1, 2]),
+            explanation: "Use SMART v2 granular scopes.".into(),
+            distractor_rationales: vec![],
+        },
+        "SMART v2 uses .r/.c/.u/.d/.s.",
+        &[],
+    );
+    assert!(
+        matching_faults
+            .iter()
+            .any(|f| f.contains("patient/Binary.rw")),
+        "{matching_faults:?}"
+    );
+    assert!(
+        !matching_faults
+            .iter()
+            .any(|f| f.contains("system/Binary.w")),
+        "{matching_faults:?}"
+    );
+}
+
+#[test]
+fn single_passage_quote_picks_contiguous_verbatim_slice_and_rejects_disjoint_short_jumps() {
+    let need = single_choice();
+    let body = "First long sentence about pre-heating kiln trays safely.\n\n\nSecond short. Third sentence explains cooling delays before glazing.";
+    let held = passage("Firing", body);
+    // Citing u1 + u3 across the `\n\n\n` stripped-fence boundary picks the longest contiguous verbatim run.
+    let raw = one_item(&[&held], &kiln_choice(ASKED, &[0], &["u1", "u3"]));
+    let built = to_candidate(raw, &need, &[&held]).unwrap();
+    assert_eq!(
+        built.source_quote,
+        "First long sentence about pre-heating kiln trays safely."
+    );
+    assert!(crate::grade_rationale::verbatim(body, &built.source_quote));
+
+    // When all cited parts are short disjoint fragments separated by `\n\n\n`, refuse concatenation.
+    let disjoint = passage("Firing", "Too short.\n\n\nAlso brief.\n\n\nThird tiny.");
+    let bad_raw = one_item(&[&disjoint], &kiln_choice(ASKED, &[0], &["u1", "u3"]));
+    let err = to_candidate(bad_raw, &need, &[&disjoint]).unwrap_err();
+    assert!(
+        err.faults
+            .iter()
+            .any(|f| f.contains("consecutive prose sentences")),
+        "{:?}",
+        err.faults
+    );
 }

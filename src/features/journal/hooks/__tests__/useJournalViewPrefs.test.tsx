@@ -22,6 +22,7 @@ function makeNote(id: string, journalId: string, highlightIds: string[]): Worksp
     stickyNotes: [],
     conversationSnapshots: [],
     sources: [],
+    citations: [],
     createdAt: '',
     updatedAt: '',
   };

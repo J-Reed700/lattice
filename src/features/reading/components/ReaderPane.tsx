@@ -197,8 +197,8 @@ export function ReaderPane({ rowWidth, availableWidth, resetKey, onFocusChange }
   };
 
   const locator = useMemo(
-    () => (source ? locatorFromSource(source, session?.excerptChunkId ?? source.chunkId) : null),
-    [source, session?.excerptChunkId]
+    () => (source ? locatorFromSource(source, session?.excerptChunkId ?? source.chunkId, session?.occurrence ?? null) : null),
+    [source, session?.excerptChunkId, session?.occurrence]
   );
 
   if (!session || !source || (session.citing && !showCitations)) return null;

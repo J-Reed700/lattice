@@ -14,6 +14,8 @@ interface CitationInteractionOptions {
   /** Whether the text's numbers stand for these sources (chat: an assistant message with sources). */
   numbered: boolean;
   showCitations: boolean;
+  /** Custom source opener when a surface uses a local preview modal instead of the docked reader pane. */
+  onOpen?: (source: SourceWithMetadata, occurrence: number | null, excerptChunkId?: string) => void;
   /** The checked sentences, by the index the viewer's claim marks carry; only their cited numbers are read here. */
   claims: readonly { citationIds: readonly number[] }[];
   /** Line references that open files (Explorer threads); absent elsewhere. */
@@ -23,9 +25,16 @@ interface CitationInteractionOptions {
   };
 }
 
+function chipOccurrence(chip: HTMLElement): number | null {
+  const raw = chip.dataset.citeAt;
+  if (!raw) return null;
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) ? parsed : null;
+}
+
 /** Owns citation navigation and the text's delegated interactions. */
 export function useCitationInteractions({
-  sources, ownerKey, conversationId = null, numbered, showCitations, claims, codeRefs,
+  sources, ownerKey, conversationId = null, numbered, showCitations, onOpen, claims, codeRefs,
 }: CitationInteractionOptions) {
   const openReader = useReaderStore((state) => state.open);
   const readerSession = useReaderStore((state) => state.session);
@@ -66,6 +75,10 @@ export function useCitationInteractions({
    */
   const openSource = useCallback(
     (source: SourceWithMetadata, occurrence: number | null = null, excerptChunkId?: string) => {
+      if (onOpen) {
+        onOpen(source, occurrence, excerptChunkId);
+        return;
+      }
       const index = citationSources.findIndex((candidate) => candidate.chunkId === source.chunkId);
       const target = index >= 0 ? citationSources[index] : undefined;
       const resolvedConversationId = source.conversationId ?? target?.conversationId ?? conversationId;
@@ -96,7 +109,7 @@ export function useCitationInteractions({
       }
       openCitation(index, occurrence, excerptChunkId ?? null);
     },
-    [citationSources, conversationId, openCitation, openReader, ownerKey]
+    [citationSources, conversationId, onOpen, openCitation, openReader, ownerKey]
   );
 
   // Inline `[n]` chips live inside the rendered answer, so they are handled by
@@ -184,8 +197,7 @@ export function useCitationInteractions({
       if (!source) return;
       event.preventDefault();
       setCitationHover(null);
-      const at = Number(chip.dataset.citeAt);
-      openSource(source, Number.isInteger(at) ? at : null);
+      openSource(source, chipOccurrence(chip));
       return;
     }
 
@@ -229,8 +241,9 @@ export function useCitationInteractions({
       if (claimHover) setClaimHover(null);
       setLit(null);
       const number = Number(chip.dataset.cite);
-      if (citationHover?.number === number) return;
-      setCitationHover({ number, rect: chip.getBoundingClientRect() });
+      const occurrence = chipOccurrence(chip);
+      if (citationHover?.number === number && citationHover.occurrence === occurrence) return;
+      setCitationHover({ number, occurrence, rect: chip.getBoundingClientRect() });
       return;
     }
     if (citationHover) setCitationHover(null);

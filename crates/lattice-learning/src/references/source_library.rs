@@ -26,7 +26,7 @@ mod lifecycle_tests;
 mod reads;
 pub use reads::ActiveVersion;
 mod repository;
-pub(crate) use repository::reads::workspace_in;
+pub(crate) use repository::reads::{version_sources_on, version_texts_on, workspace_in};
 mod user_evidence;
 pub use user_evidence::{ChosenVersion, SavedSource};
 
@@ -43,8 +43,8 @@ fn conflict(message: impl Into<String>) -> AppError {
     AppError::Conflict(message.into())
 }
 fn normalized(text: &str) -> String {
-    text.replace("\r\n", "\n")
-        .replace('\r', "\n")
+    let lines = text.replace("\r\n", "\n").replace('\r', "\n");
+    lattice_core::shared::text::strip_scraped_chrome(&lines)
         .trim()
         .to_owned()
 }
@@ -311,4 +311,19 @@ async fn require_active_program(tx: &mut WriteTx, program_id: &str) -> Result<()
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod normalized_tests {
+    use super::normalized;
+
+    #[test]
+    fn normalized_strips_scraped_markdown_mirror_chrome_while_keeping_fences() {
+        let raw = "[View a markdown version of this page](https://docs.aws.amazon.com/foo.md)\r\n\r\n# Title\r\n\r\n```markdown\r\n[View a markdown version of this page](https://docs.aws.amazon.com/foo.md)\r\n```";
+        let cleaned = normalized(raw);
+        assert_eq!(
+            cleaned,
+            "# Title\n\n```markdown\n[View a markdown version of this page](https://docs.aws.amazon.com/foo.md)\n```"
+        );
+    }
 }

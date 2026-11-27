@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 
 import { Columns3 } from 'lucide-react';
 
+import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
   selectSelectedDocumentIds,
@@ -10,6 +11,7 @@ import {
 import { useRegisterPaletteCommands } from '@/features/palette/hooks/useRegisterPaletteCommands';
 import type { PaletteCommand } from '@/features/palette/stores/paletteCommandsStore';
 import { useAppNavigate } from '@/hooks/useAppNavigate';
+import { cn } from '@/lib/utils';
 import { type ConversationSpaceDto } from '@/types';
 
 interface SelectionBarProps {
@@ -27,8 +29,8 @@ interface SelectionBarProps {
 }
 
 /**
- * Shown only while something is selected. A row, not a floating card, not a
- * tinted panel: a count and four verbs.
+ * Shown only while something is selected. Unified h-8 rounded-lg controls with
+ * `--action` primary CTA and calm secondary/ghost actions.
  */
 export function SelectionBar({
   selectedCount,
@@ -68,26 +70,37 @@ export function SelectionBar({
   useRegisterPaletteCommands(compareCommands);
 
   return (
-    <div className="flex min-h-12 flex-wrap items-center gap-x-4 gap-y-2 py-2" aria-label="Document selection actions">
-      <span className="text-sm tabular-nums text-text-primary">{selectedCount} selected</span>
-      <button type="button" onClick={onAddToCollection} className="rounded-sm bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg hover:bg-accent-hover">Add to collection</button>
-      {onRemoveFromCollection ? <TextAction label="Remove from collection" onClick={onRemoveFromCollection} /> : null}
+    <div
+      className="mb-3 flex min-h-11 flex-wrap items-center gap-1.5 rounded-xl border border-border-subtle bg-surface px-3 py-1.5 shadow-sm"
+      aria-label="Document selection actions"
+    >
+      <span className="mr-1.5 text-ui font-medium tabular-nums text-text-primary">
+        {selectedCount} selected
+      </span>
+      <Button type="button" onClick={onAddToCollection}>
+        Add to collection
+      </Button>
+      {onRemoveFromCollection ? (
+        <BarAction label="Remove from collection" onClick={onRemoveFromCollection} />
+      ) : null}
       <AddToSpace
         spaces={spaces}
         isLoadingSpaces={isLoadingSpaces}
         isAssigningSpace={isAssigningSpace}
         onAssign={onAssignToSpace}
       />
-      <TextAction label="Compare" onClick={openCompare} disabled={selectedCount < 2} />
-      <TextAction label="Snapshot" onClick={onSnapshot} />
-      <TextAction label="Delete" onClick={onDelete} danger />
-      <TextAction label="Select all" onClick={onSelectAll} />
-      <TextAction label="Clear" onClick={onClear} muted />
+      <BarAction label="Compare" onClick={openCompare} disabled={selectedCount < 2} />
+      <BarAction label="Snapshot" onClick={onSnapshot} />
+      <BarAction label="Delete" onClick={onDelete} danger />
+      <div className="ml-auto flex items-center gap-1">
+        <BarAction label="Select all" onClick={onSelectAll} />
+        <BarAction label="Clear" onClick={onClear} muted />
+      </div>
     </div>
   );
 }
 
-function TextAction({
+function BarAction({
   label,
   onClick,
   danger,
@@ -101,20 +114,22 @@ function TextAction({
   disabled?: boolean;
 }) {
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
       onClick={onClick}
       disabled={disabled}
-      className={`text-sm transition-colors duration-fast disabled:opacity-50 ${
+      className={cn(
+        'h-8 rounded-lg px-2.5 text-ui',
         danger
-          ? 'text-text-secondary hover:text-[hsl(var(--danger-fg))]'
+          ? 'text-text-secondary hover:bg-danger-muted hover:text-danger-fg'
           : muted
-            ? 'text-text-muted hover:text-text-secondary'
-            : 'text-text-secondary hover:text-text-primary'
-      }`}
+            ? 'text-text-muted hover:text-text-primary'
+            : 'text-text-secondary hover:text-text-primary',
+      )}
     >
       {label}
-    </button>
+    </Button>
   );
 }
 
@@ -134,13 +149,14 @@ function AddToSpace({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <button
+        <Button
           type="button"
+          variant="ghost"
           disabled={isLoadingSpaces || isAssigningSpace}
-          className="text-sm text-text-secondary transition-colors duration-fast hover:text-text-primary disabled:opacity-50"
+          className="h-8 rounded-lg px-2.5 text-ui text-text-secondary hover:text-text-primary"
         >
           Add to space
-        </button>
+        </Button>
       </PopoverTrigger>
       <PopoverContent align="start" sideOffset={6} className="w-56 p-1">
         {spaces.length === 0 ? (
@@ -154,7 +170,7 @@ function AddToSpace({
                 onAssign(space.id);
                 setOpen(false);
               }}
-              className="flex h-8 w-full items-center justify-between rounded-sm px-2 text-left text-sm text-text-secondary transition-colors duration-fast hover:bg-surface hover:text-text-primary"
+              className="flex h-8 w-full items-center justify-between rounded-md px-2 text-left text-ui text-text-secondary transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.06)] hover:text-text-primary"
             >
               <span className="truncate">{space.name}</span>
               {space.isArchived ? (

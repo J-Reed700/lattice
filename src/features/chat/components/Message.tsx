@@ -20,6 +20,7 @@ import { useMessageEvidence } from '@/features/chat/hooks/useMessageEvidence';
 import { useRevealStreamingRef } from '@/features/chat/hooks/useRevealStreamingRef';
 import { useChatFigures } from '@/features/chat/images/useChatFigures';
 import { openInFolder, revealInFolder } from '@/features/chat/model/folderThreadHost';
+import { attachAnchoredOccurrences } from '@/features/reading/citations';
 import { CitationHoverCard } from '@/features/reading/components/CitationHoverCard';
 import { CitationSourcesRow } from '@/features/reading/components/CitationSourcesRow';
 import { SourceCitations } from '@/features/reading/components/SourceCitations';
@@ -29,13 +30,14 @@ import { useAppNavigate } from '@/hooks/useAppNavigate';
 import { useConversationsStore } from '@/shared/conversations/conversationsStore';
 import { useDrawnReply } from '@/shared/conversations/useDrawnReply';
 import type { DisplayMessage, SourceWithMetadata } from '@/types/conversation';
+import { withoutMarks } from '@/utils/replyPieces';
 
 const NO_SOURCES: SourceWithMetadata[] = [];
 
 /** The answer as the reader sees it, each formula as its source. */
 function readAnswer(answer: HTMLElement | null): string {
   if (!answer) return '';
-  return textWithFormulas(answer) ?? answer.innerText;
+  return withoutMarks(textWithFormulas(answer) ?? answer.innerText);
 }
 
 interface MessageProps {
@@ -143,12 +145,17 @@ export const Message = memo(({
   const canDeleteMessage = Boolean(messageId);
   const domMessageId = messageId ? `message-${messageId}` : undefined;
 
-  const sources: SourceWithMetadata[] = useMemo(() => {
+  const rawSources: SourceWithMetadata[] = useMemo(() => {
     if ('sources' in message && message.sources && message.sources.length > 0) {
       return message.sources;
     }
     return storedSources ?? NO_SOURCES;
   }, [message, storedSources]);
+
+  const sources: SourceWithMetadata[] = useMemo(
+    () => attachAnchoredOccurrences(rawSources, message.reply),
+    [rawSources, message.reply],
+  );
 
   const isAssistantWithSources = !isUser && sources.length > 0;
 
@@ -328,7 +335,7 @@ export const Message = memo(({
           onMouseLeave={isUser || !showCitations ? undefined : handleBodyMouseLeave}
           className={`wrap-break-word wrap-anywhere ${
             isUser
-              ? 'ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-surface px-4 py-2.5 font-sans text-[15px] leading-[1.55] shadow-sheet'
+              ? 'ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-sm border border-border-subtle bg-surface px-4 py-2.5 font-sans text-[15px] leading-[1.55] text-text-primary shadow-sm'
               : 'chat-answer max-w-none font-serif text-[16.5px] leading-[1.7]'
           }`}
         >
@@ -374,7 +381,7 @@ export const Message = memo(({
             {attachmentNames.map((name) => (
               <span
                 key={name}
-                className="inline-flex items-center gap-1 rounded-full bg-surface px-2 py-0.5 text-[11px] text-[hsl(var(--text-secondary))] shadow-sheet"
+                className="inline-flex items-center gap-1 rounded-full border border-border-subtle bg-surface px-2.5 py-0.5 text-[11px] text-text-secondary shadow-sm"
               >
                 <Paperclip className="h-3 w-3" strokeWidth={1.6} />
                 {name}
@@ -432,6 +439,7 @@ export const Message = memo(({
           <EvidenceMargin
             citationMap={citationMap}
             activeNumbers={activeEvidence}
+            activeOccurrence={citationHover ? { number: citationHover.number, occurrence: citationHover.occurrence } : null}
             claimVerdicts={claimVerdicts}
             provenanceBySource={provenanceBySource}
             resolvedLocations={resolvedLocations}

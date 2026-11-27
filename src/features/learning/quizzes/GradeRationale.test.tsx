@@ -101,6 +101,8 @@ describe('a criterion’s source quote', () => {
       criterionId: 'example', title: 'Example', verdict: 'missed', points: 0, maxPoints: 2,
       whatWasMissing: 'No example given.', fullCreditIncludes: 'Names an inhibitor.',
       sourceQuote: 'inhibitors bind the enzyme', sourceVersionId: 'version-1',
+      sourceNumber: 3,
+      sourceSupport: { relation: 'quotes', anchors: [{ exact: 'inhibitors bind the enzyme', span: null }] },
     })],
   });
 
@@ -142,31 +144,66 @@ describe('a criterion’s source quote', () => {
 
     const list = screen.getByRole('list', { name: 'Source' });
     const item = within(list).getByRole('listitem');
-    expect(within(item).getByRole('button', { name: /Citation 1/ })).toBeInTheDocument();
+    expect(within(item).getByRole('button', { name: /Citation 3/ })).toBeInTheDocument();
     expect(within(item).getByText('inhibitors bind the enzyme')).toBeInTheDocument();
     expect(within(item).getByText(/Field notes/)).toBeInTheDocument();
     expect(document.querySelector('blockquote')).toBeNull();
 
-    fireEvent.click(within(item).getByRole('button', { name: /Citation 1/ }));
+    fireEvent.click(within(item).getByRole('button', { name: /Citation 3/ }));
     fireEvent.click(await screen.findByRole('button', { name: 'View source' }));
 
     await waitFor(() => expect(useReaderStore.getState().session).not.toBeNull());
     expect(useReaderStore.getState().session!.ownerKey).toBe('answer-1:criterion:example');
+    expect(useReaderStore.getState().session!.citations[0]?.citationId).toBe(3);
   });
 
-  it('stays the original blockquote without a course and owner', () => {
+  it('shows CitationCard without chip button when course and owner are absent', () => {
     renderRationale();
 
-    const quote = document.querySelector('blockquote')!;
-    expect(quote).toHaveTextContent('“inhibitors bind the enzyme” — Field notes');
-    expect(screen.queryByRole('button', { name: /Citation 1/ })).not.toBeInTheDocument();
+    const card = screen.getByRole('group', { name: 'Source 3, quoted from Field notes' });
+    expect(card).toHaveTextContent('“inhibitors bind the enzyme”');
+    expect(screen.queryByRole('button', { name: /Citation 3/ })).not.toBeInTheDocument();
   });
 
-  it('stays the blockquote when only the course is known', () => {
+  it('shows CitationCard when only the course is known', () => {
     renderRationale({ programId: 'program-1' });
 
-    expect(document.querySelector('blockquote')).not.toBeNull();
-    expect(screen.queryByRole('button', { name: /Citation 1/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Source 3, quoted from Field notes' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Citation 3/ })).not.toBeInTheDocument();
+  });
+
+  it('falls back to unnumbered blockquote for legacy rationales lacking sourceNumber', () => {
+    const legacy = rationale({
+      criteria: [criterion({
+        criterionId: 'example', title: 'Example', verdict: 'missed', points: 0, maxPoints: 2,
+        whatWasMissing: 'No example given.', fullCreditIncludes: 'Names an inhibitor.',
+        sourceQuote: 'inhibitors bind the enzyme', sourceVersionId: 'version-1',
+        sourceNumber: null, sourceSupport: null,
+      })],
+    });
+    render(
+      <GradeRationale rationale={legacy} answer={ANSWER} lostPoints statusWord="provisional" sources={sources} />,
+      { wrapper },
+    );
+    const quote = document.querySelector('blockquote')!;
+    expect(quote).toHaveTextContent('“inhibitors bind the enzyme” — Field notes');
+  });
+
+  it('treats non-positive sourceNumber as unnumbered rather than drawing Source 0', () => {
+    const zero = rationale({
+      criteria: [criterion({
+        criterionId: 'example', title: 'Example', verdict: 'missed', points: 0, maxPoints: 2,
+        whatWasMissing: 'No example given.', fullCreditIncludes: 'Names an inhibitor.',
+        sourceQuote: 'inhibitors bind the enzyme', sourceVersionId: 'version-1',
+        sourceNumber: 0, sourceSupport: null,
+      })],
+    });
+    render(
+      <GradeRationale rationale={zero} answer={ANSWER} lostPoints statusWord="provisional" sources={sources} programId="program-1" ownerKey="answer-1" />,
+      { wrapper },
+    );
+    expect(screen.queryByRole('group', { name: /Source 0/ })).not.toBeInTheDocument();
+    expect(document.querySelector('blockquote')).toHaveTextContent('“inhibitors bind the enzyme” — Field notes');
   });
 
   it('shows neither the citation nor the blockquote in reading mode', () => {

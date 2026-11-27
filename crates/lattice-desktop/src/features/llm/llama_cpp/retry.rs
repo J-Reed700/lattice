@@ -6,7 +6,7 @@
 //! [`AppError::ModelRejected`], as does a server's refusal of the request
 //! itself.
 use super::*;
-use crate::features::llm::fitting::Fitted;
+use crate::features::llm::fitting::{Fitted, ResponseBudget};
 use crate::features::llm::resend::Resend;
 use crate::features::llm::scheduler::rejection;
 use lattice_core::application::ports::llm_port::RequestSize;
@@ -131,6 +131,7 @@ impl LlamaCppLlm {
         let deadline = request
             .wall_clock_budget()
             .map(|budget| tokio::time::Instant::now() + budget);
+        let budget = fitted.response_budget();
         let generation = async {
             // The last server failure's status and error type, to know the
             // same failure when it comes back.
@@ -140,7 +141,14 @@ impl LlamaCppLlm {
                 let attempt = resend.attempt();
                 let mut emitted = false;
                 let outcome = self
-                    .attempt(&body, first_frame, on_text, on_reasoning, &mut emitted)
+                    .attempt(
+                        &body,
+                        budget,
+                        first_frame,
+                        on_text,
+                        on_reasoning,
+                        &mut emitted,
+                    )
                     .await;
                 let (error, retry_after) = match outcome {
                     Ok(response) => return Ok(response),
@@ -173,10 +181,31 @@ impl LlamaCppLlm {
                 // A failed inference may leave unusable server-side prompt
                 // state. Reprocess the same complete input on the next attempt;
                 // do not repeat a broken cached prefix. Network outages and
-                // rate limits keep cache reuse.
+                // rate limits keep cache reuse. When retrying a degenerate
+                // repetition loop, strengthen DRY sampling so the retry breaks
+                // out of the cycle while keeping prompt cache reuse.
                 if matches!(error, AppError::ServiceNotAvailable(_)) {
                     if let Some(object) = body.as_object_mut() {
                         object.insert("cache_prompt".into(), json!(false));
+                    }
+                } else if matches!(error, AppError::ModelAnswerUnusable(_)) {
+                    // Break multi-sentence loops on retry by widening the
+                    // penalty window (`repeat_last_n`), adding escalating
+                    // frequency penalty, and enabling DRY with a higher floor
+                    // for schema-constrained JSON (so copied quotes stay intact)
+                    // than for free-form prose drafts.
+                    if let Some(object) = body.as_object_mut() {
+                        let structured = object.contains_key("response_format");
+                        let allowed_length = if structured { 24 } else { 10 };
+                        let dry_multiplier =
+                            (0.6 + 0.2 * (attempt.saturating_sub(1)) as f64).min(1.2);
+                        let frequency_penalty = (0.15 * attempt as f64).min(0.6);
+                        object.insert("repeat_last_n".into(), json!(512));
+                        object.insert("frequency_penalty".into(), json!(frequency_penalty));
+                        object.insert("dry_multiplier".into(), json!(dry_multiplier));
+                        object.insert("dry_base".into(), json!(1.75));
+                        object.insert("dry_allowed_length".into(), json!(allowed_length));
+                        object.insert("dry_penalty_last_n".into(), json!(2048));
                     }
                 }
                 // Dropping this future cancels both the request and backoff.
@@ -191,6 +220,7 @@ impl LlamaCppLlm {
     async fn attempt(
         &self,
         body: &Value,
+        budget: ResponseBudget,
         first_frame: Option<Duration>,
         on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
         on_reasoning: Option<&(dyn Fn(String) -> Result<()> + Send + Sync)>,
@@ -212,6 +242,7 @@ impl LlamaCppLlm {
         let response = server_status(response).await.map_err(Failure::Server)?;
         let (response, timings) = read_stream(
             response.bytes_stream(),
+            budget,
             Patience {
                 first_frame,
                 stall: self.config.stall_timeout,
@@ -224,10 +255,15 @@ impl LlamaCppLlm {
         .await?;
         log_served(body, timings);
         // The same request would hit the same limit again; retrying only
-        // spends the budget several times over.
-        if response.finish_reason == "length" && response.text.trim().is_empty() {
+        // spends the budget several times over. Return AnswerCutOff (not
+        // InvalidState/Fault) so contract-level cut-off recovery can react,
+        // and never discard valid tool_calls emitted before hitting length.
+        if response.finish_reason == "length"
+            && response.text.trim().is_empty()
+            && response.tool_calls.is_empty()
+        {
             let budget = body.get("max_tokens").and_then(Value::as_u64).unwrap_or(0);
-            return Err(Failure::Permanent(AppError::InvalidState(format!(
+            return Err(Failure::Permanent(AppError::AnswerCutOff(format!(
                 "the model used its whole answer budget of {budget} tokens before writing an \
                  answer (llama.cpp stopped: length); the prompt was {} tokens of the configured \
                  context window of {}",
@@ -301,6 +337,7 @@ fn silent(wait: Duration) -> Failure {
 /// a stall.
 pub(super) async fn read_stream<S, B, E>(
     mut bytes: S,
+    budget: ResponseBudget,
     patience: Patience,
     transport_error: fn(E) -> AppError,
     on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
@@ -311,7 +348,7 @@ where
     S: futures::Stream<Item = std::result::Result<B, E>> + Unpin,
     B: AsRef<[u8]>,
 {
-    let mut decoder = streaming::Decoder::for_completion();
+    let mut decoder = streaming::Decoder::with_budget(budget);
     let mut generating = false;
     let mut watch = ProgressWatch::default();
     loop {
@@ -344,6 +381,7 @@ where
             .push(chunk)
             .map_err(|error| match decoder.take_server_failure() {
                 Some(failure) => Failure::Server(failure),
+                None if decoder.repetition_loop() => Failure::Retry(error, None),
                 None => Failure::Permanent(error),
             })?;
         for text in deltas {

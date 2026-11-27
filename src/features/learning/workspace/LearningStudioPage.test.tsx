@@ -246,7 +246,9 @@ describe('Learning Studio program workflow', () => {
     await user.click(screen.getByRole('combobox', { name: 'Module' }));
     await user.type(screen.getByRole('combobox', { name: 'Search module' }), 'Putting it');
     await user.click(screen.getByRole('option', { name: /Putting it together/ }));
-    expect(screen.getAllByText(/Putting it together gives the course/).some((element) => element.closest('[hidden]') === null)).toBe(true);
+    await user.click(screen.getByRole('button', { name: 'Module details' }));
+    expect(screen.getByRole('dialog')).toHaveTextContent(/Putting it together gives the course/);
+    await user.keyboard('{Escape}');
     expect(mocks.complete).not.toHaveBeenCalled();
     // The row is one line: the title is its own button, and the state sits beside it (§2.2).
     const compareCard = screen.getByRole('button', { name: /^Compare approaches/ }).closest('article');
@@ -1047,5 +1049,19 @@ describe('Learning Studio program workflow', () => {
     } finally {
       Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
     }
+  });
+
+  it('renders Learning Studio editorial landing without duplicating the continuing course', async () => {
+    const active = program('active', true);
+    mocks.list.mockResolvedValue(ok([summary(active)]));
+    mocks.get.mockResolvedValue(ok(active));
+
+    show();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Learning Studio' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'New course' })).toBeVisible();
+    // Continuing course renders once as a featured row, never duplicated in both a hero and list.
+    expect(await screen.findByText('A thoughtful course')).toBeVisible();
+    expect(screen.getAllByText('A thoughtful course')).toHaveLength(1);
+    expect(screen.getByText('Continue studying')).toBeVisible();
   });
 });

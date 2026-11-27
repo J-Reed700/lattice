@@ -34,6 +34,7 @@ mod focus;
 pub mod headless;
 mod prior_evidence;
 pub(crate) mod replay;
+mod reply_support;
 // Public so the claim-checker evaluation can build the reply it checks.
 pub mod reply_text;
 // Public so the no-tools retrieval path and the turn's tool-selection wiring can

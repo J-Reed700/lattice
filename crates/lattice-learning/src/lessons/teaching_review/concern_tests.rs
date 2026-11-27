@@ -1,4 +1,5 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+use super::concerns::{CheckConcern, IssueConcern};
 use super::tests::{issue, items, passage, reviewer, run};
 use super::*;
 use lattice_core::application::services::model_contract::shape::Vocabulary;

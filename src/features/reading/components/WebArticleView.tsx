@@ -3,6 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { ChevronDown, ChevronUp } from 'lucide-react';
 
 import { IconButton } from '@/components/ui';
+import { placeAnchors, type TextSpan } from '@/features/reading/citations/anchors';
+import { anchoredText, isAnchored } from '@/features/reading/citations/source';
 import { ArticleText, type ArticlePassage } from '@/features/reading/components/ArticleText';
 import { sentencesByOccurrence, sentencesCiting } from '@/features/reading/model/answerSentences';
 import { articleBlocks } from '@/features/reading/model/articleBlocks';
@@ -184,6 +186,17 @@ function scrollArticleTo(scroller: HTMLElement, top: number): void {
   scroller.scrollTop = target;
 }
 
+/** Ranges that overlap or touch, as one, in text order. */
+function mergedRanges(ranges: readonly TextSpan[]): TextSpan[] {
+  const merged: TextSpan[] = [];
+  for (const range of [...ranges].sort((a, b) => a.start - b.start || a.end - b.end)) {
+    const last = merged[merged.length - 1];
+    if (last && range.start <= last.end) last.end = Math.max(last.end, range.end);
+    else merged.push({ ...range });
+  }
+  return merged;
+}
+
 export function WebArticleView({
   url,
   source,
@@ -197,8 +210,15 @@ export function WebArticleView({
   const snapshot = source.webSnapshot;
   const hasSnapshotText = Boolean(snapshot?.text.trim());
   const savedExcerpt = source.excerpt?.trim() || source.content || '';
-  const pageText = hasSnapshotText && snapshot ? snapshot.text : savedExcerpt;
-  const { sentences, quotes, focus } = useCitedSentences(ownerKey, source.citationId, occurrence, citationContent);
+  // A source whose chips say how they use it marks exactly the sentences they name, in the text as saved.
+  const anchored = isAnchored(source);
+  const pageText = anchored ? anchoredText(source) : hasSnapshotText && snapshot ? snapshot.text : savedExcerpt;
+  const { sentences, quotes, focus } = useCitedSentences(
+    ownerKey,
+    anchored ? undefined : source.citationId,
+    occurrence,
+    citationContent,
+  );
 
   const locatorTarget = useMemo(() => {
     if (sentences.length > 0) return '';
@@ -210,7 +230,42 @@ export function WebArticleView({
 
   const effectiveSentences = useMemo(() => sentences.length > 0 ? sentences : locatorTarget ? [locatorTarget] : [], [sentences, locatorTarget]);
 
+  const anchoredOccurrences = useMemo(
+    () =>
+      anchored
+        ? (source.anchoredBy ?? []).map((entry) => ({
+            occurrence: entry.occurrence,
+            hasAnchors: entry.anchors.length > 0,
+            ...placeAnchors(pageText, entry.anchors, source.anchorBase ?? 0),
+          }))
+        : [],
+    [anchored, source.anchoredBy, source.anchorBase, pageText],
+  );
+  const clickedOccurrence = anchoredOccurrences.find((entry) => entry.occurrence === occurrence);
+  // A chip that names no sentence marks the source's own passage, as a chip does without anchoring.
+  const needsWholePassage =
+    anchored &&
+    (occurrence !== null
+      ? !clickedOccurrence?.hasAnchors
+      : anchoredOccurrences.some((entry) => !entry.hasAnchors));
+  const wholePassage = useMemo<TextSpan | null>(() => {
+    if (!needsWholePassage || !pageText || !locatorTarget) return null;
+    return findQuoteSpan(pageText, locatorTarget) ?? findSourcedPassages(pageText, [locatorTarget])[0] ?? null;
+  }, [needsWholePassage, pageText, locatorTarget]);
+  const anchoredPassages = useMemo<SourcedPassage[]>(
+    () =>
+      mergedRanges([
+        ...anchoredOccurrences.flatMap((entry) => entry.ranges),
+        ...(wholePassage ? [wholePassage] : []),
+      ]).map((range) => ({ ...range, sentenceIndex: 0, score: 1 })),
+    [anchoredOccurrences, wholePassage],
+  );
+  const everyAnchorMissing = Boolean(
+    clickedOccurrence && clickedOccurrence.hasAnchors && clickedOccurrence.ranges.length === 0,
+  );
+
   const passages = useMemo<SourcedPassage[]>(() => {
+    if (anchored) return anchoredPassages;
     if (!pageText) return [];
     if (sentences.length === 0) {
       if (!locatorTarget) return [];
@@ -228,7 +283,7 @@ export function WebArticleView({
       return span ? [{ ...span, sentenceIndex: quote.sentenceIndex, score: 1 }] : [];
     });
     return mergePassages([...quoted, ...findSourcedPassages(pageText, sentences)], pageText);
-  }, [pageText, sentences, quotes, locatorTarget]);
+  }, [anchored, anchoredPassages, pageText, sentences, quotes, locatorTarget]);
 
   /**
    * The passage to open on: the clicked sentence's, or the first.
@@ -239,6 +294,14 @@ export function WebArticleView({
    * some other sentence's passage would answer a question nobody asked.
    */
   const openingIndex = useMemo(() => {
+    if (anchored) {
+      if (occurrence === null) return passages.length > 0 ? 0 : -1;
+      const target = clickedOccurrence
+        ? clickedOccurrence.hasAnchors ? clickedOccurrence.ranges[0] : wholePassage
+        : wholePassage;
+      if (!target) return -1;
+      return passages.findIndex((passage) => passage.start <= target.start && target.start < passage.end);
+    }
     if (focus === null) return 0;
     const quote = quotes.find((candidate) => candidate.sentenceIndex === focus);
     const span =
@@ -246,7 +309,7 @@ export function WebArticleView({
       findSourcedPassages(pageText, [sentences[focus] ?? ''])[0];
     if (!span) return -1;
     return passages.findIndex((passage) => passage.start <= span.start && span.start < passage.end);
-  }, [focus, quotes, sentences, pageText, passages]);
+  }, [anchored, occurrence, clickedOccurrence, wholePassage, focus, quotes, sentences, pageText, passages]);
 
   const blocks = useMemo(() => articleBlocks(pageText), [pageText]);
   const articlePassages = useMemo<ArticlePassage[]>(
@@ -254,9 +317,9 @@ export function WebArticleView({
       passages.map((passage) => ({
         start: passage.start,
         end: passage.end,
-        title: `Matches: ${effectiveSentences[passage.sentenceIndex] ?? ''}`,
+        title: anchored ? undefined : `Matches: ${effectiveSentences[passage.sentenceIndex] ?? ''}`,
       })),
-    [passages, effectiveSentences],
+    [anchored, passages, effectiveSentences],
   );
   const [activeIndex, setActiveIndex] = useState(openingIndex);
   const markRefs = useRef(new Map<number, HTMLElement>());
@@ -308,15 +371,15 @@ export function WebArticleView({
 
   const renderBody = (): ReactNode => (
       <div className="mx-auto max-w-[68ch] py-5">
-        {!hasSnapshotText && (
-          <p className="mb-4 rounded-md border border-subtle px-3 py-2 text-xs text-[hsl(var(--text-secondary))]">
+        {!hasSnapshotText && !anchored && (
+          <p className="mb-4 rounded-md border border-border-subtle px-3 py-2 text-xs text-[hsl(var(--text-secondary))]">
             {snapshot
               ? 'The saved page snapshot contains no text; showing the saved source excerpt instead.'
               : 'This is the saved source excerpt. A full page snapshot was not saved with this citation.'}
           </p>
         )}
         {snapshot?.truncated && (
-          <p className="mb-4 rounded-md border border-subtle px-3 py-2 text-xs text-[hsl(var(--text-secondary))]">
+          <p className="mb-4 rounded-md border border-border-subtle px-3 py-2 text-xs text-[hsl(var(--text-secondary))]">
             This saved snapshot was truncated when captured; it may not contain the full page.
           </p>
         )}
@@ -343,7 +406,7 @@ export function WebArticleView({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex shrink-0 items-start justify-between gap-4 border-b border-subtle pb-4">
+      <div className="flex shrink-0 items-start justify-between gap-4 border-b border-border-subtle pb-4">
         <div className="min-w-0">
           <p className="truncate text-xs text-[hsl(var(--text-muted))]">
             {url ? hostOf(url) : isCourseSource(source) ? 'Saved source' : 'Web source'}
@@ -360,15 +423,21 @@ export function WebArticleView({
 
       {focusedSentence && (
         <p
-          className="shrink-0 truncate border-b border-subtle py-2 text-xs text-[hsl(var(--text-secondary))]"
+          className="shrink-0 truncate border-b border-border-subtle py-2 text-xs text-[hsl(var(--text-secondary))]"
           title={focusedSentence}
         >
           <span className="text-[hsl(var(--text-muted))]">For the sentence </span>“{focusedSentence}”
         </p>
       )}
 
+      {everyAnchorMissing && (
+        <p role="status" className="shrink-0 border-b border-border-subtle py-2 text-xs font-medium text-[hsl(var(--text-primary))]">
+          The cited sentence is not in the saved text of this source.
+        </p>
+      )}
+
       {showMatchNotice && (
-        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-subtle py-2">
+        <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border-subtle py-2">
           <p
             className={`text-xs ${
               // A click that found nothing has to say so louder than a count does.

@@ -26,6 +26,7 @@ use lattice_core::{
     shared::error::{AppError, Result},
 };
 use serde_json::{json, Value};
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashSet};
 
 /// Why a finding about a sentence a live claim stands on is held.
@@ -137,6 +138,28 @@ impl<'a> LessonSubject<'a> {
     }
 }
 
+/// Strips `shape::WORDS` (`"lessonShape"`) from `authoring` when it holds the
+/// policy's `Draft` or `Kept` instructions, so switching from `Phase::Draft` to
+/// `Phase::Kept` after claim repair does not wipe `Standing::reviewed` digests.
+fn basis_authoring(authoring: &Value) -> Cow<'_, Value> {
+    let Some(fields) = authoring.as_object() else {
+        return Cow::Borrowed(authoring);
+    };
+    let policy = crate::lessons::shape::policy();
+    let is_phase_shape = fields
+        .get(crate::lessons::shape::WORDS)
+        .is_some_and(|words| {
+            *words == json!(policy.asked(crate::lessons::shape::Phase::Draft))
+                || *words == json!(policy.asked(crate::lessons::shape::Phase::Kept))
+        });
+    if !is_phase_shape {
+        return Cow::Borrowed(authoring);
+    }
+    let mut stripped = fields.clone();
+    stripped.remove(crate::lessons::shape::WORDS);
+    Cow::Owned(Value::Object(stripped))
+}
+
 #[async_trait::async_trait]
 impl Subject for LessonSubject<'_> {
     fn wording(&self) -> &Wording {
@@ -172,7 +195,9 @@ impl Subject for LessonSubject<'_> {
     }
 
     fn given(&mut self, llm: &dyn LLMPort, authoring: &Value) {
-        let inputs = json!({"authoringContext":authoring,"correctnessPriority":LESSON_PRIORITY});
+        let authoring = basis_authoring(authoring);
+        let inputs =
+            json!({"authoringContext":authoring.as_ref(),"correctnessPriority":LESSON_PRIORITY});
         self.standing.under(&crate::teaching_review::basis(
             llm,
             &ReviewTexts::lesson().joined(),
@@ -207,7 +232,34 @@ impl Subject for LessonSubject<'_> {
 
     async fn find(&mut self, llm: &dyn LLMPort, pass: &Pass<'_>) -> Result<Found> {
         let review_prompt = review_prompt(pass, LESSON_PRIORITY, self.reference_versions());
-        let structure = structural_findings(pass.schema, pass.candidate, &self.wording)?;
+        let goal = pass
+            .authoring
+            .get("programGoal")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let prior = pass
+            .authoring
+            .get("priorKnowledge")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let companies = crate::lessons::company_framing::ungrounded_companies(
+            &[goal, prior],
+            &self.references.sources,
+        );
+        let mut structure = structural_findings(pass.schema, pass.candidate, &self.wording)?;
+        structure.extend(crate::generation::company_framing_findings(
+            pass.value, &companies,
+        ));
+        let source_texts: Vec<&str> = self
+            .references
+            .sources
+            .iter()
+            .map(|source| source.excerpt.as_str())
+            .collect();
+        structure.extend(crate::generation::spec_consistency_findings(
+            pass.value,
+            &source_texts,
+        ));
         // A rewrite of the whole lesson changes the sentences its checked
         // claims stand on, so once there are any, what only a rewrite can
         // answer waits for the user (claim classes design §3.10).
@@ -221,10 +273,11 @@ impl Subject for LessonSubject<'_> {
         self.held_up = blocking;
         let issues = if !blocking {
             self.step(Step::CheckingKeys);
-            let question_issues = crate::question_review::check(
+            let question_issues = crate::question_review::check_for(
                 llm,
                 pass.value,
                 crate::question_review::Outcome::of_lesson(pass.authoring),
+                &companies,
             )
             .await?;
             let round = self.standing.round(pass.value);
@@ -256,7 +309,15 @@ impl Subject for LessonSubject<'_> {
                         round.scope(),
                         crate::teaching_review::Remit::Lesson,
                     );
-                    let (judged, plan) = futures::try_join!(review, against_plan)?;
+                    let (judged, plan) = if llm.keeps_read_prompts() {
+                        // Local llama-server shares a unified KV pool: run sequentially
+                        // so review and contract checks do not evict each other's prefixes.
+                        let judged = review.await?;
+                        let plan = against_plan.await?;
+                        (judged, plan)
+                    } else {
+                        futures::try_join!(review, against_plan)?
+                    };
                     (Some(judged), plan.findings)
                 }
                 // The reviewer has seen exactly this lesson: its findings stand.
@@ -305,12 +366,11 @@ impl Subject for LessonSubject<'_> {
             let plan_findings = if reported.is_empty() {
                 plan_findings
             } else {
-                let ruled = contract::check(
+                let ruled = contract::rule_on_reports(
                     llm,
                     pass.authoring,
                     pass.value,
                     self.protected,
-                    &mut self.receipts,
                     &reported,
                 )
                 .await?;

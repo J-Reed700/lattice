@@ -5,6 +5,7 @@
 use super::{ClaimVerdict, Finding};
 use lattice_core::domain::learning::claim_review::{ClaimId, ClaimState, Class, UnverifiedReason};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// How a claim without a supporting passage was resolved by the user. Set on
 /// the report's finding from the claim ledger at publication; never by the
@@ -63,6 +64,24 @@ pub(super) fn standing<'a>(
         | ClaimState::Queued { .. }
         | ClaimState::Reopened { .. } => Standing::Unsettled,
     }
+}
+
+/// Whether `state` currently stands as unverified (`no_source` / unsupported) or
+/// still unsettled (excluding edited/removed claims).
+pub(crate) fn is_claim_active_unverified(
+    state: &ClaimState,
+    by_id: &HashMap<&str, &ClaimState>,
+) -> bool {
+    if matches!(
+        state,
+        ClaimState::Edited { .. } | ClaimState::Removed { .. }
+    ) {
+        return false;
+    }
+    matches!(
+        standing(state, &|id| by_id.get(id.0.as_str()).copied()),
+        Standing::Resolved(Resolution::Unverified { .. }) | Standing::Unsettled
+    )
 }
 
 /// A claim as the ledger places it: its sentence's unit and quote, and where

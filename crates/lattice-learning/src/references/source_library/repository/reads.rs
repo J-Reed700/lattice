@@ -300,18 +300,42 @@ pub(in super::super) async fn version_text(
     Ok(text)
 }
 
-pub(in super::super) async fn version_texts(
-    database: &Database,
+pub(crate) async fn version_texts_on(
+    connection: &mut SqliteConnection,
     program_id: &str,
 ) -> Result<HashMap<String, String>> {
-    let mut read = database.begin_read().await?;
     let rows = sqlx::query("SELECT id,full_text FROM learning_source_versions WHERE program_id=?")
         .bind(program_id)
-        .fetch_all(&mut *read)
+        .fetch_all(&mut *connection)
         .await?;
-    read.commit().await?;
     Ok(rows
         .into_iter()
         .map(|r| (r.get("id"), r.get("full_text")))
         .collect())
+}
+
+pub(crate) async fn version_sources_on(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+) -> Result<HashMap<String, (String, String)>> {
+    let rows = sqlx::query(
+        "SELECT id,source_id,full_text FROM learning_source_versions WHERE program_id=?",
+    )
+    .bind(program_id)
+    .fetch_all(&mut *connection)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.get("id"), (r.get("source_id"), r.get("full_text"))))
+        .collect())
+}
+
+pub(crate) async fn version_texts(
+    database: &Database,
+    program_id: &str,
+) -> Result<HashMap<String, String>> {
+    let mut read = database.begin_read().await?;
+    let texts = version_texts_on(&mut read, program_id).await?;
+    read.commit().await?;
+    Ok(texts)
 }

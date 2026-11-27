@@ -35,6 +35,7 @@ from collections import deque
 from dataclasses import dataclass, field
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import condense_reach as reach  # noqa: E402
 import replay_claude as claude  # noqa: E402
 import replay_close_read_ab as base  # noqa: E402
 import replay_cut_evidence_ab as cut  # noqa: E402
@@ -69,7 +70,6 @@ CONTRADICTED = "{what} Answer again and say one thing."
 CUT_OFF_MARKERS = ("length", "max_tokens", "max_output_tokens", "incomplete")
 # SamplingOverride::deterministic().
 SAMPLING = {"temperature": 0.0, "top_p": 1.0, "top_k": 1, "presence_penalty": 0.0}
-OUTPUT_RESERVATION_CAP = 32_768
 ABBREVIATIONS = {"mr", "mrs", "ms", "dr", "st", "mt", "jr", "sr", "co", "no", "vs", "etc", "e.g", "i.e"}
 
 
@@ -201,7 +201,7 @@ def render(question, shown):
 def max_tokens_for(window, scale=1):
     """context_assembler/budget.rs `plan`: the default output reservation times the request's output_scale, held to
     half the window."""
-    return min(min(window // 4, OUTPUT_RESERVATION_CAP) * scale, window // 2)
+    return min(reach.output_reservation(window) * scale, window // 2)
 
 
 def body(model, messages, window, scale=1):

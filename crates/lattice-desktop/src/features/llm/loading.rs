@@ -454,8 +454,8 @@ fn cloud_connection(
     let chosen = settings.model_window(model);
     let chosen = ModelWindowDto {
         max_output_tokens: match tuning {
-            Tuning::Standard => chosen.max_output_tokens,
-            Tuning::Utility | Tuning::Router => u32::try_from(generation.max_tokens).ok(),
+            Tuning::Standard | Tuning::Utility => chosen.max_output_tokens,
+            Tuning::Router => u32::try_from(generation.max_tokens).ok(),
         },
         ..chosen
     };

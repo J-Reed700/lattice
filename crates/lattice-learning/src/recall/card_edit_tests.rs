@@ -347,6 +347,8 @@ async fn a_card_without_a_profile_is_edited_in_study_cards_alone() -> Result<()>
                     file_path: "/notes.md".into(),
                     excerpt: "An excerpt.".into(),
                     url: None,
+                    citation_id: 0,
+                    support: Default::default(),
                 },
                 citations: vec![],
                 topic: "Basics".into(),

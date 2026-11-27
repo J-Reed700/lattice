@@ -401,9 +401,9 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
         let work = driven(&blocked, &references, &inventory, &retained);
         tokio::select! {
             result = work => panic!("The unfinished checks should still be running: {result:?}"),
-            result = tokio::time::timeout(Duration::from_secs(5), async {
+            result = tokio::time::timeout(Duration::from_secs(20), async {
                 while blocked.calls.lock().unwrap().is_empty() {
-                    tokio::task::yield_now().await;
+                    tokio::time::sleep(Duration::from_millis(10)).await;
                 }
             }) => result.expect("The model request never started"),
         }

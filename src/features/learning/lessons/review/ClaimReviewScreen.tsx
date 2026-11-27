@@ -204,13 +204,13 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   );
 
   if (session.query.isPending) {
-    return <div className="flex h-full min-h-0 flex-col bg-background">{header}
+    return <div className="flex h-full min-h-0 flex-col bg-bg">{header}
       <div role="status" aria-label="Loading the review" className="grid flex-1 gap-4 p-4 md:grid-cols-[20rem_1fr] sm:p-6">
         <div className="h-64 animate-pulse rounded-2xl bg-surface" /><div className="h-96 animate-pulse rounded-2xl bg-surface" />
       </div></div>;
   }
   if (session.query.isError) {
-    return <div className="flex h-full min-h-0 flex-col bg-background">{header}
+    return <div className="flex h-full min-h-0 flex-col bg-bg">{header}
       <div role="alert" className="m-4 rounded-xl bg-danger-muted p-4 text-sm text-text-primary sm:m-6">
         <p>{session.query.error.message}</p>
         <Button type="button" variant="outline" className="mt-3" onClick={() => void session.query.refetch()}>Load again</Button>
@@ -294,7 +294,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
   const queueWithBar = <>{queue}{selectionBar}</>;
 
   return (
-    <div ref={rootRef} {...drop.handlers} className={`relative flex h-full min-h-0 flex-col bg-background ${drop.dragging ? 'ring-2 ring-inset ring-accent' : ''}`}>
+    <div ref={rootRef} {...drop.handlers} className={`relative flex h-full min-h-0 flex-col bg-bg ${drop.dragging ? 'ring-2 ring-inset ring-accent' : ''}`}>
       {header}
       {/* Always in the tree, so the first announcement is not lost. */}
       <div role="status" className={session.message ? 'flex flex-wrap items-center gap-3 border-b border-border bg-surface px-4 py-2 text-sm text-text-secondary sm:px-6' : 'sr-only'}>

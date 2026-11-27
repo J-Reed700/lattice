@@ -5,15 +5,15 @@ import { Check, Circle, CircleDot, CirclePause, LoaderCircle, Sparkles, Triangle
 import type { Tone, Words } from '@/features/learning/quizzes/quizCopy';
 
 const toneStyle: Record<Tone, { icon: ReactNode; chip: string; text: string }> = {
-  passed: { icon: <Check size={14} strokeWidth={2.5} />, chip: 'bg-emerald-500/12 text-emerald-800 dark:text-emerald-200', text: 'text-emerald-800 dark:text-emerald-200' },
-  notPassed: { icon: <X size={14} strokeWidth={2.5} />, chip: 'bg-rose-500/12 text-rose-800 dark:text-rose-200', text: 'text-rose-800 dark:text-rose-200' },
-  partial: { icon: <CircleDot size={14} />, chip: 'bg-amber-500/14 text-amber-900 dark:text-amber-200', text: 'text-amber-900 dark:text-amber-200' },
-  provisional: { icon: <Sparkles size={14} />, chip: 'bg-sky-500/12 text-sky-900 dark:text-sky-200', text: 'text-sky-900 dark:text-sky-200' },
-  pending: { icon: <LoaderCircle size={14} className="animate-spin motion-reduce:animate-none" />, chip: 'bg-accent/10 text-accent', text: 'text-accent' },
-  paused: { icon: <CirclePause size={14} />, chip: 'bg-accent/10 text-accent', text: 'text-accent' },
-  warning: { icon: <TriangleAlert size={14} />, chip: 'bg-amber-500/14 text-amber-900 dark:text-amber-200', text: 'text-amber-900 dark:text-amber-200' },
-  override: { icon: <UserCheck size={14} />, chip: 'bg-violet-500/12 text-violet-900 dark:text-violet-200', text: 'text-violet-900 dark:text-violet-200' },
-  neutral: { icon: <Circle size={14} />, chip: 'bg-background text-text-secondary', text: 'text-text-secondary' },
+  passed: { icon: <Check size={14} strokeWidth={2.5} />, chip: 'bg-success-muted text-success-fg', text: 'text-success-fg' },
+  notPassed: { icon: <X size={14} strokeWidth={2.5} />, chip: 'bg-danger-muted text-danger-fg', text: 'text-danger-fg' },
+  partial: { icon: <CircleDot size={14} />, chip: 'bg-warning-muted text-warning-fg', text: 'text-warning-fg' },
+  provisional: { icon: <Sparkles size={14} />, chip: 'bg-sky-500/12 text-sky-700 dark:text-sky-300', text: 'text-sky-700 dark:text-sky-300' },
+  pending: { icon: <LoaderCircle size={14} className="animate-spin motion-reduce:animate-none" />, chip: 'bg-accent-muted text-accent', text: 'text-accent' },
+  paused: { icon: <CirclePause size={14} />, chip: 'bg-accent-muted text-accent', text: 'text-accent' },
+  warning: { icon: <TriangleAlert size={14} />, chip: 'bg-warning-muted text-warning-fg', text: 'text-warning-fg' },
+  override: { icon: <UserCheck size={14} />, chip: 'bg-violet-500/12 text-violet-700 dark:text-violet-300', text: 'text-violet-700 dark:text-violet-300' },
+  neutral: { icon: <Circle size={14} />, chip: 'bg-surface-sunken text-text-secondary', text: 'text-text-secondary' },
 };
 
 /** A verdict as an icon and words. The colour only repeats what the words say. */

@@ -9,6 +9,16 @@ import { useDashboardQuery } from '@/features/dashboard/hooks/useDashboardQuery'
 const getIndexingStats = vi.fn();
 const listAllDocuments = vi.fn();
 const getCorpusShape = vi.fn();
+const listConversationSpaces = vi.fn();
+const listLearningPrograms = vi.fn();
+const getLearningProgram = vi.fn();
+
+vi.mock('@/features/learning/api/client', () => ({
+  learningApi: {
+    listLearningPrograms: () => listLearningPrograms(),
+    getLearningProgram: (id: string) => getLearningProgram(id),
+  },
+}));
 
 vi.mock('@/lib/api', () => {
   const api = {
@@ -20,6 +30,7 @@ vi.mock('@/lib/api', () => {
     listConversations: async () => ({ ok: true, data: { conversations: [] } }),
     listJournals: async () => ({ ok: true, data: [] }),
     listMessageBookmarks: async () => ({ ok: true, data: { bookmarks: [] } }),
+    listConversationSpaces: () => listConversationSpaces(),
   };
   return { VaultAPI: api, default: api };
 });
@@ -38,6 +49,9 @@ describe('useDashboardQuery failure', () => {
       ok: true,
       data: { total: 0, byType: [], grownLast7Days: 0, grownToday: 0, lastIndexedAt: null },
     });
+    listConversationSpaces.mockResolvedValue({ ok: true, data: [] });
+    listLearningPrograms.mockResolvedValue({ ok: true, data: [] });
+    getLearningProgram.mockResolvedValue({ ok: false, error: 'not found' });
   });
 
   it('carries the backend reason when the library stats cannot be read', async () => {
@@ -92,6 +106,9 @@ describe('useDashboardQuery library readout', () => {
         lastIndexedAt: '2026-05-14T09:30:00+00:00',
       },
     });
+    listConversationSpaces.mockResolvedValue({ ok: true, data: [] });
+    listLearningPrograms.mockResolvedValue({ ok: true, data: [] });
+    getLearningProgram.mockResolvedValue({ ok: false, error: 'not found' });
   });
 
   it('asks for the ten newest documents and the library summary', async () => {
@@ -132,5 +149,90 @@ describe('useDashboardQuery library readout', () => {
 
     await waitFor(() => expect(result.current.data).toBeDefined());
     expect(result.current.data?.recentDocuments.map((doc) => doc.id)).toEqual(['first', 'second']);
+  });
+
+  it('loads active Learning Studio courses with current module and lesson details, plus open spaces', async () => {
+    listAllDocuments.mockResolvedValue({ ok: true, data: [] });
+    listLearningPrograms.mockResolvedValue({
+      ok: true,
+      data: [
+        {
+          id: 'p1',
+          title: 'Distributed Systems',
+          goal: 'Understand consensus',
+          status: 'active',
+          revision: 1,
+          moduleCount: 2,
+          lessonCount: 6,
+          completedLessons: 2,
+          currentLessonId: 'l-raft',
+          createdAt: 1700000100,
+        },
+      ],
+    });
+    getLearningProgram.mockResolvedValue({
+      ok: true,
+      data: {
+        summary: {
+          id: 'p1',
+          title: 'Distributed Systems',
+          goal: 'Understand consensus',
+          status: 'active',
+          revision: 1,
+          moduleCount: 2,
+          lessonCount: 6,
+          completedLessons: 2,
+          currentLessonId: 'l-raft',
+          createdAt: 1700000100,
+        },
+        modules: [
+          {
+            id: 'm2',
+            title: 'Consensus Protocols',
+            summary: '',
+            outcomes: [],
+            lessons: [
+              { id: 'l-raft', title: 'Raft Leader Election', objective: '', estimatedMinutes: 18, preparation: 'ready', blocks: [], completed: false },
+            ],
+          },
+        ],
+      },
+    });
+    listConversationSpaces.mockResolvedValue({
+      ok: true,
+      data: [
+        { id: 's-1', name: 'Systems', description: null, icon: null, accentColor: '#0f766e', spacePrompt: null, toolPreferencesJson: null, isArchived: false, sortOrder: 1, createdAt: '', updatedAt: '' },
+        { id: 's-arch', name: 'Archived', description: null, icon: null, accentColor: null, spacePrompt: null, toolPreferencesJson: null, isArchived: true, sortOrder: 2, createdAt: '', updatedAt: '' },
+      ],
+    });
+
+    const { result } = renderHook(() => useDashboardQuery(), { wrapper });
+    await waitFor(() => expect(result.current.data).toBeDefined());
+
+    expect(result.current.data?.courses).toEqual([
+      expect.objectContaining({
+        id: 'p1',
+        title: 'Distributed Systems',
+        currentLessonId: 'l-raft',
+        currentLessonTitle: 'Raft Leader Election',
+        currentModuleTitle: 'Consensus Protocols',
+        currentLessonMinutes: 18,
+      }),
+    ]);
+    expect(result.current.data?.spaces).toEqual([
+      expect.objectContaining({ id: 's-1', name: 'Systems' }),
+    ]);
+  });
+
+  it('degrades gracefully when learning or spaces endpoints fail', async () => {
+    listAllDocuments.mockResolvedValue({ ok: true, data: [] });
+    listLearningPrograms.mockRejectedValue(new Error('studio unavailable'));
+    listConversationSpaces.mockResolvedValue({ ok: false, error: 'spaces locked' });
+
+    const { result } = renderHook(() => useDashboardQuery(), { wrapper });
+    await waitFor(() => expect(result.current.data).toBeDefined());
+
+    expect(result.current.data?.courses).toEqual([]);
+    expect(result.current.data?.spaces).toEqual([]);
   });
 });

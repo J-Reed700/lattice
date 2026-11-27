@@ -19,20 +19,29 @@ const program = {
 const evidence = {
   reviewStatus: 'passed', contentSha256: 'hash', unavailableCount: 0,
   citations: [{
+    number: 4,
     path: '/modules/0/summary', target: 'module_summary', moduleId: 'module', lessonId: null, itemIndex: null,
     claim: 'A sourced summary.', sourceId: 'source', sourceTitle: 'Saved field guide', sourceUrl: 'https://example.com/guide',
     quote: 'This is the exact frozen passage supporting the visible summary.',
+    support: {
+      relation: 'quotes',
+      anchors: [{ exact: 'This is the exact frozen passage supporting the visible summary.', span: { start: 0, end: 64 } }],
+    },
   }],
 } as LearningOutlineEvidenceDto;
 
 describe('course syllabus citations', () => {
   it('opens the exact saved passage from the claim it supports', async () => {
-    render(<CourseSyllabus program={program} moduleId="module" evidence={evidence} onSelect={vi.fn()} onSelectModule={vi.fn()} />);
+    const onOpenCitation = vi.fn();
+    render(<CourseSyllabus program={program} moduleId="module" evidence={evidence} onOpenCitation={onOpenCitation} onSelect={vi.fn()} onSelectModule={vi.fn()} />);
 
     expect(screen.getByText('A sourced summary.')).toBeVisible();
-    await userEvent.click(screen.getByText('Saved field guide'));
-    expect(screen.getByText('This is the exact frozen passage supporting the visible summary.')).toBeVisible();
+    await userEvent.click(screen.getAllByText('Saved field guide')[0]!);
+    const card = screen.getByRole('group', { name: 'Source 4, quoted from Saved field guide' });
+    expect(card).toHaveTextContent('“This is the exact frozen passage supporting the visible summary.”');
     expect(screen.getByRole('link', { name: /Open original/ })).toHaveAttribute('href', 'https://example.com/guide');
+    await userEvent.click(screen.getByRole('button', { name: 'Open source' }));
+    expect(onOpenCitation).toHaveBeenCalledWith(evidence.citations[0]);
   });
 
   it('withholds cached evidence when the visible claim has changed', () => {

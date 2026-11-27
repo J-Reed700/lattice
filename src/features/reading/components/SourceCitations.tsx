@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
+import { anchoredCardDetails, CitationCard } from '@/features/reading/citations';
 import { formatSourceLocation } from '@/shared/sources/passageLocator';
 import type { SourceWithMetadata } from '@/types/conversation';
 
@@ -214,77 +215,107 @@ export function SourceCitations({
                 : undefined,
             ].filter(Boolean);
 
+            const { relation, excerpts, trail } = anchoredCardDetails(source, null);
+            const chunksBody = group.chunks.length > 0 && (
+              <div className="mt-2.5 space-y-1.5">
+                {group.chunks.map((chunk) => {
+                  // Where the passage lives, when that is actually known.
+                  // A chunk ordinal is not a location, so nothing shows
+                  // rather than "Chunk 7".
+                  const chunkMetaParts = [
+                    resolvedLocations?.get(chunk.chunkId) ??
+                      formatSourceLocation({
+                        section: chunk.section,
+                        chunkId: chunk.chunkId,
+                        pageNumber: chunk.pageNumber,
+                      }),
+                  ].filter(Boolean);
+                  const citationIdOf = (value?: number | null) =>
+                    typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : null;
+                  const passageNumber = citationIdOf(chunk.source.citationId) ?? citationIdOf(source.citationId);
+
+                  return (
+                    <div
+                      key={chunk.key}
+                      className="border-l-2 border-accent/30 pl-4 py-2"
+                    >
+                      {chunkMetaParts.length > 0 && (
+                        <div className="mb-1 text-xs text-[hsl(var(--text-muted))]">
+                          {chunkMetaParts.join(' · ')}
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        className="mb-1 text-xs text-[hsl(var(--accent))] hover:underline"
+                        onClick={() => {
+                          const excerptChunkId = chunk.chunkId === chunk.source.chunkId
+                            ? undefined
+                            : chunk.chunkId;
+                          if (excerptChunkId) onViewSource(chunk.source, null, excerptChunkId);
+                          else onViewSource(chunk.source);
+                        }}
+                      >
+                        {passageNumber !== null ? `View passage [${passageNumber}]` : 'View passage'}
+                      </button>
+                      <p className="text-sm text-[hsl(var(--text-secondary))] leading-relaxed line-clamp-4 wrap-break-word">
+                        {chunk.excerpt}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+
+            const citationNumber =
+              typeof source.citationId === 'number' && Number.isInteger(source.citationId) && source.citationId > 0
+                ? source.citationId
+                : null;
+            const metaLine = metaParts.length > 0 && (
+              <div className={`${citationNumber !== null ? 'mt-1.5' : 'mt-0.5'} text-xs text-[hsl(var(--text-muted))]`}>
+                {metaParts.join(' · ')}
+              </div>
+            );
+            const viewButton = (shrink: boolean) => (
+              <button
+                type="button"
+                onClick={() => onViewSource(source)}
+                className={`${shrink ? 'shrink-0 ' : ''}text-xs text-[hsl(var(--accent))] underline-offset-2 hover:underline`}
+                title={`Open ${source.fileName}`}
+              >
+                View source
+              </button>
+            );
+
             return (
               <li key={group.key} className="space-y-2 rounded-lg border border-border-subtle bg-surface px-4 py-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-baseline gap-2">
-                      <span className="font-mono text-xs text-[hsl(var(--text-muted))]">
-                        [{source.citationId ?? idx + 1}]
-                      </span>
-                      <span className="text-sm font-semibold text-[hsl(var(--text-primary))] wrap-break-word">
-                        {source.fileName}
-                      </span>
-                    </div>
-                    {metaParts.length > 0 && (
-                      <div className="mt-0.5 text-xs text-[hsl(var(--text-muted))]">
-                        {metaParts.join(' · ')}
+                {citationNumber !== null ? (
+                  <CitationCard
+                    number={citationNumber}
+                    title={source.fileName}
+                    relation={relation}
+                    excerpts={excerpts}
+                    trail={trail}
+                    footer={
+                      <>
+                        {metaLine}
+                        <div className="mt-2">{viewButton(false)}</div>
+                        {chunksBody}
+                      </>
+                    }
+                  />
+                ) : (
+                  <>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <span className="text-sm font-semibold text-[hsl(var(--text-primary))] wrap-break-word">
+                          {source.fileName}
+                        </span>
+                        {metaLine}
                       </div>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => onViewSource(source)}
-                    className="shrink-0 text-xs text-[hsl(var(--accent))] underline-offset-2 hover:underline"
-                    title={`Open ${source.fileName}`}
-                  >
-                    View source
-                  </button>
-                </div>
-
-                {group.chunks.length > 0 && (
-                  <div className="space-y-1.5">
-                    {group.chunks.map((chunk) => {
-                      // Where the passage lives, when that is actually known.
-                      // A chunk ordinal is not a location, so nothing shows
-                      // rather than "Chunk 7".
-                      const chunkMetaParts = [
-                        resolvedLocations?.get(chunk.chunkId) ??
-                          formatSourceLocation({
-                            section: chunk.section,
-                            chunkId: chunk.chunkId,
-                            pageNumber: chunk.pageNumber,
-                          }),
-                      ].filter(Boolean);
-
-                      return (
-                        <div
-                          key={chunk.key}
-                          className="border-l-2 border-accent/30 pl-4 py-2"
-                        >
-                          {chunkMetaParts.length > 0 && (
-                            <div className="mb-1 text-xs text-[hsl(var(--text-muted))]">
-                              {chunkMetaParts.join(' · ')}
-                            </div>
-                          )}
-                          <button type="button"
-                            className="mb-1 text-xs text-[hsl(var(--accent))] hover:underline"
-                            onClick={() => {
-                              const excerptChunkId = chunk.chunkId === chunk.source.chunkId
-                                ? undefined
-                                : chunk.chunkId;
-                              if (excerptChunkId) onViewSource(chunk.source, null, excerptChunkId);
-                              else onViewSource(chunk.source);
-                            }}>
-                            View passage [{chunk.source.citationId ?? source.citationId ?? idx + 1}]
-                          </button>
-                          <p className="text-sm text-[hsl(var(--text-secondary))] leading-relaxed line-clamp-4 wrap-break-word">
-                            {chunk.excerpt}
-                          </p>
-                        </div>
-                      );
-                    })}
-                  </div>
+                      {viewButton(true)}
+                    </div>
+                    {chunksBody}
+                  </>
                 )}
               </li>
             );

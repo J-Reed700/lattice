@@ -719,10 +719,20 @@ fn label(task: &Value, pointer: &str, sentence: &str) -> String {
 fn flow_model(answer: impl Fn(&Value, usize) -> Vec<Value> + Send + Sync + 'static) -> Scripted {
     let asked = std::sync::atomic::AtomicUsize::new(0);
     Scripted::new().on_request::<FlowRepair>(move |sent, _| {
+        if sent.request.schema().is_none() {
+            return flow_reply("Draft reasoning.".into());
+        }
         let earlier = asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let task = flow_task(sent);
         flow_reply(json!({"entries": answer(&task, earlier)}).to_string())
     })
+}
+
+fn flow_structured(llm: &Scripted) -> Vec<Asked> {
+    llm.sent()
+        .into_iter()
+        .filter(|sent| sent.request.schema().is_some())
+        .collect()
 }
 
 async fn mend(llm: &dyn LLMPort, taken: &Taken, protected: &[Protected]) -> Result<Option<Value>> {
@@ -768,7 +778,7 @@ async fn a_flow_repair_that_inserts_a_sentence_the_lesson_already_has_is_asked_o
         None,
         "the section already has An intro to the whole idea."
     );
-    let sent = llm.sent();
+    let sent = flow_structured(&llm);
     assert_eq!(sent.len(), 2);
     assert!(flow_prompt(&sent[1]).contains("Answer again."));
 
@@ -787,7 +797,7 @@ async fn a_flow_repair_that_inserts_a_sentence_the_lesson_already_has_is_asked_o
         None,
         "another section already has the sentence"
     );
-    assert_eq!(llm.sent().len(), 2);
+    assert_eq!(flow_structured(&llm).len(), 2);
     Ok(())
 }
 
@@ -814,7 +824,7 @@ async fn a_flow_repair_changes_the_sentences_beside_a_gap_and_nothing_else() -> 
         repaired["body"],
         "An intro to the whole idea. That follows from the setup. Kept claim. Closing note."
     );
-    let sent = llm.sent();
+    let sent = flow_structured(&llm);
     assert_eq!(sent.len(), 2, "the entry outside the gap is asked again");
     assert!(flow_prompt(&sent[1]).contains("outside the two sentences beside this gap"));
     let prompt = flow_prompt(&sent[0]);
@@ -859,7 +869,7 @@ async fn a_flow_repair_that_rewrites_a_sentence_a_claim_stands_on_is_no_repair()
     });
 
     assert_eq!(mend(&llm, &taken, &protected).await?, None);
-    let sent = llm.sent();
+    let sent = flow_structured(&llm);
     assert_eq!(sent.len(), 2);
     assert!(flow_prompt(&sent[1]).contains("states a checked claim"));
     Ok(())
@@ -894,7 +904,7 @@ async fn a_flow_repair_that_leaves_the_section_no_lesson_leaves_it_as_cut() -> R
     .await?;
 
     assert_eq!(repaired, None);
-    assert_eq!(llm.sent().len(), 1);
+    assert_eq!(flow_structured(&llm).len(), 1);
     Ok(())
 }
 
@@ -905,7 +915,7 @@ async fn a_flow_repair_that_asks_for_nothing_changes_nothing() -> Result<()> {
         flow_model(|task, _| vec![entry(task["gaps"][0]["gap"].as_str().unwrap(), no_edits())]);
 
     assert_eq!(mend(&llm, &taken, &protected).await?, None);
-    assert_eq!(llm.sent().len(), 1);
+    assert_eq!(flow_structured(&llm).len(), 1);
     Ok(())
 }
 
@@ -979,7 +989,7 @@ async fn a_gap_the_answer_leaves_out_is_asked_again_alone() -> Result<()> {
         repaired["body"],
         "Intro one. So one follows. Middle claim. Intro two. So two follows. Tail."
     );
-    let sent = llm.sent();
+    let sent = flow_structured(&llm);
     assert_eq!(sent.len(), 2);
     assert_eq!(shown_gaps(&flow_task(&sent[0])).len(), 2);
     assert_eq!(shown_gaps(&flow_task(&sent[1])).len(), 1);
@@ -1428,5 +1438,223 @@ async fn a_flow_repair_that_does_not_fit_keeps_the_cut_text() -> Result<()> {
 
     assert!(matches!(settled, Ok(Settled::Done)), "{:?}", settled.err());
     assert!(ledger.cuts.mended[&0].checked);
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_orphaned_half_contrast_can_remove_its_verified_partner_while_keeping_edits_confined(
+) -> Result<()> {
+    let body = "Near-miss one: declared versus observed. In one reported thread, an RTF payload failed. The same thread shows a PDF part rejected with 400. Both are failures after a send. The first is a claim mismatch. Near-miss two: keep valid behavior clear.";
+    let section = block("contrast", "Watch out for", body);
+    let taken = Taken {
+        label: "Watch out for".into(),
+        gaps: vec![gap(
+            Some("The first is a claim mismatch."),
+            Some("Near-miss two: keep valid behavior clear."),
+        )],
+        answer_lost: false,
+    };
+    let protected = vec![
+        Protected {
+            unit: 0,
+            field: "body".into(),
+            quote: "The same thread shows a PDF part rejected with 400.".into(),
+            released: false,
+        },
+        Protected {
+            unit: 0,
+            field: "body".into(),
+            quote: "The first is a claim mismatch.".into(),
+            released: false,
+        },
+    ];
+    let lesson = json!({"blocks": [section.clone()], "questions": []});
+    let llm = flow_model(|task, earlier| {
+        let gap_id = task["gaps"][0]["gap"].as_str().unwrap().to_owned();
+        if earlier == 0 {
+            let mismatch = label(task, BODY, "The first is a claim mismatch.");
+            let mut edits = replacing(&mismatch, "Wrong edit.");
+            edits["sentences"]["remove"] = json!([label(
+                task,
+                BODY,
+                "Near-miss one: declared versus observed."
+            )]);
+            return vec![entry(&gap_id, edits)];
+        }
+        let mut edits = no_edits();
+        edits["sentences"]["remove"] = json!([
+            label(task, BODY, "Near-miss one: declared versus observed."),
+            label(task, BODY, "In one reported thread, an RTF payload failed."),
+            label(
+                task,
+                BODY,
+                "The same thread shows a PDF part rejected with 400."
+            ),
+            label(task, BODY, "Both are failures after a send."),
+            label(task, BODY, "The first is a claim mismatch."),
+        ]);
+        vec![entry(&gap_id, edits)]
+    });
+
+    let repaired = mend_section(
+        &llm,
+        (&json!({"type": "object"}), 4_000),
+        (0, true, &section),
+        (&taken, &protected),
+        (&lesson, &Default::default()),
+    )
+    .await?
+    .unwrap();
+
+    assert_eq!(
+        repaired["body"],
+        "Near-miss two: keep valid behavior clear."
+    );
+    let sent = flow_structured(&llm);
+    assert_eq!(sent.len(), 2);
+    assert!(flow_prompt(&sent[0]).contains("contrastOrphanRemoval"));
+    assert_eq!(flow_task(&sent[0])["contrastOrphanRemoval"], json!(true));
+    assert!(flow_prompt(&sent[1]).contains("states a checked claim"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_explanation_section_still_refuses_removing_a_checked_sentence() -> Result<()> {
+    let (_, mut taken, protected) = mended_section();
+    taken.gaps = vec![gap(Some("This follows from it."), Some("Kept claim."))];
+    let llm = flow_model(|task, _| {
+        let gap_id = task["gaps"][0]["gap"].as_str().unwrap().to_owned();
+        let mut edits = no_edits();
+        edits["sentences"]["remove"] = json!([label(task, BODY, "Kept claim.")]);
+        vec![entry(&gap_id, edits)]
+    });
+
+    assert_eq!(mend(&llm, &taken, &protected).await?, None);
+    let sent = flow_structured(&llm);
+    assert_eq!(sent.len(), 2);
+    assert!(flow_prompt(&sent[1]).contains("states a checked claim"));
+    Ok(())
+}
+
+#[test]
+fn empty_headings_are_pruned_while_nonempty_fences_and_check_reveals_stay() {
+    let raw = "Intro.\n\n### Dead Section\n\n### Empty Sibling\n\n### Live Section\nStays.\n\n### Trailing Dead";
+    assert_eq!(
+        sections::headings::prune_empty_headings(raw),
+        "Intro.\n\n### Live Section\nStays."
+    );
+
+    let with_fence =
+        "Intro.\n```markdown\n### Not A Real Heading\n```\n\n### Check your thinking\n";
+    assert_eq!(
+        sections::headings::prune_empty_headings(with_fence),
+        with_fence
+    );
+
+    assert_eq!(
+        sections::headings::prune_newly_empty_headings("3. Only sentence.\n# Heading", "# Heading"),
+        "# Heading"
+    );
+    assert_eq!(
+        sections::headings::prune_newly_empty_headings(
+            "# Outer\n\n## Inner\nCut sentence.",
+            "# Outer\n\n## Inner"
+        ),
+        ""
+    );
+}
+
+#[tokio::test]
+async fn a_flow_repair_crossing_a_heading_surfaces_the_heading_and_allows_inserting_after_it(
+) -> Result<()> {
+    let body =
+        "Background context.\n\n### Four Steps\n\n1. Register the client.\n2. Request token.";
+    let section = block("explanation", "Steps", body);
+    let taken = Taken {
+        label: "Steps".into(),
+        gaps: vec![gap(
+            Some("Background context."),
+            Some("Register the client."),
+        )],
+        answer_lost: false,
+    };
+    let lesson = json!({"blocks":[section.clone()],"questions":[]});
+    let llm = flow_model(|task, _| {
+        let gap_id = task["gaps"][0]["gap"].as_str().unwrap().to_owned();
+        let heading = label(task, BODY, "### Four Steps");
+        let mut edits = no_edits();
+        edits["sentences"]["insert"] = json!([{
+            "after": heading,
+            "with": {"text": "Follow these four steps in sequence.", "from": []}
+        }]);
+        vec![entry(&gap_id, edits)]
+    });
+
+    let repaired = mend_section(
+        &llm,
+        (&json!({"type": "object"}), 4_000),
+        (0, true, &section),
+        (&taken, &[]),
+        (&lesson, &Default::default()),
+    )
+    .await?
+    .unwrap();
+
+    let repaired_body = repaired["body"].as_str().unwrap();
+    let heading_pos = repaired_body.find("### Four Steps").unwrap();
+    let added_pos = repaired_body
+        .find("Follow these four steps in sequence.")
+        .unwrap();
+    let list_pos = repaired_body.find("1. Register the client.").unwrap();
+    assert!(
+        heading_pos < added_pos && added_pos < list_pos,
+        "{repaired_body}"
+    );
+    let sent = flow_structured(&llm);
+    assert_eq!(sent.len(), 1);
+    let prompt = flow_prompt(&sent[0]);
+    let task = flow_task(&sent[0]);
+    assert!(prompt.contains("headingOrphanCheck"));
+    assert_eq!(task["headingOrphanCheck"], json!(true));
+    assert_eq!(
+        task["gaps"][0]["headings"],
+        json!([label(&task, BODY, "### Four Steps")])
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_flow_repair_can_remove_an_orphaned_unverified_heading_in_a_gap() -> Result<()> {
+    let body = "Background context.\n\n### Orphan Heading\n\nClosing note.";
+    let section = block("explanation", "Steps", body);
+    let taken = Taken {
+        label: "Steps".into(),
+        gaps: vec![gap(Some("Background context."), Some("Closing note."))],
+        answer_lost: false,
+    };
+    let lesson = json!({"blocks":[section.clone()],"questions":[]});
+    let llm = flow_model(|task, _| {
+        let gap_id = task["gaps"][0]["gap"].as_str().unwrap().to_owned();
+        let heading = label(task, BODY, "### Orphan Heading");
+        let mut edits = no_edits();
+        edits["sentences"]["remove"] = json!([heading]);
+        vec![entry(&gap_id, edits)]
+    });
+
+    let repaired = mend_section(
+        &llm,
+        (&json!({"type": "object"}), 4_000),
+        (0, true, &section),
+        (&taken, &[]),
+        (&lesson, &Default::default()),
+    )
+    .await?
+    .unwrap();
+
+    assert!(!repaired["body"]
+        .as_str()
+        .unwrap()
+        .contains("Orphan Heading"));
+    assert!(repaired["body"].as_str().unwrap().contains("Closing note."));
     Ok(())
 }

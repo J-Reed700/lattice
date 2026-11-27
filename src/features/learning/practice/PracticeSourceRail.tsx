@@ -7,7 +7,7 @@ import { SavedSourceCitations } from '@/features/learning/sources/SavedSourceCit
 import { useLearningSourceWorkspace } from '@/features/learning/sources/useLearningSources';
 import { useSavedSourceReader } from '@/features/learning/sources/useSavedSourceReader';
 import { useReaderClosesWithOwner } from '@/features/reading/hooks/useReaderClosesWithOwner';
-import type { LearningPracticeCitationDto, LearningSourceLibraryItemDto } from '@/lib/bindings';
+import type { LearningPracticeCitationDto, LearningSourceLibraryItemDto, SupportDto } from '@/lib/bindings';
 
 function dateLabel(value: number) {
   const date = new Date(value);
@@ -142,7 +142,7 @@ export function sourceClosedReason(sourceOpeningAllowed: boolean, busy: boolean)
 export function usePracticeSourceReader(
   programId: string,
   ownerKey: string,
-  selected: { sourceId: string; versionId: string; quote?: string | null } | null,
+  selected: { sourceId: string; versionId: string; quote?: string | null; number?: number; support?: SupportDto | null } | null,
 ) {
   const reader = useSavedSourceReader(programId);
   useReaderClosesWithOwner(ownerKey);

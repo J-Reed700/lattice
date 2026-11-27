@@ -4,7 +4,7 @@
 //! comparison is all a request holds; each judgment finished into a finding
 //! and its receipt.
 use super::*;
-use lattice_core::application::services::claim_verification::CountedPast;
+use lattice_core::application::services::claim_verification::{CountedPast, ShownPassage};
 use lattice_core::shared::hash::sha256_hex;
 use lattice_core::{protocol, shared::protocol::Protocol};
 
@@ -106,15 +106,32 @@ pub(super) fn labelled(pending: &PendingClaim, labels: &Labels) -> Vec<String> {
 }
 
 /// [`labelled`], for a page not yet held by a comparison.
-pub(in crate::lessons::content_verification) fn labelled_passages(
-    passages: &[EvidencePassage],
-    labels: &Labels,
-) -> Vec<String> {
+fn labelled_passages(passages: &[EvidencePassage], labels: &Labels) -> Vec<String> {
     passages
         .iter()
         .map(|p| match labels.get(&p.source_id) {
             Some(label) => format!("{label}\n{}", p.text),
             None => p.text.clone(),
+        })
+        .collect()
+}
+
+/// The passages of `pending`'s page as the part-wise judge is shown them:
+/// each one's label and its own text.
+pub(super) fn shown(pending: &PendingClaim, labels: &Labels) -> Vec<ShownPassage> {
+    shown_passages(&pending.evidence, labels)
+}
+
+/// [`shown`], for a page not yet held by a comparison.
+pub(in crate::lessons::content_verification) fn shown_passages(
+    passages: &[EvidencePassage],
+    labels: &Labels,
+) -> Vec<ShownPassage> {
+    passages
+        .iter()
+        .map(|p| ShownPassage {
+            label: labels.get(&p.source_id).cloned().unwrap_or_default(),
+            text: p.text.clone(),
         })
         .collect()
 }

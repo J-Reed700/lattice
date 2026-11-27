@@ -6,6 +6,7 @@ import { OutlineCitation } from '@/features/learning/curriculum/OutlineEvidence'
 import { findOutlineCitation } from '@/features/learning/model/evidencePresentation';
 import type {
   LearningModuleDto,
+  LearningOutlineCitationDto,
   LearningOutlineEvidenceDto,
   LearningProgramDto,
 } from '@/lib/bindings';
@@ -17,6 +18,7 @@ export function CourseSyllabus({
   onSelect,
   onSelectModule,
   evidence,
+  onOpenCitation,
   compact = false,
   renderTopics,
 }: {
@@ -26,6 +28,7 @@ export function CourseSyllabus({
   program: LearningProgramDto;
   moduleId: string;
   evidence?: LearningOutlineEvidenceDto | null;
+  onOpenCitation?: (citation: LearningOutlineCitationDto) => void;
   onSelect: (module: LearningModuleDto, lessonId: string) => void;
   onSelectModule: (module: LearningModuleDto) => void;
 }) {
@@ -42,7 +45,7 @@ export function CourseSyllabus({
 
   return (
     <section
-      className={compact ? 'relative min-w-0' : 'mt-3 overflow-hidden rounded-2xl border border-border bg-surface'}
+      className={compact ? 'relative min-w-0' : 'mt-3 overflow-hidden rounded-xl border border-border-subtle bg-surface shadow-sm'}
       aria-label="Course syllabus"
       onKeyDown={(event) => {
         if (event.key === 'Escape') {
@@ -55,25 +58,26 @@ export function CourseSyllabus({
         ref={trigger}
         type="button"
         onClick={() => setOpen(!open)}
+        aria-label={compact ? 'Your course journey' : undefined}
         aria-expanded={open}
         aria-controls="course-syllabus-content"
-        className={compact ? 'flex min-h-10 items-center gap-2 rounded-lg px-3 text-left hover:bg-surface' : 'flex min-h-16 w-full items-center gap-3 px-5 py-3 text-left'}
+        className={compact ? 'inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-left text-xs font-medium text-text-secondary transition-colors hover:bg-surface-raised hover:text-text-primary' : 'flex min-h-16 w-full items-center gap-3 px-5 py-3 text-left'}
       >
-        <Layers3 size={19} className="shrink-0 text-accent" />
+        <Layers3 size={compact ? 14 : 19} className="shrink-0 text-accent" />
         <span className="min-w-0 flex-1">
-          <span className="block text-sm font-semibold text-text-primary">Your course journey</span>
+          <span className={compact ? 'block text-xs font-medium text-inherit' : 'block text-sm font-semibold text-text-primary'}>{compact ? 'Syllabus' : 'Your course journey'}</span>
           <span className={compact ? 'sr-only' : 'mt-1 block text-xs leading-5 text-text-muted'}>
             {program.modules.length} {program.modules.length === 1 ? 'module' : 'modules'} · {lessons.length} {lessons.length === 1 ? 'lesson' : 'lessons'} · about {minutes < 60 ? `${minutes} minutes` : `${Math.round(minutes / 60)} hours`}
             {program.summary.status === 'active' && ` · ${completed} lessons complete`}
           </span>
         </span>
-        <ChevronDown size={17} className={`shrink-0 text-text-muted transition ${open ? 'rotate-180' : ''}`} />
+        <ChevronDown size={compact ? 13 : 17} className={`shrink-0 text-text-muted transition ${open ? 'rotate-180' : ''}`} />
       </button>
 
       <div
         id="course-syllabus-content"
         hidden={!open}
-        className={compact ? 'absolute right-0 top-full z-30 mt-1 max-h-[75vh] w-[min(960px,calc(100vw-3rem))] overflow-y-auto rounded-2xl border border-border bg-surface p-5 shadow-xl' : 'border-t border-border p-4 sm:p-5'}
+        className={compact ? 'surface-pop absolute right-0 top-full z-30 mt-1.5 max-h-[75vh] w-[min(920px,calc(100vw-3rem))] overflow-y-auto rounded-xl bg-surface-overlay p-5 shadow-lg' : 'border-t border-border p-4 sm:p-5'}
       >
         <p className="mb-5 max-w-3xl text-sm leading-6 text-text-secondary">
           {program.summary.status === 'draft'
@@ -81,7 +85,7 @@ export function CourseSyllabus({
             : 'Follow the sequence or revisit a topic: choose a module to pick up at its next lesson, or a lesson to go straight to it. Opening a lesson never marks it complete.'}
         </p>
         {evidence?.unavailableCount ? (
-          <p className="mb-4 rounded-lg bg-amber-500/10 p-3 text-xs leading-5 text-text-secondary">
+          <p className="mb-4 rounded-lg border border-border-subtle bg-surface-sunken/70 p-3 text-xs leading-5 text-text-secondary">
             {evidence.unavailableCount} saved outline {evidence.unavailableCount === 1 ? 'citation is' : 'citations are'} hidden because the visible plan changed or the exact saved passage is unavailable.
           </p>
         ) : null}
@@ -90,15 +94,15 @@ export function CourseSyllabus({
             const done = module.lessons.filter((lesson) => lesson.completed).length;
             const summaryCitation = findOutlineCitation(evidence, 'module_summary', module.id, module.summary);
             return (
-              <li key={module.id} className={`min-w-0 rounded-xl border p-4 ${moduleId === module.id ? 'border-accent/40 bg-accent/5' : 'border-border bg-background/40'}`}>
+              <li key={module.id} className={`min-w-0 rounded-xl border p-4 ${moduleId === module.id ? 'border-accent/40 bg-accent-muted/45' : 'border-border-subtle bg-bg/40'}`}>
                 <div className="flex items-start gap-3">
-                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-surface font-serif text-lg text-accent">
-                    {done === module.lessons.length && done > 0 ? <Check size={16} /> : String(index + 1).padStart(2, '0')}
+                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-surface font-mono text-xs font-semibold text-accent shadow-2xs ring-1 ring-border-subtle">
+                    {done === module.lessons.length && done > 0 ? <Check size={15} /> : String(index + 1).padStart(2, '0')}
                   </span>
                   <div className="min-w-0 flex-1">
                     <span className="text-xs font-medium text-accent">Module {index + 1}{index === program.modules.length - 1 && ' · Final module'}</span>
                     <Editable content={{ kind: 'learning.module', key: module.id }} label={`module: ${module.title}`}>
-                      <h3 className="mt-1 font-serif text-xl leading-snug text-text-primary">
+                      <h3 className="mt-1 font-sans text-lg font-semibold leading-snug tracking-[-0.02em] text-text-primary">
                         <button
                           type="button"
                           aria-current={moduleId === module.id ? 'true' : undefined}
@@ -114,7 +118,7 @@ export function CourseSyllabus({
                       </h3>
                       <p className="mt-2 text-xs leading-5 text-text-secondary">{module.summary}</p>
                     </Editable>
-                    <OutlineCitation citation={summaryCitation} evidence={evidence} />
+                    <OutlineCitation citation={summaryCitation} onOpen={onOpenCitation} />
                   </div>
                 </div>
                 {Boolean(module.prerequisiteModuleIds?.length) && (
@@ -136,7 +140,7 @@ export function CourseSyllabus({
                   {module.outcomes.map((outcome, outcomeIndex) => (
                     <li key={`${outcomeIndex}-${outcome}`} className="text-xs leading-5 text-text-secondary">
                       <div className="flex gap-2"><Check size={13} className="mt-1 shrink-0 text-accent" /><span>{outcome}</span></div>
-                      <OutlineCitation citation={findOutlineCitation(evidence, 'outcome', module.id, outcome, outcomeIndex)} evidence={evidence} className="ml-5" />
+                      <OutlineCitation citation={findOutlineCitation(evidence, 'outcome', module.id, outcome, outcomeIndex)} onOpen={onOpenCitation} className="ml-5" />
                     </li>
                   ))}
                 </ul>
@@ -159,7 +163,7 @@ export function CourseSyllabus({
                         </button>
                         <p className="ml-10 text-[11px] leading-5 text-text-muted">{lesson.objective}</p>
                       </Editable>
-                      <OutlineCitation citation={findOutlineCitation(evidence, 'lesson_objective', module.id, lesson.objective, lessonIndex, lesson.id)} evidence={evidence} className="ml-10" />
+                      <OutlineCitation citation={findOutlineCitation(evidence, 'lesson_objective', module.id, lesson.objective, lessonIndex, lesson.id)} onOpen={onOpenCitation} className="ml-10" />
                       {renderTopics && <div className="ml-10">{renderTopics(lesson.id)}</div>}
                     </li>
                   ))}

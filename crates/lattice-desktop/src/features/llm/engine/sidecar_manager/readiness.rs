@@ -65,6 +65,7 @@ pub(crate) fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String
     if let Some(serving) = &config.pooling {
         return pooling_server_args(config, serving, port);
     }
+    let checkpoint_min_step = (config.context_size / CTX_CHECKPOINTS).max(CHECKPOINT_MIN_STEP);
     let mut args = vec![
         "-m".to_string(),
         config.model_path.to_string_lossy().to_string(),
@@ -90,7 +91,7 @@ pub(crate) fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String
         "--ctx-checkpoints".to_string(),
         CTX_CHECKPOINTS.to_string(),
         "--checkpoint-min-step".to_string(),
-        CHECKPOINT_MIN_STEP.to_string(),
+        checkpoint_min_step.to_string(),
         "--cache-reuse".to_string(),
         "256".to_string(),
     ];
@@ -107,6 +108,11 @@ pub(crate) fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String
         ]);
     } else if let Some(slots) = config.parallel_slots.filter(|&s| s > 0) {
         args.extend(["-np".to_string(), slots.to_string()]);
+        if slots > 1 {
+            // llama-server enables unified KV automatically only for `-np -1`;
+            // an explicit `-np N` splits `--ctx-size` per slot unless `-kvu` is set.
+            args.push("-kvu".to_string());
+        }
     }
     if let Some(seed) = config.seed {
         args.extend(["-s".to_string(), seed.to_string()]);
@@ -462,5 +468,28 @@ pub(super) async fn await_ready(
                 READINESS_IDLE_TIMEOUT.as_secs(),
             )));
         }
+    }
+}
+
+#[cfg(test)]
+mod checkpoint_step_tests {
+    use super::*;
+
+    fn checkpoint_min_step(context_size: u32) -> Option<String> {
+        let mut cfg = SidecarConfig::for_model(PathBuf::from("/models/qwen.gguf"));
+        cfg.context_size = context_size;
+        let args = build_server_args(&cfg, 12345);
+        args.iter()
+            .position(|arg| arg == "--checkpoint-min-step")
+            .and_then(|idx| args.get(idx + 1))
+            .cloned()
+    }
+
+    #[test]
+    fn checkpoint_min_step_scales_with_context_size_above_floor() {
+        assert_eq!(checkpoint_min_step(0).as_deref(), Some("1024"));
+        assert_eq!(checkpoint_min_step(32_768).as_deref(), Some("1024"));
+        assert_eq!(checkpoint_min_step(131_072).as_deref(), Some("4096"));
+        assert_eq!(checkpoint_min_step(262_144).as_deref(), Some("8192"));
     }
 }

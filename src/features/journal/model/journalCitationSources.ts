@@ -1,8 +1,12 @@
-import type { SourceDto } from '@/lib/bindings';
+import type { SourceDto, WorkspaceNoteCitationDto } from '@/lib/bindings';
 import type { SourceWithMetadata } from '@/types/conversation';
 
-/** Convert the nullable generated DTO fields to the chat reader's runtime shape. */
-export function toJournalCitationSource(source: SourceDto): SourceWithMetadata {
+/** Convert the nullable generated DTO fields and note citation metadata to the chat reader's runtime shape. */
+export function toJournalCitationSource(
+  source: SourceDto,
+  noteCitation?: WorkspaceNoteCitationDto | null,
+): SourceWithMetadata {
+  const citationId = noteCitation?.number ?? source.citationId;
   return {
     documentId: source.documentId,
     chunkId: source.chunkId,
@@ -15,7 +19,19 @@ export function toJournalCitationSource(source: SourceDto): SourceWithMetadata {
     score: source.score,
     fileSizeBytes: source.fileSizeBytes,
     modifiedAt: source.modifiedAt,
-    ...(source.citationId != null ? { citationId: source.citationId } : {}),
+    ...(citationId != null ? { citationId } : {}),
+    ...(noteCitation
+      ? {
+          anchoredBy: [
+            {
+              occurrence: 0,
+              relation: noteCitation.support.relation,
+              anchors: noteCitation.support.anchors,
+            },
+          ],
+          anchorBase: 0,
+        }
+      : {}),
     ...(source.excerpt != null ? { excerpt: source.excerpt } : {}),
     ...(source.highlights != null ? { highlights: source.highlights } : {}),
     ...(source.section != null ? { section: source.section } : {}),

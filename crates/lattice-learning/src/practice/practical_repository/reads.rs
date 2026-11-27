@@ -293,6 +293,10 @@ impl LearningPracticalRepository {
         row: sqlx::sqlite::SqliteRow,
     ) -> Result<LearningSimulationSessionDto> {
         let id: String = row.get("id");
+        let program_id: String = row.get("program_id");
+        let version_texts =
+            crate::references::source_library::version_texts_on(&mut *connection, &program_id)
+                .await?;
         let turns = sqlx::query(
             "SELECT * FROM learning_simulation_turns WHERE session_id=? ORDER BY ordinal",
         )
@@ -301,12 +305,15 @@ impl LearningPracticalRepository {
         .await?
         .into_iter()
         .map(|turn| {
+            let mut citations: Vec<crate::dto::LearningPracticeCitationDto> =
+                decode(turn.get("citations_json"))?;
+            crate::dto::LearningPracticeCitationDto::hydrate_list(&mut citations, &version_texts);
             Ok(LearningSimulationTurnDto {
                 id: turn.get("id"),
                 ordinal: turn.get("ordinal"),
                 speaker: parse_speaker(turn.get("speaker"))?,
                 content: turn.get("content"),
-                citations: decode(turn.get("citations_json"))?,
+                citations,
                 model_name: turn.get("model_name"),
                 created_at: turn.get("created_at"),
             })
@@ -314,7 +321,7 @@ impl LearningPracticalRepository {
         .collect::<Result<Vec<_>>>()?;
         Ok(LearningSimulationSessionDto {
             id,
-            program_id: row.get("program_id"),
+            program_id,
             activity_id: row.get("activity_id"),
             activity_revision: row.get("activity_revision"),
             practice_session_id: row.get("practice_session_id"),

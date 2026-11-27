@@ -48,6 +48,10 @@ struct Model {
     audited_sections: Mutex<Vec<Vec<usize>>>,
     /// Fail the coverage mapping of the unit at this section.
     fail_coverage_at: Option<usize>,
+    /// When set alongside `fail_coverage_at`, wait until this many unit
+    /// checkpoints have landed before failing that unit so resume tests
+    /// deterministically simulate an interruption after earlier units saved.
+    wait_coverage_saved: Option<(JobStore, String, String, usize)>,
     coverage_gap_in: Option<usize>,
 }
 impl Model {
@@ -62,11 +66,12 @@ impl Model {
             extracted_sections: Mutex::new(Vec::new()),
             audited_sections: Mutex::new(Vec::new()),
             fail_coverage_at: None,
+            wait_coverage_saved: None,
             coverage_gap_in: None,
         }
     }
 
-    /// The sections whose coverage was mapped, in section order.
+    /// The sections whose coverage was audited, in section order.
     fn audited(&self) -> Vec<usize> {
         let mut sections: Vec<usize> = self
             .audited_sections
@@ -77,6 +82,7 @@ impl Model {
             .copied()
             .collect();
         sections.sort_unstable();
+        sections.dedup();
         sections
     }
 }
@@ -123,14 +129,11 @@ pub(crate) fn fixture_prompts(request: &CompletionRequest) -> Vec<String> {
     }
     let correction = fixture_correction(request);
     if is_claim_check(user) || system.is_empty() {
-        return vec![format!("{}{correction}", passages_by_place(user))];
+        return vec![format!(
+            "{}{correction}",
+            bridge_tests::passages_by_place(user)
+        )];
     }
-    let mapped = request
-        .contract()
-        .filter(|call| call.id == coverage::CoverageMapping::ID)
-        .and_then(|call| call.input["unit"].as_u64())
-        .map(|unit| format!("\n\nMapped unit: {unit}"))
-        .unwrap_or_default();
     let extracted = request
         .contract()
         .filter(|call| call.id == inventory::InventoryExtraction::ID)
@@ -145,7 +148,7 @@ pub(crate) fn fixture_prompts(request: &CompletionRequest) -> Vec<String> {
             format!("\n\nExtracted sections: {}", indices.join(","))
         })
         .unwrap_or_default();
-    vec![format!("{system}{mapped}{extracted}\n\n{user}{correction}")]
+    vec![format!("{system}{extracted}\n\n{user}{correction}")]
 }
 
 /// The sections an extraction prompt of the fixture asked about.
@@ -161,11 +164,14 @@ pub(crate) fn extracted_sections_of(prompt: &str) -> Vec<usize> {
         .unwrap_or_default()
 }
 
-/// The section a coverage mapping prompt of the fixture was asked about.
-pub(crate) fn mapped_unit(prompt: &str) -> Option<usize> {
-    prompt
-        .split("\n\n")
-        .find_map(|chunk| chunk.strip_prefix("Mapped unit: ")?.parse().ok())
+/// The section a fidelity audit prompt of the fixture was asked about.
+pub(crate) fn audited_unit(prompt: &str) -> Option<usize> {
+    if !prompt.starts_with("Audit inventory fidelity.") {
+        return None;
+    }
+    let task = fixture_task(prompt)?;
+    let id = task["targetPassage"]["id"].as_str()?;
+    id.strip_prefix("unit-")?.split('-').next()?.parse().ok()
 }
 
 /// The correction a request asks again with, as the text that follows its task
@@ -619,7 +625,7 @@ fn part_wise_reply(reply: &str, user: &str) -> String {
         .map(str::to_ascii_lowercase)
         .filter(|label| ["supported", "contradicted", "unsupported"].contains(&label.as_str()))
     else {
-        return reply.to_owned();
+        return bridge_tests::resolved_parts(reply, user);
     };
     let (mut reason, mut passage) = (String::new(), None);
     for line in lines {
@@ -630,7 +636,7 @@ fn part_wise_reply(reply: &str, user: &str) -> String {
             passage = value
                 .strip_prefix("passage-")
                 .and_then(|place| place.parse::<usize>().ok())
-                .map(|place| format!("p{}", place + 1));
+                .map(|place| format!("passage-{place}"));
         }
     }
     let claim = user
@@ -643,11 +649,12 @@ fn part_wise_reply(reply: &str, user: &str) -> String {
         "contradicted" => ("contradicted", passage),
         _ => ("specific_missing", None),
     };
-    json!({
-        "parts": [{"part": claim, "kind": kind, "passages": passage.into_iter().collect::<Vec<_>>()}],
+    let written = json!({
+        "parts": [{"words": claim, "kind": kind, "from": passage.into_iter().collect::<Vec<_>>()}],
         "reason": reason,
     })
-    .to_string()
+    .to_string();
+    bridge_tests::resolved_parts(&written, user)
 }
 
 /// Every schema-constrained learning request a fixture answers: its grammar
@@ -709,25 +716,6 @@ fn fixture_messages(request: &CompletionRequest) -> (&str, &str) {
         Some((task, _)) => (system, task),
         None => (system, user),
     }
-}
-
-/// A part-wise check's prompt with each passage under the label the fixtures
-/// answer by its place (`[passage-0]`) instead of the handle it is shown under
-/// (`[p1]`).
-fn passages_by_place(user: &str) -> String {
-    if !user.starts_with("Source passages:") {
-        return user.to_owned();
-    }
-    user.split('\n')
-        .map(|line| {
-            line.strip_prefix("[p")
-                .and_then(|rest| rest.strip_suffix(']'))
-                .and_then(|digits| digits.parse::<usize>().ok())
-                .and_then(|handle| handle.checked_sub(1))
-                .map_or_else(|| line.to_owned(), |place| format!("[passage-{place}]"))
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 fn is_claim_check(user: &str) -> bool {
@@ -874,12 +862,6 @@ pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
             json!({"of":v["id"],"claims":[{"sentenceId":sentence_id(passage, statement),"statement":statement}],"nonFactualReason":""})
         }).collect::<Vec<_>>()).to_string());
     }
-    if prompt.starts_with("Audit claim coverage independently.") {
-        return Some(coverage::scripted_decisions(
-            prompt,
-            |_, claims| json!({"claimIds":claims,"nonFactualReason":if claims.is_empty() {"The fixture contains only a stipulated instruction."} else {""},"missingClaims":[]}),
-        ));
-    }
     None
 }
 #[async_trait::async_trait]
@@ -924,12 +906,27 @@ impl Model {
                 .unwrap()
                 .push(extracted_sections_of(prompt));
         }
-        if prompt.starts_with("Audit claim coverage independently.") {
-            let index = mapped_unit(prompt).unwrap();
-            if self.fail_coverage_at == Some(index) {
-                return Err(invalid("fixture interrupted during coverage"));
+        if prompt.starts_with("Audit inventory fidelity.") {
+            if let Some(index) = audited_unit(prompt) {
+                if self.fail_coverage_at == Some(index) {
+                    if let Some((jobs, job, prefix, expected)) = &self.wait_coverage_saved {
+                        tokio::time::timeout(Duration::from_secs(5), async {
+                            loop {
+                                let saved =
+                                    jobs.checkpoints_with_prefix(job, prefix).await.unwrap();
+                                if saved.len() >= *expected {
+                                    break;
+                                }
+                                tokio::task::yield_now().await;
+                            }
+                        })
+                        .await
+                        .expect("Earlier sections must save their checkpoints before interruption");
+                    }
+                    return Err(invalid("fixture interrupted during coverage"));
+                }
+                self.audited_sections.lock().unwrap().push(vec![index]);
             }
-            self.audited_sections.lock().unwrap().push(vec![index]);
         }
         if let Some(index) = self.coverage_gap_in {
             if prompt.starts_with("Audit inventory fidelity.") {
@@ -941,19 +938,6 @@ impl Model {
                 {
                     return Ok(json!({"missingAssertions":[{"sentenceId":data["targetPassage"]["sentences"][0]["id"],"statement":"An additional original assertion is missing from this fixture inventory."}],"reason":"The fixture names one omission."}).to_string());
                 }
-            }
-            if prompt.starts_with("Audit claim coverage independently.")
-                && mapped_unit(prompt) == Some(index)
-            {
-                let first = std::cell::Cell::new(true);
-                return Ok(coverage::scripted_decisions(prompt, |_, claims| {
-                    let missing = if first.replace(false) {
-                        json!([{"statement":"An assertion is missing."}])
-                    } else {
-                        json!([])
-                    };
-                    json!({"claimIds":claims,"nonFactualReason":"","missingClaims":missing})
-                }));
             }
         }
         if let Some(response) = fixture_response(prompt) {

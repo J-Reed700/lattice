@@ -14,11 +14,11 @@ Answer in two steps. Step 1, now: work through the task in prose. First give eac
   "include_reasoning": false,
   "sampling": null,
   "thinking": "off",
-  "max_output_tokens": 6000,
+  "max_output_tokens": 112616,
   "stop": [],
   "want_logprobs": false,
   "priority": "background",
-  "cache_key": null
+  "cache_key": "reason-first-draft-v1:7a522b35c4b7b41f1651c4ed14607d1b23ab63ec609e0a271dfdba0357818f95"
 }
 ######## request 2 of 4 ########
 === input 1: message (system) ===
@@ -45,71 +45,36 @@ Step 2: give the final answer from your draft. Keep its content, wording, number
         "type": "object",
         "properties": {
           "entry": {
-            "anyOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "kind": {
-                    "type": "string",
-                    "enum": [
-                      "verdict"
-                    ]
-                  },
-                  "at": {
-                    "type": "string"
-                  },
-                  "status": {
-                    "type": "string",
-                    "enum": [
-                      "resolved",
-                      "unresolved"
-                    ]
-                  },
-                  "reason": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "at",
-                  "status",
-                  "reason"
-                ],
-                "additionalProperties": false
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "finding"
+                ]
               },
-              {
-                "type": "object",
-                "properties": {
-                  "kind": {
-                    "type": "string",
-                    "enum": [
-                      "finding"
-                    ]
-                  },
-                  "place": {
-                    "type": "string",
-                    "description": "One of the names the request shows, such as p1."
-                  },
-                  "category": {
-                    "type": "string",
-                    "enum": [
-                      "factual",
-                      "plan"
-                    ]
-                  },
-                  "reason": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "place",
-                  "category",
-                  "reason"
-                ],
-                "additionalProperties": false
+              "place": {
+                "type": "string",
+                "description": "One of the names the request shows, such as p1."
+              },
+              "category": {
+                "type": "string",
+                "enum": [
+                  "factual",
+                  "plan"
+                ]
+              },
+              "reason": {
+                "type": "string"
               }
-            ]
+            },
+            "required": [
+              "kind",
+              "place",
+              "category",
+              "reason"
+            ],
+            "additionalProperties": false
           }
         },
         "required": [
@@ -141,7 +106,7 @@ Step 2: give the final answer from your draft. Keep its content, wording, number
   "stop": [],
   "want_logprobs": false,
   "priority": "background",
-  "cache_key": null
+  "cache_key": "reason-first-draft-v1:7a522b35c4b7b41f1651c4ed14607d1b23ab63ec609e0a271dfdba0357818f95"
 }
 ######## request 3 of 4 ########
 === input 1: message (system) ===
@@ -159,11 +124,11 @@ Answer in two steps. Step 1, now: work through the task in prose. First give eac
   "include_reasoning": false,
   "sampling": null,
   "thinking": "off",
-  "max_output_tokens": 6200,
+  "max_output_tokens": 112141,
   "stop": [],
   "want_logprobs": false,
   "priority": "background",
-  "cache_key": null
+  "cache_key": "reason-first-draft-v1:aa43d2787c35d16f98f7b872df575282d9f0a3325a6aae1a189796d0c69c4941"
 }
 ######## request 4 of 4 ########
 === input 1: message (system) ===
@@ -287,5 +252,5 @@ Step 2: give the final answer from your draft. Keep its content, wording, number
   "stop": [],
   "want_logprobs": false,
   "priority": "background",
-  "cache_key": null
+  "cache_key": "reason-first-draft-v1:aa43d2787c35d16f98f7b872df575282d9f0a3325a6aae1a189796d0c69c4941"
 }

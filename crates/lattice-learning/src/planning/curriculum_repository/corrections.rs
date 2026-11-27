@@ -2,6 +2,7 @@
 use super::{lesson_activity_started, LearningCurriculumRepository};
 use crate::{
     curriculum::{self, LearningCurriculumRevision},
+    dto::LearningProgramStatus,
     persistence::{decode, encode},
 };
 use lattice_core::shared::{
@@ -53,7 +54,8 @@ pub(crate) async fn lesson_row(
         objective: row.get("objective"),
         estimated_minutes,
         plan_fixed: completed || activity_started,
-        draft: row.get::<String, _>("status") == "draft",
+        draft: LearningProgramStatus::parse(&row.get::<String, _>("status"))?
+            == LearningProgramStatus::Draft,
     }))
 }
 
@@ -84,7 +86,8 @@ pub(crate) async fn module_row(
         program_id: row.get("program_id"),
         title: row.get("title"),
         summary: row.get("summary"),
-        draft: row.get::<String, _>("status") == "draft",
+        draft: LearningProgramStatus::parse(&row.get::<String, _>("status"))?
+            == LearningProgramStatus::Draft,
     }))
 }
 

@@ -23,7 +23,7 @@ export function SourceTrustSection({
   const reassess = useReassessSourceTrust();
   const entry = trust.data?.sources[0] ?? null;
   return (
-    <section aria-label="Source trust" className="rounded-xl bg-background p-4">
+    <section aria-label="Source trust" className="rounded-xl bg-bg p-4">
       <h4 className="text-[10px] font-semibold uppercase tracking-wider text-text-muted">Trust</h4>
       {trust.isLoading && <p role="status" className="mt-2 text-xs text-text-muted">Reading this source’s trust…</p>}
       {trust.error && <p role="alert" className="mt-2 text-xs text-rose-700">Its trust could not be read: {trust.error.message}</p>}

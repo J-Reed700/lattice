@@ -398,7 +398,18 @@ fn turn_transcript(
         Ok(messages) => messages,
         Err(error) => {
             warn!(%error, "Answer saved but the conversation could not be re-read; returning this turn only");
-            let answer = ConversationMessage::of(answer, Some(reply.pieces()));
+            let metadata: serde_json::Value = answer
+                .metadata
+                .as_deref()
+                .and_then(|raw| serde_json::from_str(raw).ok())
+                .unwrap_or(serde_json::Value::Null);
+            let sources: Vec<SourceDto> = metadata
+                .get("sources")
+                .and_then(|sources| serde_json::from_value(sources.clone()).ok())
+                .unwrap_or_default();
+            let pieces =
+                super::reply_support::pieces(reply, &sources, metadata.get("verification"));
+            let answer = ConversationMessage::of(answer, Some(pieces));
             let question = ConversationMessage {
                 id: user_message_id.to_string(),
                 role: "user".to_string(),

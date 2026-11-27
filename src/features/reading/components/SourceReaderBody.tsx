@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
 import { PassageHighlighter, SelectionToolbar, useTextSelection } from '@/features/reading';
+import { isAnchored } from '@/features/reading/citations/source';
 import { CitationRail } from '@/features/reading/components/CitationRail';
 import { ImportScopeSelect } from '@/features/reading/components/ImportScopeSelect';
 import { JournalCapturePreview } from '@/features/reading/components/JournalCapturePreview';
@@ -138,8 +139,8 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   const [resolvedLabel, setResolvedLabel] = useState<string | undefined>(undefined);
   const activeConversationId = useConversationsStore((state) => state.activeConversationId);
 
-  // File size limits (10MB backend limit)
-  const MAX_PREVIEW_SIZE = 10 * 1024 * 1024; // 10MB
+  // File size limits (matches 100MB backend IPC preview limit)
+  const MAX_PREVIEW_SIZE = 100 * 1024 * 1024; // 100MB
   const WARN_SIZE = 5 * 1024 * 1024; // 5MB
 
   const isFileTooLarge = source.fileSizeBytes > MAX_PREVIEW_SIZE;
@@ -147,8 +148,24 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
 
   const mimeType = source.mimeType || '';
   const sourcePreviewKind = getSourcePreviewKind(source);
+  const anchored = isAnchored(source);
   const hasDocumentId = Boolean(source.documentId && UUID_PATTERN.test(source.documentId));
-  const looksUpDocumentPath = hasDocumentId && !isHttpUrl(source.filePath);
+  const normalizedCategory = normalizeCategory(source.category ?? '');
+  const isWebCategory =
+    normalizedCategory.includes('web article') || normalizedCategory === 'web';
+  const externalSourceUrl = getSourceExternalUrl(source);
+  const isWebDocumentId = Boolean(source.documentId?.startsWith('web:'));
+  // Only sources whose anchored text IS their full reader document (saved course versions, web
+  // articles, or sources carrying a captured snapshot) replace the file reader; vault files
+  // still load their local PDF / Markdown / text viewers with anchored rail and passage locating.
+  const anchoredTextOnly = anchored && (
+    isCourseSource(source) ||
+    isWebDocumentId ||
+    isWebCategory ||
+    sourcePreviewKind === 'external-web' ||
+    Boolean(source.webSnapshot?.text.trim())
+  );
+  const looksUpDocumentPath = !anchoredTextOnly && hasDocumentId && !isHttpUrl(source.filePath);
   const documentPathQuery = useQuery({
     queryKey: readingKeys.documentPath(source.documentId ?? ''),
     queryFn: async () => {
@@ -167,11 +184,6 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
   const { article: savedArticle, deciding } = useSavedWebArticle(source, archivePath);
   const isWebArchiveArticle = savedArticle !== null;
   const isExternalWebSource = !isWebArchiveArticle && sourcePreviewKind === 'external-web';
-  const normalizedCategory = normalizeCategory(source.category ?? '');
-  const isWebCategory =
-    normalizedCategory.includes('web article') || normalizedCategory === 'web';
-  const externalSourceUrl = getSourceExternalUrl(source);
-  const isWebDocumentId = Boolean(source.documentId?.startsWith('web:'));
   // An HTML file on disk is a page to render, not a web citation to read as
   // text: the sandboxed, theme-aware HTML viewer reads and shows it.
   const isLocalHtmlFile =
@@ -180,6 +192,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     !isWebCategory &&
     !isWebDocumentId;
   const isWebSourceLike =
+    anchoredTextOnly ||
     isWebArchiveArticle ||
     isExternalWebSource ||
     isWebCategory ||
@@ -231,6 +244,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     !isLocalHtmlFile &&
     // Course material carries its own text; there is no file behind it to read.
     !isCourseSource(source) &&
+    !anchoredTextOnly &&
     (hasDocumentId || Boolean(source.filePath && !isHttpUrl(source.filePath)));
   const shouldResolveDocumentPath = hasDocumentId && !isWebSourceLike;
   // Citation metadata can retain the path from when it was indexed. A stable
@@ -291,7 +305,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
     [locatorChunkId, onLocationResolved]
   );
 
-  const { canTravel, goToCitation } = useCitationTravel(citations, citationIndex, onCitationIndexChange);
+  const { canTravel, stepCitation, position, total } = useCitationTravel(citations, citationIndex, onCitationIndexChange);
 
   const { captureDraft, setCaptureDraft, handleReference, handleAddToJournal, handleAskAbout } =
     usePassageCapture({ source, initialLocator, resolvedLabel, onClose });
@@ -393,7 +407,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
 
   const enrichedWebSource = (() => {
     if (!showsWebArticle) return source;
-    if (source.webSnapshot?.text) return source;
+    if (source.webSnapshot?.text || anchored) return source;
     const resolvedText = webPageMode.snapshot?.readerText?.trim() || content?.trim();
     if (!resolvedText) return source;
     return {
@@ -482,7 +496,7 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
             below 1024px.
           */}
           {matchNotice && (
-            <p className="shrink-0 border-b border-subtle px-7 py-2 text-xs text-[hsl(var(--text-muted))]">
+            <p className="shrink-0 border-b border-border-subtle px-7 py-2 text-xs text-[hsl(var(--text-muted))]">
               {matchNotice}
             </p>
           )}
@@ -518,10 +532,11 @@ export const SourceReaderBody: FC<SourceReaderBodyProps> = ({
             source={source}
             locator={initialLocator}
             resolvedLabel={resolvedLabel}
-            index={citationIndex}
-            total={citations?.length}
-            onPrevious={canTravel ? () => goToCitation((citationIndex ?? 0) - 1) : undefined}
-            onNext={canTravel ? () => goToCitation((citationIndex ?? 0) + 1) : undefined}
+            occurrence={occurrence}
+            index={position >= 0 ? position : undefined}
+            total={total}
+            onPrevious={canTravel ? () => stepCitation(-1) : undefined}
+            onNext={canTravel ? () => stepCitation(1) : undefined}
             onReference={() => handleReference(initialLocator.text)}
             onAddToJournal={() => handleAddToJournal(initialLocator.text)}
             onAskAbout={() => handleAskAbout(initialLocator.text)}

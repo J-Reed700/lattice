@@ -144,7 +144,7 @@ export function RetentionFrameworksModal({
         <DialogHeader>
           <div className="flex items-center gap-2">
             <GraduationCap className="size-6 text-accent" />
-            <DialogTitle className="text-xl font-serif text-text-primary">
+            <DialogTitle className="font-sans text-lg font-semibold tracking-[-0.02em] text-text-primary">
               How to learn so it lasts
             </DialogTitle>
           </div>

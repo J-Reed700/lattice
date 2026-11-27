@@ -1,5 +1,6 @@
 //! A lesson's and course bank's questions in `learning_assessment_candidates`.
 
+use crate::assessment_repository::CandidateReviewStatus;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::persistence::WriteTx;
 use sqlx::{Row, SqliteConnection};
@@ -9,7 +10,7 @@ pub(crate) struct QuestionHome {
     pub program_id: String,
     pub lesson_id: Option<String>,
     pub review_state: Option<String>,
-    pub review_status: String,
+    pub review_status: CandidateReviewStatus,
     pub has_reports: bool,
 }
 
@@ -27,13 +28,16 @@ pub(crate) async fn question_home(
     .bind(candidate_id)
     .fetch_optional(&mut *connection)
     .await?;
-    Ok(row.map(|row| QuestionHome {
-        program_id: row.get("program_id"),
-        lesson_id: row.get("lesson_id"),
-        review_state: row.get("review_state"),
-        review_status: row.get("review_status"),
-        has_reports: row.get::<i64, _>("has_reports") != 0,
-    }))
+    row.map(|row| {
+        Ok(QuestionHome {
+            program_id: row.get("program_id"),
+            lesson_id: row.get("lesson_id"),
+            review_state: row.get("review_state"),
+            review_status: CandidateReviewStatus::parse(&row.get::<String, _>("review_status"))?,
+            has_reports: row.get::<i64, _>("has_reports") != 0,
+        })
+    })
+    .transpose()
 }
 
 /// Whether a candidate question already appears on submitted or open quizzes.
@@ -144,30 +148,5 @@ pub(crate) async fn write_answer_key(
     .bind(candidate_id)
     .execute(&mut **tx)
     .await?;
-    Ok(())
-}
-
-pub(crate) async fn review_status(
-    connection: &mut SqliteConnection,
-    candidate_id: &str,
-) -> Result<Option<String>> {
-    Ok(
-        sqlx::query_scalar("SELECT review_status FROM learning_assessment_candidates WHERE id=?")
-            .bind(candidate_id)
-            .fetch_optional(&mut *connection)
-            .await?,
-    )
-}
-
-pub(crate) async fn set_review_status(
-    tx: &mut WriteTx,
-    candidate_id: &str,
-    status: &str,
-) -> Result<()> {
-    sqlx::query("UPDATE learning_assessment_candidates SET review_status=? WHERE id=?")
-        .bind(status)
-        .bind(candidate_id)
-        .execute(&mut **tx)
-        .await?;
     Ok(())
 }

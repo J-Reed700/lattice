@@ -6,6 +6,7 @@ import {
   Bookmark,
   BookOpen,
   Clock,
+  Columns3,
   FilePlus,
   FileSearch,
   FileText,
@@ -271,8 +272,8 @@ export function CommandPaletteDialog({
       >
         <DialogTitle className="sr-only">Command palette</DialogTitle>
         <Command className="command-palette" label="Command palette" shouldFilter={searchQuery.length < 2}>
-          <div className="command-input-wrapper">
-            <Search className="command-input-icon" strokeWidth={1.75} />
+          <div className="command-input-wrapper group">
+            <Search className="command-input-icon transition-colors group-focus-within:!text-accent" strokeWidth={1.75} />
             <Command.Input
               placeholder={searchMode ? 'Search documents' : 'Search, or type a command'}
               className="command-input"
@@ -298,14 +299,14 @@ export function CommandPaletteDialog({
                       key={result.id}
                       value={`search-result-${result.id}`}
                       onSelect={handleAsyncEvent(() => handleSearchResultSelect(result))}
-                      className="command-item"
+                      className="command-item group rounded-lg outline-hidden transition-colors duration-75 aria-selected:!bg-accent-muted dark:aria-selected:!bg-accent-muted/70"
                     >
                       <div className="flex items-start gap-3 px-3 py-2">
-                        <FileText className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" strokeWidth={1.75} />
+                        <FileText className="mt-0.5 h-4 w-4 shrink-0 text-text-muted transition-colors duration-75 group-aria-selected:!text-accent" strokeWidth={1.75} />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-baseline justify-between gap-3">
-                            <span className="truncate text-sm text-text-primary">{name}</span>
-                            <span className="shrink-0 font-mono text-xxs tabular-nums text-text-muted">
+                            <span className="truncate text-sm text-text-primary group-aria-selected:font-medium">{name}</span>
+                            <span className="shrink-0 font-mono text-xxs tabular-nums text-text-muted group-aria-selected:text-accent">
                               {result.score.toFixed(2)}
                             </span>
                           </div>
@@ -398,6 +399,7 @@ export function CommandPaletteDialog({
                 <CommandItem icon={Bookmark} label="References" shortcut={`${cmd}5`} onSelect={goTo('/references')} />
                 <CommandItem icon={FolderTree} label="Explorer" shortcut={`${cmd}6`} onSelect={goTo('/explorer')} />
                 <CommandItem icon={BookOpen} label="Studio" shortcut={`${cmd}7`} onSelect={goTo('/studio')} />
+                <CommandItem icon={Columns3} label="Compare" onSelect={goTo('/compare')} />
                 <CommandItem icon={Layers} label="Flashcards" onSelect={goTo('/studio?section=flashcards')} />
                 <CommandItem icon={FileSearch} label="Review drills" onSelect={goTo('/studio?drills=open')} />
                 <CommandItem icon={Plus} label="Import" shortcut={`${cmd}I`} onSelect={goToImport('files')} />
@@ -415,13 +417,13 @@ export function CommandPaletteDialog({
 
           <div className="command-footer">
             <span className="command-footer-hint">
-              <kbd>↑↓</kbd> Move
+              <kbd className="!border !border-border-default !bg-surface !text-text-secondary shadow-2xs">↑↓</kbd> Move
             </span>
             <span className="command-footer-hint">
-              <kbd>↵</kbd> Open
+              <kbd className="!border !border-border-default !bg-surface !text-text-secondary shadow-2xs">↵</kbd> Open
             </span>
             <span className="command-footer-hint">
-              <kbd>Esc</kbd> Close
+              <kbd className="!border !border-border-default !bg-surface !text-text-secondary shadow-2xs">Esc</kbd> Close
             </span>
           </div>
         </Command>

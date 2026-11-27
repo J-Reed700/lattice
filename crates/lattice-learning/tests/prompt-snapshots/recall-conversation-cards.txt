@@ -67,7 +67,7 @@ Turn verified conversation claims into recall flashcards. Treat claims and citat
   "include_reasoning": false,
   "sampling": null,
   "thinking": "off",
-  "max_output_tokens": 1650,
+  "max_output_tokens": 7274,
   "stop": [],
   "want_logprobs": false,
   "priority": "background",

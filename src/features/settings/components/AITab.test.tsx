@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -6,6 +6,7 @@ import { VaultAPI } from '@/lib/api';
 
 import { ChatTab } from './AITab/ChatTab';
 import { PromptsTab } from './AITab/PromptsTab';
+import { chooseRadixOption, polyfillRadixSelect } from './radixSelectTestUtils';
 
 import type { LlmSettingsContextValue } from './AITab/useLlmSettings';
 
@@ -117,12 +118,13 @@ describe('ChatTab', () => {
 
       expect(await screen.findByRole('button', { name: 'Test connection' })).toBeInTheDocument();
       const ollamaModel = await screen.findByLabelText('Model');
-      expect(ollamaModel.tagName).toBe('SELECT');
+      expect(ollamaModel).toHaveAttribute('role', 'combobox');
       expect(ollamaModel).toBeDisabled();
     });
 
     it('loads model options after a successful connection test', async () => {
       const user = userEvent.setup();
+      polyfillRadixSelect();
       const testConnectionMock = vi.fn().mockResolvedValueOnce({
         ok: true,
         data: {
@@ -138,9 +140,10 @@ describe('ChatTab', () => {
 
       expect(testConnectionMock).toHaveBeenCalled();
       const modelSelect = await screen.findByLabelText('Model');
-      expect(within(modelSelect).getByRole('option', { name: 'llama3.2:latest' })).toBeInTheDocument();
-      expect(within(modelSelect).getByRole('option', { name: 'qwen2.5:latest' })).toBeInTheDocument();
       expect(modelSelect).not.toBeDisabled();
+      fireEvent.pointerDown(modelSelect, { button: 0, ctrlKey: false, pointerType: 'mouse' });
+      expect(await screen.findByRole('option', { name: 'llama3.2:latest' })).toBeInTheDocument();
+      expect(screen.getByRole('option', { name: 'qwen2.5:latest' })).toBeInTheDocument();
     });
 
     it('explicitly saves a default localhost connection without switching the provider', async () => {
@@ -161,7 +164,7 @@ describe('ChatTab', () => {
   it('offers llama.cpp separately and keeps the saved Ollama connection when switching', async () => {
     const user = userEvent.setup();
     render(<ChatTab />);
-    await user.selectOptions(screen.getByLabelText('Chat provider'), 'llamacpp');
+    await chooseRadixOption(screen.getByLabelText('Chat provider'), 'llama.cpp', user);
     expect(mockLlmSettings.saveLlmUpdates).toHaveBeenCalledWith({ provider: 'llamacpp' });
     expect(mockLlmSettings.llmSettings!.ollamaUrl).toBe('http://localhost:11434');
   });
@@ -194,7 +197,7 @@ describe('ChatTab', () => {
     render(<ChatTab />);
     expect(screen.getByText('llama.cpp server')).toBeInTheDocument();
     expect(screen.getByText('Ollama server')).toBeInTheDocument();
-    expect(screen.getByLabelText('Chat provider')).toHaveValue('auto');
+    expect(screen.getByLabelText('Chat provider')).toHaveTextContent('Auto — local, llama.cpp, then Ollama');
     await user.click(screen.getByRole('button', { name: 'Save connection' }));
     expect(mockLlmSettings.saveLlmUpdates).toHaveBeenCalledWith({
       llamaCpp: { url: 'http://localhost:8080', model: 'qwen.gguf', authHeaderName: '' },
@@ -210,11 +213,14 @@ describe('ChatTab', () => {
     expect(mockLlmSettings.saveLlmUpdates).not.toHaveBeenCalled();
   });
 
-  it.each(['local', 'ollama'] as const)('edits a saved llama.cpp connection while preserving the %s provider', async provider => {
+  it.each([
+    ['local', 'Local only'],
+    ['ollama', 'Ollama'],
+  ] as const)('edits a saved llama.cpp connection while preserving the %s provider', async (provider, label) => {
     mockLlmSettings.llmSettings!.provider = provider;
     const user = userEvent.setup();
     render(<ChatTab />);
-    expect(screen.getByLabelText('Chat provider')).toHaveValue(provider);
+    expect(screen.getByLabelText('Chat provider')).toHaveTextContent(label);
     await user.clear(screen.getByLabelText('llama.cpp URL'));
     await user.type(screen.getByLabelText('llama.cpp URL'), 'https://new-server.example.com');
     await user.click(screen.getByRole('button', { name: 'Save connection' }));
@@ -240,9 +246,9 @@ describe('PromptsTab verification', () => {
     render(<PromptsTab />);
 
     expect(screen.getByLabelText('Verify responses')).toBeInTheDocument();
-    expect(screen.getByLabelText('Temperature')).toHaveValue(0);
-    expect(screen.getByLabelText('Top P')).toHaveValue(1);
-    expect(screen.getByLabelText('Top K')).toHaveValue(1);
+    expect(screen.getByLabelText('Temperature')).toHaveValue('0');
+    expect(screen.getByLabelText('Top P')).toHaveValue('1');
+    expect(screen.getByLabelText('Top K')).toHaveValue('1');
     expect(screen.queryByLabelText('Max tokens')).not.toBeInTheDocument();
   });
 

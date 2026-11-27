@@ -38,7 +38,7 @@ export function AddSourceResult({ programId, report, line, host, onNextStep }: {
     );
   }
   return (
-    <div role="status" aria-label="What adding the source found" className="space-y-2 rounded-lg bg-background p-3 text-sm leading-6 text-text-secondary">
+    <div role="status" aria-label="What adding the source found" className="space-y-2 rounded-lg bg-bg p-3 text-sm leading-6 text-text-secondary">
       {line && <p className="text-text-primary">{line}</p>}
       {snapshot.state === 'failed' && report.source && (
         <Button type="button" variant="outline" disabled={capture.isPending}

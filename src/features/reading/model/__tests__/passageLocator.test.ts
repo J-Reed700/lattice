@@ -155,3 +155,32 @@ it('locates the full cited passage instead of the search snippet', () => {
   } as Parameters<typeof locatorFromSource>[0];
   expect(locatorFromSource(source, 'passage-2').text).toBe(source.content);
 });
+
+it('keeps locator.text contiguous using the first disjoint anchor even under 40 chars', () => {
+  const source = {
+    documentId: 'doc-1',
+    chunkId: 'chunk-1',
+    fileName: 'guide.md',
+    filePath: '/vault/guide.md',
+    mimeType: 'text/markdown',
+    content: 'Full chunk text from index.',
+    score: 0.9,
+    fileSizeBytes: 100,
+    modifiedAt: '2026-10-20T00:00:00.000Z',
+    anchoredBy: [
+      {
+        occurrence: 0,
+        relation: 'quotes',
+        anchors: [
+          { exact: 'Short exact lead-in passage.' },
+          { exact: 'Distant second clause after ellipsis.' },
+        ],
+      },
+    ],
+  } as Parameters<typeof locatorFromSource>[0];
+
+  const locator = locatorFromSource(source, 'chunk-1', 0);
+  expect(locator.text).toBe('Short exact lead-in passage.');
+  expect(locator.text.length).toBeLessThan(40);
+  expect(buildNeedles(locator.text)).toEqual(['short exact lead-in passage']);
+});

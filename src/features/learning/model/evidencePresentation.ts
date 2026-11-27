@@ -1,4 +1,5 @@
-import type { LearningCitationDto, LearningClaimEvidenceDto, LearningEvidencePassageDto, LearningLessonEvidenceDto, LearningOutlineCitationDto, LearningOutlineCitationTarget, LearningOutlineEvidenceDto } from '@/lib/bindings';
+import type { AnchoredOccurrence } from '@/features/reading/citations';
+import type { LearningCitationDto, LearningClaimEvidenceDto, LearningClaimPartDto, LearningEvidencePassageDto, LearningLessonEvidenceDto, LearningOutlineCitationDto, LearningOutlineCitationTarget, LearningOutlineEvidenceDto } from '@/lib/bindings';
 import type { ClaimVerdict } from '@/types/conversation';
 
 export function passageKey(passage: LearningEvidencePassageDto): string {
@@ -37,9 +38,39 @@ export function checkWords(claim: LearningClaimEvidenceDto, citations: ReadonlyM
   return null;
 }
 
-/** What a Sourced statement says beyond its passage, of one kind: the common knowledge or the lesson's own figures no passage states. */
-export function partsOfKind(claim: LearningClaimEvidenceDto, kind: 'common' | 'own'): string[] {
+/** What a Sourced statement says beyond its passage, of one kind: the common knowledge or the lesson's own figures no passage states, or what follows from the passages without being stated. */
+export function partsOfKind(claim: LearningClaimEvidenceDto, kind: 'common' | 'own' | 'follows'): string[] {
   return (claim.parts ?? []).filter((part) => part.kind === kind).map((part) => part.part);
+}
+
+/** The passage a part's anchors lie in, and those anchors as the one occurrence the reader opens on. */
+export interface PartOpening {
+  number: number;
+  anchoredBy: AnchoredOccurrence[];
+}
+
+/** Where the reader opens for a part that names source sentences: the cited passage holding its anchors, marked as `contradicts` for a contradicted part, else with the statement's relation or `backs`. Null when the part has no anchors or none lies in a cited passage. */
+export function partOpening(
+  claim: LearningClaimEvidenceDto,
+  part: LearningClaimPartDto,
+  citations: ReadonlyMap<number, LearningCitationDto>,
+): PartOpening | null {
+  const anchors = (part.anchors ?? []).filter((anchor) => anchor.span);
+  const first = anchors[0]?.span;
+  if (!first) return null;
+  const inside = (citation: LearningCitationDto, span: { start: number; end: number }) =>
+    citation.passage.startByte <= span.start && span.end <= citation.passage.endByte;
+  const holders = (claim.cites ?? []).flatMap((number) => {
+    const citation = citations.get(number);
+    return citation && inside(citation, first) ? [citation] : [];
+  });
+  const chosen = holders.find((citation) => citation.passage.sourceVersionId === part.sourceVersionId) ?? holders[0];
+  if (!chosen) return null;
+  const relation = part.kind === 'contradicted' ? 'contradicts' : claim.relation ?? 'backs';
+  return {
+    number: chosen.number,
+    anchoredBy: [{ occurrence: 0, relation, anchors: anchors.filter((anchor) => anchor.span && inside(chosen, anchor.span)) }],
+  };
 }
 
 type ReportCitations = Pick<LearningLessonEvidenceDto, 'citations'> | null | undefined;
@@ -73,6 +104,7 @@ export function resolutionText(claim: LearningClaimEvidenceDto): string {
 }
 
 export const UNSTATED_PARTS = [
+  { kind: 'follows', label: 'Follows from the source: ' },
   { kind: 'common', label: 'Common knowledge, not in the source: ' },
   { kind: 'own', label: "The lesson's own figures, not in the source: " },
 ] as const;

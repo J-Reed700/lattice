@@ -264,6 +264,26 @@ pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()>
             "An assessment item has more distractor rationales than options.",
         ));
     }
+    if !candidate.distractor_rationales.is_empty() {
+        let right_has_reason = match &candidate.key {
+            LearningAssessmentKey::Choice(right) => candidate
+                .distractor_rationales
+                .get(*right)
+                .is_some_and(|reason| !reason.trim().is_empty()),
+            LearningAssessmentKey::Choices(rights) => rights.iter().any(|right| {
+                candidate
+                    .distractor_rationales
+                    .get(*right)
+                    .is_some_and(|reason| !reason.trim().is_empty())
+            }),
+            _ => false,
+        };
+        if right_has_reason {
+            return Err(invalid(
+                "An assessment item keeps the right choice's distractor rationale empty.",
+            ));
+        }
+    }
     let no_left = candidate.left.is_empty();
     match (&candidate.format, &candidate.key) {
         (LearningItemFormat::SingleChoice, LearningAssessmentKey::Choice(_)) => {
@@ -374,4 +394,256 @@ pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()>
         Some(fault) => Err(invalid(fault)),
         None => Ok(()),
     }
+}
+
+/// Checks freshly authored quiz items and lesson questions for course/lesson
+/// meta-talk, phantom build/version numbers absent from the item and `quote`,
+/// and ungrounded external company framing when `companies` is non-empty.
+#[cfg(test)]
+pub(crate) fn authored_content_faults(
+    candidate: &LearningAssessmentCandidate,
+    quote: &str,
+) -> Vec<String> {
+    authored_content_faults_for(candidate, quote, &[])
+}
+
+pub(crate) fn authored_content_faults_for(
+    candidate: &LearningAssessmentCandidate,
+    quote: &str,
+    companies: &[String],
+) -> Vec<String> {
+    let mut faults = Vec::new();
+    let texts = || {
+        std::iter::once(candidate.prompt.as_str())
+            .chain(candidate.options.iter().map(String::as_str))
+            .chain(candidate.left.iter().map(String::as_str))
+            .chain(std::iter::once(candidate.explanation.as_str()))
+            .chain(candidate.distractor_rationales.iter().map(String::as_str))
+            .chain(
+                candidate
+                    .rubric
+                    .iter()
+                    .flat_map(|c| [c.title.as_str(), c.description.as_str()]),
+            )
+    };
+    if texts().any(contains_course_meta_talk) {
+        faults.push(
+            "The question or its feedback uses course or lesson meta-talk instead of domain terms."
+                .into(),
+        );
+    }
+    if let Some(phantom) = find_phantom_version(candidate, quote) {
+        faults.push(format!(
+            "The explanation or rationale introduces version {phantom}, which does not appear in the question or its answer."
+        ));
+    }
+    if !companies.is_empty() {
+        for text in texts() {
+            for fault in crate::lessons::company_framing::company_framing_faults(text, companies) {
+                if !faults.contains(&fault) {
+                    faults.push(fault);
+                }
+            }
+        }
+    }
+    let scope_sources = (!quote.trim().is_empty()).then_some(quote);
+    let source_slice: &[&str] = match scope_sources {
+        Some(q) => &[q],
+        None => &[],
+    };
+    let right_indices: std::collections::HashSet<usize> = match &candidate.key {
+        LearningAssessmentKey::Choice(idx) => std::iter::once(*idx).collect(),
+        LearningAssessmentKey::Choices(idxs) => idxs.iter().copied().collect(),
+        LearningAssessmentKey::Matching(pairs) => pairs.iter().copied().collect(),
+        _ => std::collections::HashSet::new(),
+    };
+    let checked_for_scopes = std::iter::once(candidate.prompt.as_str())
+        .chain(
+            candidate
+                .options
+                .iter()
+                .enumerate()
+                .filter(|(idx, _)| right_indices.contains(idx))
+                .map(|(_, opt)| opt.as_str()),
+        )
+        .chain(candidate.left.iter().map(String::as_str))
+        .chain(std::iter::once(candidate.explanation.as_str()))
+        .chain(candidate.distractor_rationales.iter().map(String::as_str))
+        .chain(
+            candidate
+                .rubric
+                .iter()
+                .flat_map(|c| [c.title.as_str(), c.description.as_str()]),
+        );
+    for text in checked_for_scopes {
+        for fault in crate::lessons::spec_checks::smart_scope_faults(text, source_slice) {
+            if !faults.contains(&fault) {
+                faults.push(fault);
+            }
+        }
+    }
+    faults
+}
+
+fn contains_course_meta_talk(text: &str) -> bool {
+    let normalized = text.replace('\u{2019}', "'").to_ascii_lowercase();
+    const PHRASES: &[&str] = &[
+        "of this course",
+        "in this course",
+        "for this course",
+        "rules of this course",
+        "rules of the course",
+        "this lesson's",
+        "in this lesson",
+        "of this lesson",
+        "for this lesson",
+        "from this lesson",
+        "nothing in this lesson",
+        "taught in this lesson",
+    ];
+    PHRASES.iter().any(|phrase| normalized.contains(phrase))
+}
+
+fn find_phantom_version(candidate: &LearningAssessmentCandidate, quote: &str) -> Option<String> {
+    let mut allowed = String::new();
+    allowed.push_str(&candidate.prompt);
+    for text in candidate.options.iter().chain(candidate.left.iter()) {
+        allowed.push(' ');
+        allowed.push_str(text);
+    }
+    for criterion in &candidate.rubric {
+        allowed.push(' ');
+        allowed.push_str(&criterion.title);
+        allowed.push(' ');
+        allowed.push_str(&criterion.description);
+    }
+    match &candidate.key {
+        LearningAssessmentKey::Text(key) => {
+            for variant in &key.variants {
+                allowed.push(' ');
+                allowed.push_str(variant);
+            }
+        }
+        LearningAssessmentKey::Cloze(blanks) => {
+            for blank in blanks {
+                for variant in &blank.variants {
+                    allowed.push(' ');
+                    allowed.push_str(variant);
+                }
+            }
+        }
+        LearningAssessmentKey::Ordering(values) => {
+            for value in values {
+                allowed.push(' ');
+                allowed.push_str(value);
+            }
+        }
+        _ => {}
+    }
+    allowed.push(' ');
+    allowed.push_str(quote);
+    let allowed_versions = extract_three_part_versions(&allowed);
+
+    std::iter::once(candidate.explanation.as_str())
+        .chain(candidate.distractor_rationales.iter().map(String::as_str))
+        .find_map(|text| {
+            let lower = text.to_ascii_lowercase();
+            extract_three_part_versions(text).into_iter().find(|ver| {
+                !allowed_versions.contains(ver) && !is_named_standard_version(&lower, ver)
+            })
+        })
+}
+
+fn is_named_standard_version(lower_text: &str, ver: &str) -> bool {
+    const STANDARDS: &[&str] = &[
+        "semver",
+        "semantic versioning",
+        "openapi",
+        "fhir r4b",
+        "fhir r4",
+        "fhir r5",
+        "fhir",
+        "hl7",
+        "oauth",
+        "rfc",
+        "ecma",
+    ];
+    let mut start = 0;
+    while let Some(pos) = lower_text.get(start..).and_then(|s| s.find(ver)) {
+        let abs = start + pos;
+        let prefix = lower_text
+            .get(..abs)
+            .unwrap_or_default()
+            .trim_end_matches(|c: char| c == 'v' || c == '(' || c.is_whitespace());
+        if STANDARDS.iter().any(|std_name| {
+            prefix.strip_suffix(std_name).is_some_and(|before| {
+                before.is_empty() || !before.ends_with(|c: char| c.is_ascii_alphanumeric())
+            })
+        }) {
+            return true;
+        }
+        start = abs + ver.len();
+    }
+    false
+}
+
+fn extract_three_part_versions(text: &str) -> Vec<String> {
+    let bytes = text.as_bytes();
+    let mut versions = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        let Some(&ch) = bytes.get(i) else { break };
+        if ch.is_ascii_digit() {
+            let start = i;
+            let prev = start.checked_sub(1).and_then(|idx| bytes.get(idx)).copied();
+            if prev
+                .is_some_and(|p| (p.is_ascii_alphanumeric() && p != b'v' && p != b'V') || p == b'.')
+            {
+                while bytes
+                    .get(i)
+                    .is_some_and(|b| b.is_ascii_digit() || *b == b'.')
+                {
+                    i += 1;
+                }
+                continue;
+            }
+            let mut end = start;
+            let mut dots = 0usize;
+            let mut ok = true;
+            let mut seg_len = 0usize;
+            while let Some(&b) = bytes.get(end) {
+                if b.is_ascii_digit() {
+                    seg_len += 1;
+                    end += 1;
+                } else if b == b'.' {
+                    let next_digit = bytes.get(end + 1).is_some_and(u8::is_ascii_digit);
+                    if seg_len > 0 && next_digit {
+                        dots += 1;
+                        seg_len = 0;
+                        end += 1;
+                    } else if seg_len == 0 {
+                        ok = false;
+                        break;
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+            let trailing_part = bytes.get(end).is_some_and(|b| {
+                b.is_ascii_digit()
+                    || (*b == b'.' && bytes.get(end + 1).is_some_and(u8::is_ascii_digit))
+            });
+            if ok && dots == 2 && seg_len > 0 && !trailing_part {
+                if let Some(slice) = text.get(start..end) {
+                    versions.push(slice.to_owned());
+                }
+            }
+            i = end.max(start + 1);
+        } else {
+            i += 1;
+        }
+    }
+    versions
 }

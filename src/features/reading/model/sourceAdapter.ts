@@ -15,6 +15,7 @@ import type {
   LearningSourceVersionSummaryDto,
   RecentDocument,
   StudySourceDto,
+  SupportDto,
 } from '@/lib/bindings';
 import { formatSourceLocation } from '@/shared/sources/passageLocator';
 import type { DocumentMetadata, SearchResult } from '@/types';
@@ -181,7 +182,6 @@ export function fromRecentDocument(doc: RecentDocument): ResolvedReaderTarget {
 /** Flashcard / Study recall citation (`StudySourceDto`) -> unified reader target. */
 export function fromStudySource(
   studySource: StudySourceDto,
-  index = 0,
   conversationId?: string,
 ): ResolvedReaderTarget {
   const externalUrl = studySource.url?.trim() && isHttpUrl(studySource.url) ? studySource.url.trim() : null;
@@ -189,13 +189,13 @@ export function fromStudySource(
   const effectivePath = externalUrl ?? rawPath;
   const web = Boolean(externalUrl || isHttpUrl(effectivePath));
   const excerpt = studySource.excerpt?.trim() || '';
-  const documentId = studySource.documentId?.trim() || (web ? `web:${effectivePath}` : effectivePath || `study-${index}`);
-  const chunkId = studySource.chunkId?.trim() || `${documentId}#${index}`;
+  const documentId = studySource.documentId?.trim() || (web ? `web:${effectivePath}` : effectivePath || `study-${studySource.citationId}`);
+  const chunkId = studySource.chunkId?.trim() || `${documentId}#cite-${studySource.citationId}`;
 
   const source: SourceWithMetadata = {
     documentId,
     chunkId,
-    fileName: studySource.fileName?.trim() || fileNameFromPathOrUrl(effectivePath, `Citation ${index + 1}`),
+    fileName: studySource.fileName?.trim() || fileNameFromPathOrUrl(effectivePath, 'Saved source'),
     filePath: effectivePath || documentId,
     mimeType: resolveMimeType(null, effectivePath, web ? 'web' : 'document'),
     category: web ? 'web' : 'document',
@@ -204,7 +204,19 @@ export function fromStudySource(
     score: 1,
     fileSizeBytes: 0,
     modifiedAt: new Date(0).toISOString(),
-    citationId: index + 1,
+    citationId: studySource.citationId,
+    ...(studySource.support
+      ? {
+          anchoredBy: [
+            {
+              occurrence: 0,
+              relation: studySource.support.relation,
+              anchors: studySource.support.anchors,
+            },
+          ],
+          anchorBase: 0,
+        }
+      : {}),
     conversationId,
   };
 
@@ -430,31 +442,43 @@ export function learningPassageUrl(passage: Pick<LearningEvidencePassageDto, 'ur
 /** Learning Studio lesson evidence passage (`LearningEvidencePassageDto`) -> unified reader target. A web passage's saved page is its snapshot; its content is the passage, which a reader marks, or the whole text when there is no passage. */
 export function fromLearningEvidencePassage(
   passage: LearningEvidencePassageDto,
-  index = 0,
+  citationNumber?: number,
   fullText?: string | null,
 ): ResolvedReaderTarget {
   const url = learningPassageUrl(passage);
   const web = Boolean(url);
-  const text = passage.text?.trim() || '';
-  const documentId = url ? `web:${url}` : passage.sourceVersionId || `passage-${index}`;
+  const passageText = passage.text ?? '';
+  const text = passageText.trim() ? passageText : '';
+  const savedText = fullText?.trim() ? fullText : '';
+  const validCitationNumber =
+    typeof citationNumber === 'number' && Number.isInteger(citationNumber) && citationNumber > 0
+      ? citationNumber
+      : undefined;
+  const documentId = url ? `web:${url}` : passage.sourceVersionId || 'passage';
   const chunkId = `${passage.sourceVersionId}:${passage.startByte}-${passage.endByte}`;
 
   return {
     source: {
       documentId,
       chunkId,
-      fileName: passage.title?.trim() || (url ? fileNameFromPathOrUrl(url) : `Source ${index + 1}`),
+      fileName:
+        passage.title?.trim() ||
+        (url
+          ? fileNameFromPathOrUrl(url)
+          : validCitationNumber !== undefined
+            ? `Source ${validCitationNumber}`
+            : 'Saved source'),
       filePath: url ?? passage.sourceVersionId,
       mimeType: web ? 'text/html' : 'text/plain',
       category: web ? 'web' : 'document',
-      content: text || fullText?.trim() || '',
+      content: text || savedText,
       excerpt: text || undefined,
       webSnapshot:
-        web && (fullText?.trim() || text)
+        web && (savedText || text)
           ? {
               url: url!,
               title: passage.title?.trim() || null,
-              text: fullText?.trim() || text,
+              text: savedText || text,
               fetchedAt: null,
               truncated: false,
             }
@@ -462,11 +486,12 @@ export function fromLearningEvidencePassage(
       score: 1,
       fileSizeBytes: 0,
       modifiedAt: new Date(0).toISOString(),
-      citationId: index + 1,
+      ...(validCitationNumber !== undefined ? { citationId: validCitationNumber } : {}),
+      anchorBase: web && savedText ? 0 : passage.startByte,
     },
     locator: text
       ? {
-          text,
+          text: text.trim(),
           chunkId,
         }
       : null,
@@ -478,6 +503,8 @@ export interface LearningSourceVersionReading {
   quote?: string | null;
   /** The citation's number where the text that cites it numbers them. */
   number?: number;
+  /** Backend-verified relation and anchors for this citation. */
+  support?: SupportDto | null;
   /** The saved text as it should be read, when that differs from the immutable capture. */
   readerText?: string;
 }
@@ -496,7 +523,7 @@ export function fromLearningSourceVersion(
 ): ResolvedReaderTarget {
   const { version } = detail;
   const url = version.resolvedUrl?.trim() && isHttpUrl(version.resolvedUrl) ? version.resolvedUrl.trim() : null;
-  const text = (reading.readerText ?? detail.fullText).trim();
+  const text = reading.readerText ?? detail.fullText;
   const quote = reading.quote?.trim() || '';
   const title = version.title?.trim() || (url ? fileNameFromPathOrUrl(url) : 'Saved source');
   const acquired = Number.isFinite(version.acquiredAt) ? new Date(version.acquiredAt).toISOString() : null;
@@ -525,6 +552,12 @@ export function fromLearningSourceVersion(
       fileSizeBytes: 0,
       modifiedAt: acquired ?? new Date(0).toISOString(),
       citationId: reading.number,
+      ...(reading.support
+        ? {
+            anchoredBy: [{ occurrence: 0, relation: reading.support.relation, anchors: reading.support.anchors }],
+            anchorBase: 0,
+          }
+        : {}),
     },
     locator: quote ? { text: quote, chunkId } : null,
   };

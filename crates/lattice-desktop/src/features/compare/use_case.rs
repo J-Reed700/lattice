@@ -23,6 +23,7 @@ use super::dto::{
 };
 use super::prompt::{Answer, Cell, Column, CompareRow, Input, Sentence};
 use super::retrieval::retrieve_for_document;
+use lattice_core::application::contracts::replies::SupportDto;
 
 pub const DOCUMENT_CONCURRENCY: usize = 2;
 /// How long one row call may take.
@@ -98,8 +99,10 @@ fn cell_of(cell: &Cell, held: &[Sentence]) -> CompareCellDto {
                 held.iter()
                     .find(|sentence| sentence.reference() == picked.reference)
                     .map(|sentence| CompareCitationDto {
+                        number: 0,
                         chunk_id: sentence.chunk_id.clone(),
                         excerpt: sentence.text.0.clone(),
+                        support: SupportDto::cites([sentence.text.0.as_str()]),
                     })
             }),
         },
@@ -107,6 +110,18 @@ fn cell_of(cell: &Cell, held: &[Sentence]) -> CompareCellDto {
             value: None,
             citation: None,
         },
+    }
+}
+
+fn number_row_citations(rows: &mut [CompareRowDto]) {
+    let mut next = 1u32;
+    for row in rows {
+        for cell in &mut row.cells {
+            if let Some(citation) = cell.citation.as_mut() {
+                citation.number = next;
+                next += 1;
+            }
+        }
     }
 }
 
@@ -141,14 +156,16 @@ pub(super) async fn build_row(
             filled.unanswered.join(", ")
         )
     });
-    Ok(CompareRowDto {
+    let mut row = CompareRowDto {
         document_id: document.id.clone(),
         title: document.title.clone(),
         file_path: document.file_path.clone(),
         cells: filled.cells,
         error,
         degraded: filled.degraded,
-    })
+    };
+    number_row_citations(std::slice::from_mut(&mut row));
+    Ok(row)
 }
 
 /// The cells of one document's row, the columns the model gave no usable
@@ -316,10 +333,11 @@ pub async fn compare_documents_impl(
         .into_iter()
         .map(|row| (row.document_id.clone(), row))
         .collect();
-    let ordered_rows: Vec<CompareRowDto> = document_ids
+    let mut ordered_rows: Vec<CompareRowDto> = document_ids
         .iter()
         .filter_map(|id| by_id.remove(id))
         .collect();
+    number_row_citations(&mut ordered_rows);
 
     Ok(CompareTableDto {
         columns,

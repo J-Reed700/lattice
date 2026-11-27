@@ -751,15 +751,14 @@ async fn the_classifier_knob_decides_whether_the_call_reasons_first() -> Result<
 }
 
 #[tokio::test]
-async fn the_answers_are_asked_for_deterministically() -> Result<()> {
+async fn the_answers_use_default_sampling_without_greedy_override() -> Result<()> {
     let llm = standard();
     grade(&llm, &Scene::new()).await?;
     for sent in asks::<GradeReview>(&llm)
         .iter()
         .chain(asks::<GradeExtras>(&llm).iter())
     {
-        let sampling = sent.request.sampling.unwrap_or_default();
-        assert_eq!((sampling.temperature, sampling.top_k), (Some(0.0), Some(1)));
+        assert_eq!(sent.request.sampling, None);
     }
     Ok(())
 }

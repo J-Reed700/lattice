@@ -1,11 +1,18 @@
 import { type FC, useState, useCallback, useEffect, useMemo, useRef, type DragEvent } from 'react';
 
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { X, ArrowUp, ArrowDown } from 'lucide-react';
+import { ArrowDown, ArrowUp, Upload, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { IconButton } from '@/components/ui/IconButton';
-import { SettingsRow, settingsFieldClass } from '@/components/ui/SettingsSection';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { SettingsRow } from '@/components/ui/SettingsSection';
 import { useApi } from '@/contexts/ApiContext';
 import {
   assignCollectionDocumentsFromOperation,
@@ -17,6 +24,7 @@ import {
 import { chooseFiles } from '@/features/files/hooks/filePickers';
 import { useCustomCollectionsQuery, useCustomCollectionActions } from '@/features/files/hooks/useCustomCollectionsQuery';
 import { hasUnsettledItems, useIndexing } from '@/features/files/hooks/useIndexing';
+import { formatDisplayPath } from '@/features/files/model/documentMetadata';
 import { useBatchFileImportStore } from '@/features/files/stores/batchFileImportStore';
 import { useSpacesQuery } from '@/features/spaces/api/queries';
 import { useToast } from '@/hooks/useToast';
@@ -57,6 +65,8 @@ const isRetryableStatus = (status: FileItem['status']): boolean =>
   status === 'pending' || status === 'error';
 const EMPTY_CUSTOM_COLLECTIONS: CustomCollection[] = [];
 const EMPTY_SPACES: ConversationSpaceDto[] = [];
+const NONE_SELECT_VALUE = '__none__';
+const SUPPORTED_FORMAT_CHIPS = ['PDF', 'DOCX', 'Markdown', 'TXT', 'HTML', 'CSV / JSON', 'Code'];
 
 export const BatchFileImport: FC<BatchFileImportProps> = ({
   onImportComplete,
@@ -479,14 +489,19 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
       {historyError && <p role="alert" className="mb-4 text-sm text-text-secondary">Previous import results could not be loaded: {historyError}. Open History to refresh their status.</p>}
       <div
         className={cn(
-          'rounded-md border border-dashed py-10 text-center transition-colors duration-fast',
-          isDragging ? 'border-accent' : 'border-border-default'
+          'rounded-xl border border-dashed px-6 py-11 text-center transition-colors duration-fast',
+          isDragging
+            ? 'border-accent bg-accent-muted/40'
+            : 'border-border-default bg-bg/60 hover:border-border-strong'
         )}
         onDrop={handleAsyncEvent(handleDrop)}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
       >
-        <p className="text-sm text-text-secondary">
+        <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-surface text-text-secondary shadow-control">
+          <Upload className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+        </div>
+        <p className="text-sm font-medium text-text-primary">
           Drop files here, or{' '}
           <button
             type="button"
@@ -497,30 +512,43 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
             choose files
           </button>
         </p>
-        <p className="mt-1 text-xs text-text-muted">
+        <p className="mt-1.5 text-xs text-text-muted">
           PDF, DOCX, RTF, ODT, XLSX, PPTX, TXT, MD, HTML, CSV, JSON, code · up to 50 MB each
         </p>
+        <div className="mt-3.5 flex flex-wrap items-center justify-center gap-1.5">
+          {SUPPORTED_FORMAT_CHIPS.map((fmt) => (
+            <span
+              key={fmt}
+              className="inline-flex items-center rounded-md bg-[hsl(var(--text-primary)/0.05)] px-2 py-0.5 text-[11px] font-medium text-text-secondary"
+            >
+              {fmt}
+            </span>
+          ))}
+        </div>
       </div>
 
-      <div className="mt-8 border-t border-border-subtle">
+      <div className="mt-6 border-t border-border-subtle">
         <SettingsRow label="Add to space" htmlFor="batch-file-space-select">
-          <select
-            id="batch-file-space-select"
-            value={selectedSpaceId}
-            onChange={(event) => {
+          <Select
+            value={selectedSpaceId || NONE_SELECT_VALUE}
+            onValueChange={(value) => {
               setHasCustomizedSpaceScope(true);
-              setSelectedSpaceId(event.target.value);
+              setSelectedSpaceId(value === NONE_SELECT_VALUE ? '' : value);
             }}
             disabled={isImporting || spacesQuery.isLoading}
-            className={settingsFieldClass}
           >
-            <option value="">None</option>
-            {spaces.map((space) => (
-              <option key={space.id} value={space.id}>
-                {space.icon ? `${space.icon} ` : ''}{space.name}{space.isArchived ? ' (archived)' : ''}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger id="batch-file-space-select" className="w-[220px]">
+              <SelectValue placeholder="None" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NONE_SELECT_VALUE}>None</SelectItem>
+              {spaces.map((space) => (
+                <SelectItem key={space.id} value={space.id}>
+                  {space.icon ? `${space.icon} ` : ''}{space.name}{space.isArchived ? ' (archived)' : ''}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </SettingsRow>
 
         <SettingsRow
@@ -529,26 +557,29 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
         >
           {manualCollections.length === 0 ? (
             collectionsQuery.error ? (
-              <span role="alert" className="text-xs text-danger">
+              <span role="alert" className="text-xs text-danger-fg">
                 Collections unavailable: {collectionsQuery.error.message}{' '}
                 <button type="button" className="underline" onClick={() => { void collectionsQuery.refetch(); }}>Retry</button>
               </span>
             ) : <span className="text-xs text-text-muted">No collections yet</span>
           ) : (
-            <select
-              id="batch-file-collection-select"
-              value={selectedCollectionId}
-              onChange={(event) => setSelectedCollectionId(event.target.value)}
+            <Select
+              value={selectedCollectionId || NONE_SELECT_VALUE}
+              onValueChange={(value) => setSelectedCollectionId(value === NONE_SELECT_VALUE ? '' : value)}
               disabled={isImporting}
-              className={settingsFieldClass}
             >
-              <option value="">None</option>
-              {manualCollections.map((collection) => (
-                <option key={collection.id} value={collection.id}>
-                  {collection.label}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger id="batch-file-collection-select" className="w-[220px]">
+                <SelectValue placeholder="None" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={NONE_SELECT_VALUE}>None</SelectItem>
+                {manualCollections.map((collection) => (
+                  <SelectItem key={collection.id} value={collection.id}>
+                    {collection.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           )}
         </SettingsRow>
       </div>
@@ -596,7 +627,7 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
 
       {files.length > 0 && (
         <div className="mt-8">
-          <h2 className="pb-2 text-base font-medium text-text-primary">
+          <h2 className="pb-2 font-sans text-base font-semibold tracking-[-0.02em] text-text-primary">
             {files.length} {files.length === 1 ? 'file' : 'files'}{sourceGroup?.ordered ? ' · reading order' : ''}
           </h2>
           <div className="flex items-center gap-2">
@@ -639,11 +670,10 @@ export const BatchFileImport: FC<BatchFileImportProps> = ({
           variant="ghost"
           onClick={handleAsyncEvent(handleCancel)}
           disabled={isCancelling || (isImporting && !currentJobId)}
-          className="h-9"
         >
           {isCancelling ? 'Cancelling…' : 'Cancel'}
         </Button>
-        <Button onClick={handleAsyncEvent(handleStartImport)} disabled={!canImport} className="h-9">
+        <Button onClick={handleAsyncEvent(handleStartImport)} disabled={!canImport}>
           {isImporting
             ? 'Importing…'
             : selectedCount > 0
@@ -687,7 +717,7 @@ const statusLabel = (file: FileItem): string => {
 const FileListItem: FC<FileListItemProps> = ({ file, onRemove, disabled, position, onMove, isLast }) => {
   const meta = file.size > 0
     ? formatBytes(file.size)
-    : file.path.slice(0, file.path.length - file.name.length).replace(/[\\/]$/, '');
+    : formatDisplayPath(file.path) ?? file.path.slice(0, file.path.length - file.name.length).replace(/[\\/]$/, '');
   const status = statusLabel(file);
 
   return (
@@ -699,7 +729,7 @@ const FileListItem: FC<FileListItemProps> = ({ file, onRemove, disabled, positio
       </div>}
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm text-text-primary">{file.name}</div>
-        {meta && <div className="truncate text-xs text-text-muted">{meta}</div>}
+        {meta && <div className="truncate text-xs text-text-muted" title={file.path}>{meta}</div>}
         {file.status === 'error' && (
           <p className="mt-1 wrap-break-word text-xs text-danger-fg">{status}</p>
         )}

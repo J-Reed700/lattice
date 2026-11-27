@@ -1353,10 +1353,21 @@ fn properties_holding<'a>(
 /// - Transition branches: `kind` first in every `anyOf` branch
 #[test]
 fn the_extraction_grammar_keys_match_alphabetical_generation_order() {
-    use lattice_core::application::services::model_contract::shape::{Held, Shape};
-    let mut scope =
-        lattice_core::application::services::model_contract::shown::Scope::for_question();
-    let showing = scope.request();
+    use lattice_core::application::services::model_contract::{
+        shape::{Held, Shape},
+        shown::{Internal, Scope, Told},
+    };
+    let mut scope = Scope::for_question();
+    let mut showing = scope.request();
+    showing
+        .show(&[super::extract::Memory {
+            id: Internal::of(MemoryId::new()),
+            kind: Told("constraint".to_owned()),
+            label: Told("Existing rule".to_owned()),
+            first_stated_at_sequence: Told(1),
+            last_changed_at_sequence: Told(1),
+        }])
+        .expect("shown memory");
     type Answer = <super::extract::MemoryExtraction as lattice_core::application::services::model_contract::ask::Answered>::Answer;
     let schema = <Answer as Shape>::schema(&showing, Held::Plain).expect("the extraction schema");
     let root_keys = object_keys(schema.as_json().get("properties"));

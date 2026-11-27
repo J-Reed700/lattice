@@ -123,6 +123,15 @@ pub(crate) async fn check(
     candidate: &Value,
     outcome: Outcome<'_>,
 ) -> Result<Vec<ReviewFinding>> {
+    check_for(llm, candidate, outcome, &[]).await
+}
+
+pub(crate) async fn check_for(
+    llm: &dyn LLMPort,
+    candidate: &Value,
+    outcome: Outcome<'_>,
+    companies: &[String],
+) -> Result<Vec<ReviewFinding>> {
     let drafted: Vec<(usize, Drafted)> = candidate
         .get("questions")
         .and_then(Value::as_array)
@@ -135,7 +144,7 @@ pub(crate) async fn check(
         .iter()
         .map(|(_, question)| {
             format!(
-                "question-review-v5:{}",
+                "question-review-v6:{}",
                 sha256_hex(
                     json!({
                         "model": llm.model_name(),
@@ -204,11 +213,19 @@ pub(crate) async fn check(
         .zip(&verdicts)
         .filter_map(|((index, question), verdict)| {
             let verdict = verdict.as_ref()?;
+            let mut defects = verdict.defects.clone();
+            defects.extend(
+                crate::assessment_engine::checks::authored_content_faults_for(
+                    &question.item(*index),
+                    question.quote.as_deref().unwrap_or_default(),
+                    companies,
+                ),
+            );
             finding(
                 *index,
                 &question.prompt,
                 verdict.dispute.as_deref(),
-                &verdict.defects,
+                &defects,
                 &verdict.repeats,
             )
         })

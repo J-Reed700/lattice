@@ -1,11 +1,14 @@
 import { useEffect, useState } from 'react';
 
-import { SettingsRow } from '@/components/ui';
-import { useSettingsQuery, useUpdateSettingsMutation } from '@/features/settings/hooks/useSettingsQuery';
+import { Checkbox, Input, SettingsRow } from '@/components/ui';
+import {
+  useSettingsQuery,
+  useUpdateSettingsMutation,
+} from '@/features/settings/hooks/useSettingsQuery';
 import { toast } from '@/stores/toastStore';
 import type { DownloadedModel } from '@/types/downloadedModels';
 
-import { NUMBER_FIELD_CLASS, clamp } from '../AITab/shared';
+import { clamp } from '../AITab/shared';
 
 const MIN_WINDOW = 1;
 
@@ -21,7 +24,9 @@ export function LocalContextWindowRow({ models }: { models: DownloadedModel[] })
   const [entry, setEntry] = useState<string | null>(null);
   const saved = settings?.llm?.localContextWindow ?? null;
   const [shown, setShown] = useState<number | null>(saved);
-  useEffect(() => { setShown(saved); }, [saved]);
+  useEffect(() => {
+    setShown(saved);
+  }, [saved]);
   const usesDefault = shown === null && entry === null;
 
   const save = async (localContextWindow: number | null) => {
@@ -52,35 +57,34 @@ export function LocalContextWindowRow({ models }: { models: DownloadedModel[] })
       hint="Unless you set a window here or in the model's settings, each model loads with the largest window that fits this machine's memory now, up to its maximum, the window it was trained for. A window you set that is too large for this machine fails to load and says how much it needed, and one larger than the model was trained for is stretched by rope scaling, which costs quality."
       htmlFor="local-context-window"
     >
-      <div className="flex items-center gap-3">
-        <label className="flex items-center gap-1.5 whitespace-nowrap text-sm">
-          <input
-            type="checkbox"
-            checked={usesDefault}
-            onChange={(event) => {
-              if (!event.target.checked) {
-                setEntry('');
-                return;
-              }
-              setEntry(null);
-              if (shown !== null) void save(null);
-            }}
-          />
-          Fit each model to this machine
-        </label>
-        <input
-          id="local-context-window"
-          type="number"
-          min={MIN_WINDOW}
-          max={ceiling ?? undefined}
-          step={1}
-          disabled={usesDefault}
-          placeholder={usesDefault ? undefined : 'Tokens'}
-          value={entry ?? shown ?? ''}
-          onChange={(event) => setEntry(event.target.value)}
-          onBlur={commit}
-          className={NUMBER_FIELD_CLASS}
+      <div className="flex flex-wrap items-center justify-end gap-3">
+        <Checkbox
+          label="Fit each model to this machine"
+          checked={usesDefault}
+          onCheckedChange={(checked) => {
+            if (!checked) {
+              setEntry('');
+              return;
+            }
+            setEntry(null);
+            if (shown !== null) void save(null);
+          }}
         />
+        <div className="w-28 shrink-0">
+          <Input
+            id="local-context-window"
+            type="number"
+            min={MIN_WINDOW}
+            max={ceiling ?? undefined}
+            step={1}
+            disabled={usesDefault}
+            placeholder={usesDefault ? undefined : 'Tokens'}
+            value={entry ?? shown ?? ''}
+            onChange={(event) => setEntry(event.target.value)}
+            onBlur={commit}
+            className="text-right tabular-nums"
+          />
+        </div>
       </div>
     </SettingsRow>
   );

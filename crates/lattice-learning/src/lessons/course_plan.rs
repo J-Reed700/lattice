@@ -30,7 +30,7 @@ use std::collections::{HashMap, HashSet};
 /// What a lesson's plan entry holds: the one definition planning and changing a course plan share.
 macro_rules! plan_items {
     () => {
-        "ideas, the two or three core ideas its objective depends on; terms, the vocabulary it introduces; actions, the things the learner does (procedures, techniques, operations) that this lesson teaches; and contrast, the confusion this lesson resolves. Name every idea, term and action as a topic in a few words, never as a statement of fact or a definition: the plan makes no claims, because each lesson is checked against sources when it is written."
+        "ideas, the two or three core ideas its objective depends on; terms, the vocabulary it introduces; actions, the things the learner does (procedures, techniques, operations) that this lesson teaches; and contrast, the confusion this lesson resolves. Name every idea, term and action as a topic in a few words, never as a statement of fact or a definition: the plan makes no claims, because each lesson is checked against sources when it is written. When goal or priorKnowledge names a real external company or organisation, plan general architectural concepts or proposed-design topics rather than claiming proprietary company internals."
     };
 }
 

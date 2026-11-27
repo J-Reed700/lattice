@@ -8,7 +8,6 @@ use std::time::{Duration, Instant};
 
 use notify::{RecursiveMode, Watcher};
 use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
@@ -341,20 +340,9 @@ async fn run_watcher(
     tracing::info!("Vault watcher stopped");
 }
 
-const MAX_NOTE_BYTES: u64 = 4 * 1024 * 1024;
-
 async fn read_note_with_sha256(path: &Path) -> std::io::Result<(String, String)> {
-    let file = tokio::fs::File::open(path).await?;
-    let mut bytes = Vec::new();
-    file.take(MAX_NOTE_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .await?;
-    if bytes.len() as u64 > MAX_NOTE_BYTES {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "Vault note exceeds 4 MiB",
-        ));
-    }
+    // repository-barrier-allow: watcher reads a local markdown note in the user's watched vault.
+    let bytes = tokio::fs::read(path).await?;
     let sha256 = lattice_core::shared::hash::sha256_hex(&bytes);
     let contents = String::from_utf8(bytes)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;

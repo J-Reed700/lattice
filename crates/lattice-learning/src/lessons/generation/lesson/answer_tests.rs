@@ -657,3 +657,19 @@ fn the_form_asks_for_wrong_choices_first_and_for_a_citation_in_every_part() {
     assert!(FORM.contains("at least one whenever sources are shown, whatever its kind"));
     assert!(!FORM.contains("the right choice in right, the other choices"));
 }
+
+#[test]
+fn leaked_quote_handles_in_learner_text_are_detected() {
+    assert_eq!(
+        find_leaked_quote_handle("According to [q1], the lock is reentrant."),
+        Some("[q1]".to_owned())
+    );
+    assert_eq!(
+        find_leaked_quote_handle("See [q42] for details."),
+        Some("[q42]".to_owned())
+    );
+    assert_eq!(
+        find_leaked_quote_handle("Array index [0] or [query] is fine."),
+        None
+    );
+}

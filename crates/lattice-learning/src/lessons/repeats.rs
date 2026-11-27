@@ -4,13 +4,21 @@
 //! rows, code, a sentence that is only code (a command shown on a line of its
 //! own), a sentence too short to be quoted, or the strong label that opens a
 //! paragraph, which lessons repeat on purpose.
-use crate::generation::long_enough_quote;
 use crate::review_findings::FindingSite;
-use lattice_core::shared::text::same_text::fold;
+use lattice_core::shared::text::same_text::{fold, long_enough_quote};
 use lattice_core::shared::text::segmentation::code_fences;
-use lattice_core::shared::text::sentences;
+use lattice_core::shared::text::{item_marker_end, sentences};
 use serde_json::Value;
 use std::collections::HashMap;
+
+/// Two consecutive sentences in the same block where the second repeats the
+/// first verbatim or opens by stuttering the first sentence's wording.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ConsecutiveRepeat {
+    pub(crate) first: String,
+    pub(crate) second: String,
+    pub(crate) prefix_stutter: bool,
+}
 
 /// How often each sentence occurs in some text.
 pub(crate) type Counts = HashMap<String, usize>;
@@ -147,6 +155,200 @@ pub(crate) fn comparable(text: &str) -> Vec<String> {
                 .filter(|sentence| has_prose_letter(sentence) && long_enough_quote(sentence)),
         );
     }
+    found
+}
+
+fn is_horizontal_rule(line: &str) -> bool {
+    let mut marks = line.chars().filter(|c| !c.is_whitespace());
+    let Some(first) = marks.next().filter(|c| matches!(c, '-' | '*' | '_' | '=')) else {
+        return false;
+    };
+    let rest: Vec<_> = marks.collect();
+    rest.len() >= 2 && rest.iter().all(|&c| c == first)
+}
+
+fn is_bold_label_only(unit: &str) -> bool {
+    let trimmed = unit.trim();
+    trimmed
+        .strip_prefix("**")
+        .and_then(|rest| rest.strip_suffix("**"))
+        .is_some_and(|inner| !inner.contains("**"))
+}
+
+fn sentence_words(sentence: &str) -> Vec<String> {
+    fold(sentence)
+        .split_whitespace()
+        .map(|word| {
+            word.trim_matches(|c: char| !c.is_alphanumeric() && c != '-' && c != '\'')
+                .to_owned()
+        })
+        .filter(|word| !word.is_empty() && word.chars().any(char::is_alphanumeric))
+        .collect()
+}
+
+fn has_clause_after_prefix(next: &str, prefix_len: usize, allow_conjunction: bool) -> bool {
+    let folded = fold(next);
+    let tokens: Vec<&str> = folded.split_whitespace().collect();
+    let word_indices: Vec<usize> = tokens
+        .iter()
+        .enumerate()
+        .filter(|(_, w)| w.chars().any(char::is_alphanumeric))
+        .map(|(idx, _)| idx)
+        .collect();
+    let Some(&last_idx) = prefix_len
+        .checked_sub(1)
+        .and_then(|idx| word_indices.get(idx))
+    else {
+        return false;
+    };
+    let last = tokens.get(last_idx).copied().unwrap_or_default();
+    let punct_break = last.ends_with([',', ';', ':', '-', '(']);
+    let next_token = tokens.get(last_idx + 1).copied().unwrap_or_default();
+    let trimmed = next_token.trim_matches(|c: char| !c.is_alphanumeric() && c != '(');
+    let starts_clause = next_token.starts_with(['(', '-'])
+        || (allow_conjunction
+            && matches!(
+                trimmed,
+                "and" | "or" | "but" | "then" | "so" | "because" | "while" | "which" | "when"
+            ));
+    punct_break || starts_clause
+}
+
+fn classify_consecutive(prev: &str, next: &str) -> Option<ConsecutiveRepeat> {
+    let prev_words = sentence_words(prev);
+    let next_words = sentence_words(next);
+    if prev_words.is_empty() || next_words.is_empty() {
+        return None;
+    }
+    if prev_words == next_words {
+        return Some(ConsecutiveRepeat {
+            first: prev.to_owned(),
+            second: next.to_owned(),
+            prefix_stutter: false,
+        });
+    }
+    if next_words.len() > prev_words.len() && next_words.starts_with(&prev_words) {
+        let long_stutter = prev_words.len() >= 4;
+        let clause_stutter =
+            prev_words.len() >= 3 && has_clause_after_prefix(next, prev_words.len(), true);
+        let punct_pair = prev_words.len() >= 2
+            && !matches!(
+                prev_words.first().map(String::as_str),
+                Some("it" | "this" | "that" | "these" | "those" | "they" | "there")
+            )
+            && has_clause_after_prefix(next, prev_words.len(), false);
+        if long_stutter || clause_stutter || punct_pair {
+            return Some(ConsecutiveRepeat {
+                first: prev.to_owned(),
+                second: next.to_owned(),
+                prefix_stutter: true,
+            });
+        }
+    }
+    if prev_words.len() == next_words.len() && prev_words.len() >= 7 {
+        let mut diff: Option<(&str, &str)> = None;
+        let mut multiple = false;
+        for (left, right) in prev_words.iter().zip(&next_words) {
+            if left != right {
+                if diff.is_some() {
+                    multiple = true;
+                    break;
+                }
+                diff = Some((left.as_str(), right.as_str()));
+            }
+        }
+        if !multiple {
+            if let Some((left, right)) = diff {
+                let code_or_protocol_token = |word: &str| {
+                    word.bytes().any(|b| {
+                        b.is_ascii_digit() || matches!(b, b'/' | b'.' | b':' | b'-' | b'_')
+                    })
+                };
+                if prev_words.len() >= 13
+                    || code_or_protocol_token(left)
+                    || code_or_protocol_token(right)
+                {
+                    return Some(ConsecutiveRepeat {
+                        first: prev.to_owned(),
+                        second: next.to_owned(),
+                        prefix_stutter: true,
+                    });
+                }
+            }
+        }
+    }
+    None
+}
+
+fn flush_consecutive_unit(
+    unit: &mut String,
+    prev: &mut Option<String>,
+    out: &mut Vec<ConsecutiveRepeat>,
+) {
+    let body = std::mem::take(unit);
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    if is_bold_label_only(trimmed) {
+        *prev = None;
+        return;
+    }
+    for (from, to) in sentences(trimmed) {
+        let Some(piece) = trimmed.get(from..to).map(str::trim) else {
+            continue;
+        };
+        if !has_prose_letter(piece) {
+            continue;
+        }
+        if let Some(earlier) = prev.as_deref() {
+            if let Some(found) = classify_consecutive(earlier, piece) {
+                out.push(found);
+            }
+        }
+        *prev = Some(piece.to_owned());
+    }
+}
+
+/// Consecutive identical sentences and prefix-stutters (`"X. X, and..."`) across
+/// prose paragraphs and list items, with no minimum length floor.
+pub(crate) fn consecutive_repeats(text: &str) -> Vec<ConsecutiveRepeat> {
+    let fences = code_fences(text);
+    let mut found = Vec::new();
+    let mut current = String::new();
+    let mut prev: Option<String> = None;
+    let mut offset = 0;
+    for raw in text.split_inclusive('\n') {
+        let start = offset;
+        offset += raw.len();
+        if fences.iter().any(|fence| fence.whole().contains(&start)) {
+            flush_consecutive_unit(&mut current, &mut prev, &mut found);
+            prev = None;
+            continue;
+        }
+        let line = raw.trim();
+        if line.is_empty() {
+            flush_consecutive_unit(&mut current, &mut prev, &mut found);
+            continue;
+        }
+        if line.starts_with(['#', '|', '>']) || is_horizontal_rule(line) {
+            flush_consecutive_unit(&mut current, &mut prev, &mut found);
+            prev = None;
+            continue;
+        }
+        if let Some(marker_end) = item_marker_end(raw) {
+            flush_consecutive_unit(&mut current, &mut prev, &mut found);
+            let content = raw.get(marker_end..).unwrap_or_default().trim();
+            if !content.is_empty() {
+                current.push_str(content);
+                current.push(' ');
+            }
+            continue;
+        }
+        current.push_str(line);
+        current.push(' ');
+    }
+    flush_consecutive_unit(&mut current, &mut prev, &mut found);
     found
 }
 

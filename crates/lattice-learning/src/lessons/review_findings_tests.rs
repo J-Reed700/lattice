@@ -256,6 +256,8 @@ fn each_rule_has_the_remedy_its_fix_needs() {
         (Rule::NoExplanation, Whole),
         (Rule::QuestionKinds, Whole),
         (Rule::CopiedWording, Edits),
+        (Rule::CompanyFraming, Edits),
+        (Rule::SpecConsistency, Edits),
     ];
     for (rule, remedy) in table {
         assert_eq!(rule.remedy(), remedy, "{rule:?}");

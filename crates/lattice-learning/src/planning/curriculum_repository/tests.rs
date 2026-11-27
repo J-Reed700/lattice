@@ -11,7 +11,7 @@ use crate::{
     tests::{fixture, pool},
 };
 use lattice_core::shared::persistence::Database;
-use lattice_core::shared::runtime::jobs::RecoveryPolicy;
+use lattice_core::shared::runtime::jobs::{JobStatus, RecoveryPolicy};
 use sqlx::SqlitePool;
 
 async fn active_program(database: &Database) -> Result<LearningProgramDto> {
@@ -1480,5 +1480,1079 @@ async fn an_oversized_job_request_is_refused_before_it_is_read() -> Result<()> {
         matches!(&error, AppError::InvalidInput(message) if message == "Generation job input is too large."),
         "{error}"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn start_selected_lesson_jobs_orders_cross_module_skips_ready_and_held_and_is_idempotent(
+) -> Result<()> {
+    let pool = pool().await?;
+    let database = Database::new(pool.clone());
+    let program = three_module_program(&database).await?;
+    let m0 = lesson_ids(&program, 0);
+    let m1 = lesson_ids(&program, 1);
+    let m2 = lesson_ids(&program, 2);
+
+    // Mark m0[0] ready, hold m1[0] for review.
+    make_ready(&pool, &m0[0]).await?;
+    let repo = LearningCurriculumRepository::new(database.clone());
+    let held = repo
+        .start_job(&StartLearningGenerationJobRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            expected_revision: program.summary.revision,
+            kind: LearningGenerationJobKind::LessonPreparation,
+            request_json: serde_json::json!({"lessonIds":[m1[0]]}).to_string(),
+            progress_total: 1,
+        })
+        .await?;
+    assert!(jobs(&database).claim(&held.id).await?.is_some());
+    jobs(&database)
+        .fail(&held.id, "generation_failed", "Held for review")
+        .await?;
+    sqlx::query(
+        "INSERT INTO learning_lesson_reviews(lesson_id,program_id,job_id,state,revision,draft_sha256,checker_model,opened_at,updated_at) \
+         VALUES(?,?,?,'needs_review',0,'sha','fixture',1,1)",
+    )
+    .bind(&m1[0])
+    .bind(&program.summary.id)
+    .bind(&held.id)
+    .execute(&pool)
+    .await?;
+
+    // Request out-of-order + duplicate IDs across modules 0, 1, 2.
+    let request = StartLearningLessonsJobsRequestDto {
+        operation_id: op_id(),
+        program_id: program.summary.id.clone(),
+        lesson_ids: vec![
+            m2[1].clone(),
+            m0[0].clone(),
+            m1[1].clone(),
+            m1[0].clone(),
+            m0[1].clone(),
+            m2[1].clone(),
+        ],
+        expected_revision: program.summary.revision,
+    };
+    let queued = repo.start_selected_lesson_jobs(&request).await?;
+    assert_eq!(
+        lessons_of(&pool, &queued).await?,
+        vec![m0[1].clone(), m1[1].clone(), m2[1].clone()]
+    );
+
+    // Replay with the same operation_id returns identical jobs.
+    let replayed = repo.start_selected_lesson_jobs(&request).await?;
+    assert_eq!(
+        replayed.iter().map(|j| j.id.clone()).collect::<Vec<_>>(),
+        queued.iter().map(|j| j.id.clone()).collect::<Vec<_>>()
+    );
+
+    // Repeating with a new operation_id reuses the already-queued jobs (zero duplicates).
+    let deduped = repo
+        .start_selected_lesson_jobs(&StartLearningLessonsJobsRequestDto {
+            operation_id: op_id(),
+            ..request.clone()
+        })
+        .await?;
+    assert_eq!(
+        deduped.iter().map(|j| j.id.clone()).collect::<Vec<_>>(),
+        queued.iter().map(|j| j.id.clone()).collect::<Vec<_>>()
+    );
+
+    // When none of the selected lessons are preparable, stale revision is still rejected
+    // and valid revision returns an empty vec.
+    let stale_err = repo
+        .start_selected_lesson_jobs(&StartLearningLessonsJobsRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            lesson_ids: vec![m0[0].clone(), m1[0].clone()],
+            expected_revision: program.summary.revision + 1,
+        })
+        .await
+        .unwrap_err();
+    assert!(
+        stale_err.to_string().contains("Program changed"),
+        "{stale_err}"
+    );
+
+    let none_preparable = repo
+        .start_selected_lesson_jobs(&StartLearningLessonsJobsRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            lesson_ids: vec![m0[0].clone(), m1[0].clone()],
+            expected_revision: program.summary.revision,
+        })
+        .await?;
+    assert!(none_preparable.is_empty());
+
+    // Empty lesson_ids and foreign lesson_id are rejected.
+    let empty_err = repo
+        .start_selected_lesson_jobs(&StartLearningLessonsJobsRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            lesson_ids: Vec::new(),
+            expected_revision: program.summary.revision,
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(empty_err, AppError::InvalidInput(_)));
+
+    let other = active_program(&database).await?;
+    let foreign_err = repo
+        .start_selected_lesson_jobs(&StartLearningLessonsJobsRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            lesson_ids: vec![lesson_ids(&other, 0)[0].clone()],
+            expected_revision: program.summary.revision,
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(foreign_err, AppError::InvalidInput(_)));
+    Ok(())
+}
+
+#[tokio::test]
+async fn reset_lesson_preparation_cancels_active_and_quiz_jobs_wipes_artifacts_and_preserves_notes(
+) -> Result<()> {
+    let pool = pool().await?;
+    let database = Database::new(pool.clone());
+    let program = three_module_program(&database).await?;
+    let m0 = lesson_ids(&program, 0);
+    let m1 = lesson_ids(&program, 1);
+    let repo = LearningCurriculumRepository::new(database.clone());
+    let store = jobs(&database);
+
+    // Queue m0[0] (running with checkpoint + staged draft), m0[1] (paused/cancelled),
+    // and m1[0] (failed).
+    let queued = repo
+        .start_selected_lesson_jobs(&StartLearningLessonsJobsRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            lesson_ids: vec![m0[0].clone(), m0[1].clone(), m1[0].clone()],
+            expected_revision: program.summary.revision,
+        })
+        .await?;
+    assert!(store.claim(&queued[0].id).await?.is_some());
+    store
+        .put_checkpoint(
+            &queued[0].id,
+            &lesson_checkpoint_key(&m0[0], "draft"),
+            &serde_json::json!({"ok": true}),
+        )
+        .await?;
+    store
+        .update_staged(&queued[0].id, |_| {
+            Ok(serde_json::json!({"drafts": {m0[0].clone(): {"input_hash": "h", "candidate": "c"}}}))
+        })
+        .await?;
+
+    repo.cancel_job(&LearningGenerationJobActionRequestDto {
+        operation_id: op_id(),
+        program_id: program.summary.id.clone(),
+        job_id: queued[1].id.clone(),
+        expected_revision: program.summary.revision,
+    })
+    .await?;
+
+    assert!(store.claim(&queued[2].id).await?.is_some());
+    store
+        .fail(&queued[2].id, "generation_failed", "Broken model")
+        .await?;
+
+    // Also add an active quiz_bank job for m0[0] and an unrelated one for m1[1].
+    let quiz_m0_0 = crate::quiz_bank_jobs::queue_bank(
+        &database,
+        &op_id(),
+        &program.summary.id,
+        &crate::dto::LearningQuizScopeDto {
+            kind: crate::dto::LearningQuizScopeKind::Lesson,
+            id: Some(m0[0].clone()),
+        },
+        false,
+    )
+    .await?;
+    let quiz_m1_1 = crate::quiz_bank_jobs::queue_bank(
+        &database,
+        &op_id(),
+        &program.summary.id,
+        &crate::dto::LearningQuizScopeDto {
+            kind: crate::dto::LearningQuizScopeKind::Lesson,
+            id: Some(m1[1].clone()),
+        },
+        false,
+    )
+    .await?;
+
+    // Populate verification/review/claims/findings/checker examples/note link on m0[0].
+    sqlx::query(
+        "INSERT INTO learning_lesson_reviews(lesson_id,program_id,job_id,state,revision,draft_sha256,checker_model,opened_at,updated_at) \
+         VALUES(?,?,?,'needs_review',0,'sha','fixture',1,1)",
+    )
+    .bind(&m0[0])
+    .bind(&program.summary.id)
+    .bind(&queued[0].id)
+    .execute(&pool)
+    .await?;
+    let claim_id = op_id();
+    sqlx::query(
+        "INSERT INTO learning_lesson_claims(claim_id,lesson_id,unit_index,unit_kind,field,quote,statement,state_json,evidence_json,updated_at) \
+         VALUES(?,?,0,'block','body','q','s','{\"kind\":\"waiting\"}','[]',1)",
+    )
+    .bind(&claim_id)
+    .bind(&m0[0])
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO learning_lesson_claim_events(claim_id,ordinal,actor,kind,payload_json,job_id,at) \
+         VALUES(?,0,'machine','extracted','{}',?,1)",
+    )
+    .bind(&claim_id)
+    .bind(&queued[0].id)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO learning_lesson_audits(lesson_id,draft_sha256,verifier_model,policy,state,batches_json,started_at) \
+         VALUES(?,'sha','verifier','p','completed','[]',1)",
+    )
+    .bind(&m0[0])
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO learning_lesson_teaching_findings(lesson_id,finding_key,kind,site,unit_index,unit_title,unit_sha256,note,repairs,state,found_at) \
+         VALUES(?,'k1','teaching','section',0,'T','sha','n',0,'waiting',1)",
+    )
+    .bind(&m0[0])
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO learning_lesson_verifications(lesson_id,program_id,policy,content_sha256,report_json,checked_at) \
+         VALUES(?,?,'p','sha','{}',1)",
+    )
+    .bind(&m0[0])
+    .bind(&program.summary.id)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO learning_blocks(lesson_id,ordinal,kind,title,body,source_ids_json) \
+         VALUES(?,0,'explanation','T','Body','[]')",
+    )
+    .bind(&m0[0])
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO learning_checker_examples(id,program_id,lesson_id,claim_id,checker_model,context_window,policy,claim,passages_json,local_verdict,label,label_source,at) \
+         VALUES(?,?,?,?, 'c', 8192, 'p', 'cl', '[]', 'v', 'true', 'user_confirm', 1)",
+    )
+    .bind(op_id())
+    .bind(&program.summary.id)
+    .bind(&m0[0])
+    .bind(&claim_id)
+    .execute(&pool)
+    .await?;
+
+    // Create a learner note link for m0[0] that MUST survive reset.
+    let (note_id, created) = LearningRepository::new(database.clone())
+        .ensure_lesson_note(&program.summary.id, &m0[0], "Note", "My notes")
+        .await?;
+    assert!(created);
+    assert!(!note_id.is_empty());
+
+    // Reset all three lessons (none are 'ready' yet, so program revision stays unchanged).
+    let reset_req = ResetLearningLessonPreparationRequestDto {
+        operation_id: op_id(),
+        program_id: program.summary.id.clone(),
+        lesson_ids: vec![m1[0].clone(), m0[0].clone(), m0[1].clone()],
+        expected_revision: program.summary.revision,
+    };
+    let result = repo.reset_lesson_preparation(&reset_req).await?;
+    assert_eq!(
+        result.reset_lesson_ids,
+        vec![m0[0].clone(), m0[1].clone(), m1[0].clone()]
+    );
+    assert_eq!(result.program_revision, program.summary.revision);
+    assert!(result.cancelled_job_ids.contains(&queued[0].id));
+    assert!(result.cancelled_job_ids.contains(&quiz_m0_0));
+    assert!(!result.cancelled_job_ids.contains(&quiz_m1_1));
+
+    // Unrelated quiz bank job stays pending.
+    assert_eq!(store.get(&quiz_m1_1).await?.status, JobStatus::Pending);
+
+    // Every reset lesson job is cancelled with error_message = NULL, ended_by_update = true,
+    // no checkpoints, and no staged_result_json.
+    for job in &queued {
+        let row = store.get(&job.id).await?;
+        assert_eq!(row.status, JobStatus::Cancelled);
+        assert_eq!(row.error_message, None);
+        assert_eq!(row.error_code.as_deref(), Some("ended_by_update"));
+        assert!(row.staged_result.is_none());
+        assert!(store.checkpoints_with_prefix(&job.id, "").await?.is_empty());
+    }
+    let plan = repo.plan(&program.summary.id).await?;
+    assert!(plan
+        .jobs
+        .iter()
+        .filter(|j| j.kind == LearningGenerationJobKind::LessonPreparation && !j.ended_by_update)
+        .collect::<Vec<_>>()
+        .is_empty());
+
+    // All lesson preparation artifacts are deleted; note link is preserved.
+    for table in [
+        "learning_blocks",
+        "learning_lesson_reviews",
+        "learning_lesson_claims",
+        "learning_lesson_audits",
+        "learning_lesson_teaching_findings",
+        "learning_lesson_verifications",
+        "learning_checker_examples",
+    ] {
+        let count: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT count(*) FROM {table} WHERE lesson_id=?"
+        )))
+        .bind(&m0[0])
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(count, 0, "expected {table} cleared for reset lesson");
+    }
+    let claim_events: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM learning_lesson_claim_events WHERE claim_id=?")
+            .bind(&claim_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(claim_events, 0);
+    let note_links: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM learning_lesson_note_links WHERE program_id=? AND lesson_id=?",
+    )
+    .bind(&program.summary.id)
+    .bind(&m0[0])
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(note_links, 1);
+
+    // Re-preparing m0[0] after reset cleanly creates a fresh Pending job.
+    let re_queued = repo
+        .start_selected_lesson_jobs(&StartLearningLessonsJobsRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            lesson_ids: vec![m0[0].clone()],
+            expected_revision: result.program_revision,
+        })
+        .await?;
+    assert_eq!(re_queued.len(), 1);
+    assert_eq!(re_queued[0].status, LearningGenerationJobStatus::Pending);
+    assert!(!re_queued[0].ended_by_update);
+    Ok(())
+}
+
+#[tokio::test]
+async fn reset_ready_lesson_reverts_to_outline_updates_curriculum_snapshot_and_replays_idempotently(
+) -> Result<()> {
+    let pool = pool().await?;
+    let database = Database::new(pool.clone());
+    let program = active_program(&database).await?;
+    let m0 = lesson_ids(&program, 0);
+    let repo = LearningCurriculumRepository::new(database.clone());
+
+    // Mark m0[0] ready & completed, seed accepted snapshot with Ready/Completed state.
+    sqlx::query("UPDATE learning_lessons SET preparation='ready', curriculum_state='ready', completed=1 WHERE id=?")
+        .bind(&m0[0])
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        "INSERT INTO learning_blocks(lesson_id,ordinal,kind,title,body,source_ids_json) \
+         VALUES(?,0,'explanation','T','Body','[]')",
+    )
+    .bind(&m0[0])
+    .execute(&pool)
+    .await?;
+    let initial_plan = repo.plan(&program.summary.id).await?;
+    assert_eq!(
+        initial_plan.accepted_revision.as_ref().unwrap().modules[0].lessons[0].state,
+        LearningCurriculumLessonState::Completed
+    );
+
+    let reset_op = op_id();
+    let request = ResetLearningLessonPreparationRequestDto {
+        operation_id: reset_op.clone(),
+        program_id: program.summary.id.clone(),
+        lesson_ids: vec![m0[0].clone()],
+        expected_revision: program.summary.revision,
+    };
+    let res = repo.reset_lesson_preparation(&request).await?;
+    assert_eq!(res.program_revision, program.summary.revision + 1);
+    assert_eq!(res.reset_lesson_ids, vec![m0[0].clone()]);
+
+    let (prep, state, completed): (String, String, i64) = sqlx::query_as(
+        "SELECT preparation, curriculum_state, completed FROM learning_lessons WHERE id=?",
+    )
+    .bind(&m0[0])
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(prep, "outline");
+    assert_eq!(state, "outline");
+    assert_eq!(completed, 0);
+
+    let after_plan = repo.plan(&program.summary.id).await?;
+    assert_eq!(after_plan.program_revision, res.program_revision);
+    let accepted = after_plan.accepted_revision.unwrap();
+    curriculum::validate_curriculum(&accepted)?;
+    assert_eq!(
+        accepted.modules[0].lessons[0].state,
+        LearningCurriculumLessonState::Outline
+    );
+
+    // Replaying with same operation_id returns identical result even after revision bumped.
+    let replayed = repo.reset_lesson_preparation(&request).await?;
+    assert_eq!(replayed.program_revision, res.program_revision);
+    assert_eq!(replayed.reset_lesson_ids, res.reset_lesson_ids);
+
+    // Reusing the same operation_id with different lesson_ids fails.
+    let conflict = repo
+        .reset_lesson_preparation(&ResetLearningLessonPreparationRequestDto {
+            lesson_ids: vec![m0[1].clone()],
+            ..request
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(conflict, AppError::InvalidInput(_)));
+    Ok(())
+}
+
+#[tokio::test]
+async fn reset_strips_only_selected_lesson_from_legacy_multi_lesson_job() -> Result<()> {
+    let pool = pool().await?;
+    let database = Database::new(pool.clone());
+    let program = active_program(&database).await?;
+    let m0 = lesson_ids(&program, 0);
+    let store = jobs(&database);
+    let repo = LearningCurriculumRepository::new(database.clone());
+
+    let admitted = store
+        .submit(&lattice_core::shared::runtime::jobs::NewJob {
+            kind: LESSON_PREPARATION.into(),
+            subject_id: Some(program.summary.id.clone()),
+            operation_id: op_id(),
+            payload_hash: "a".repeat(64),
+            requested: serde_json::json!({"lessonIds": [m0[0], m0[1]]}),
+            progress_total: 2,
+            message: "Running".into(),
+        })
+        .await?;
+    sqlx::query(
+        "INSERT INTO learning_jobs(job_id,program_id,base_revision_number,content_revision) VALUES(?,?,?,1)",
+    )
+    .bind(&admitted.id)
+    .bind(&program.summary.id)
+    .bind(program.summary.revision)
+    .execute(&pool)
+    .await?;
+    assert!(store.claim(&admitted.id).await?.is_some());
+    store
+        .put_checkpoint(
+            &admitted.id,
+            &lesson_checkpoint_key(&m0[0], "step"),
+            &serde_json::json!({"n": 1}),
+        )
+        .await?;
+    store
+        .put_checkpoint(
+            &admitted.id,
+            &lesson_checkpoint_key(&m0[1], "step"),
+            &serde_json::json!({"n": 2}),
+        )
+        .await?;
+    store
+        .update_staged(&admitted.id, |_| {
+            Ok(serde_json::json!({
+                "drafts": {
+                    m0[0].clone(): {"input_hash": "h0", "candidate": "c0"},
+                    m0[1].clone(): {"input_hash": "h1", "candidate": "c1"}
+                }
+            }))
+        })
+        .await?;
+
+    let res = repo
+        .reset_lesson_preparation(&ResetLearningLessonPreparationRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            lesson_ids: vec![m0[0].clone()],
+            expected_revision: program.summary.revision,
+        })
+        .await?;
+    assert!(res.cancelled_job_ids.is_empty());
+
+    let after = store.get(&admitted.id).await?;
+    assert_eq!(after.status, JobStatus::Running);
+    assert!(store
+        .checkpoint(&admitted.id, &lesson_checkpoint_key(&m0[0], "step"))
+        .await?
+        .is_none());
+    assert!(store
+        .checkpoint(&admitted.id, &lesson_checkpoint_key(&m0[1], "step"))
+        .await?
+        .is_some());
+    let drafts = after.staged_result.unwrap();
+    assert!(drafts["drafts"].get(&m0[0]).is_none());
+    assert!(drafts["drafts"].get(&m0[1]).is_some());
+    Ok(())
+}
+
+#[tokio::test]
+async fn cancelling_eleven_jobs_concurrently_under_heavy_write_load_succeeds_promptly() -> Result<()>
+{
+    use lattice_core::shared::runtime::jobs::{
+        JobContext, JobHandler, JobKindConfig, JobOutcome, JobRuntime, JobStatus, RecoveryPolicy,
+    };
+    use std::sync::Arc;
+    use tokio::sync::{mpsc, Semaphore};
+
+    struct BlockingHandler {
+        started: mpsc::UnboundedSender<String>,
+        release: Arc<Semaphore>,
+    }
+
+    #[async_trait::async_trait]
+    impl JobHandler for BlockingHandler {
+        async fn run(&self, context: &JobContext) -> Result<JobOutcome> {
+            self.started.send(context.id().to_string()).unwrap();
+            match context.until_cancelled(self.release.acquire()).await {
+                Some(permit) => {
+                    permit.unwrap().forget();
+                    Ok(JobOutcome::Completed {
+                        result_ref: "ok".into(),
+                        message: "Done".into(),
+                    })
+                }
+                None => Ok(JobOutcome::Stopped),
+            }
+        }
+    }
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("pause-storm.sqlite");
+    lattice_core::shared::testing::sqlite::write_migrated(&path).await?;
+    let base =
+        crate::test_support::file_options(path).busy_timeout(std::time::Duration::from_secs(2));
+    let writer_pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(base.clone())
+        .await?;
+    let reader_pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(2)
+        .acquire_timeout(std::time::Duration::from_secs(5))
+        .connect_with(base.pragma("query_only", "ON"))
+        .await?;
+    let database = Database::with_writer_pool(reader_pool, writer_pool);
+    let mut program = active_program(&database).await?;
+    let repo = LearningCurriculumRepository::new(database.clone());
+    // Ensure we have at least 11 outline lessons in one program.
+    let plan = repo.plan(&program.summary.id).await?;
+    let module_id = plan.accepted_revision.unwrap().modules[0].id.clone();
+    let existing_count = lesson_ids(&program, 0).len();
+    if existing_count < 11 {
+        let ops: Vec<_> = (existing_count..11)
+            .map(|i| LearningCurriculumOperation::AddLesson {
+                module_id: module_id.clone(),
+                after_lesson_id: None,
+                lesson: LearningCurriculumLesson {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    title: format!("Pause lesson {i}"),
+                    objective: "Verify pause concurrency".into(),
+                    estimated_minutes: 10,
+                    state: LearningCurriculumLessonState::Outline,
+                    assessment_started: false,
+                    replacement_lesson_id: None,
+                },
+            })
+            .collect();
+        let preview = repo
+            .preview(&PreviewLearningCurriculumRevisionRequestDto {
+                operation_id: op_id(),
+                program_id: program.summary.id.clone(),
+                expected_revision: program.summary.revision,
+                reason: "Add lessons for pause stress test".into(),
+                operations: ops,
+            })
+            .await?;
+        let draft = preview.draft_revision.unwrap();
+        let _ = repo
+            .accept_revision(&LearningCurriculumRevisionActionRequestDto {
+                operation_id: op_id(),
+                program_id: program.summary.id.clone(),
+                revision_id: draft.id,
+                expected_revision: program.summary.revision,
+            })
+            .await?;
+        program = LearningRepository::new(database.clone())
+            .get(&program.summary.id)
+            .await?;
+    }
+    let target_lessons: Vec<String> = lesson_ids(&program, 0).into_iter().take(11).collect();
+    assert_eq!(target_lessons.len(), 11);
+
+    let (started_tx, mut started_rx) = mpsc::unbounded_channel();
+    let release = Arc::new(Semaphore::new(0));
+    let runtime =
+        JobRuntime::with_poll_interval(database.clone(), std::time::Duration::from_millis(25));
+    runtime
+        .register(
+            LESSON_PREPARATION,
+            Arc::new(BlockingHandler {
+                started: started_tx,
+                release: Arc::clone(&release),
+            }),
+            JobKindConfig::new(RecoveryPolicy::Requeue).concurrency(12),
+        )
+        .await?;
+
+    let mut job_ids = Vec::new();
+    for lesson_id in &target_lessons {
+        let job = repo
+            .start_lesson_job(&StartLearningGenerationJobRequestDto {
+                operation_id: op_id(),
+                program_id: program.summary.id.clone(),
+                expected_revision: program.summary.revision,
+                kind: LearningGenerationJobKind::LessonPreparation,
+                request_json: serde_json::json!({"lessonIds": [lesson_id]}).to_string(),
+                progress_total: 1,
+            })
+            .await?;
+        runtime.submitted(&job.id).await;
+        job_ids.push(job.id);
+    }
+    for _ in 0..11 {
+        tokio::time::timeout(std::time::Duration::from_secs(2), started_rx.recv())
+            .await
+            .expect("worker failed to start")
+            .unwrap();
+    }
+
+    // Save a checkpoint + large staged_result_json on each running job before pausing.
+    let large_staged = "s".repeat(128 * 1024);
+    for (lesson_id, job_id) in target_lessons.iter().zip(&job_ids) {
+        repo.save_lesson_checkpoint(
+            job_id,
+            lesson_id,
+            "draft",
+            serde_json::json!({"step": 1, "lesson": lesson_id}),
+        )
+        .await?;
+        assert!(
+            jobs(&database)
+                .update_staged(job_id, {
+                    let large_staged = large_staged.clone();
+                    move |_| Ok(serde_json::json!({"draft": large_staged}))
+                })
+                .await?
+        );
+    }
+
+    // Hold the writer lock briefly while queuing 12 background standard writes AND UI list polls.
+    let active_holder = database.begin_write().await.unwrap();
+    let mut bg_writers = Vec::new();
+    for i in 0..12 {
+        let repo = LearningCurriculumRepository::new(database.clone());
+        let job_id = job_ids[i % job_ids.len()].clone();
+        let lesson_id = target_lessons[i % target_lessons.len()].clone();
+        bg_writers.push(tokio::spawn(async move {
+            let _ = repo
+                .save_lesson_checkpoint(&job_id, &lesson_id, "late", serde_json::json!({"n": i}))
+                .await;
+        }));
+        tokio::task::yield_now().await;
+    }
+    let readers: Vec<_> = (0..6)
+        .map(|_| {
+            let repo = LearningCurriculumRepository::new(database.clone());
+            let pid = program.summary.id.clone();
+            tokio::spawn(async move { repo.jobs(&pid).await })
+        })
+        .collect();
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+    // Mimic 11 concurrent Control Center cancel_learning_generation_job calls.
+    let cancels: Vec<_> = job_ids
+        .iter()
+        .map(|job_id| {
+            let repo = LearningCurriculumRepository::new(database.clone());
+            let runtime = Arc::clone(&runtime);
+            let req = LearningGenerationJobActionRequestDto {
+                operation_id: op_id(),
+                program_id: program.summary.id.clone(),
+                job_id: job_id.clone(),
+                expected_revision: program.summary.revision,
+            };
+            tokio::spawn(async move {
+                runtime.begin_cancel(&req.job_id);
+                match repo.cancel_job(&req).await {
+                    Ok(job) => {
+                        runtime.finish_cancel(&job.id).await;
+                        Ok(job)
+                    }
+                    Err(e) => {
+                        runtime.abort_cancel(&req.job_id);
+                        Err(e)
+                    }
+                }
+            })
+        })
+        .collect();
+
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    active_holder.commit().await.unwrap();
+
+    for handle in cancels {
+        let cancelled = tokio::time::timeout(std::time::Duration::from_secs(3), handle)
+            .await
+            .expect("cancel_job stalled under write load")
+            .unwrap()?;
+        assert_eq!(cancelled.status, LearningGenerationJobStatus::Cancelled);
+    }
+    for reader in readers {
+        let listed = reader.await.unwrap()?;
+        assert_eq!(listed.len(), 11);
+    }
+    for bg in bg_writers {
+        bg.await.unwrap();
+    }
+
+    // Verify zero zombie jobs and preserved pre-cancel checkpoints.
+    tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+    for (lesson_id, job_id) in target_lessons.iter().zip(&job_ids) {
+        let final_job = repo.job(job_id).await?;
+        assert_eq!(final_job.status, LearningGenerationJobStatus::Cancelled);
+        assert_eq!(
+            jobs(&database).get_summary(job_id).await?.status,
+            JobStatus::Cancelled
+        );
+        let saved = repo.lesson_checkpoint(job_id, lesson_id, "draft").await?;
+        assert_eq!(
+            saved,
+            Some(serde_json::json!({"step": 1, "lesson": lesson_id}))
+        );
+    }
+
+    // Also cover batch cancel_jobs on a fresh pending batch in one urgent transaction.
+    let mut batch_ids = Vec::new();
+    for lesson_id in target_lessons.iter().take(3) {
+        let retried = repo
+            .retry_job(&LearningGenerationJobActionRequestDto {
+                operation_id: op_id(),
+                program_id: program.summary.id.clone(),
+                job_id: job_ids[target_lessons
+                    .iter()
+                    .position(|id| id == lesson_id)
+                    .unwrap()]
+                .clone(),
+                expected_revision: program.summary.revision,
+            })
+            .await?;
+        batch_ids.push(retried.id);
+    }
+    let batch_reqs: Vec<_> = batch_ids
+        .iter()
+        .map(|id| LearningGenerationJobActionRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            job_id: id.clone(),
+            expected_revision: program.summary.revision,
+        })
+        .collect();
+    let batch_cancelled = repo.cancel_jobs(&batch_reqs).await?;
+    assert_eq!(batch_cancelled.len(), 3);
+    assert!(batch_cancelled
+        .iter()
+        .all(|j| j.status == LearningGenerationJobStatus::Cancelled));
+    Ok(())
+}
+
+#[tokio::test]
+async fn prioritize_job_lowers_rank_below_min_and_is_idempotent() -> Result<()> {
+    let pool = pool().await?;
+    let database = Database::new(pool.clone());
+    let program = three_module_program(&database).await?;
+    let m0 = lesson_ids(&program, 0);
+    let m1 = lesson_ids(&program, 1);
+    let repo = LearningCurriculumRepository::new(database.clone());
+
+    let queued = repo
+        .start_selected_lesson_jobs(&StartLearningLessonsJobsRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            lesson_ids: vec![m0[0].clone(), m0[1].clone(), m1[0].clone()],
+            expected_revision: program.summary.revision,
+        })
+        .await?;
+    assert_eq!(queued[0].rank, Some(0));
+    assert_eq!(queued[1].rank, Some(1));
+    assert_eq!(queued[2].rank, Some(2));
+
+    let op = op_id();
+    let prioritized = repo
+        .prioritize_job(&LearningGenerationJobActionRequestDto {
+            operation_id: op.clone(),
+            program_id: program.summary.id.clone(),
+            job_id: queued[2].id.clone(),
+            expected_revision: program.summary.revision,
+        })
+        .await?;
+    assert_eq!(prioritized.rank, Some(-1));
+
+    // Replaying with same operation_id is idempotent.
+    let replayed = repo
+        .prioritize_job(&LearningGenerationJobActionRequestDto {
+            operation_id: op,
+            program_id: program.summary.id.clone(),
+            job_id: queued[2].id.clone(),
+            expected_revision: program.summary.revision,
+        })
+        .await?;
+    assert_eq!(replayed.rank, Some(-1));
+
+    // Calling again with a new operation_id when already strictly minimum does not drift rank.
+    let already_first = repo
+        .prioritize_job(&LearningGenerationJobActionRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            job_id: queued[2].id.clone(),
+            expected_revision: program.summary.revision,
+        })
+        .await?;
+    assert_eq!(already_first.rank, Some(-1));
+
+    // Prioritizing a running job is an idempotent no-op.
+    assert!(jobs(&database).claim(&queued[0].id).await?.is_some());
+    let running_noop = repo
+        .prioritize_job(&LearningGenerationJobActionRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            job_id: queued[0].id.clone(),
+            expected_revision: program.summary.revision,
+        })
+        .await?;
+    assert_eq!(running_noop.status, LearningGenerationJobStatus::Running);
+    assert_eq!(running_noop.rank, Some(0));
+
+    // Prioritizing a cancelled job fails.
+    repo.cancel_job(&LearningGenerationJobActionRequestDto {
+        operation_id: op_id(),
+        program_id: program.summary.id.clone(),
+        job_id: queued[1].id.clone(),
+        expected_revision: program.summary.revision,
+    })
+    .await?;
+    let cancelled_err = repo
+        .prioritize_job(&LearningGenerationJobActionRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            job_id: queued[1].id.clone(),
+            expected_revision: program.summary.revision,
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(cancelled_err, AppError::InvalidState(_)));
+    Ok(())
+}
+
+#[tokio::test]
+async fn preflight_cancel_rejects_invalid_requests_and_cancel_jobs_skips_terminal_siblings(
+) -> Result<()> {
+    use crate::planning::curriculum_repository::CancelPreflight;
+    use lattice_core::shared::runtime::jobs::{
+        JobContext, JobHandler, JobKindConfig, JobOutcome, JobRuntime, JobStatus, RecoveryPolicy,
+    };
+    use std::sync::Arc;
+    use tokio::sync::{mpsc, Notify};
+
+    struct SelectableHandler {
+        started: mpsc::UnboundedSender<String>,
+        finish_id: String,
+        hold: Arc<Notify>,
+    }
+
+    #[async_trait::async_trait]
+    impl JobHandler for SelectableHandler {
+        async fn run(&self, context: &JobContext) -> Result<JobOutcome> {
+            if context.id() == self.finish_id {
+                self.started.send(context.id().to_string()).unwrap();
+                return Ok(JobOutcome::Completed {
+                    result_ref: "ok".into(),
+                    message: "Done".into(),
+                });
+            }
+            self.started.send(context.id().to_string()).unwrap();
+            match context.until_cancelled(self.hold.notified()).await {
+                Some(()) => Ok(JobOutcome::Completed {
+                    result_ref: "ok".into(),
+                    message: "Done".into(),
+                }),
+                None => Ok(JobOutcome::Stopped),
+            }
+        }
+    }
+
+    let pool = pool().await?;
+    let database = Database::new(pool.clone());
+    let mut program = active_program(&database).await?;
+    let repo = LearningCurriculumRepository::new(database.clone());
+    let plan = repo.plan(&program.summary.id).await?;
+    let module_id = plan.accepted_revision.unwrap().modules[0].id.clone();
+    let existing = lesson_ids(&program, 0).len();
+    if existing < 3 {
+        let ops: Vec<_> = (existing..3)
+            .map(|i| LearningCurriculumOperation::AddLesson {
+                module_id: module_id.clone(),
+                after_lesson_id: None,
+                lesson: LearningCurriculumLesson {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    title: format!("Batch lesson {i}"),
+                    objective: "Test preflight and batch skip".into(),
+                    estimated_minutes: 10,
+                    state: LearningCurriculumLessonState::Outline,
+                    assessment_started: false,
+                    replacement_lesson_id: None,
+                },
+            })
+            .collect();
+        let preview = repo
+            .preview(&PreviewLearningCurriculumRevisionRequestDto {
+                operation_id: op_id(),
+                program_id: program.summary.id.clone(),
+                expected_revision: program.summary.revision,
+                reason: "Ensure 3 lessons".into(),
+                operations: ops,
+            })
+            .await?;
+        let _ = repo
+            .accept_revision(&LearningCurriculumRevisionActionRequestDto {
+                operation_id: op_id(),
+                program_id: program.summary.id.clone(),
+                revision_id: preview.draft_revision.unwrap().id,
+                expected_revision: program.summary.revision,
+            })
+            .await?;
+        program = LearningRepository::new(database.clone())
+            .get(&program.summary.id)
+            .await?;
+    }
+    let lessons: Vec<String> = lesson_ids(&program, 0).into_iter().take(3).collect();
+    let mut job_ids = Vec::new();
+    for lesson_id in &lessons {
+        let job = repo
+            .start_lesson_job(&StartLearningGenerationJobRequestDto {
+                operation_id: op_id(),
+                program_id: program.summary.id.clone(),
+                expected_revision: program.summary.revision,
+                kind: LearningGenerationJobKind::LessonPreparation,
+                request_json: serde_json::json!({"lessonIds": [lesson_id]}).to_string(),
+                progress_total: 1,
+            })
+            .await?;
+        job_ids.push(job.id);
+    }
+
+    let (started_tx, mut started_rx) = mpsc::unbounded_channel();
+    let hold = Arc::new(Notify::new());
+    let runtime =
+        JobRuntime::with_poll_interval(database.clone(), std::time::Duration::from_millis(25));
+    runtime
+        .register(
+            LESSON_PREPARATION,
+            Arc::new(SelectableHandler {
+                started: started_tx,
+                finish_id: job_ids[1].clone(),
+                hold: Arc::clone(&hold),
+            }),
+            JobKindConfig::new(RecoveryPolicy::Interrupt).concurrency(4),
+        )
+        .await?;
+    for id in &job_ids {
+        runtime.submitted(id).await;
+    }
+    for _ in 0..3 {
+        started_rx.recv().await.unwrap();
+    }
+    // Wait until job_ids[1] transitions to Completed concurrently.
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while jobs(&database).get_summary(&job_ids[1]).await?.status != JobStatus::Completed {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        Ok::<_, AppError>(())
+    })
+    .await
+    .unwrap()?;
+
+    // Preflight rejects bad op_id, stale revision, wrong program, and completed job.
+    assert!(repo
+        .preflight_cancel(&LearningGenerationJobActionRequestDto {
+            operation_id: "bad".into(),
+            program_id: program.summary.id.clone(),
+            job_id: job_ids[0].clone(),
+            expected_revision: program.summary.revision,
+        })
+        .await
+        .is_err());
+    assert!(repo
+        .preflight_cancel(&LearningGenerationJobActionRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            job_id: job_ids[0].clone(),
+            expected_revision: program.summary.revision + 5,
+        })
+        .await
+        .is_err());
+    assert!(repo
+        .preflight_cancel(&LearningGenerationJobActionRequestDto {
+            operation_id: op_id(),
+            program_id: uuid::Uuid::new_v4().to_string(),
+            job_id: job_ids[0].clone(),
+            expected_revision: program.summary.revision,
+        })
+        .await
+        .is_err());
+    assert!(repo
+        .preflight_cancel(&LearningGenerationJobActionRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            job_id: job_ids[1].clone(),
+            expected_revision: program.summary.revision,
+        })
+        .await
+        .is_err());
+    assert!(matches!(
+        repo.preflight_cancel(&LearningGenerationJobActionRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            job_id: job_ids[0].clone(),
+            expected_revision: program.summary.revision,
+        })
+        .await?,
+        CancelPreflight::Proceed
+    ));
+
+    // Batch cancel with live active tokens skips the already-Completed sibling
+    // rather than rolling back cancellation of job_ids[0] and job_ids[2].
+    let active_ids = [job_ids[0].clone(), job_ids[2].clone()];
+    runtime.begin_cancel_many(&active_ids);
+    let reqs: Vec<_> = job_ids
+        .iter()
+        .map(|id| LearningGenerationJobActionRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            job_id: id.clone(),
+            expected_revision: program.summary.revision,
+        })
+        .collect();
+    let results = repo.cancel_jobs(&reqs).await?;
+    runtime.finish_cancel_many(&active_ids).await;
+
+    assert_eq!(results.len(), 3);
+    assert_eq!(results[0].status, LearningGenerationJobStatus::Cancelled);
+    assert_eq!(results[1].status, LearningGenerationJobStatus::Completed);
+    assert_eq!(results[2].status, LearningGenerationJobStatus::Cancelled);
+    assert!(matches!(
+        repo.preflight_cancel(&reqs[0]).await?,
+        CancelPreflight::Replayed(job) if job.status == LearningGenerationJobStatus::Cancelled
+    ));
     Ok(())
 }

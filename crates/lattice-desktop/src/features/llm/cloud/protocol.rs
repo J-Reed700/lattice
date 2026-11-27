@@ -60,6 +60,16 @@ pub(super) trait EventDecoder: Send {
     /// Whether the model has begun its answer: an output of any kind has
     /// started, shown or not (thinking it does not stream, text, a tool call).
     fn answer_begun(&self) -> bool;
+    /// Number of token-bearing output deltas decoded so far (text, reasoning,
+    /// or non-empty tool call name/arguments).
+    fn token_events(&self) -> usize;
+    /// Number of distinct tool calls accumulated in this round so far.
+    fn tool_call_count(&self) -> usize;
+    /// Number of distinct content blocks accumulated so far, for protocols
+    /// that index blocks separately from tool calls.
+    fn block_count(&self) -> usize {
+        0
+    }
     /// The completed response in the provider's own shape, once the stream
     /// has ended.
     fn finish(self: Box<Self>) -> Result<Option<Value>>;

@@ -75,13 +75,10 @@ impl FileOpsModule {
         let library = Arc::new(SqliteFileLibrary::new(database.clone()));
         // Previews of PDFs and office files parse under the same worker bound
         // as indexing, which builds its extractor from the same workers.
+        // ReadFileContentUseCase checks available-memory admission before calling it.
         let preview_extractor = Arc::new(
-            ContentExtractionAdapter::new().with_extractor(
-                ContentExtractor::with_max_size(
-                    crate::features::file::use_cases::read_content::MAX_FILE_SIZE_BYTES,
-                )
-                .with_workers(extraction_workers),
-            ),
+            ContentExtractionAdapter::new()
+                .with_extractor(ContentExtractor::new().with_workers(extraction_workers)),
         );
         let file = crate::features::file::di::build(
             document_repo.clone(),

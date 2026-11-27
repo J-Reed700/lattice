@@ -8,10 +8,10 @@ import type { LearningAssessmentItemResultDto } from '@/lib/bindings';
 export type PartState = 'right' | 'wrong' | 'missed' | 'unknown';
 
 const partStyle: Record<PartState, { icon: ReactNode; className: string }> = {
-  right: { icon: <Check size={13} aria-hidden="true" />, className: 'bg-emerald-500/12 text-emerald-800 dark:text-emerald-200' },
-  wrong: { icon: <X size={13} aria-hidden="true" />, className: 'bg-rose-500/12 text-rose-800 dark:text-rose-200' },
-  missed: { icon: <CircleDashed size={13} aria-hidden="true" />, className: 'bg-amber-500/12 text-amber-800 dark:text-amber-200' },
-  unknown: { icon: null, className: 'bg-background text-text-secondary' },
+  right: { icon: <Check size={13} aria-hidden="true" />, className: 'bg-success-muted text-success-fg' },
+  wrong: { icon: <X size={13} aria-hidden="true" />, className: 'bg-danger-muted text-danger-fg' },
+  missed: { icon: <CircleDashed size={13} aria-hidden="true" />, className: 'bg-warning-muted text-warning-fg' },
+  unknown: { icon: null, className: 'bg-surface-sunken text-text-secondary' },
 };
 
 /** A small verdict chip for one part of an answer: an icon and words, never colour alone. */
@@ -23,7 +23,7 @@ export function PartMark({ state, children }: { state: PartState; children: Reac
 /** The item's explanation, rendered so maths and emphasis survive. */
 export function KeyExplanation({ text, label = 'Why' }: { text: string; label?: string }) {
   if (!text.trim()) return null;
-  return <div className="mt-4 rounded-xl bg-background/70 px-4 py-3">
+  return <div className="mt-4 rounded-xl bg-bg/70 px-4 py-3">
     <div className="text-[10px] font-semibold uppercase tracking-[.15em] text-text-muted">{label}</div>
     <div className="mt-1 text-sm leading-6 text-text-secondary"><TiptapViewer content={text} /></div>
   </div>;
@@ -36,7 +36,7 @@ export function ReasonLine({ children }: { children: ReactNode }) {
 
 /** Practical tasks never appear in a quiz; if one does, it says where it belongs. */
 export function ArtifactNotice() {
-  return <p className="rounded-xl bg-background px-4 py-3 text-sm text-text-secondary">This task is answered in Practice › Code &amp; simulations.</p>;
+  return <p className="rounded-xl bg-bg px-4 py-3 text-sm text-text-secondary">This task is answered in Practice › Code &amp; simulations.</p>;
 }
 
 /** The grader's verdict on one part (blank, option, pair, position), when the item was graded. */

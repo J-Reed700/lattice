@@ -56,7 +56,7 @@ function RemovableGroup({ programId, heading, note, noun, items }: {
       <p className="mt-1 max-w-3xl text-xs leading-5 text-text-secondary">{note}</p>
       <ul className="mt-3 max-h-64 space-y-1.5 overflow-auto">
         {items.map((item) => (
-          <li key={item.sourceId} className="min-w-0 rounded-lg bg-background px-3 py-2">
+          <li key={item.sourceId} className="min-w-0 rounded-lg bg-bg px-3 py-2">
             <span className="block truncate text-xs font-medium text-text-primary">{item.title}</span>
             {item.url && <span className="block truncate text-[10px] text-text-muted">{item.url}</span>}
             {item.reason && <span className="mt-1 inline-block rounded-full border border-border px-1.5 py-px text-[10px] text-text-secondary">{item.reason}</span>}

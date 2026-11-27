@@ -110,16 +110,7 @@ fn without_marker(sentence: &str) -> &str {
 
 /// `text` without its code fences.
 fn prose(text: &str) -> String {
-    let fences = code_fences(text);
-    let mut prose = String::new();
-    let mut offset = 0;
-    for line in text.split_inclusive('\n') {
-        if !fences.iter().any(|fence| fence.whole().contains(&offset)) {
-            prose.push_str(line);
-        }
-        offset += line.len();
-    }
-    prose
+    crate::lessons::spec_checks::prose_without_fences(text)
 }
 
 /// The sentences of `text` that teach: its prose outside code fences, without
@@ -158,9 +149,9 @@ fn uncited_quotations(
     site: FindingSite,
     findings: &mut Vec<ReviewFinding>,
 ) {
-    let Some(path) = site.pointer() else {
+    if site.pointer().is_none() {
         return;
-    };
+    }
     let label = site.note_label();
     let cited: Vec<(&str, &str)> = item
         .get("citations")
@@ -190,7 +181,7 @@ fn uncited_quotations(
         let (summary, note, quote) = if quotes.is_empty() {
             let summary =
                 format!("No source is cited for this sentence: \u{201c}{sentence}\u{201d}");
-            let note = format!("{label} states a specific in \"{sentence}\" without citing it. Cite it when a supplied excerpt holds the wording: add an entry to the citations of {path} with the sentence, the excerpt's sourceIndex and an exact quote of the excerpt that contains the wording. When no supplied excerpt holds it, or the words are not quoted from a source (a misconception, a learner's thought or an example remark), remove the quotation marks and write it as the lesson's own sentence.");
+            let note = format!("{label} states a specific in \"{sentence}\" without citing it. Cite it when a supplied excerpt holds the wording by citing that sentence against the excerpt sentences that contain the wording (in cite or recite). When no supplied excerpt holds it, or the words are not quoted from a source (a misconception, a learner's thought or an example remark), remove the quotation marks and write it as the lesson's own sentence.");
             (summary, note, "")
         } else {
             let (missing, quote) = quotes
@@ -205,7 +196,7 @@ fn uncited_quotations(
                 "The quotation cited for this sentence does not contain {}: \u{201c}{sentence}\u{201d}",
                 join_plain(&missing)
             );
-            let note = format!("{label}: the quote cited for \"{sentence}\" does not contain {}. Cite a quote of a supplied excerpt that does, in an entry of the citations of {path}, or remove the quotation marks and write it as the lesson's own sentence when no excerpt holds the wording.", missing.join(", "));
+            let note = format!("{label}: the quote cited for \"{sentence}\" does not contain {}. Cite the supplied excerpt sentences that contain it (in cite or recite), or remove the quotation marks and write it as the lesson's own sentence when no excerpt holds the wording.", missing.join(", "));
             (summary, note, quote)
         };
         findings.push(citation(
@@ -239,9 +230,9 @@ fn scaffolding(
     site: FindingSite,
     findings: &mut Vec<ReviewFinding>,
 ) {
-    let Some(path) = site.pointer() else {
+    if site.pointer().is_none() {
         return;
-    };
+    }
     let label = site.note_label();
     let mut texts: Vec<&str> = Vec::new();
     for field in fields {
@@ -261,7 +252,7 @@ fn scaffolding(
             let summary = format!(
                 "This line is a citation written into the lesson's text: \u{201c}{line}\u{201d}"
             );
-            let note = format!("{label} has a citation written into its text: \"{line}\". Remove that line from the text and cite the sentence it supports in an entry of the citations of {path}.");
+            let note = format!("{label} has a citation written into its text: \"{line}\". Remove that line from the text and cite the sentence it supports against the supplied excerpt sentences instead.");
             findings.push(citation(
                 Rule::CitationLabel,
                 site,
@@ -280,7 +271,7 @@ fn scaffolding(
             let summary = format!(
                 "This sentence names a source by its number, which learners never see: \u{201c}{sentence}\u{201d}"
             );
-            let note = format!("{label} names a source by its number in \"{sentence}\". Learners never see source numbers: state what the source says as the lesson's own sentence without naming a source, and cite that sentence in the citations list of {path}.");
+            let note = format!("{label} names a source by its number in \"{sentence}\". Learners never see source numbers: state what the source says as the lesson's own sentence without naming a source, and cite that sentence against the supplied excerpt sentences instead.");
             findings.push(citation(
                 Rule::SourceNumber,
                 site,
@@ -360,7 +351,8 @@ pub(crate) fn lesson_rules(
     let mut seen = HashSet::new();
     for (index, block) in blocks.iter().enumerate() {
         let mut reported = HashSet::new();
-        for sentence in repeats::comparable(text(block, "body")) {
+        let body = text(block, "body");
+        for sentence in repeats::comparable(body) {
             let key = repeats::key(&sentence);
             if !seen.insert(key.clone()) && reported.insert(key) {
                 let site = FindingSite::Section(index);
@@ -374,6 +366,52 @@ pub(crate) fn lesson_rules(
                     )
                     .with_summary(format!("{} repeats a sentence the lesson already has: \u{201c}{sentence}\u{201d}", site.label()))
                     .with_passage(&sentence),
+                );
+            }
+        }
+        for repeat in repeats::consecutive_repeats(body) {
+            let key = repeats::key(&repeat.second);
+            if reported.insert(key.clone()) {
+                seen.insert(key);
+                let site = FindingSite::Section(index);
+                let (summary, note) = if repeat.prefix_stutter {
+                    (
+                        format!(
+                            "{} opens a sentence by repeating the previous sentence: \u{201c}{}\u{201d}",
+                            site.label(),
+                            repeat.second
+                        ),
+                        format!(
+                            "{} starts \"{}\" by repeating the previous sentence \"{}\"; remove the repeated opening or merge them cleanly.",
+                            site.note_label(),
+                            repeat.second,
+                            repeat.first
+                        ),
+                    )
+                } else {
+                    (
+                        format!(
+                            "{} repeats a sentence right after itself: \u{201c}{}\u{201d}",
+                            site.label(),
+                            repeat.second
+                        ),
+                        format!(
+                            "{} says \"{}\" twice in a row; say it once and remove the duplicate.",
+                            site.note_label(),
+                            repeat.second
+                        ),
+                    )
+                };
+                findings.push(
+                    ReviewFinding::rule_about(
+                        Rule::SentenceRepeated,
+                        FindingKind::Teaching,
+                        site,
+                        &repeat.second,
+                        note,
+                    )
+                    .with_summary(summary)
+                    .with_passage(&repeat.second),
                 );
             }
         }
@@ -538,6 +576,88 @@ fn choice_findings(
         ));
     }
     found
+}
+
+/// Checks lesson section titles and bodies for ungrounded proprietary claims
+/// about external companies named in the learner's goal (`Finding D.5`).
+pub(crate) fn company_framing_findings(lesson: &Value, companies: &[String]) -> Vec<ReviewFinding> {
+    if companies.is_empty() {
+        return Vec::new();
+    }
+    let Some(blocks) = lesson.get("blocks").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut findings = Vec::new();
+    for (index, block) in blocks.iter().enumerate() {
+        let site = FindingSite::Section(index);
+        for field in ["title", "body"] {
+            let value = text(block, field);
+            for (sentence, fault) in
+                crate::lessons::company_framing::company_framing_fault_entries(value, companies)
+            {
+                findings.push(
+                    ReviewFinding::rule_about(
+                        Rule::CompanyFraming,
+                        FindingKind::Teaching,
+                        site,
+                        &sentence,
+                        format!("{} ({}): {fault}", site.note_label(), field),
+                    )
+                    .with_summary(format!(
+                        "{} presents unverified company internals as facts instead of a proposed scenario.",
+                        site.label()
+                    ))
+                    .with_passage(&sentence),
+                );
+            }
+        }
+    }
+    findings
+}
+
+/// Checks lesson blocks for internal specification/code consistency defects
+/// (invalid SMART `.w`/`.rw` permissions, undeclared TypeScript injections,
+/// `refreshToken` naming on `client_credentials`, and expiry buffer drift).
+pub(crate) fn spec_consistency_findings(
+    lesson: &Value,
+    sources_text: &[&str],
+) -> Vec<ReviewFinding> {
+    let Some(blocks) = lesson.get("blocks").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut findings = Vec::new();
+    for fault in crate::lessons::spec_checks::block_consistency_fault_entries(lesson, sources_text)
+    {
+        if let Some(block) = blocks.get(fault.block_index) {
+            let body = text(block, "body");
+            if text(block, "kind") == "check" && fault.message.contains("invalid SMART FHIR scope")
+            {
+                if let Some((_, reveal)) = split_check(body) {
+                    if crate::lessons::spec_checks::smart_scope_faults(reveal, sources_text)
+                        .is_empty()
+                    {
+                        continue;
+                    }
+                }
+            }
+            let site = FindingSite::Section(fault.block_index);
+            findings.push(
+                ReviewFinding::rule_about(
+                    Rule::SpecConsistency,
+                    FindingKind::Teaching,
+                    site,
+                    &fault.subject,
+                    format!("{}: {}", site.note_label(), fault.message),
+                )
+                .with_summary(format!(
+                    "{} has a specification or code consistency issue.",
+                    site.label()
+                ))
+                .with_passage(&fault.passage),
+            );
+        }
+    }
+    findings
 }
 
 #[cfg(test)]

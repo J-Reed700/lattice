@@ -101,7 +101,7 @@ describe('IndexingTab', () => {
 
   it('displays current batch size value from backend', async () => {
     renderTab();
-    expect(await screen.findByLabelText('Batch size')).toHaveValue(32);
+    expect(await screen.findByLabelText('Batch size')).toHaveValue('32');
   });
 
   describe('Watch Folders', () => {

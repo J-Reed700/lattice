@@ -818,12 +818,17 @@ async fn prompt_snapshot_lesson_writer() -> Result<()> {
     )
     .await?;
 
-    // The slot-affinity key is the course's id, which is minted at random.
+    // Two-step authoring calls stamp a per-call cache_key (distinct from the
+    // course id) so Step 1 and Step 2 share a slot without colliding across
+    // concurrent calls.
     let mut sent = llm.sent_for::<LessonWriter>();
     for request in &mut sent {
-        assert_eq!(
-            request.cache_key.as_deref(),
-            Some(program.summary.id.as_str())
+        assert!(
+            request
+                .cache_key
+                .as_deref()
+                .is_some_and(|key| !key.is_empty()),
+            "expected a non-empty per-call cache_key"
         );
         request.cache_key = Some("course-0".into());
     }
@@ -1317,5 +1322,20 @@ fn a_rendered_lesson_meets_the_writers_schema() {
     assert_eq!(
         rendered["blocks"][0]["citations"][0]["sentence"],
         "Water boils."
+    );
+}
+
+#[test]
+fn lesson_writer_prompts_forbid_inventing_company_internals_and_quiz_meta_talk() {
+    let reqs = writer_requirements();
+    let system = lesson_system_with(writer_grounding());
+    assert!(
+        reqs.contains("real external company or organisation"),
+        "{reqs}"
+    );
+    assert!(reqs.contains("meta-talk"), "{reqs}");
+    assert!(
+        system.contains("neutral scenario entities rather than a real company"),
+        "{system}"
     );
 }

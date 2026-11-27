@@ -1,5 +1,6 @@
 //! The course's item bank: what it holds per quiz requirement, what each quiz
 //! still needs written, and storing what was written.
+use super::unverified::{unverified_candidates_in, verified_block_bodies_in};
 use super::{
     candidate_from_row, candidate_outcomes_in, decode, format_name, json,
     LearningAssessmentRepository, StoredCandidate, CANDIDATE_COLUMNS,
@@ -11,13 +12,86 @@ use crate::dto::{LearningQuizScopeDto, LearningQuizScopeKind};
 use crate::lessons::claim_reviews::repository::waiting_questions_in;
 use crate::persistence::now;
 use crate::quiz_blueprints;
-use lattice_core::shared::error::Result;
+use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::{Database, WriteTx};
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqliteConnection};
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
+
+/// Persisted review standing of a quiz candidate question in `learning_assessment_candidates`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CandidateReviewStatus {
+    Agreed,
+    Disputed,
+    Dropped,
+    Reported,
+}
+
+impl CandidateReviewStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Agreed => "agreed",
+            Self::Disputed => "disputed",
+            Self::Dropped => "dropped",
+            Self::Reported => "reported",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Result<Self> {
+        match raw {
+            "agreed" => Ok(Self::Agreed),
+            "disputed" => Ok(Self::Disputed),
+            "dropped" => Ok(Self::Dropped),
+            "reported" => Ok(Self::Reported),
+            other => Err(AppError::InvalidState(format!(
+                "Unknown candidate review status: {other}"
+            ))),
+        }
+    }
+}
+
+pub(crate) async fn candidate_review_status_in(
+    connection: &mut SqliteConnection,
+    candidate_id: &str,
+) -> Result<Option<CandidateReviewStatus>> {
+    let raw: Option<String> =
+        sqlx::query_scalar("SELECT review_status FROM learning_assessment_candidates WHERE id=?")
+            .bind(candidate_id)
+            .fetch_optional(&mut *connection)
+            .await?;
+    raw.as_deref().map(CandidateReviewStatus::parse).transpose()
+}
+
+pub(crate) async fn set_candidate_review_status_in(
+    tx: &mut WriteTx,
+    candidate_id: &str,
+    status: CandidateReviewStatus,
+) -> Result<()> {
+    sqlx::query("UPDATE learning_assessment_candidates SET review_status=? WHERE id=?")
+        .bind(status.as_str())
+        .bind(candidate_id)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+pub(crate) async fn mark_candidate_reported_in(
+    tx: &mut WriteTx,
+    candidate_id: &str,
+    program_id: &str,
+) -> Result<()> {
+    sqlx::query(
+        "UPDATE learning_assessment_candidates SET review_status=? WHERE id=? AND program_id=?",
+    )
+    .bind(CandidateReviewStatus::Reported.as_str())
+    .bind(candidate_id)
+    .bind(program_id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
 
 /// An item on its way into the bank.
 #[derive(Debug, Clone)]
@@ -30,7 +104,7 @@ pub struct BankItem {
     pub origin: &'static str,
     /// `agreed` for items forms may draw, `dropped` for a lesson question the
     /// bank's checks reject, kept so the lesson's questions keep their places.
-    pub review_status: &'static str,
+    pub review_status: CandidateReviewStatus,
 }
 
 /// A stable content token: same format, stem and options, same item.
@@ -64,7 +138,7 @@ pub(crate) async fn insert_bank_items_in(
             continue;
         };
         let mut hash = content_hash(item);
-        let mut review_status = entry.review_status;
+        let mut review_status = entry.review_status.as_str();
         let id_taken: Option<i64> = sqlx::query_scalar(
             "SELECT 1 FROM learning_assessment_candidates WHERE program_id=? AND id=?",
         )
@@ -87,7 +161,7 @@ pub(crate) async fn insert_bank_items_in(
                 continue;
             }
             hash = sha256_hex(format!("{hash}\0{}", item.id));
-            review_status = "dropped";
+            review_status = CandidateReviewStatus::Dropped.as_str();
         }
         sqlx::query("INSERT INTO learning_assessment_candidates(id,program_id,outcome_id,format,difficulty,prompt,options_json,artifact_kind,rubric_json,source_version_ids_json,authored_by,author_model,content_sha256,created_at,review_status,origin,lesson_id,source_quote,left_items_json) VALUES(?,?,?,?,?,?,?,NULL,?,?,'model',?,?,?,?,?,?,?,?)")
             .bind(&item.id)
@@ -197,7 +271,7 @@ impl LearningAssessmentRepository {
             .fetch_all(&mut *connection)
             .await?;
         let waiting = waiting_questions_in(connection, program_id).await?;
-        let mut held_back = HashSet::new();
+        let mut held_back = Box::pin(unverified_candidates_in(connection, program_id)).await?;
         if !waiting.is_empty() {
             let own: Vec<(String, String)> = sqlx::query_as("SELECT id, lesson_id FROM learning_assessment_candidates WHERE program_id=? AND origin IN ('lesson','migrated') AND lesson_id IS NOT NULL ORDER BY rowid")
                 .bind(program_id)
@@ -234,25 +308,39 @@ impl LearningAssessmentRepository {
             .collect())
     }
 
-    /// A lesson's blocks as authoring material.
+    /// A lesson's blocks as authoring material, with unverified/`no_source`
+    /// sentences removed so quiz authoring never builds answer keys on them.
     pub(crate) async fn lesson_material_in(
         connection: &mut SqliteConnection,
         lesson_id: &str,
     ) -> Result<Vec<MaterialPassage>> {
-        sqlx::query("SELECT b.title,b.body,b.source_ids_json,l.title lesson_title FROM learning_blocks b JOIN learning_lessons l ON l.id=b.lesson_id WHERE b.lesson_id=? ORDER BY b.ordinal")
+        let rows = sqlx::query("SELECT b.ordinal,b.title,b.body,b.source_ids_json,l.title lesson_title FROM learning_blocks b JOIN learning_lessons l ON l.id=b.lesson_id WHERE b.lesson_id=? ORDER BY b.ordinal")
             .bind(lesson_id)
             .fetch_all(&mut *connection)
-            .await?
-            .into_iter()
-            .map(|row| {
+            .await?;
+        let ordinals_and_bodies: Vec<(usize, String)> = rows
+            .iter()
+            .enumerate()
+            .map(|(fallback, row)| {
+                let ordinal = usize::try_from(row.get::<i64, _>("ordinal")).unwrap_or(fallback);
+                (ordinal, row.get("body"))
+            })
+            .collect();
+        let verified_bodies =
+            verified_block_bodies_in(connection, lesson_id, &ordinals_and_bodies).await?;
+        rows.into_iter()
+            .zip(verified_bodies)
+            .map(|(row, body)| {
                 Ok(MaterialPassage {
                     lesson_title: row.get("lesson_title"),
                     title: row.get("title"),
-                    text: row.get("body"),
+                    text: body,
                     source_version_ids: decode(row.get("source_ids_json"))?,
                 })
             })
-            .filter(|p: &Result<MaterialPassage>| p.as_ref().map_or(true, |p| !p.text.trim().is_empty()))
+            .filter(|p: &Result<MaterialPassage>| {
+                p.as_ref().map_or(true, |p| !p.text.trim().is_empty())
+            })
             .collect()
     }
 
@@ -267,7 +355,22 @@ impl LearningAssessmentRepository {
             .bind(lesson_id)
             .fetch_all(&mut *connection)
             .await?;
+        let waiting = waiting_questions_in(connection, program_id).await?;
+        let mut held_back = Box::pin(unverified_candidates_in(connection, program_id)).await?;
+        if !waiting.is_empty() {
+            let own: Vec<String> = sqlx::query_scalar("SELECT id FROM learning_assessment_candidates WHERE program_id=? AND lesson_id=? AND origin IN ('lesson','migrated') ORDER BY rowid")
+                .bind(program_id)
+                .bind(lesson_id)
+                .fetch_all(&mut *connection)
+                .await?;
+            for (index, id) in own.into_iter().enumerate() {
+                if waiting.contains(&(lesson_id.to_owned(), index)) {
+                    held_back.insert(id);
+                }
+            }
+        }
         rows.iter()
+            .filter(|row| !held_back.contains(&row.get::<String, _>("id")))
             .map(|row| candidate_from_row(row, vec![]).map(|c| c.candidate.into()))
             .collect()
     }
@@ -281,7 +384,7 @@ impl LearningAssessmentRepository {
         top_up: bool,
     ) -> Result<Vec<AuthoringNeed>> {
         let mut tx = database.begin_write().await?;
-        let needs = Self::bank_needs_in(&mut tx, program_id, scope, top_up).await?;
+        let needs = Box::pin(Self::bank_needs_in(&mut tx, program_id, scope, top_up)).await?;
         tx.commit().await?;
         Ok(needs)
     }
@@ -302,7 +405,7 @@ impl LearningAssessmentRepository {
             return Ok(None);
         };
         let requirements = quiz_blueprints::requirements_in(&mut tx, &blueprint).await?;
-        let bank = Self::bank_in(&mut tx, program_id).await?;
+        let bank = Box::pin(Self::bank_in(&mut tx, program_id)).await?;
         tx.commit().await?;
         Ok(bank_state(&requirements, &bank, &HashSet::new()).shortfall)
     }
@@ -337,7 +440,7 @@ impl LearningAssessmentRepository {
             return Ok(vec![]);
         };
         let requirements = quiz_blueprints::requirements_in(tx, &blueprint).await?;
-        let bank = Self::bank_in(tx, program_id).await?;
+        let bank = Box::pin(Self::bank_in(tx, program_id)).await?;
         let exposed = Self::exposed_in(tx, program_id).await?;
         let state = bank_state(&requirements, &bank, &exposed);
         let steps: Vec<(usize, usize, BankPass)> = if top_up {
@@ -365,7 +468,8 @@ impl LearningAssessmentRepository {
             let source = match writable.entry(index) {
                 Entry::Occupied(known) => known.into_mut(),
                 Entry::Vacant(unknown) => {
-                    let Some(source) = Self::need_source_in(tx, program_id, requirement).await?
+                    let Some(source) =
+                        Box::pin(Self::need_source_in(tx, program_id, requirement)).await?
                     else {
                         continue;
                     };
@@ -420,7 +524,7 @@ impl LearningAssessmentRepository {
         };
         let mut material = Vec::new();
         for lesson in &lessons {
-            material.extend(Self::lesson_material_in(tx, lesson).await?);
+            material.extend(Box::pin(Self::lesson_material_in(tx, lesson)).await?);
         }
         if material.is_empty() {
             return Ok(None);

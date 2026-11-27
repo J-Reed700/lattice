@@ -5,7 +5,7 @@
 use crate::assessment_engine::{
     self as engine, LearningAssessmentCandidate, LearningAssessmentKey as Key, LearningItemFormat,
 };
-use crate::lessons::structured_call::Asking;
+use crate::lessons::structured_call::{Asking, CallKind, ReasonFirst};
 use crate::model_call;
 use lattice_core::application::services::model_contract::ask::{
     ask, ask_each, Alone, Answered, Refusal, Says, Settled,
@@ -685,6 +685,8 @@ fn ordered_solution(question: &Question, statement: &OrderSolved) -> Solution {
     }
 }
 
+const KEY_REVIEW_DRAFT_BRIEF: &str = "Solve each question from its premises and any supplied passage. Work through the options or steps briefly, verify which answer(s) are strictly defensible as worded, and state your final answer for each question id.";
+
 /// Asks `C` about `group`, all of one answer form: one settlement for each question.
 async fn solved_together<C, S>(llm: &dyn LLMPort, group: &[Question]) -> Result<Vec<Settled<S>>>
 where
@@ -698,7 +700,11 @@ where
         llm,
         &Asking {
             progress: None,
-            reasoning: None,
+            reasoning: Some(ReasonFirst {
+                kind: CallKind::Authoring,
+                subject: "the independent answer check",
+                brief: KEY_REVIEW_DRAFT_BRIEF,
+            }),
         },
         &mut Scope::for_question(),
         group,
@@ -720,7 +726,11 @@ async fn solved_orders(llm: &dyn LLMPort, group: &[Question]) -> Result<Vec<Sett
                 llm,
                 &Asking {
                     progress: None,
-                    reasoning: None,
+                    reasoning: Some(ReasonFirst {
+                        kind: CallKind::Authoring,
+                        subject: "the independent ordering check",
+                        brief: KEY_REVIEW_DRAFT_BRIEF,
+                    }),
                 },
                 &mut Scope::for_question(),
                 &Questions {

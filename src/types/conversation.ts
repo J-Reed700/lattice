@@ -6,6 +6,8 @@
 
 import { z } from 'zod';
 
+import type { AnchoredOccurrence } from '@/features/reading/citations/types';
+
 import type { SearchResult } from './searchResult';
 import type {
   CompactionRecordDto,
@@ -62,6 +64,13 @@ export interface SourceWithMetadata {
   citationId?: number;
   /** Originating conversation ID when opened outside the active chat thread. */
   conversationId?: string;
+  /**
+   * How each of this source's chips in the drawn text uses it, for the chips that say.
+   * Look an entry up by `occurrence` (the chip's `data-cite-at`), never by position.
+   */
+  anchoredBy?: AnchoredOccurrence[];
+  /** The byte of the saved version where the text this source shows begins; absent means 0. */
+  anchorBase?: number;
 }
 
 export interface SourceChunkExcerpt {
@@ -476,8 +485,8 @@ export const TurnStepSchema = z.object({
   durationMs: z.number().int().min(0).nullable().optional(),
   /** What it produced: "8 passages from 3 files", "not enough support: …". */
   result: z.string().nullable().optional(),
-  /** The backend caps Unicode characters, not JavaScript UTF-16 code units. */
-  reasoning: z.string().max(48_000).refine(text => [...text].length <= 24_000).nullable().optional(),
+  /** Full reasoning trace emitted for the step, when present. */
+  reasoning: z.string().nullable().optional(),
   /**
    * For a search, the pages it found; for a page read, the page. A read knows
    * its address from the start and a search only at the end, so either event

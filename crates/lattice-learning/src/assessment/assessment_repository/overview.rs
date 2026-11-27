@@ -12,6 +12,7 @@ use crate::quiz_bank_jobs::QUIZ_BANK;
 use crate::quiz_blueprints;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::WriteTx;
+use lattice_core::shared::runtime::jobs::JobStatus;
 use sqlx::{Row, SqliteConnection};
 use std::collections::HashSet;
 
@@ -59,9 +60,10 @@ impl LearningAssessmentRepository {
             quiz_blueprints::ensure_blueprint_with(tx, program_id, &scope, course.0, course.1)
                 .await?;
         let job = bank_job(tx, program_id, &scope).await?;
+        let job_status = job.as_ref().and_then(|(_, s)| JobStatus::parse(s));
         let preparing_job_id = job
             .as_ref()
-            .filter(|(_, status)| matches!(status.as_str(), "pending" | "running"))
+            .filter(|_| job_status.is_some_and(|s| !s.is_finished()))
             .map(|(id, _)| id.clone());
         let attempts = sqlx::query("SELECT s.form_id,s.score,s.passed,s.grade_status,s.submitted_at,s.pending_items,f.retake_of_form_id,(SELECT count(*) FROM learning_assessment_item_results r WHERE r.form_id=s.form_id AND r.learner_override=1) overridden FROM learning_assessment_submissions s JOIN learning_assessment_forms f ON f.id=s.form_id WHERE f.program_id=? AND f.scope_kind=? AND f.scope_id IS ? AND f.mode='graded' ORDER BY s.submitted_at DESC")
             .bind(program_id)
@@ -146,7 +148,7 @@ impl LearningAssessmentRepository {
             LearningQuizBankStatus::Preparing
         } else if state.ready {
             LearningQuizBankStatus::Ready
-        } else if job.as_ref().is_some_and(|(_, s)| s == "failed") {
+        } else if job_status == Some(JobStatus::Failed) {
             LearningQuizBankStatus::Failed
         } else {
             LearningQuizBankStatus::NotPrepared
@@ -217,7 +219,7 @@ impl LearningAssessmentRepository {
                 .await?;
         }
         let settings = quiz_blueprints::settings_in(&mut tx, program_id).await?;
-        let bank = Self::bank_in(&mut tx, program_id).await?;
+        let bank = Box::pin(Self::bank_in(&mut tx, program_id)).await?;
         let exposed = Self::exposed_in(&mut tx, program_id).await?;
         let facts = quiz_blueprints::course_facts_in(&mut tx, program_id).await?;
         let mut modules = Vec::new();
@@ -226,7 +228,7 @@ impl LearningAssessmentRepository {
         for module in &facts.modules {
             let mut lessons = Vec::new();
             for lesson in facts.lessons.iter().filter(|l| l.module_id == module.id) {
-                let quiz = Self::quiz_status_in(
+                let quiz = Box::pin(Self::quiz_status_in(
                     &mut tx,
                     program_id,
                     LearningQuizScopeDto {
@@ -237,7 +239,7 @@ impl LearningAssessmentRepository {
                     (&facts, &settings),
                     &bank,
                     &exposed,
-                )
+                ))
                 .await?;
                 quizzes_total += 1;
                 if quiz.verdict == LearningQuizVerdict::Passed {
@@ -248,7 +250,7 @@ impl LearningAssessmentRepository {
                     quiz,
                 });
             }
-            let test = Self::quiz_status_in(
+            let test = Box::pin(Self::quiz_status_in(
                 &mut tx,
                 program_id,
                 LearningQuizScopeDto {
@@ -259,7 +261,7 @@ impl LearningAssessmentRepository {
                 (&facts, &settings),
                 &bank,
                 &exposed,
-            )
+            ))
             .await?;
             modules.push(LearningModuleQuizzesDto {
                 module_id: module.id.clone(),
@@ -267,7 +269,7 @@ impl LearningAssessmentRepository {
                 lessons,
             });
         }
-        let exam = Self::quiz_status_in(
+        let exam = Box::pin(Self::quiz_status_in(
             &mut tx,
             program_id,
             LearningQuizScopeDto {
@@ -278,7 +280,7 @@ impl LearningAssessmentRepository {
             (&facts, &settings),
             &bank,
             &exposed,
-        )
+        ))
         .await?;
         let outcomes = Self::outcomes_in(&mut tx, program_id).await?;
         let evidence = Self::evidence_in(&mut tx, program_id).await?;

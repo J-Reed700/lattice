@@ -94,7 +94,7 @@ export function Composer({
 
       <form onSubmit={handleAsyncEvent(composer.handleSubmit)} className="chat-column chat-beside-margin mx-auto w-full px-6 pb-5 pt-1">
         {/* One object: the page you write on, with its tools along the bottom edge. */}
-        <div className="rounded-2xl bg-surface shadow-sheet transition-shadow duration-base focus-within:shadow-[var(--shadow-sheet),0_0_0_3px_hsl(var(--accent)/0.16)]">
+        <div className="rounded-2xl border border-border-default bg-surface shadow-md transition-shadow duration-base focus-within:border-accent/45 focus-within:ring-2 focus-within:ring-ring/20">
           {chips}
           <FocusChips
             documents={focusDocuments}
@@ -279,7 +279,7 @@ export function Composer({
                 onClick={onCancel}
                 aria-label="Stop generating response"
                 title="Stop"
-                className="pressable inline-flex h-8 w-8 items-center justify-center rounded-full bg-[hsl(var(--text-primary))] text-[hsl(var(--bg))] transition-[scale,opacity] duration-fast hover:opacity-90"
+                className="pressable inline-flex h-8 w-8 items-center justify-center rounded-full bg-action text-action-fg shadow-action transition-[background-color,scale,opacity] duration-fast hover:bg-action-hover"
               >
                 <Square className="h-3 w-3 fill-current" />
               </button>
@@ -291,7 +291,7 @@ export function Composer({
                 aria-label="Cancel attaching files"
                 aria-busy="true"
                 title="Cancel attaching files"
-                className="pressable inline-flex h-8 w-8 items-center justify-center rounded-full bg-[hsl(var(--text-primary))] text-[hsl(var(--bg))] transition-[scale,opacity] duration-fast hover:opacity-90"
+                className="pressable inline-flex h-8 w-8 items-center justify-center rounded-full bg-action text-action-fg shadow-action transition-[background-color,scale,opacity] duration-fast hover:bg-action-hover"
               >
                 <Square className="h-3 w-3 fill-current" />
               </button>
@@ -306,7 +306,7 @@ export function Composer({
                     ? 'Waiting for the context to finish compacting'
                     : 'Send · Enter'
                 }
-                className="pressable inline-flex h-8 w-8 items-center justify-center rounded-full bg-[hsl(var(--accent))] text-[hsl(var(--accent-fg))] shadow-action transition-[background-color,color,scale,box-shadow] duration-fast hover:bg-[hsl(var(--accent-hover))] disabled:cursor-not-allowed disabled:bg-[hsl(var(--text-primary)/0.08)] disabled:text-[hsl(var(--text-disabled))] disabled:shadow-none"
+                className="pressable inline-flex h-8 w-8 items-center justify-center rounded-full bg-action text-action-fg shadow-action transition-[background-color,color,scale,box-shadow] duration-fast hover:bg-action-hover disabled:cursor-not-allowed disabled:bg-[hsl(var(--text-primary)/0.08)] disabled:text-text-disabled disabled:shadow-none"
               >
                 <ArrowUp className="h-4 w-4" strokeWidth={2.2} />
               </button>

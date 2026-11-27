@@ -111,6 +111,7 @@ export function ModelsTab() {
       <PageHeader
         title="Models"
         description="Find and download models for the way you work."
+        className="mb-4"
         actions={
           <button type="button" className={SECONDARY_BUTTON_CLASS} onClick={() => window.dispatchEvent(new CustomEvent('settings:navigate-tab', { detail: { tab: 'downloaded-models' } }))}>
             <ArrowDownToLine className="mr-2 h-4 w-4" aria-hidden="true" /> Downloaded models

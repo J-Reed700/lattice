@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { resetBatchFileImportWorkflow } from '@/features/files/hooks/batchFileImportWatcher';
@@ -72,10 +72,27 @@ const choose = async (paths: string[]) => {
   await press('choose files');
 };
 
+const openRadixSelect = (label: string) => {
+  const trigger = screen.getByRole('combobox', { name: label });
+  fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: 'mouse' });
+  return trigger;
+};
+
+const chooseRadixOption = (label: string, optionName: string) => {
+  openRadixSelect(label);
+  fireEvent.click(screen.getByRole('option', { name: optionName }));
+};
+
 const collection = (id: string, name: string, parentId: string | null = null, kind = 'manual') =>
   ({ id, name, kind, parentId, documentIds: [], createdAt: '', updatedAt: '' });
 
 describe('BatchFileImport flows', () => {
+  beforeAll(() => {
+    Element.prototype.hasPointerCapture = () => false;
+    Element.prototype.releasePointerCapture = () => {};
+    Element.prototype.scrollIntoView = () => {};
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     resetBatchFileImportWorkflow();
@@ -208,12 +225,12 @@ describe('BatchFileImport flows', () => {
       mocks.selectedSpaceId = 's-bio';
       mocks.spaces = [{ id: 's-bio', name: 'Biology', icon: '🧬', isArchived: false }, { id: 's-old', name: 'Old', icon: null, isArchived: true }];
       renderImport();
-      const select = screen.getByLabelText('Add to space') as HTMLSelectElement;
-      expect(select).toHaveValue('s-bio');
-      expect(within(select).getByRole('option', { name: '🧬 Biology' })).toBeInTheDocument();
-      expect(within(select).getByRole('option', { name: 'Old (archived)' })).toBeInTheDocument();
-      fireEvent.change(select, { target: { value: '' } });
-      expect(select).toHaveValue('');
+      const trigger = openRadixSelect('Add to space');
+      expect(trigger).toHaveTextContent('🧬 Biology');
+      expect(screen.getByRole('option', { name: '🧬 Biology' })).toBeInTheDocument();
+      expect(screen.getByRole('option', { name: 'Old (archived)' })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('option', { name: 'None' }));
+      expect(trigger).toHaveTextContent('None');
     });
 
     it('labels nested manual collections by their path, skipping snapshots and loops', () => {
@@ -226,7 +243,8 @@ describe('BatchFileImport flows', () => {
         collection('k6', 'Snapshot', null, 'snapshot'),
       ];
       renderImport();
-      const options = within(screen.getByLabelText('Add to collection')).getAllByRole('option').map((option) => option.textContent);
+      openRadixSelect('Add to collection');
+      const options = screen.getAllByRole('option').map((option) => option.textContent);
       expect(options).toEqual(['None', 'Kitchen', 'Kitchen / Breads', 'Loop A / Loop B', 'Loop B / Loop A', 'Orphan']);
     });
 
@@ -239,7 +257,7 @@ describe('BatchFileImport flows', () => {
       mocks.collectionsQuery.data = [collection('k1', 'Kitchen')];
       const onImportComplete = vi.fn();
       renderImport({ onImportComplete });
-      fireEvent.change(screen.getByLabelText('Add to collection'), { target: { value: 'k1' } });
+      chooseRadixOption('Add to collection', 'Kitchen');
       await choose(['/a/one.pdf', '/a/two.pdf']);
       mocks.getOperation.mockReturnValue({
         id: 'job-1', status: 'completed', totalFiles: 2, processedFiles: 2, successfulFiles: 1, failedFiles: 1,
@@ -259,7 +277,7 @@ describe('BatchFileImport flows', () => {
       mocks.collectionsQuery.data = [collection('k1', 'Kitchen')];
       mocks.collectionActions.addDocuments.mockRejectedValueOnce(new Error('collection deleted'));
       renderImport();
-      fireEvent.change(screen.getByLabelText('Add to collection'), { target: { value: 'k1' } });
+      chooseRadixOption('Add to collection', 'Kitchen');
       await choose(['/a/one.pdf']);
       mocks.getOperation.mockReturnValue({
         id: 'job-1', status: 'error', error: 'worker crashed', totalFiles: 1, processedFiles: 1, successfulFiles: 1, failedFiles: 0,
@@ -282,7 +300,7 @@ describe('BatchFileImport flows', () => {
       });
       mocks.startBatchImport.mockResolvedValueOnce({ ok: true, data: 'job-unmounted' });
       const { unmount } = renderImport();
-      fireEvent.change(screen.getByLabelText('Add to collection'), { target: { value: 'k1' } });
+      chooseRadixOption('Add to collection', 'Kitchen');
       await choose(['/a/one.pdf']);
       await press('Import 1 file');
       expect(mocks.collectionActions.addDocuments).not.toHaveBeenCalled();
@@ -339,7 +357,7 @@ describe('BatchFileImport flows', () => {
           });
 
         const { unmount } = renderImport();
-        fireEvent.change(screen.getByLabelText('Add to collection'), { target: { value: 'k1' } });
+        chooseRadixOption('Add to collection', 'Kitchen');
         await choose(['/a/one.pdf', '/a/two.pdf']);
         await press('Import 2 files');
         unmount();
@@ -385,7 +403,7 @@ describe('BatchFileImport flows', () => {
     it('sends the chosen space', async () => {
       mocks.spaces = [{ id: 's-bio', name: 'Biology', icon: null, isArchived: false }];
       renderImport();
-      fireEvent.change(screen.getByLabelText('Add to space'), { target: { value: 's-bio' } });
+      chooseRadixOption('Add to space', 'Biology');
       await choose(['/a/one.pdf']);
       await press('Import 1 file');
       expect(mocks.startBatchImport).toHaveBeenCalledWith(['/a/one.pdf'], 's-bio');

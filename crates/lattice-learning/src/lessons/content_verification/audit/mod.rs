@@ -23,9 +23,7 @@ use std::collections::HashMap;
 
 use async_trait::async_trait;
 
-use lattice_core::application::ports::llm_port::{
-    InferencePriority, SamplingOverride, ANSWER_EFFORT,
-};
+use lattice_core::application::ports::llm_port::{InferencePriority, ANSWER_EFFORT};
 use lattice_core::application::ports::{ClaimReviewStore, LLMPort};
 use lattice_core::application::services::chat_model_resolution::cloud_provider_name;
 use lattice_core::application::services::grounded_generation::CallOptions;
@@ -536,7 +534,6 @@ impl<'a> Judge<'a> {
             });
             let call = CallOptions {
                 priority: InferencePriority::Verification,
-                sampling: Some(SamplingOverride::deterministic()),
                 no_time_limit: true,
                 reasoning_effort: Some(ANSWER_EFFORT.into()),
                 ..Default::default()

@@ -85,6 +85,10 @@ pub async fn passages(
                 file_path: document.file_path.clone(),
                 excerpt: chunk.text.clone(),
                 url: None,
+                citation_id: (sources.len() + 1) as u32,
+                support: lattice_core::application::contracts::replies::SupportDto::cites([chunk
+                    .text
+                    .as_str()]),
             });
         }
     }

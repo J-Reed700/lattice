@@ -59,7 +59,7 @@ const DialogContent = React.forwardRef<
         ref={ref}
         forceMount={forceMount}
         className={unstyled ? className : cn(
-          "surface-pop fixed left-1/2 top-1/2 z-50 grid w-[calc(100%-32px)] max-w-lg grid-cols-[minmax(0,1fr)] gap-4 rounded-xl bg-[hsl(var(--surface-overlay))] p-6 shadow-lg outline-hidden [translate:-50%_-50%]",
+          "surface-pop fixed left-1/2 top-1/2 z-50 grid w-[calc(100%-32px)] max-w-lg grid-cols-[minmax(0,1fr)] gap-4 rounded-2xl bg-surface-overlay p-6 shadow-lg outline-hidden [translate:-50%_-50%]",
           className
         )}
         onOpenAutoFocus={(event) => {
@@ -78,7 +78,7 @@ const DialogContent = React.forwardRef<
         {hideClose ? children : (
           <>
             {children}
-            <DialogPrimitive.Close className="absolute right-3.5 top-3.5 inline-flex h-7 w-7 items-center justify-center rounded-md text-[hsl(var(--text-tertiary))] transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.06)] hover:text-[hsl(var(--text-primary))] focus:outline-hidden focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] disabled:pointer-events-none">
+            <DialogPrimitive.Close className="absolute right-3.5 top-3.5 inline-flex h-7 w-7 items-center justify-center rounded-lg text-text-tertiary transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.06)] hover:text-text-primary focus:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none">
               <X className="h-4 w-4" strokeWidth={1.75} />
               <span className="sr-only">Close</span>
             </DialogPrimitive.Close>
@@ -127,7 +127,7 @@ const DialogTitle = React.forwardRef<
     asChild={asChild}
     // With `asChild` the element passed in is the title, styled as it is.
     className={asChild ? className : cn(
-      "font-serif text-xl font-medium leading-snug tracking-[-0.015em] text-[hsl(var(--text-primary))]",
+      "font-sans text-lg font-semibold leading-snug tracking-[-0.02em] text-text-primary",
       className
     )}
     {...props}

@@ -16,13 +16,16 @@ async fn fk_pool() -> Result<SqlitePool> {
 }
 
 fn source() -> StudySourceDto {
+    let excerpt = "Pesto Genovese is made from basil, pine nuts, garlic and cheese.";
     StudySourceDto {
         chunk_id: "chunk-4".into(),
         document_id: id(),
         file_name: "italian-cooking.pdf".into(),
         file_path: "/library/italian-cooking.pdf".into(),
-        excerpt: "Pesto Genovese is made from basil, pine nuts, garlic and cheese.".into(),
+        excerpt: excerpt.into(),
         url: None,
+        citation_id: 1,
+        support: lattice_core::application::contracts::replies::SupportDto::cites([excerpt]),
     }
 }
 
@@ -295,5 +298,114 @@ async fn a_target_pulls_late_cards_due_and_spaces_reviews_to_land_before_it() ->
         repo.set_target(&saved.id, Some(target), now).await,
         Err(AppError::NotFound(_))
     ));
+    Ok(())
+}
+
+#[tokio::test]
+async fn stored_cards_without_numbers_or_support_hydrate_cites_and_sequential_ids() -> Result<()> {
+    use lattice_core::application::contracts::replies::RelationDto;
+
+    let pool = fk_pool().await?;
+    let db = Database::new(pool.clone());
+    let repo = StudyRepository::new(db);
+    let saved = deck(10, |d| {
+        vec![card(
+            d,
+            StudyCardFormat::MultipleChoice,
+            &["Basil", "Mint"],
+            0,
+            10,
+        )]
+    });
+    repo.save(&saved).await?;
+    let legacy_json = serde_json::json!([
+        {
+            "chunkId": "c1",
+            "documentId": "doc1",
+            "fileName": "first.md",
+            "filePath": "/first.md",
+            "excerpt": "First source excerpt."
+        },
+        {
+            "chunkId": "c2",
+            "documentId": "doc2",
+            "fileName": "second.md",
+            "filePath": "/second.md",
+            "excerpt": "Second source excerpt."
+        }
+    ])
+    .to_string();
+    sqlx::query("UPDATE study_cards SET source_json=? WHERE id=?")
+        .bind(legacy_json)
+        .bind(&saved.cards[0].id)
+        .execute(&pool)
+        .await?;
+
+    let reloaded = repo.get(&saved.id).await?;
+    let card = &reloaded.cards[0];
+    assert_eq!(card.citations.len(), 2);
+    assert_eq!(card.citations[0].citation_id, 1);
+    assert_eq!(card.citations[1].citation_id, 2);
+    assert_eq!(card.citations[0].support.relation, RelationDto::Cites);
+    assert_eq!(
+        card.citations[0].support.anchors[0].exact,
+        "First source excerpt."
+    );
+    assert_eq!(card.source.citation_id, 1);
+    assert_eq!(card.source.support.relation, RelationDto::Cites);
+    Ok(())
+}
+
+#[tokio::test]
+async fn stored_cards_preserve_non_cites_support_when_anchors_exist() -> Result<()> {
+    use lattice_core::application::contracts::replies::{
+        AnchorDto, ByteSpanDto, RelationDto, SupportDto,
+    };
+
+    let pool = fk_pool().await?;
+    let db = Database::new(pool);
+    let repo = StudyRepository::new(db);
+    let mut saved = deck(10, |d| {
+        vec![card(
+            d,
+            StudyCardFormat::MultipleChoice,
+            &["Basil", "Mint"],
+            0,
+            10,
+        )]
+    });
+    let quote = saved.cards[0].source.excerpt.clone();
+    let span = ByteSpanDto {
+        start: 0,
+        end: quote.len(),
+    };
+    saved.cards[0].source.citation_id = 3;
+    saved.cards[0].source.support = SupportDto {
+        relation: RelationDto::Quotes,
+        anchors: vec![AnchorDto {
+            exact: quote.clone(),
+            span: Some(span),
+        }],
+    };
+    let mut second = source();
+    second.citation_id = 7;
+    second.support = SupportDto {
+        relation: RelationDto::Backs,
+        anchors: vec![AnchorDto {
+            exact: quote.clone(),
+            span: None,
+        }],
+    };
+    saved.cards[0].citations = vec![saved.cards[0].source.clone(), second];
+    repo.save(&saved).await?;
+
+    let reloaded = repo.get(&saved.id).await?;
+    let card = &reloaded.cards[0];
+    assert_eq!(card.source.citation_id, 3);
+    assert_eq!(card.source.support.relation, RelationDto::Quotes);
+    assert_eq!(card.source.support.anchors[0].exact, quote);
+    assert_eq!(card.source.support.anchors[0].span, Some(span));
+    assert_eq!(card.citations[1].citation_id, 7);
+    assert_eq!(card.citations[1].support.relation, RelationDto::Backs);
     Ok(())
 }

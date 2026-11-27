@@ -18,15 +18,15 @@ import { useEffect, useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
 import { X } from 'lucide-react';
 
-import { PageHeader, SettingsRow, SettingsSection, settingsFieldClass, Switch } from '@/components/ui';
+import { Button, Input, PageHeader, SettingsRow, SettingsSection, Switch } from '@/components/ui';
 import { IndexingActivitySection } from '@/features/files/components/IndexingStatus/IndexingActivitySection';
 import { useIndexedFoldersActions } from '@/features/files/hooks/useIndexedFoldersQuery';
 import { getErrorMessage } from '@/lib/errorUtils';
-import { cn } from '@/lib/utils';
 import { toast } from '@/stores/toastStore';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
-import { NUMBER_FIELD_CLASS, ROW_ACTION_CLASS, SECONDARY_BUTTON_CLASS, SWITCH_CLASS } from './settingsStyles';
+import { SettingsNumberField } from './SettingControls';
+import { ROW_ACTION_CLASS, SWITCH_CLASS } from './settingsStyles';
 import { useSettingsQuery, useUpdateSettingsMutation } from '../hooks/useSettingsQuery';
 
 const DEFAULT_BATCH_SIZE = 32;
@@ -39,7 +39,7 @@ export function IndexingTab() {
   const [newPattern, setNewPattern] = useState('');
   const [isAddingFolder, setIsAddingFolder] = useState(false);
 
-  // Batch size keeps a draft so we commit once on blur/Enter, not per keystroke.
+  // Batch size keeps a draft so we commit once on blur/Enter/step, not per keystroke.
   const backendBatchSize = settings?.indexing.batchSize ?? DEFAULT_BATCH_SIZE;
   const [batchSizeDraft, setBatchSizeDraft] = useState(backendBatchSize);
 
@@ -61,7 +61,7 @@ export function IndexingTab() {
         onError: (error) => {
           toast.error("Couldn't save auto-index setting", { message: error.message });
         },
-      }
+      },
     );
   };
 
@@ -115,7 +115,7 @@ export function IndexingTab() {
         onError: (error) => {
           toast.error("Couldn't add exclude pattern", { message: error.message });
         },
-      }
+      },
     );
   };
 
@@ -127,27 +127,31 @@ export function IndexingTab() {
         onError: (error) => {
           toast.error("Couldn't remove exclude pattern", { message: error.message });
         },
-      }
+      },
     );
   };
 
-  const commitBatchSize = () => {
-    if (batchSizeDraft === backendBatchSize) return;
+  const commitBatchSize = (candidate: number) => {
+    const next = Math.max(1, Math.round(candidate));
+    if (next === backendBatchSize) return;
 
     updateSettingsMutation.mutate(
-      { category: 'indexing', updates: { batchSize: batchSizeDraft } },
+      { category: 'indexing', updates: { batchSize: next } },
       {
         onError: (error) => {
           setBatchSizeDraft(backendBatchSize); // roll back the draft
           toast.error("Couldn't save batch size", { message: error.message });
         },
-      }
+      },
     );
   };
 
   return (
     <>
-      <PageHeader title="Indexing" description="Choose what enters your library and how it stays up to date." />
+      <PageHeader
+        title="Indexing"
+        description="Choose what enters your library and how it stays up to date."
+      />
 
       <SettingsSection title="Behavior">
         <SettingsRow label="Auto-index new files" htmlFor="autoIndex">
@@ -165,22 +169,15 @@ export function IndexingTab() {
           hint={isSavingBatchSize ? 'Files indexed per pass · saving…' : 'Files indexed per pass'}
           htmlFor="batchSize"
         >
-          <input
+          <SettingsNumberField
             id="batchSize"
-            type="number"
             min={1}
             step={1}
+            integer
             value={batchSizeDraft}
-            onChange={(e) => {
-              const next = parseInt(e.target.value, 10);
-              if (!Number.isNaN(next)) setBatchSizeDraft(Math.max(1, next));
-            }}
-            onBlur={commitBatchSize}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') commitBatchSize();
-            }}
             disabled={isSyncing || isSavingBatchSize}
-            className={NUMBER_FIELD_CLASS}
+            onDraftChange={(next) => setBatchSizeDraft(Math.max(1, Math.round(next)))}
+            onCommit={commitBatchSize}
           />
         </SettingsRow>
       </SettingsSection>
@@ -188,14 +185,14 @@ export function IndexingTab() {
       <SettingsSection
         title="Watched folders"
         actions={
-          <button
+          <Button
             type="button"
+            variant="outline"
             onClick={handleAsyncEvent(handleAddFolder)}
             disabled={isAddingFolder || isSyncing}
-            className={SECONDARY_BUTTON_CLASS}
           >
             {isAddingFolder ? 'Adding…' : 'Add folder'}
-          </button>
+          </Button>
         }
       >
         {watchFolders.length === 0 ? (
@@ -229,29 +226,30 @@ export function IndexingTab() {
       <SettingsSection title="Excluded patterns">
         <SettingsRow label="Add a pattern" stacked htmlFor="excludePattern">
           <div className="flex gap-2">
-            <input
-              id="excludePattern"
-              type="text"
-              value={newPattern}
-              onChange={(e) => setNewPattern(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  void handleAddPattern();
-                }
-              }}
-              placeholder="*.tmp, node_modules, .git"
-              className={cn(settingsFieldClass, 'flex-1')}
-            />
-            <button
+            <div className="min-w-0 flex-1">
+              <Input
+                id="excludePattern"
+                type="text"
+                value={newPattern}
+                onChange={(e) => setNewPattern(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    void handleAddPattern();
+                  }
+                }}
+                placeholder="*.tmp, node_modules, .git"
+              />
+            </div>
+            <Button
               type="button"
+              variant="outline"
               onClick={() => {
                 void handleAddPattern();
               }}
               disabled={!newPattern.trim() || isSyncing}
-              className={SECONDARY_BUTTON_CLASS}
             >
               Add
-            </button>
+            </Button>
           </div>
         </SettingsRow>
 

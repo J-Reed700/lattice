@@ -1,10 +1,8 @@
-import { ExternalLink, Quote } from 'lucide-react';
+import { ExternalLink } from 'lucide-react';
 
 import type { OutlineEvidenceQuery } from '@/features/learning/api/evidenceQueries';
-import type {
-  LearningOutlineCitationDto,
-  LearningOutlineEvidenceDto,
-} from '@/lib/bindings';
+import { CitationCard } from '@/features/reading/citations';
+import type { LearningOutlineCitationDto } from '@/lib/bindings';
 
 export function OutlineEvidenceStatus({ report }: { report: OutlineEvidenceQuery }) {
   if (report.isError) return (
@@ -21,15 +19,14 @@ export function OutlineEvidenceStatus({ report }: { report: OutlineEvidenceQuery
 
 export function OutlineCitation({
   citation,
-  evidence,
+  onOpen,
   className = '',
 }: {
   citation?: LearningOutlineCitationDto;
-  evidence?: LearningOutlineEvidenceDto | null;
+  onOpen?: (citation: LearningOutlineCitationDto) => void;
   className?: string;
 }) {
-  if (!citation || !evidence) return null;
-  const number = evidence.citations.indexOf(citation) + 1;
+  if (!citation) return null;
   let href: string | undefined;
   try {
     const url = new URL(citation.sourceUrl ?? '');
@@ -37,21 +34,26 @@ export function OutlineCitation({
   } catch {
     // A saved local source has no external link.
   }
+  const anchorExcerpts = citation.support.anchors.map((anchor) => anchor.exact).filter(Boolean);
+  const excerpts = anchorExcerpts.length > 0 ? anchorExcerpts : citation.quote.trim() ? [citation.quote] : [];
 
   return (
     <details className={`mt-2 wrap-anywhere rounded-lg border border-accent/15 bg-accent/[.035] px-3 py-2 ${className}`}>
       <summary className="flex cursor-pointer list-none items-center gap-2 text-[11px] font-medium text-accent">
-        <span className="inline-grid h-5 min-w-5 place-items-center rounded bg-accent/10 px-1 text-[10px] font-semibold">{number}</span>
+        <span className="inline-grid h-5 min-w-5 place-items-center rounded bg-accent/10 px-1 text-[10px] font-semibold">{citation.number}</span>
         <span className="min-w-0 flex-1 truncate">{citation.sourceTitle}</span>
         <span className="text-text-muted">View citation</span>
       </summary>
-      <blockquote className="mt-2 whitespace-pre-wrap border-l-2 border-accent/40 pl-3 font-serif text-xs leading-5 text-text-primary">
-        {citation.quote}
-      </blockquote>
-      <p className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-text-muted">
-        <Quote size={11} /> Exact text from saved source {citation.sourceId}
-        {href && <a href={href} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-accent underline">Open original <ExternalLink size={10} /></a>}
-      </p>
+      <div className="mt-2 border-t border-accent/15 pt-2">
+        <CitationCard
+          number={citation.number}
+          title={citation.sourceTitle}
+          relation={citation.support.relation}
+          excerpts={excerpts}
+          onOpen={onOpen ? () => onOpen(citation) : undefined}
+          footer={href ? <a href={href} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-accent underline">Open original <ExternalLink size={10} /></a> : undefined}
+        />
+      </div>
     </details>
   );
 }

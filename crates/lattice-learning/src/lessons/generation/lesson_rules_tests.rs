@@ -164,7 +164,7 @@ fn quoted_wording_without_a_citation_is_a_finding_at_its_section() {
     assert_eq!(findings[0].kind, FindingKind::Quotation);
     assert!(findings[0].note.contains("without citing it"));
     assert!(findings[0].note.contains(TIMEOUT));
-    assert!(findings[0].note.contains("citations of /blocks/0"));
+    assert!(findings[0].note.contains("supplied excerpt"));
 
     cited(
         &mut candidate,
@@ -656,7 +656,7 @@ fn a_sentence_naming_a_source_by_number_is_a_finding_with_its_whole_sentence() {
         format!("This sentence names a source by its number, which learners never see: \u{201c}{sentence}\u{201d}")
     );
     assert_eq!(findings[0].sentence.as_deref(), Some(sentence));
-    assert!(findings[0].note.contains("citations list"));
+    assert!(findings[0].note.contains("supplied excerpt"));
 }
 
 #[test]
@@ -1100,4 +1100,99 @@ fn a_lesson_question_whose_key_is_in_its_prompt_is_a_finding() {
     );
     let ids = rule_ids(&lesson_rules(&candidate));
     assert_eq!(ids, ["rule/answer-in-prompt/question-0"], "{ids:?}");
+}
+
+#[test]
+fn consecutive_duplicates_and_prefix_stutters_in_prose_and_lists_are_findings() {
+    let mut candidate = lesson();
+    candidate["blocks"][7]["body"] = json!(
+        "1. Parse the header.\n5. Write the acknowledgement you expect back. Write the acknowledgement you expect back, and inspect MSA-2."
+    );
+    candidate["blocks"][0]["body"] = json!("Check MSA-2. Check MSA-2.");
+    let findings = lesson_rules(&candidate);
+    let ids = rule_ids(&findings);
+    assert_eq!(findings.len(), 2, "{findings:?}");
+    assert_eq!(findings[0].place().site, FindingSite::Section(0));
+    assert_eq!(findings[1].place().site, FindingSite::Section(7));
+    assert_eq!(findings[0].kind, FindingKind::Teaching);
+    assert_eq!(findings[1].kind, FindingKind::Teaching);
+    assert!(
+        ids[0].starts_with("rule/sentence-repeated/section-0/"),
+        "{ids:?}"
+    );
+    assert!(
+        ids[1].starts_with("rule/sentence-repeated/section-7/"),
+        "{ids:?}"
+    );
+    assert_eq!(findings[0].passage.as_deref(), Some("Check MSA-2."));
+    assert_eq!(
+        findings[1].passage.as_deref(),
+        Some("Write the acknowledgement you expect back, and inspect MSA-2.")
+    );
+}
+
+#[test]
+fn company_framing_and_spec_consistency_findings_flag_ungrounded_claims_and_bad_scopes() {
+    let mut candidate = lesson();
+    candidate["blocks"][0]["body"] = json!(
+        "Documo\u{2019}s PostgreSQL database stores tenant keys. Request system/Binary.w for upload."
+    );
+    candidate["blocks"][1]["body"] = json!(
+        "```typescript\nimport { Injectable } from '@nestjs/common';\n@Injectable()\nexport class TokenSvc {\n  constructor(private readonly cfg: ConfigService) {}\n}\n```"
+    );
+
+    let company_issues = company_framing_findings(&candidate, &["Documo".to_owned()]);
+    assert_eq!(company_issues.len(), 1, "{company_issues:?}");
+    assert_eq!(company_issues[0].place().site, FindingSite::Section(0));
+    assert!(
+        matches!(
+            company_issues[0].origin,
+            crate::review_findings::Origin::Rule {
+                rule: Rule::CompanyFraming,
+                subject: Some(_),
+            }
+        ),
+        "{company_issues:?}"
+    );
+    assert!(company_issues[0].sentence.is_none(), "{company_issues:?}");
+    assert_eq!(
+        company_issues[0].passage.as_deref(),
+        Some("Documo\u{2019}s PostgreSQL database stores tenant keys.")
+    );
+
+    let spec_issues = spec_consistency_findings(&candidate, &[]);
+    assert!(
+        spec_issues.iter().any(|f| {
+            f.place().site == FindingSite::Section(0)
+                && f.note.contains("system/Binary.w")
+                && f.sentence.is_none()
+                && f.passage.as_deref() == Some("Request system/Binary.w for upload.")
+                && matches!(
+                    f.origin,
+                    crate::review_findings::Origin::Rule {
+                        rule: Rule::SpecConsistency,
+                        subject: Some(_),
+                    }
+                )
+        }),
+        "{spec_issues:?}"
+    );
+    assert!(
+        spec_issues.iter().any(|f| {
+            f.place().site == FindingSite::Section(1)
+                && f.note.contains("ConfigService")
+                && f.sentence.is_none()
+                && f.passage
+                    .as_deref()
+                    .is_some_and(|p| p.starts_with("```typescript") && p.contains("ConfigService"))
+                && matches!(
+                    f.origin,
+                    crate::review_findings::Origin::Rule {
+                        rule: Rule::SpecConsistency,
+                        subject: Some(_),
+                    }
+                )
+        }),
+        "{spec_issues:?}"
+    );
 }

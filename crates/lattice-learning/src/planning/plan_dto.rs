@@ -169,6 +169,32 @@ pub struct StartLearningModuleJobsRequestDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
+pub struct StartLearningLessonsJobsRequestDto {
+    pub operation_id: String,
+    pub program_id: String,
+    pub lesson_ids: Vec<String>,
+    pub expected_revision: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetLearningLessonPreparationRequestDto {
+    pub operation_id: String,
+    pub program_id: String,
+    pub lesson_ids: Vec<String>,
+    pub expected_revision: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetLearningLessonPreparationResultDto {
+    pub reset_lesson_ids: Vec<String>,
+    pub cancelled_job_ids: Vec<String>,
+    pub program_revision: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
 pub struct LearningGenerationJobActionRequestDto {
     pub operation_id: String,
     pub program_id: String,

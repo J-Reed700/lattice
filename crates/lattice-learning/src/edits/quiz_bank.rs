@@ -7,9 +7,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use crate::assessment_repository::quoted_questions_in;
+use crate::assessment_repository::{
+    candidate_review_status_in, quoted_questions_in, set_candidate_review_status_in,
+    CandidateReviewStatus,
+};
 use crate::edits::keys::{self, affected, section_key};
-use crate::lessons::claim_reviews::repository::questions;
 use lattice_core::shared::edits::{
     Change, Consequence, ContentRef, EditReactor, EditRegistry, Reaction, RelatedContent,
 };
@@ -111,20 +113,23 @@ impl EditReactor for QuizBankReactor {
             let Some(prior) = reverted.get("priorReviewStatus").and_then(Value::as_str) else {
                 return Ok(Reaction::default());
             };
-            let current = questions::review_status(&mut tx.reading(), &change.content.key).await?;
-            questions::set_review_status(tx, &change.content.key, prior).await?;
+            let prior_status = CandidateReviewStatus::parse(prior)?;
+            let current =
+                candidate_review_status_in(&mut tx.reading(), &change.content.key).await?;
+            set_candidate_review_status_in(tx, &change.content.key, prior_status).await?;
             return Ok(Reaction {
-                receipt: current.map(|status| json!({ "priorReviewStatus": status })),
+                receipt: current.map(|status| json!({ "priorReviewStatus": status.as_str() })),
                 affected: vec![affected::QUIZZES.into()],
                 consequences: Vec::new(),
                 follow_up: None,
             });
         }
 
-        let current = questions::review_status(&mut tx.reading(), &change.content.key).await?;
-        let receipt = if current.as_deref() == Some("dropped") {
-            questions::set_review_status(tx, &change.content.key, "agreed").await?;
-            Some(json!({ "priorReviewStatus": "dropped" }))
+        let current = candidate_review_status_in(&mut tx.reading(), &change.content.key).await?;
+        let receipt = if current == Some(CandidateReviewStatus::Dropped) {
+            set_candidate_review_status_in(tx, &change.content.key, CandidateReviewStatus::Agreed)
+                .await?;
+            Some(json!({ "priorReviewStatus": CandidateReviewStatus::Dropped.as_str() }))
         } else {
             None
         };

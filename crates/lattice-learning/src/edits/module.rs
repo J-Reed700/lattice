@@ -81,12 +81,12 @@ impl ContentKind for ModuleKind {
             .after
             .get("title")
             .and_then(Value::as_str)
-            .ok_or_else(|| AppError::InvalidState("Module title must be a string.".into()))?;
+            .ok_or_else(|| AppError::InvalidInput("Module title must be a string.".into()))?;
         let summary = change
             .after
             .get("summary")
             .and_then(Value::as_str)
-            .ok_or_else(|| AppError::InvalidState("Module summary must be a string.".into()))?;
+            .ok_or_else(|| AppError::InvalidInput("Module summary must be a string.".into()))?;
         correct_module(
             tx,
             &change.scope.container,

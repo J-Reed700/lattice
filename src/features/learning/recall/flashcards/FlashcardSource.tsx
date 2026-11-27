@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { CitationCard } from '@/features/reading/citations';
 import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
 import { fromStudySource } from '@/features/reading/model/sourceAdapter';
 import type { StudySourceDto } from '@/lib/bindings';
@@ -18,7 +19,7 @@ function safeExternalHref(value?: string | null) {
 export function FlashcardSource({ sources }: { sources: StudySourceDto[] }) {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
 
-  const targets = useMemo(() => sources.map((s, idx) => fromStudySource(s, idx)), [sources]);
+  const targets = useMemo(() => sources.map((source) => fromStudySource(source)), [sources]);
   const allSources = useMemo(() => targets.map((t) => t.source), [targets]);
 
   if (!sources.length) return null;
@@ -28,32 +29,53 @@ export function FlashcardSource({ sources }: { sources: StudySourceDto[] }) {
       <summary className="cursor-pointer text-text-secondary">
         {sources.length === 1 ? `Citation · ${sources[0].fileName}` : `Citations · ${sources.length} sources`}
       </summary>
-      <div className="space-y-5 py-4">
+      <div className="space-y-4 py-4">
         {sources.map((source, index) => {
           const href = safeExternalHref(source.url);
           const filePath = source.filePath?.trim();
           const hasTarget = Boolean(href || filePath || source.documentId);
+          const excerpts = source.support?.anchors.map((anchor) => anchor.exact).filter(Boolean) ?? [];
+          const passage = excerpts.length === 0 ? (source.excerpt?.trim() || undefined) : undefined;
+          const site = href ? new URL(href).hostname : undefined;
+          const citationNumber =
+            typeof source.citationId === 'number' && Number.isInteger(source.citationId) && source.citationId > 0
+              ? source.citationId
+              : null;
+          const openButton = hasTarget && (href || citationNumber === null) ? (
+            <Button
+              className="mt-2"
+              variant="secondary"
+              size="sm"
+              onClick={() => setOpenIndex(index)}
+            >
+              {href ? 'Open reference' : 'Open source'}
+            </Button>
+          ) : !hasTarget ? (
+            <p className="mt-2 text-xs text-text-muted">Saved source snapshot</p>
+          ) : undefined;
+          const title = source.fileName?.trim() || 'Saved source';
+          const fallbackText = excerpts[0] ?? passage;
           return (
-            <div key={`${source.chunkId}-${index}`}>
-              {sources.length > 1 && (
-                <p className="mb-2 text-xs font-medium text-text-primary">
-                  [{index + 1}] {source.fileName}
-                </p>
-              )}
-              <blockquote className="border-l-2 border-accent pl-4 leading-relaxed text-text-secondary">
-                {source.excerpt}
-              </blockquote>
-              {hasTarget ? (
-                <Button
-                  className="mt-3"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setOpenIndex(index)}
-                >
-                  {href ? 'Open reference' : 'Open source'}
-                </Button>
+            <div key={`${source.chunkId}-${citationNumber ?? 'unnumbered'}-${index}`}>
+              {citationNumber !== null ? (
+                <CitationCard
+                  number={citationNumber}
+                  title={title}
+                  site={site}
+                  relation={source.support?.relation}
+                  excerpts={excerpts}
+                  passage={passage}
+                  onOpen={hasTarget && !href ? () => setOpenIndex(index) : undefined}
+                  footer={openButton}
+                />
               ) : (
-                <p className="mt-3 text-xs text-text-muted">Saved source snapshot</p>
+                <div>
+                  <p className="mb-2 text-xs font-medium text-text-primary">{title}</p>
+                  {fallbackText && (
+                    <p className="leading-relaxed text-text-secondary">{fallbackText}</p>
+                  )}
+                  {openButton}
+                </div>
               )}
             </div>
           );

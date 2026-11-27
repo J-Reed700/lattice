@@ -51,7 +51,7 @@ fn used_note(protected: &[Protected]) -> String {
         .next()
         .and_then(|(_, units)| units.spans().first().map(|(unit, _)| *unit))
         .unwrap();
-    let hit = hit_at(&parts, &texts, unit).unwrap();
+    let hit = reading::hit_at(&parts, &texts, unit).unwrap();
     let settled = Settled {
         taught: Vec::new(),
         missing: Vec::new(),

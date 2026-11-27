@@ -36,22 +36,22 @@ export function LearningDocumentPicker({ selected, onChange, limit }: {
   return <div className="space-y-3">
     <div className="grid gap-3 sm:grid-cols-[minmax(140px,1fr)_minmax(0,2fr)]">
       <label htmlFor={`${id}-space`} className="text-xs font-medium text-text-secondary">Document Space
-        <select data-add-focus id={`${id}-space`} value={spaceId} onChange={(event) => { setSpaceId(event.target.value); setSearch(''); }} className="mt-1.5 min-h-11 w-full rounded-xl border border-border bg-background px-3 text-sm">
+        <select data-add-focus id={`${id}-space`} value={spaceId} onChange={(event) => { setSpaceId(event.target.value); setSearch(''); }} className="mt-1.5 min-h-11 w-full rounded-xl border border-border bg-bg px-3 text-sm">
           {!choices.some((space) => space.id === GENERAL_SPACE_ID) && <option value={GENERAL_SPACE_ID}>General</option>}
           {!choices.some((space) => space.id === spaceId) && spaceId !== GENERAL_SPACE_ID && <option value={spaceId}>{spaceName}</option>}
           {choices.map((space) => <option key={space.id} value={space.id}>{space.name}</option>)}
         </select>
       </label>
       <label htmlFor={`${id}-search`} className="text-xs font-medium text-text-secondary">Find a document
-        <div className="mt-1.5 flex min-h-11 items-center gap-2 rounded-xl border border-border bg-background px-3"><Search size={15} aria-hidden="true" /><input id={`${id}-search`} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${spaceName}`} className="min-w-0 flex-1 bg-transparent text-sm outline-hidden" /></div>
+        <div className="mt-1.5 flex min-h-11 items-center gap-2 rounded-xl border border-border bg-bg px-3"><Search size={15} aria-hidden="true" /><input id={`${id}-search`} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${spaceName}`} className="min-w-0 flex-1 bg-transparent text-sm outline-hidden" /></div>
       </label>
     </div>
     <p className="text-xs leading-5 text-text-muted">Showing documents available to <strong className="font-medium text-text-secondary">{spaceName}</strong>. Only checked documents are used. You can choose materials from several Spaces.</p>
     {spaces.isError && <p role="alert" className="text-xs text-rose-700">Spaces could not be loaded. <button type="button" onClick={() => void spaces.refetch()} className="underline">Retry Spaces</button></p>}
-    {documents.isLoading ? <p role="status" className="py-4 text-sm text-text-muted">Loading documents from {spaceName}…</p> : documents.isError ? <p role="alert" className="rounded-xl bg-rose-500/5 p-3 text-sm text-rose-700">{documents.error.message} <button type="button" onClick={() => void documents.refetch()} className="underline">Retry documents</button></p> : <div className="max-h-60 overflow-y-auto rounded-xl border border-border bg-background/40 p-2">
+    {documents.isLoading ? <p role="status" className="py-4 text-sm text-text-muted">Loading documents from {spaceName}…</p> : documents.isError ? <p role="alert" className="rounded-xl bg-rose-500/5 p-3 text-sm text-rose-700">{documents.error.message} <button type="button" onClick={() => void documents.refetch()} className="underline">Retry documents</button></p> : <div className="max-h-60 overflow-y-auto rounded-xl border border-border bg-bg/40 p-2">
       {documents.data?.length ? documents.data.map((document) => {
         const checked = selected.some((item) => item.id === document.documentId);
-        return <label key={document.documentId} className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-sm hover:bg-background"><input type="checkbox" checked={checked} disabled={!checked && limit != null && selected.length >= limit} onChange={(event) => onChange(event.target.checked ? [...selected, { id: document.documentId, title: document.fileName, spaceName }] : selected.filter((item) => item.id !== document.documentId))} className="accent-accent" /><BookOpen size={15} className="shrink-0 text-text-muted" /><span className="min-w-0 wrap-break-word text-text-secondary">{document.fileName}</span></label>;
+        return <label key={document.documentId} className="flex min-h-11 cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-sm hover:bg-bg"><input type="checkbox" checked={checked} disabled={!checked && limit != null && selected.length >= limit} onChange={(event) => onChange(event.target.checked ? [...selected, { id: document.documentId, title: document.fileName, spaceName }] : selected.filter((item) => item.id !== document.documentId))} className="accent-accent" /><BookOpen size={15} className="shrink-0 text-text-muted" /><span className="min-w-0 wrap-break-word text-text-secondary">{document.fileName}</span></label>;
       }) : <p className="p-3 text-sm leading-6 text-text-muted">{search ? 'No matching documents in this Space. Try another search or Space.' : 'No indexed documents in this Space. Choose another Space, add a URL, or start from your topic.'}</p>}
     </div>}
     {documents.data?.length === 50 && <p className="text-xs text-text-muted">Showing the first 50 matches. Search to find more documents.</p>}

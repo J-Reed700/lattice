@@ -22,7 +22,7 @@ const apiCallMock = vi.mocked(apiCall as unknown as (command: string, args?: unk
 
 const result = { synthesis: 'Decisions from the discussion.', entryCount: 2, chunkCount: 3, scope: 'conversation', conversationIds: ['first', 'second'], citations: [], sources: [] };
 const options = { title: 'Research', heading: 'Research', request: { conversationIds: ['first', 'second'], scope: 'conversation' }, destination: { kind: 'capture' as const } };
-const page = (id: string): WorkspaceNote => ({ id, title: id, content: 'Existing notes.', revision: 1, createdAt: '', updatedAt: '', journalId: 'journal', linkedDocumentIds: [], linkedConversationIds: [], highlights: [], stickyNotes: [], sources: [], conversationSnapshots: [] });
+const page = (id: string): WorkspaceNote => ({ id, title: id, content: 'Existing notes.', revision: 1, createdAt: '', updatedAt: '', journalId: 'journal', linkedDocumentIds: [], linkedConversationIds: [], highlights: [], stickyNotes: [], sources: [], citations: [], conversationSnapshots: [] });
 const client = () => new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
 
 function synthesis(overrides: Partial<JournalSynthesisDto> = {}, job: Parameters<typeof jobFixture>[0] = {}): JournalSynthesisDto {

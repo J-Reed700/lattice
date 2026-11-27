@@ -353,3 +353,40 @@ async fn a_prior_knowledge_of_null_is_no_prior_knowledge() -> Result<()> {
         .all(|(_, said)| !said.contains("null")));
     Ok(())
 }
+
+#[tokio::test]
+async fn finding_schema_variants_keep_kind_alphabetically_first() -> Result<()> {
+    let model = on::<LessonContractCheck>(Layered::new(), nothing_taught);
+    let model = on::<LessonContractFind>(model, nothing_found);
+    let candidate = lesson([
+        "First explanation.",
+        "Second explanation.",
+        "Third explanation.",
+    ]);
+    let _ = run(&model, &context(&[]), &candidate, &[]).await?;
+    let sent = asks::<LessonContractFind>(&model);
+    assert_eq!(sent.len(), 1);
+    let schema = sent[0]
+        .request
+        .schema()
+        .expect("LessonContractFind must attach JSON schema")
+        .as_json();
+    let branches = schema
+        .pointer("/properties/items/items/properties/finding/anyOf")
+        .and_then(Value::as_array)
+        .expect("expected finding anyOf branches");
+    assert_eq!(branches.len(), 3);
+    for branch in branches {
+        let props = branch
+            .get("properties")
+            .and_then(Value::as_object)
+            .expect("expected object properties on branch");
+        let first_key = props.keys().min().map(String::as_str);
+        assert_eq!(
+            first_key,
+            Some("kind"),
+            "every Finding anyOf variant must start alphabetically with `kind`: {branch}"
+        );
+    }
+    Ok(())
+}

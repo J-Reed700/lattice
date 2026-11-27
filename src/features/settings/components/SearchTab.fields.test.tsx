@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { chooseRadixOption } from './radixSelectTestUtils';
 import { SearchTab } from './SearchTab';
 
 type Callbacks = { onError?: (error: Error) => void; onSettled?: () => void };
@@ -68,9 +69,9 @@ describe('SearchTab fields', () => {
     render(<SearchTab />);
     edit('Maximum results', '500');
     expect(last()[0]).toEqual({ category: 'search', updates: { maxResults: 500 } });
-    expect(screen.getByLabelText('Maximum results')).toHaveValue(500);
+    expect(screen.getByLabelText('Maximum results')).toHaveValue('500');
     act(() => last()[1].onSettled?.());
-    expect(screen.getByLabelText('Maximum results')).toHaveValue(10);
+    expect(screen.getByLabelText('Maximum results')).toHaveValue('10');
     edit('Similarity threshold', '1.5');
     expect(last()[0]).toEqual({ category: 'search', updates: { similarityThreshold: 1 } });
     edit('Hybrid alpha', '0.75');
@@ -83,17 +84,17 @@ describe('SearchTab fields', () => {
     render(<SearchTab />);
     fireEvent.click(screen.getByLabelText('Document summaries'));
     act(() => last()[1].onSettled?.());
-    expect(screen.getByLabelText('Maximum results')).toHaveValue(10);
+    expect(screen.getByLabelText('Maximum results')).toHaveValue('10');
   });
 
-  it('configures truncated vector storage', () => {
+  it('configures truncated vector storage', async () => {
     h.query = { data: { search: search({ vectorIndexCompression: { mode: 'truncated', dims: 256, quantization: 'f32' } }) }, isPending: false, refetch: vi.fn() };
     render(<SearchTab />);
     edit('Stored dimensions', '0');
     expect(last()[0]).toEqual({ category: 'search', updates: { vectorIndexCompression: { mode: 'truncated', dims: 1, quantization: 'f32' } } });
-    fireEvent.change(screen.getByLabelText('Stored precision'), { target: { value: 'i8' } });
+    await chooseRadixOption(screen.getByLabelText('Stored precision'), '8-bit integer');
     expect(last()[0]).toEqual({ category: 'search', updates: { vectorIndexCompression: { mode: 'truncated', dims: 256, quantization: 'i8' } } });
-    fireEvent.change(screen.getByLabelText('Vector storage'), { target: { value: 'none' } });
+    await chooseRadixOption(screen.getByLabelText('Vector storage'), 'Full precision');
     expect(last()[0]).toEqual({ category: 'search', updates: { vectorIndexCompression: { mode: 'none', dims: 256, quantization: 'f32' } } });
   });
 

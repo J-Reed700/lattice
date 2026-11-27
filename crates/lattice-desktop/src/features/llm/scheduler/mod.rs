@@ -503,12 +503,14 @@ impl InferenceScheduler {
             let Some(waiter) = state.queue.remove(&key) else {
                 return;
             };
-            let previous_owner = state.slots.iter().position(|candidate| {
-                waiter.cache_key.is_some() && candidate.last_key == waiter.cache_key
-            });
-            if let Some(previous) = previous_owner.filter(|previous| *previous != slot) {
-                if let Some(stale) = state.slots.get_mut(previous) {
-                    stale.last_key = None;
+            if waiter.cache_key.is_some() {
+                for (index, candidate) in state.slots.iter_mut().enumerate() {
+                    if index != slot
+                        && candidate.running.is_none()
+                        && candidate.last_key == waiter.cache_key
+                    {
+                        candidate.last_key = None;
+                    }
                 }
             }
             state.clock = state.clock.saturating_add(1);
@@ -665,19 +667,6 @@ impl InferenceScheduler {
         }
         drop_retired_tail(&mut state.slots);
     }
-
-    #[cfg(test)]
-    fn queued(&self) -> usize {
-        self.state.lock().queue.len()
-    }
-
-    /// How long until admission reopens, while a throttle keeps it closed.
-    #[cfg(test)]
-    pub(crate) fn reopens_in(&self) -> Option<Duration> {
-        let open_at = self.state.lock().congestion.as_ref()?.open_at()?;
-        let wait = open_at.saturating_duration_since(Instant::now());
-        (!wait.is_zero()).then_some(wait)
-    }
 }
 
 fn active_slots(slots: &[Slot]) -> usize {
@@ -791,3 +780,6 @@ mod vision_tests;
 
 #[cfg(test)]
 mod waiting_tests;
+
+#[cfg(test)]
+mod slot_key_tests;

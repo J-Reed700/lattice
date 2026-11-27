@@ -14,8 +14,9 @@ import { type FC, useEffect, useMemo, useRef } from 'react';
 import { X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/Checkbox';
 import { IconButton } from '@/components/ui/IconButton';
-import { settingsTextareaClass } from '@/components/ui/SettingsSection';
+import { Textarea } from '@/components/ui/textarea';
 import { useApi } from '@/contexts/ApiContext';
 import {
   cancelBatchUrlImport,
@@ -115,33 +116,28 @@ export const BatchUrlImport: FC<BatchUrlImportProps> = ({ onImportComplete }) =>
       <label htmlFor="url-textarea" className="sr-only">
         URLs to import, one per line
       </label>
-      <textarea
+      <Textarea
         ref={textareaRef}
         id="url-textarea"
-        rows={8}
+        rows={7}
         value={urlText}
         disabled={hasActiveJob}
         onChange={(e) => setBatchUrlText(e.target.value, api)}
         placeholder="One URL per line"
-        className={settingsTextareaClass}
       />
 
-      <div className="mt-3 flex items-center justify-between gap-4">
-        <label className="flex cursor-pointer items-center gap-2 text-sm text-text-secondary">
-          <input
-            type="checkbox"
-            checked={options.extractArticle}
-            disabled={hasActiveJob}
-            onChange={(e) => setExtractArticle(e.target.checked)}
-            className="h-3.5 w-3.5 rounded-sm border-border-default accent-[hsl(var(--text-tertiary))]"
-          />
-          Extract article text
-        </label>
+      <div className="mt-3.5 flex items-center justify-between gap-4">
+        <Checkbox
+          label="Extract article text"
+          checked={options.extractArticle}
+          disabled={hasActiveJob}
+          onCheckedChange={(checked) => setExtractArticle(checked)}
+        />
 
         <Button
           onClick={handleAsyncEvent(() => startBatchUrlImportRun(api))}
           disabled={readyCount === 0 || hasActiveJob}
-          className="h-9 shrink-0"
+          className="shrink-0"
         >
           {readyCount > 0
             ? `Import ${readyCount} ${readyCount === 1 ? 'URL' : 'URLs'}`
@@ -183,9 +179,9 @@ export const BatchUrlImport: FC<BatchUrlImportProps> = ({ onImportComplete }) =>
       )}
 
       {items.length > 0 && (
-        <div className="mt-8">
+        <div className="mt-6">
           <div className="flex items-center justify-between pb-2">
-            <h2 className="text-base font-medium text-text-primary">
+            <h2 className="font-sans text-base font-semibold tracking-[-0.02em] text-text-primary">
               {items.length} {items.length === 1 ? 'URL' : 'URLs'}
             </h2>
             <button
@@ -206,13 +202,12 @@ export const BatchUrlImport: FC<BatchUrlImportProps> = ({ onImportComplete }) =>
                   key={item.id}
                   className="group flex items-start gap-3 border-b border-border-subtle py-3"
                 >
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={item.selected}
                     disabled={hasActiveJob}
-                    onChange={() => toggleItem(item.id)}
+                    onCheckedChange={() => toggleItem(item.id)}
                     aria-label={`Include ${item.url}`}
-                    className="mt-1 h-3.5 w-3.5 shrink-0 rounded-sm border-border-default accent-[hsl(var(--text-tertiary))]"
+                    className="mt-0.5 shrink-0"
                   />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm text-text-primary">
@@ -244,7 +239,7 @@ export const BatchUrlImport: FC<BatchUrlImportProps> = ({ onImportComplete }) =>
       )}
 
       {items.length === 0 && (
-        <p className="mt-8 text-sm text-text-muted">No URLs yet.</p>
+        <p className="mt-6 text-sm text-text-muted">No URLs yet.</p>
       )}
     </div>
   );

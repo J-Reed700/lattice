@@ -102,11 +102,20 @@ impl LearningPracticeRepository {
                 .get::<Option<i64>, _>("artifact_updated")
                 .unwrap_or(summary.created_at),
         };
+        let program_id: String = row.get("program_id");
         let assistance = Self::assistance_on(&mut *connection, session_id).await?;
-        let tutor_turns = Self::turns_on(&mut *connection, session_id).await?;
+        let mut tutor_turns = Self::turns_on(&mut *connection, session_id).await?;
         let proposals = Self::proposals_on(&mut *connection, session_id).await?;
         let revealed_solution: Option<String> = row.get("revealed_solution");
-        let revealed_solution_citations = decode(row.get("revealed_solution_citations_json"))?;
+        let mut revealed_solution_citations: Vec<LearningPracticeCitationDto> =
+            decode(row.get("revealed_solution_citations_json"))?;
+        let version_texts =
+            crate::references::source_library::version_texts_on(&mut *connection, &program_id)
+                .await?;
+        for turn in &mut tutor_turns {
+            LearningPracticeCitationDto::hydrate_list(&mut turn.citations, &version_texts);
+        }
+        LearningPracticeCitationDto::hydrate_list(&mut revealed_solution_citations, &version_texts);
         let result = if let Some(grade) = row.get::<Option<String>, _>("grade_status") {
             Some(LearningPracticeResultDto {
                 grade_status: parse_grade_status(&grade)?,
@@ -271,7 +280,7 @@ impl LearningPracticeRepository {
                 .fetch_optional(&mut *read)
                 .await?;
         read.commit().await?;
-        if program_status.as_deref() != Some("active") {
+        if program_status.as_deref() != Some(crate::dto::LearningProgramStatus::Active.as_str()) {
             return Err(invalid(
                 "Practice actions require an active learning program.",
             ));

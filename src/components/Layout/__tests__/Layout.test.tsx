@@ -13,6 +13,7 @@ vi.mock('@/features/model/components/Downloads/HeaderDownloadsIndicator', () => 
 }));
 vi.mock('@/features/files/components/IndexingStatus/IndexingStatusRail', () => ({ IndexingStatusRail: () => null }));
 vi.mock('@/features/iris/components/Iris', () => ({ Iris: () => null }));
+vi.mock('../RailSpacesSection', () => ({ RailSpacesSection: () => null }));
 
 // The rail renders `null` under the mock above (and on a real idle vault), so
 // this list is still the complete set of buttons Layout puts in the nav.
@@ -90,5 +91,23 @@ describe('Layout', () => {
   it('renders the routed content', () => {
     renderLayout('/chat');
     expect(screen.getByTestId('outlet')).toBeInTheDocument();
+  });
+
+  it('styles Lattice wordmark, Find anything control, and active rail pill for Option A', () => {
+    renderLayout('/home');
+    const brand = screen.getByLabelText('Lattice');
+    expect(brand.textContent).toBe('Lattice');
+    expect(brand.querySelector('span:last-child')?.className).toContain('font-sans');
+    expect(brand.querySelector('span:last-child')?.className).toContain('font-semibold');
+
+    const paletteBtn = screen.getByRole('button', { name: 'Search and commands' });
+    expect(paletteBtn.className).toContain('bg-surface');
+    expect(paletteBtn.className).toContain('shadow-control');
+
+    const homeBtn = screen.getByLabelText('Home');
+    const activePill = homeBtn.querySelector('span[aria-hidden="true"]');
+    expect(activePill?.className).toContain('bg-surface');
+    expect(activePill?.className).toContain('shadow-sm');
+    expect(activePill?.className).toContain('ring-1');
   });
 });

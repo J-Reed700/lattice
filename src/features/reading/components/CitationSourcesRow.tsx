@@ -9,6 +9,7 @@ export interface CitationSourcesRowEntry {
   key?: string;
   provenanceLabel?: string;
   resolvedLocation?: string;
+  occurrence?: number | null;
   disabledReason?: string;
   /** The source's name shown after its chip, for rows that list sources rather than only number them. */
   title?: string;
@@ -41,6 +42,7 @@ export function CitationSourcesRow({
             source={entry.source}
             provenanceLabel={entry.provenanceLabel}
             resolvedLocation={entry.resolvedLocation}
+            occurrence={entry.occurrence}
             disabledReason={entry.disabledReason}
             onViewFile={entry.onView}
           />

@@ -5,7 +5,7 @@ use crate::lessons::content_verification::Protected;
 use crate::lessons::copied_wording::Wording;
 use crate::lessons::rows::words::{citing, KEYS, NO_CITATIONS, SENTENCES};
 use crate::lessons::rows::{self, Held, Left, Quotes, Rows};
-use crate::lessons::structured_call::{self, Asking};
+use crate::lessons::structured_call::{self, Asking, CallKind, ReasonFirst};
 use crate::lessons::text_edits::{
     self, NEVER_SAY_WHERE, QUOTED_WORDING, STEPS_IN_ORDER, UNQUOTED_REMARKS,
 };
@@ -398,6 +398,10 @@ const LEARNER: &str = "The learner sees only the lesson: added or changed text t
 const KEPT_TO_THE_CONTRACT: &str =
     "Added or changed text uses a term, or asks the learner to do or use something, only where the lesson has taught it by that point; otherwise it says there what the term means or how to do it. It never says again what the sentence before or after it already says.";
 
+/// Explanations and worked examples stay conceptual and never import practice workflows.
+const SECTION_ROLES: &str =
+    "Only practice sections (guided_practice, independent_practice) ask the learner to create deliverables, files, or external work, and only when originalRequirements asks for them; explanation, worked_example, contrast, check, reflection, and recap sections never introduce deliverable, repository, commit, viewer, file-saving, or external-tooling instructions.";
+
 /// The instructions of an edit repair, with the rules of citing when the material takes citations.
 pub(in crate::lessons) fn system(cites: bool) -> String {
     let mut parts = vec![
@@ -407,6 +411,7 @@ pub(in crate::lessons) fn system(cites: bool) -> String {
         SMALLEST.to_owned(),
         LEARNER.to_owned(),
         KEPT_TO_THE_CONTRACT.to_owned(),
+        SECTION_ROLES.to_owned(),
     ];
     if cites {
         parts.push(citing());
@@ -574,6 +579,8 @@ impl Taking<'_, '_> {
     }
 }
 
+const REPAIR_DRAFT_BRIEF: &str = "Go through each finding in order. Identify the exact unit ids to edit or replace, verify each unit is edited at most once and stays within the finding's scope, and write out the exact replacement text or why the finding cannot be repaired.";
+
 /// Asks for the edits that correct `request`'s findings, and takes the entries that stand.
 pub(super) async fn mend(llm: &dyn LLMPort, request: &Request<'_>) -> Result<Mended> {
     let sents = sents_of(&request.issues);
@@ -584,7 +591,11 @@ pub(super) async fn mend(llm: &dyn LLMPort, request: &Request<'_>) -> Result<Men
         llm,
         &Asking {
             progress: None,
-            reasoning: None,
+            reasoning: Some(ReasonFirst {
+                kind: CallKind::Authoring,
+                subject: "the corrections",
+                brief: REPAIR_DRAFT_BRIEF,
+            }),
         },
         &mut Scope::for_question(),
         &sents,
@@ -670,7 +681,7 @@ fn rewrite_prompt(request: &Request<'_>, requirements: Value) -> Map<String, Val
         ("candidate", request.candidate.clone()),
         ("sourceQuoteChecks", json!(request.quote_checks)),
         ("issuesToFix", issues),
-        ("instruction", json!(format!("Give the complete corrected material. Change every defective passage, exercise, key or explanation identified above. An unchanged draft is not a repair. Preserve valid content. Do not mention this internal review, the course plan or the sources' excerpts in the learner-facing material. {KEPT_TO_THE_CONTRACT}"))),
+        ("instruction", json!(format!("Give the complete corrected material. Change every defective passage, exercise, key or explanation identified above. An unchanged draft is not a repair. Preserve valid content. Do not mention this internal review, the course plan or the sources' excerpts in the learner-facing material. {KEPT_TO_THE_CONTRACT} {SECTION_ROLES}"))),
     ]
     .into_iter()
     .map(|(key, value)| (key.to_owned(), value))
@@ -693,9 +704,6 @@ pub(super) async fn rewrite(llm: &dyn LLMPort, request: &Request<'_>) -> Result<
             crate::lesson_progress::stage("Reusing the completed teaching repair");
             return read_rewrite(raw);
         }
-        if let Some(reason) = saved.get("refused").and_then(Value::as_str) {
-            return Err(AppError::ModelAnswerUnusable(reason.to_owned()));
-        }
     }
     // Fitted to the window as the review is.
     let mut requirements = request.authoring.clone();
@@ -716,12 +724,8 @@ pub(super) async fn rewrite(llm: &dyn LLMPort, request: &Request<'_>) -> Result<
     let result =
         writer_excerpts::complete(llm, &call, &wr, excerpts.as_ref(), None, None, read_rewrite)
             .await;
-    match &result {
-        Ok(raw) => crate::lesson_drafts::record_checkpoint(&key, json!({"answer": raw})).await?,
-        Err(AppError::ModelAnswerUnusable(reason) | AppError::AnswerCutOff(reason)) => {
-            crate::lesson_drafts::record_checkpoint(&key, json!({"refused": reason})).await?;
-        }
-        Err(_) => {}
+    if let Ok(raw) = &result {
+        crate::lesson_drafts::record_checkpoint(&key, json!({"answer": raw})).await?;
     }
     result
 }

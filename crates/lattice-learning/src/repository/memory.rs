@@ -216,16 +216,26 @@ impl LearningRepository {
             } else {
                 String::new()
             };
+            let excerpt: String = source.get("excerpt");
             citations.push(StudySourceDto {
                 chunk_id,
                 document_id,
                 file_name: source.get("title"),
                 file_path,
-                excerpt: source.get("excerpt"),
+                support: lattice_core::application::contracts::replies::SupportDto::cites([
+                    excerpt.as_str(),
+                ]),
+                excerpt,
                 url,
+                citation_id: (citations.len() + 1) as u32,
             });
         }
         if citations.is_empty() {
+            let excerpt = if generated {
+                "AI-authored recall from the prepared lesson; no external source."
+            } else {
+                "Learner-authored recall card without an external source."
+            };
             citations.push(StudySourceDto {
                 chunk_id: format!("learning-memory:{draft_id}"),
                 document_id: String::new(),
@@ -235,13 +245,12 @@ impl LearningRepository {
                     "Personal learning card".into()
                 },
                 file_path: String::new(),
-                excerpt: if generated {
-                    "AI-authored recall from the prepared lesson; no external source."
-                } else {
-                    "Learner-authored recall card without an external source."
-                }
-                .into(),
+                excerpt: excerpt.into(),
                 url: None,
+                citation_id: 1,
+                support: lattice_core::application::contracts::replies::SupportDto::cites([
+                    excerpt,
+                ]),
             });
         }
         let now = chrono::Utc::now().timestamp_millis();
@@ -340,12 +349,17 @@ async fn validate_memory_lesson(
     let row = sqlx::query("SELECT p.status,l.preparation FROM learning_programs p JOIN learning_lessons l ON l.program_id=p.id WHERE p.id=? AND l.id=?")
         .bind(program_id).bind(lesson_id).fetch_optional(&mut *tx).await?
         .ok_or_else(|| AppError::NotFound("Lesson does not belong to this learning program.".into()))?;
-    if row.get::<String, _>("status") != "active" {
+    if LearningProgramStatus::parse(&row.get::<String, _>("status"))?
+        != LearningProgramStatus::Active
+    {
         return Err(AppError::InvalidInput(
             "Accept the program before using its memory tools.".into(),
         ));
     }
-    if require_ready && row.get::<String, _>("preparation") != "ready" {
+    if require_ready
+        && LearningPreparation::parse(&row.get::<String, _>("preparation"))?
+            != LearningPreparation::Ready
+    {
         return Err(AppError::InvalidInput(
             "Prepare this lesson before using its memory tools.".into(),
         ));
@@ -411,7 +425,9 @@ pub(crate) async fn ensure_memory_resources(
             .fetch_optional(&mut **tx)
             .await?
             .ok_or_else(|| AppError::NotFound("Learning program not found.".into()))?;
-    if program.get::<String, _>("status") != "active" {
+    if LearningProgramStatus::parse(&program.get::<String, _>("status"))?
+        != LearningProgramStatus::Active
+    {
         return Err(AppError::InvalidInput(
             "Accept the program before creating its memory workspace.".into(),
         ));

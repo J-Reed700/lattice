@@ -176,3 +176,165 @@ fn a_source_index_past_the_numbered_sources_still_fails() {
         "The citation must select a supplied sourceIndex."
     );
 }
+
+#[test]
+fn switching_from_draft_to_kept_shape_preserves_standing_section_digests() {
+    use crate::lessons::course_generation_tests::ScriptedModel;
+    use crate::lessons::shape::{policy, LessonShape, Phase};
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
+
+    let policy = policy();
+    let model = ScriptedModel {
+        outputs: Mutex::new(VecDeque::new()),
+        prompts: Mutex::new(Vec::new()),
+    };
+    let sources = vec![source("written", WRITTEN)];
+    let references = ReferenceCollection::lexical(&sources).unwrap();
+    let candidate = json!({
+        "blocks": [
+            {"kind": "explanation", "title": "First", "body": "First body.", "sourceIndex": 0, "quote": WRITTEN},
+            {"kind": "explanation", "title": "Second", "body": "Second body.", "sourceIndex": 0, "quote": WRITTEN}
+        ],
+        "questions": []
+    });
+
+    let mut draft_authoring = writer_context();
+    let draft_schema = policy.schema(Phase::Draft, sources.len());
+    LessonShape::new(&draft_schema, policy).state_in(&mut draft_authoring);
+
+    let mut first = LessonSubject::new(&references, &sources, &[], Held::default());
+    first.given(&model, &draft_authoring);
+    let round = first.standing.round(&candidate).unwrap();
+    first.standing.judged(
+        &candidate,
+        &round,
+        crate::teaching_review::Judged::default(),
+    );
+    first.standing.admit(&candidate, Vec::new());
+    let saved = json!({ "reviewer": first.standing.saved().unwrap() }).to_string();
+
+    let mut kept_authoring = writer_context();
+    let kept_schema = policy.schema(Phase::Kept, sources.len());
+    LessonShape::new(&kept_schema, policy).state_in(&mut kept_authoring);
+
+    let mut next = LessonSubject::new(&references, &sources, &[], Held::default());
+    next.standing.resume(&saved);
+    next.given(&model, &kept_authoring);
+    assert!(
+        next.standing.round(&candidate).is_none(),
+        "switching Phase::Draft -> Phase::Kept must not wipe Standing::reviewed digests"
+    );
+
+    let mut edited = candidate.clone();
+    edited["blocks"][0]["body"] = json!("Updated first body.");
+    let recheck = next.standing.round(&edited).unwrap();
+    assert_eq!(recheck.sections, [0]);
+
+    let mut custom_authoring = writer_context();
+    custom_authoring["lessonShape"] = json!(["Two sections."]);
+    next.given(&model, &custom_authoring);
+    let custom_recheck = next.standing.round(&candidate).unwrap();
+    assert_eq!(custom_recheck.sections, [0, 1]);
+}
+
+#[tokio::test]
+async fn local_keeps_read_prompts_runs_review_and_contract_sequentially() -> Result<()> {
+    use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct LocalProbe {
+        keeps_prompts: bool,
+        in_flight: AtomicUsize,
+        max_in_flight: AtomicUsize,
+        calls: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl LLMPort for LocalProbe {
+        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+            let active = self.in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+            self.max_in_flight.fetch_max(active, Ordering::SeqCst);
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            // Yield so concurrent futures under try_join! would overlap here.
+            tokio::task::yield_now().await;
+            self.in_flight.fetch_sub(1, Ordering::SeqCst);
+            if crate::lessons::structured_call::is_draft_request(request) {
+                return Ok(CompletionResponse::from_text(
+                    crate::lessons::structured_call::FIXTURE_DRAFT,
+                ));
+            }
+            Ok(CompletionResponse::from_text(r#"{"items":[]}"#))
+        }
+        fn model_name(&self) -> &str {
+            "local-probe"
+        }
+        fn count_tokens(&self, text: &str) -> usize {
+            text.len() / 4
+        }
+        fn max_context_tokens(&self) -> usize {
+            32_768
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+        fn enforces(
+            &self,
+            _schema: &lattice_core::application::services::model_contract::shape::Schema,
+        ) -> bool {
+            false
+        }
+        fn keeps_read_prompts(&self) -> bool {
+            self.keeps_prompts
+        }
+    }
+
+    let sources = vec![source("written", WRITTEN)];
+    let references = ReferenceCollection::lexical(&sources)?;
+    let candidate = json!({
+        "blocks": [{
+            "kind": "explanation",
+            "title": "First",
+            "body": "A substantive teaching explanation with practice context. ".repeat(6),
+            "rubric": [],
+            "sourceIndex": 0,
+            "quote": WRITTEN,
+        }],
+        "questions": [],
+    });
+    let authoring = writer_context();
+    let schema_value = json!({"type": "object"});
+    let pass = Pass {
+        candidate: &candidate.to_string(),
+        value: &candidate,
+        authoring: &authoring,
+        quote_checks: &[],
+        schema: crate::lessons::teaching::ReviewSchema::Other(&schema_value),
+    };
+
+    let local = LocalProbe {
+        keeps_prompts: true,
+        in_flight: AtomicUsize::new(0),
+        max_in_flight: AtomicUsize::new(0),
+        calls: AtomicUsize::new(0),
+    };
+    let mut local_subject = LessonSubject::new(&references, &sources, &[], Held::default());
+    local_subject.given(&local, &authoring);
+    let found = local_subject.find(&local, &pass).await?;
+    assert!(found.findings.is_empty(), "{:?}", found.findings);
+    assert!(local.calls.load(Ordering::SeqCst) >= 2);
+    assert_eq!(local.max_in_flight.load(Ordering::SeqCst), 1);
+
+    let cloud = LocalProbe {
+        keeps_prompts: false,
+        in_flight: AtomicUsize::new(0),
+        max_in_flight: AtomicUsize::new(0),
+        calls: AtomicUsize::new(0),
+    };
+    let mut cloud_subject = LessonSubject::new(&references, &sources, &[], Held::default());
+    cloud_subject.given(&cloud, &authoring);
+    let found = cloud_subject.find(&cloud, &pass).await?;
+    assert!(found.findings.is_empty(), "{:?}", found.findings);
+    assert!(cloud.max_in_flight.load(Ordering::SeqCst) >= 2);
+    Ok(())
+}

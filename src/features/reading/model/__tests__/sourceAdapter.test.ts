@@ -141,18 +141,30 @@ describe('sourceAdapter canonical mappings', () => {
   });
 
   describe('fromStudySource', () => {
-    it('maps StudySourceDto with excerpt into locator', () => {
+    it('maps StudySourceDto with excerpt, backend citationId, and support into locator', () => {
       const study: StudySourceDto = {
         documentId: 'study-doc-1',
         chunkId: 'study-chunk-1',
         fileName: 'Cell Biology.pdf',
         filePath: '/vault/cell_bio.pdf',
         excerpt: 'Mitochondria are the powerhouse of the cell.',
+        citationId: 4,
+        support: {
+          relation: 'cites',
+          anchors: [{ exact: 'Mitochondria are the powerhouse of the cell.', span: null }],
+        },
       };
-      const target = fromStudySource(study, 2, 'conv-study-1');
+      const target = fromStudySource(study, 'conv-study-1');
       expect(target.source.documentId).toBe('study-doc-1');
       expect(target.source.chunkId).toBe('study-chunk-1');
-      expect(target.source.citationId).toBe(3);
+      expect(target.source.citationId).toBe(4);
+      expect(target.source.anchoredBy).toEqual([
+        {
+          occurrence: 0,
+          relation: 'cites',
+          anchors: [{ exact: 'Mitochondria are the powerhouse of the cell.', span: null }],
+        },
+      ]);
       expect(target.source.conversationId).toBe('conv-study-1');
       expect(target.locator).toEqual({
         text: 'Mitochondria are the powerhouse of the cell.',
@@ -165,11 +177,14 @@ describe('sourceAdapter canonical mappings', () => {
         fileName: 'Cell Biology Online',
         url: 'https://example.org/cell-biology',
         excerpt: 'Mitochondria generate ATP.',
+        citationId: 2,
+        support: { relation: 'cites', anchors: [] },
       } as unknown as StudySourceDto;
-      const target = fromStudySource(study, 0);
+      const target = fromStudySource(study);
       expect(target.source.filePath).toBe('https://example.org/cell-biology');
       expect(target.source.category).toBe('web');
       expect(target.source.mimeType).toBe('text/html');
+      expect(target.source.citationId).toBe(2);
       expect(target.locator?.text).toBe('Mitochondria generate ATP.');
     });
   });
@@ -359,14 +374,37 @@ describe('sourceAdapter canonical mappings', () => {
         trust: null,
       };
 
-      const target = fromLearningEvidencePassage(passage, 0, 'Full backpropagation textbook text');
+      const target = fromLearningEvidencePassage(passage, 4, 'Full backpropagation textbook text');
       expect(target.source.documentId).toBe('web:https://learn.example.com/backprop');
       expect(target.source.fileName).toBe('Evidence on Backpropagation');
+      expect(target.source.citationId).toBe(4);
       expect(target.source.webSnapshot?.text).toBe('Full backpropagation textbook text');
       expect(target.locator).toEqual({
         text: 'Backpropagation computes the gradient of the loss function.',
         chunkId: 'sv-123:100-165',
       });
+    });
+
+    it('omits citationId and positional fallback names when called without a backend citation number', () => {
+      const passage: LearningEvidencePassageDto = {
+        sourceVersionId: '',
+        title: '',
+        text: 'Excerpt without title.',
+        startByte: 0,
+        endByte: 22,
+        url: null,
+        retrievalKind: 'source',
+        trust: null,
+      };
+
+      const unnumbered = fromLearningEvidencePassage(passage);
+      expect(unnumbered.source.citationId).toBeUndefined();
+      expect(unnumbered.source.documentId).toBe('passage');
+      expect(unnumbered.source.fileName).toBe('Saved source');
+
+      const numbered = fromLearningEvidencePassage(passage, 3);
+      expect(numbered.source.citationId).toBe(3);
+      expect(numbered.source.fileName).toBe('Source 3');
     });
 
     it('keeps the passage as what a reader marks once the saved page has loaded', () => {
@@ -382,10 +420,44 @@ describe('sourceAdapter canonical mappings', () => {
       };
 
       for (const url of ['https://learn.example.com/backprop', null]) {
-        const { source } = fromLearningEvidencePassage({ ...passage, url }, 0, 'Full backpropagation textbook text');
+        const { source } = fromLearningEvidencePassage({ ...passage, url }, undefined, 'Full backpropagation textbook text');
         expect(locatorFromSource(source, source.chunkId).text).toBe(passage.text);
         expect(source.content).toBe(passage.text);
       }
+    });
+
+    describe('the text anchors are placed in', () => {
+      const passage: LearningEvidencePassageDto = {
+        sourceVersionId: 'sv-123',
+        title: 'Evidence on Backpropagation',
+        text: '\n  Backpropagation computes the gradient.  \n',
+        startByte: 100,
+        endByte: 148,
+        url: 'https://learn.example.com/backprop',
+        retrievalKind: 'lexical',
+        trust: null,
+      };
+
+      it('keeps a saved page exactly as given and starts at byte 0', () => {
+        const { source } = fromLearningEvidencePassage(passage, undefined, '\n\nThe whole saved page.\n');
+
+        expect(source.webSnapshot?.text).toBe('\n\nThe whole saved page.\n');
+        expect(source.anchorBase).toBe(0);
+      });
+
+      it('keeps a web passage shown alone exactly as given and starts at its own byte', () => {
+        const { source } = fromLearningEvidencePassage(passage);
+
+        expect(source.webSnapshot?.text).toBe(passage.text);
+        expect(source.anchorBase).toBe(100);
+      });
+
+      it('starts a passage with no page at its own byte', () => {
+        const { source } = fromLearningEvidencePassage({ ...passage, url: null });
+
+        expect(source.anchorBase).toBe(100);
+        expect(source.content.trim()).toBe('Backpropagation computes the gradient.');
+      });
     });
 
     it('reads a whole source with no passage as its full text', () => {
@@ -393,7 +465,7 @@ describe('sourceAdapter canonical mappings', () => {
         sourceVersionId: 'sv-123', title: 'Lecture notes', text: '', startByte: 0, endByte: 0, url: null, retrievalKind: 'source', trust: null,
       };
 
-      const target = fromLearningEvidencePassage(passage, 0, 'The whole of the lecture notes.');
+      const target = fromLearningEvidencePassage(passage, undefined, 'The whole of the lecture notes.');
       expect(target.source.content).toBe('The whole of the lecture notes.');
       expect(target.locator).toBeNull();
     });

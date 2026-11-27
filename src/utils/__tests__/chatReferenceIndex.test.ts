@@ -18,6 +18,7 @@ const buildNote = (overrides: Partial<WorkspaceNote>): WorkspaceNote => ({
   stickyNotes: [],
   conversationSnapshots: [],
   sources: [],
+  citations: [],
   createdAt: '2026-02-19T10:00:00.000Z',
   updatedAt: '2026-02-19T10:00:00.000Z',
   ...overrides,

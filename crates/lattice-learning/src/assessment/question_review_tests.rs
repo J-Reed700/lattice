@@ -26,6 +26,9 @@ struct Script {
 #[async_trait::async_trait]
 impl LLMPort for Script {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        if request.schema().is_none() {
+            return Ok(CompletionResponse::from_text("Draft reasoning."));
+        }
         let (system, user) = crate::lessons::structured_call::task_messages(request);
         let kind = if system.starts_with("Solve quiz questions") {
             "solve"
@@ -495,4 +498,42 @@ fn a_lessons_outcome_includes_what_the_course_plan_gives_it_to_teach() {
     assert!(outcome.description.contains("Bravo gives way"));
     assert!(!outcome.description.contains("Charlie came before"));
     assert!(!outcome.description.contains("Delta comes after"));
+}
+
+#[tokio::test]
+async fn question_review_catches_course_meta_talk_and_phantom_versions_on_drafted_questions(
+) -> Result<()> {
+    let pool = crate::test_support::pool().await?;
+    let db = Database::new(pool);
+    let (repo, job, lesson_id) = crate::content_verification::test_support::setup(&db).await?;
+    let llm = Script::new(Script::agreeing(), Script::sound());
+
+    let drafted = json!({"questions":[{
+        "kind": "quiz",
+        "prompt": "Which action best fits this lesson's rotation policy?",
+        "options": ["Register first", "Switch first", "Retire first", "Skip rotation"],
+        "correctIndex": 0,
+        "explanation": "Registering first lets the verifier accept assertions for the 4.0.1 build.",
+        "rationales": [
+            "",
+            "Nothing in this lesson allows switching first.",
+            "Retiring drops the active key.",
+            "Skipping leaves stale keys."
+        ],
+        "quote": "Register the new public key before switching."
+    }]});
+
+    let findings = crate::lesson_drafts::run(&db, &repo, &job, &lesson_id, async {
+        check(&llm, &drafted, outcome()).await
+    })
+    .await?;
+
+    assert_eq!(findings.len(), 1);
+    assert!(
+        findings[0].note.contains("meta-talk"),
+        "{}",
+        findings[0].note
+    );
+    assert!(findings[0].note.contains("4.0.1"), "{}", findings[0].note);
+    Ok(())
 }

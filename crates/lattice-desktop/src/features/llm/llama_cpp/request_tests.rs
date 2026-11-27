@@ -41,6 +41,7 @@ fn local_client(
         context_window: 8192,
         stall_timeout: Duration::from_secs(30),
         supports_tools: true,
+        supports_thinking: true,
         model_thinking,
         prefill_guard: true,
         vision: None,
@@ -245,24 +246,37 @@ fn each_mode_samples_with_its_own_profile_unless_the_caller_overrides() {
         "{thinking}"
     );
 
-    // A verdict stays greedy whichever mode it runs in, and a presence
-    // penalty would push it off a label word the prompt just listed.
-    for mode in [ThinkingMode::Off, ThinkingMode::On] {
-        let greedy = body_of(
-            &client,
-            &legacy::completion(legacy::Completion {
-                input: user("Supported or not?"),
-                thinking: mode,
-                sampling: Some(SamplingOverride::deterministic()),
-                ..Default::default()
-            }),
-        )
-        .unwrap();
-        assert!(
-            close(sampling(&greedy), (0.0, 1.0, 1, 0.0, 1.0)),
-            "{greedy}"
-        );
-    }
+    // A non-thinking verdict stays greedy with no presence penalty, while
+    // thinking mode suppresses greedy deterministic decoding to prevent
+    // `<think>` repetition loops.
+    let greedy_off = body_of(
+        &client,
+        &legacy::completion(legacy::Completion {
+            input: user("Supported or not?"),
+            thinking: ThinkingMode::Off,
+            sampling: Some(SamplingOverride::deterministic()),
+            ..Default::default()
+        }),
+    )
+    .unwrap();
+    assert!(
+        close(sampling(&greedy_off), (0.0, 1.0, 1, 0.0, 1.0)),
+        "{greedy_off}"
+    );
+    let greedy_on = body_of(
+        &client,
+        &legacy::completion(legacy::Completion {
+            input: user("Supported or not?"),
+            thinking: ThinkingMode::On,
+            sampling: Some(SamplingOverride::deterministic()),
+            ..Default::default()
+        }),
+    )
+    .unwrap();
+    assert!(
+        close(sampling(&greedy_on), (1.0, 0.95, 20, 1.5, 1.0)),
+        "{greedy_on}"
+    );
 
     // An override sets only what it names.
     let partial = body_of(
@@ -553,4 +567,80 @@ fn non_thinking_sampling_applies_only_when_resolved_thinking_is_off() {
             "{non_thinking_body}"
         );
     }
+}
+
+#[test]
+fn decoder_flushes_an_unterminated_final_sse_frame_on_eof() {
+    let mut decoder = streaming::Decoder::for_completion();
+    decoder
+        .push(
+            br#"data: {"choices":[{"delta":{"content":"hello"},"finish_reason":null}]}
+data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":12,"completion_tokens":3}}"#,
+        )
+        .unwrap();
+    let response = decoder.into_response().unwrap();
+    assert_eq!(response.text, "hello");
+    assert_eq!(response.finish_reason, "stop");
+    assert_eq!(response.output_tokens, 3);
+}
+
+#[test]
+fn initial_requests_omit_dry_sampling_so_verbatim_quotes_stay_intact() {
+    let client = client();
+    let sampled = body_of(
+        &client,
+        &legacy::completion(legacy::Completion {
+            input: user("Audit this passage"),
+            ..Default::default()
+        }),
+    )
+    .unwrap();
+    assert!(sampled.get("dry_multiplier").is_none());
+
+    let deterministic = body_of(
+        &client,
+        &legacy::completion(legacy::Completion {
+            input: user("Verify this claim"),
+            sampling: Some(SamplingOverride::deterministic()),
+            ..Default::default()
+        }),
+    )
+    .unwrap();
+    assert!(deterministic.get("dry_multiplier").is_none());
+}
+
+#[test]
+fn answer_step_samples_deterministically_when_thinking_is_off_and_yields_when_thinking_is_on() {
+    let base = legacy::grounded("You are careful.", "Check the claim.");
+    let answer = base.answer_step(
+        "Answer now.",
+        "Return JSON.",
+        "Draft prompt.",
+        "Draft prose.",
+    );
+    assert_eq!(
+        answer.call.sampling,
+        Some(SamplingOverride::deterministic())
+    );
+
+    let request = legacy::completion(legacy::Completion {
+        input: user("Return JSON."),
+        sampling: answer.call.sampling,
+        thinking: answer.call.thinking,
+        ..Default::default()
+    });
+
+    let non_thinking = local_client(ThinkingPolicy::PerRequest, ThinkingOverrideDto::Auto);
+    let non_thinking_body = body_of(&non_thinking, &request).unwrap();
+    assert!(
+        close(sampling(&non_thinking_body), (0.0, 1.0, 1, 0.0, 1.0)),
+        "{non_thinking_body}"
+    );
+
+    let thinking = local_client(ThinkingPolicy::AlwaysOn, ThinkingOverrideDto::Auto);
+    let thinking_body = body_of(&thinking, &request).unwrap();
+    assert!(
+        close(sampling(&thinking_body), (1.0, 0.95, 20, 1.5, 1.0)),
+        "{thinking_body}"
+    );
 }

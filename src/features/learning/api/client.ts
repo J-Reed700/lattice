@@ -6,6 +6,7 @@ import type { ApiResult } from '@/types';
 
 import { learningCall } from './learningCall';
 import { lessonReviewApi } from './lessonReview';
+import { preparationControlApi } from './preparationControl';
 
 async function invokeCommand<C extends CommandName>(
   command: C,
@@ -78,6 +79,8 @@ export const learningApi = {
     request: Wire.LearningGenerationJobActionRequestDto,
   ): Promise<ApiResult<Wire.LearningGenerationJob>> =>
     learningCall('retry_learning_generation_job', { request }),
+
+  ...preparationControlApi,
 
   getLearningGenerationJob: (
     id: string,

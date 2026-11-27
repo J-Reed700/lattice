@@ -134,9 +134,14 @@ type PracticeHintLevel =
   | "partial_strategy"
   | "worked_explanation";
 type PracticeCitation = {
+  number: number;
   sourceId: string;
   versionId: string;
   quote: string;
+  support: {
+    relation: "quotes" | "backs" | "cites";
+    anchors: Array<{ exact: string; span?: { start: number; end: number } | null }>;
+  };
 };
 type PracticeCriterion = {
   id: string;
@@ -1193,14 +1198,18 @@ export async function installLearningStudioBackend(page: Page) {
           unavailableCount: 0,
           citations: [
             {
+              number: 1,
               path: "/modules/0/summary", target: "module_summary", moduleId: module.id,
               lessonId: null, itemIndex: null, claim: module.summary, sourceId: source.id,
               sourceTitle: source.title, sourceUrl: source.url, quote: source.excerpt,
+              support: { relation: "quotes", anchors: [{ exact: source.excerpt, span: null }] },
             },
             {
+              number: 2,
               path: "/modules/0/lessons/0/objective", target: "lesson_objective", moduleId: module.id,
               lessonId: currentLesson.id, itemIndex: 0, claim: currentLesson.objective, sourceId: source.id,
               sourceTitle: source.title, sourceUrl: source.url, quote: source.excerpt,
+              support: { relation: "quotes", anchors: [{ exact: source.excerpt, span: null }] },
             },
           ],
         };
@@ -1278,21 +1287,36 @@ export async function installLearningStudioBackend(page: Page) {
         return structuredClone(state.verifierAudit);
       },
       get_learning_lesson_audit: () => null,
-      get_learning_lesson_evidence: () => ({
+      get_learning_lesson_evidence: () => {
+        const excerpt = source.excerpt;
+        const secondParagraph = "ACTIVE_SOURCE_SENTINEL: Record the same measure across the observation period. The original edition remains available for exact citation review.";
+        const quotedText = "The original edition remains available for exact citation review.";
+        const fullText = sourceVersionTexts.get(sourceV1.id) ?? `${excerpt}\n\n${secondParagraph}`;
+        const passage = (text: string, startByte = fullText.indexOf(text)) => ({ sourceVersionId: source.id, title: source.title, url: source.url, text, startByte, endByte: startByte + text.length, retrievalKind: "hybrid" });
+        const anchor = (text: string, start = fullText.indexOf(text)) => ({ exact: text, span: { start, end: start + text.length } });
+        return {
         policy: "lesson-evidence-v2", checkedAt: Date.UTC(2026, 9, 4), checkerModel: "Evidence fixture",
         retrievalMode: "hybrid", embeddingModel: "Embedding fixture", contentSha256: "a".repeat(64),
         claimCount: 14, confirmedCount: 0, executedExamples: 0, unexecutedLanguages: [], sourcesCurrent: true,
         teachingClaims: [{ sectionIndex: 0, contentQuote: "A comparison begins by naming the measure and the period under observation.",
           claim: "A careful comparison records the chosen measure and observation period.", verdict: "supported",
-          reason: "The saved reference supports this teaching claim.", supportingQuote: source.excerpt,
-          passages: [{ sourceVersionId: source.id, title: source.title, url: source.url, text: source.excerpt,
-            startByte: 0, endByte: source.excerpt.length, retrievalKind: "hybrid" }], resolution: "verified", note: null, cites: [1] }],
-        citations: [{ number: 1, sourceId: "logical-source-field-notes", passage: { sourceVersionId: source.id, title: source.title, url: source.url,
-          text: source.excerpt, startByte: 0, endByte: source.excerpt.length, retrievalKind: "hybrid" } }],
+          reason: "The saved reference supports this teaching claim.", supportingQuote: excerpt,
+          passages: [passage(excerpt)], resolution: "verified", note: null, cites: [1], relation: "restates",
+          parts: [
+            { part: "A comparison begins by naming the measure", kind: "stated", sourceVersionId: source.id, anchors: [anchor(excerpt)] },
+            { part: "the period under observation", kind: "follows", sourceVersionId: source.id, anchors: [anchor(excerpt)] },
+          ] }],
+        citations: [
+          { number: 1, sourceId: "logical-source-field-notes", passage: passage(excerpt) },
+          { number: 2, sourceId: "logical-source-field-notes", passage: passage(secondParagraph) },
+        ],
         sections: lesson.blocks.map((block, sectionIndex) => ({ sectionIndex, pieces: sectionIndex === 0
-          ? [{ type: "text", text: block.body }, { type: "reference", reference: { written: "[s1]", kind: "source", number: 1 } }]
-          : [{ type: "text", text: block.body }] })),
-      }),
+          ? [{ type: "text", text: block.body }, { type: "reference", reference: { written: "[s1]", kind: "source", number: 1, support: { relation: "restates", anchors: [anchor(excerpt)] } } }]
+          : sectionIndex === 1
+            ? [{ type: "quoted", text: quotedText }, { type: "reference", reference: { written: "[s2]", kind: "source", number: 2, support: { relation: "quotes", anchors: [anchor(quotedText)] } } }]
+            : [{ type: "text", text: block.body }] })),
+        };
+      },
       get_learning_memory: () => copyMemory(),
       get_learning_practice_workspace: (args) => {
         const programId = String(getArg(args, "id"));
@@ -1461,9 +1485,11 @@ export async function installLearningStudioBackend(page: Page) {
           if (!sourceId)
             throw new Error("Frozen source version is unavailable in the source library.");
           const citation: PracticeCitation = {
+            number: 1,
             sourceId,
             versionId,
             quote,
+            support: { relation: "quotes", anchors: [{ exact: quote, span: null }] },
           };
           const frozenText = sourceVersionTexts.get(versionId);
           if (
@@ -1541,7 +1567,13 @@ export async function installLearningStudioBackend(page: Page) {
           if (!sourceId)
             throw new Error("Frozen source version is unavailable in the source library.");
           session.revealedSolution = `Compare the same measure over the full observation period, then describe limits in the available cases. ${quote}`;
-          session.revealedSolutionCitations = [{ sourceId, versionId, quote }];
+          session.revealedSolutionCitations = [{
+            number: 1,
+            sourceId,
+            versionId,
+            quote,
+            support: { relation: "quotes", anchors: [{ exact: quote, span: null }] },
+          }];
           session.assistance.push({
             id: crypto.randomUUID(),
             kind: "solution_revealed",
@@ -2132,6 +2164,7 @@ export async function installLearningStudioBackend(page: Page) {
               stickyNotes: [],
               conversationSnapshots: [],
               sources: [],
+              citations: [],
               createdAt: timestamp,
               updatedAt: timestamp,
             },

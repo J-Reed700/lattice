@@ -6,6 +6,7 @@ use crate::lessons::content_verification::tests::{fixture_completion, fixture_pr
 use crate::lessons::course_generation_tests::ScriptedModel;
 use crate::reference_collection::ReferencePassage;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::application::services::model_contract::ask::Answered;
 use lattice_core::application::services::model_contract::test_support::taint::{holds, Marks};
 use lattice_core::shared::error::AppError;
 

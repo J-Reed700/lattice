@@ -96,7 +96,7 @@ describe('SimulationPanel', () => {
     renderPanel(session({
       turns: [
         { id: 't1', speaker: 'learner', content: 'Welcome to the Roman gallery.', citations: [] },
-        { id: 't2', speaker: 'counterpart', content: 'Why are the statues white?', citations: [{ sourceId: 's1', quote: 'Paint has worn away.' }] },
+        { id: 't2', speaker: 'counterpart', content: 'Why are the statues white?', citations: [{ number: 1, sourceId: 's1', versionId: 's1-v1', quote: 'Paint has worn away.', support: { relation: 'quotes', anchors: [{ exact: 'Paint has worn away.', span: null }] } }] },
         { id: 't3', speaker: 'coach', content: 'Mention the original pigments.', citations: [] },
       ] as never,
     }));
@@ -115,7 +115,7 @@ describe('SimulationPanel', () => {
       sourceId: 'spec', fullText: 'The captured specification explains repeated effects.', usage: [],
       version: { id: 'spec-v2', versionNumber: 2, title: 'Retry semantics', publisher: 'Specification publisher', resolvedUrl: 'https://spec.example/retries', extractionVersion: 'test', wordCount: 8 },
     } });
-    renderPanel(session({ status: 'submitted', turns: [{ id: 'feedback', speaker: 'coach', content: 'Compare the intended effects.', citations: [{ sourceId: 'spec', versionId: 'spec-v2', quote: 'repeated effects' }] }] as never }), { ...activity, kind: 'interview', practiceMode: 'demonstrate' });
+    renderPanel(session({ status: 'submitted', turns: [{ id: 'feedback', speaker: 'coach', content: 'Compare the intended effects.', citations: [{ number: 1, sourceId: 'spec', versionId: 'spec-v2', quote: 'repeated effects', support: { relation: 'quotes', anchors: [{ exact: 'repeated effects', span: null }] } }] }] as never }), { ...activity, kind: 'interview', practiceMode: 'demonstrate' });
     expect(api.getLearningSourceVersion).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: /^Citation 1/ }));
     fireEvent.click(await screen.findByRole('button', { name: 'View source' }));

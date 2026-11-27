@@ -59,7 +59,8 @@ impl Database {
         }
     }
 
-    /// Returns the urgent write handle for user edits.
+    /// Returns the urgent write handle for interactive user actions such as
+    /// job cancellation and direct content edits.
     pub fn urgent(&self) -> UrgentWrites<'_> {
         UrgentWrites { database: self }
     }

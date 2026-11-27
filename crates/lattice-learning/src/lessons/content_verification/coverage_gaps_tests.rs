@@ -122,16 +122,6 @@ impl JudgingModel {
                 return Ok(reply.to_string());
             }
         }
-        if prompt.starts_with("Audit claim coverage independently.") {
-            return Ok(coverage::scripted_decisions(prompt, |text, claims| {
-                let missing = if text == self.proposed_passage {
-                    json!([{"statement":"The passage's premise is not in the inventory."}])
-                } else {
-                    json!([])
-                };
-                json!({"claimIds":claims,"nonFactualReason":"","missingClaims":missing})
-            }));
-        }
         if prompt.starts_with("Source passages:")
             && prompt.contains(&format!("\n\nClaim: {}", self.watched_claim))
         {

@@ -1,9 +1,8 @@
-import { SettingsRow, SettingsSection, settingsFieldClass } from '@/components/ui';
-import { Badge } from '@/components/ui/badge';
+import { Badge, Button, SettingsRow, SettingsSection } from '@/components/ui';
 import type { ArchiveStatus } from '@/types/api/backup';
 
 import { formatBackupDate, formatBytes } from './backupFormat';
-import { GHOST_BUTTON_CLASS, SECONDARY_BUTTON_CLASS } from './settingsStyles';
+import { SettingsSelect } from './SettingControls';
 
 const KEEP_COUNT_OPTIONS = [1, 3, 5, 10, 20];
 
@@ -60,7 +59,7 @@ export function OffDeviceBackup({
           className="border-b border-border-subtle py-3 text-sm text-warning-fg"
         >
           Your Lattice database itself is inside {archive.dataDirCloudProvider}. A synced folder
-          can corrupt an open database. Move Lattice's data folder out of it and use off-device
+          can corrupt an open database. Move Lattice&apos;s data folder out of it and use off-device
           backup instead — that writes one finished file at a time, which is safe to sync.
         </div>
       ) : null}
@@ -72,9 +71,9 @@ export function OffDeviceBackup({
             cloud folder, a NAS, or a USB stick. Setup gives you a 24-word recovery code, which is
             the only way back in if you forget the passphrase. Lattice cannot reset it.
           </p>
-          <button type="button" onClick={onSetUp} className={`${SECONDARY_BUTTON_CLASS} mt-3`}>
+          <Button type="button" variant="outline" onClick={onSetUp} className="mt-3">
             Set up encrypted backup
-          </button>
+          </Button>
         </div>
       ) : (
         <>
@@ -86,17 +85,17 @@ export function OffDeviceBackup({
               {archive.destinationProvider ? (
                 <Badge variant="outline">{archive.destinationProvider}</Badge>
               ) : null}
-              <button
+              <Button
                 type="button"
+                variant="outline"
                 onClick={onChangeDestination}
                 disabled={isChangingDestination}
-                className={SECONDARY_BUTTON_CLASS}
               >
                 {archive.destination ? 'Change' : 'Choose folder'}
-              </button>
+              </Button>
             </div>
             {archive.destinationMissing ? (
-              <p className="mt-1.5 text-xs text-danger">
+              <p className="mt-1.5 text-xs text-danger-fg">
                 That folder is gone. Choose another one, or reconnect the drive.
               </p>
             ) : null}
@@ -107,25 +106,24 @@ export function OffDeviceBackup({
             hint="Older archives in the folder are deleted after a successful backup."
             htmlFor="archive-keep-count"
           >
-            <select
-              id="archive-keep-count"
-              value={archive.keepCount}
-              disabled={isSavingKeepCount}
-              onChange={(event) => onKeepCountChange(Number(event.target.value))}
-              className={settingsFieldClass}
-            >
-              {keepCountOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
+            <div className="w-28">
+              <SettingsSelect
+                id="archive-keep-count"
+                value={String(archive.keepCount)}
+                disabled={isSavingKeepCount}
+                onValueChange={(next) => onKeepCountChange(Number(next))}
+                options={keepCountOptions.map((option) => ({
+                  value: String(option),
+                  label: String(option),
+                }))}
+              />
+            </div>
           </SettingsRow>
 
           <SettingsRow label="Passphrase" hint="Optional. The recovery code always works.">
-            <button type="button" onClick={onManagePassphrase} className={SECONDARY_BUTTON_CLASS}>
+            <Button type="button" variant="outline" onClick={onManagePassphrase}>
               {archive.hasPassphrase ? 'Change passphrase' : 'Set passphrase'}
-            </button>
+            </Button>
           </SettingsRow>
 
           <div className="border-b border-border-subtle py-3">
@@ -135,7 +133,7 @@ export function OffDeviceBackup({
                 : 'No backup written yet.'}
             </p>
             {archive.lastError ? (
-              <p className="mt-0.5 text-sm text-danger">
+              <p className="mt-0.5 text-sm text-danger-fg">
                 Last attempt failed: {archive.lastError.message}
               </p>
             ) : null}
@@ -144,14 +142,14 @@ export function OffDeviceBackup({
                 <p role="status" className="min-w-0 flex-1 text-sm text-text-secondary">
                   {hydrationNotice}
                 </p>
-                <button
+                <Button
                   type="button"
+                  variant="outline"
                   onClick={onRetryHydration}
                   disabled={isRestoring}
-                  className={SECONDARY_BUTTON_CLASS}
                 >
                   Try again
-                </button>
+                </Button>
               </div>
             ) : null}
           </div>
@@ -183,29 +181,29 @@ export function OffDeviceBackup({
           ) : null}
 
           <div className="flex flex-wrap items-center gap-2 py-3">
-            <button
+            <Button
               type="button"
+              variant="outline"
               onClick={onBackUpNow}
               disabled={isArchiving || isIndexing || !archive.destination}
               title={isIndexing ? 'Wait for indexing to finish before backing up.' : undefined}
-              className={SECONDARY_BUTTON_CLASS}
             >
               {isArchiving ? 'Backing up…' : 'Back up now'}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="outline"
               onClick={onRestore}
               disabled={isRestoring}
-              className={SECONDARY_BUTTON_CLASS}
             >
               {isRestoring ? 'Restoring…' : 'Restore from file'}
-            </button>
-            <button type="button" onClick={onRotateRecoveryCode} className={GHOST_BUTTON_CLASS}>
+            </Button>
+            <Button type="button" variant="ghost" onClick={onRotateRecoveryCode}>
               Generate new recovery code
-            </button>
-            <button type="button" onClick={onTurnOff} className={GHOST_BUTTON_CLASS}>
+            </Button>
+            <Button type="button" variant="ghost" onClick={onTurnOff}>
               Turn off
-            </button>
+            </Button>
           </div>
         </>
       )}

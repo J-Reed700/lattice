@@ -3,153 +3,34 @@
 use super::copied_wording::{self, Wording, SAY_IT_YOURSELF};
 use super::repeats;
 use super::text_edits::{citation_entry, cited_sentence, taught_at};
-use crate::generation::long_enough_quote;
 use lattice_core::application::services::model_contract::edit::{Anchor, Change, Consistent, Made};
 use lattice_core::application::services::model_contract::shape::{
     Authored, Fields, Form, Settled, Why,
 };
 use lattice_core::application::services::model_contract::shown::{
-    Drawn, Handle, Kind, Picked, Showing, Shown,
+    Handle, Kind, Picked, Showing, Shown,
 };
 use lattice_core::application::services::model_contract::units::{
-    Grain, Quoted, Texts, Unit, UnitRef, Units,
+    Grain, Quoted, Unit, UnitRef, Units,
 };
 use lattice_core::shared::error::Result;
 use lattice_core::shared::text::same_text;
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeSet;
 
 mod keys;
 mod located;
 mod part;
+mod quotes;
 mod rendering;
 mod value;
 pub(crate) mod words;
 
 pub(crate) use keys::Rekey;
+pub(crate) use quotes::{Citation, CitationRef, Quotes};
 
 /// The lists of the material whose elements are parts, and whether a part of one is a question.
 const LISTS: [(&str, bool); 2] = [("blocks", false), ("questions", true)];
-
-/// A citation a part holds, by where it is in the material as shown.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct CitationRef {
-    pub part: String,
-    /// `None`: the part's own `sourceIndex` and `quote`.
-    pub index: Option<usize>,
-}
-
-/// A citation of a part: its own pair, or an element of its `citations`.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Citation {
-    at: CitationRef,
-    source_index: Option<u64>,
-    quote: String,
-    covers: Vec<UnitRef>,
-}
-
-impl Kind for Citation {
-    const PREFIX: &'static str = "c";
-    const DRAWN: Drawn = Drawn::Itself;
-    type Ref = CitationRef;
-
-    fn reference(&self) -> CitationRef {
-        self.at.clone()
-    }
-}
-
-impl Citation {
-    #[cfg(test)]
-    pub(crate) fn at(&self) -> &CitationRef {
-        &self.at
-    }
-
-    pub(crate) fn source_index(&self) -> Option<u64> {
-        self.source_index
-    }
-
-    pub(crate) fn quote(&self) -> &str {
-        &self.quote
-    }
-}
-
-/// The excerpts a request may show, and the sentences of them a citation may quote.
-#[derive(Debug, Clone, Default)]
-pub(crate) struct Quotes {
-    texts: Texts<u64>,
-    quotable: Vec<Quoted>,
-}
-
-/// Where the excerpt of a source stands among the texts of a request.
-fn place_of(source_index: u64) -> String {
-    source_index.to_string()
-}
-
-impl Quotes {
-    /// From source entries shaped `{"sourceIndex": n, "excerpt": "…", …}`.
-    pub(crate) fn of<'a>(sources: impl IntoIterator<Item = &'a Value>) -> Self {
-        let mut quotes = Self::default();
-        for source in sources {
-            if let (Some(source_index), Some(excerpt)) = (
-                source.get("sourceIndex").and_then(Value::as_u64),
-                source.get("excerpt").and_then(Value::as_str),
-            ) {
-                quotes.push(source_index, excerpt);
-            }
-        }
-        quotes
-    }
-
-    /// Adds an excerpt of source `source_index`. One already held for that source is not added again.
-    pub(crate) fn push(&mut self, source_index: u64, excerpt: &str) {
-        let held = self
-            .texts
-            .iter()
-            .any(|(of, units)| *of == source_index && units.text() == excerpt);
-        if held {
-            return;
-        }
-        self.texts.push(
-            source_index,
-            &place_of(source_index),
-            excerpt,
-            Grain::Sentence,
-        );
-        if let Some((_, units)) = self.texts.iter().last() {
-            self.quotable.extend(
-                units
-                    .quoted()
-                    .into_iter()
-                    .filter(|sentence| long_enough_quote(sentence.text())),
-            );
-        }
-    }
-
-    /// The sentences a citation may quote, in the order added.
-    pub(crate) fn all(&self) -> &[Quoted] {
-        &self.quotable
-    }
-
-    /// The source a quotable sentence is of, and its words. `None` for a sentence that is not quotable.
-    pub(crate) fn get(&self, at: UnitRef) -> Option<(u64, &str)> {
-        if !self.quotable.iter().any(|held| held.reference() == at) {
-            return None;
-        }
-        self.texts.found(at).map(|(source, text)| (*source, text))
-    }
-
-    /// `excerpt` (of source `source_index`) as it is, the bracketed handle of each quotable `shown` holds
-    /// before its sentence.
-    pub(crate) fn marked(
-        &self,
-        source_index: u64,
-        excerpt: &str,
-        shown: &Shown<'_, Quoted>,
-    ) -> String {
-        Units::of_at(excerpt, Grain::Sentence, &place_of(source_index)).marked(shown)
-    }
-}
 
 /// New text, and the source sentences it rests on.
 #[derive(Debug, Clone, PartialEq)]
@@ -458,11 +339,12 @@ impl Rows {
             .into_iter()
             .filter_map(|pointer| {
                 let text = material.pointer(&pointer)?.as_str()?;
-                if only.is_some_and(|only| part_of(&pointer) != only) {
+                let part = part_of(&pointer);
+                if only.is_some_and(|only| part != only) {
                     return None;
                 }
                 Some(Field {
-                    part: part_of(&pointer),
+                    part,
                     units: Units::of_at(text, Grain::Sentence, &pointer),
                     pointer,
                 })
@@ -752,7 +634,25 @@ impl Rows {
             }
         }
 
-        let counts = repeats::said(&[&current]);
+        let mut counts = repeats::said(&[&current]);
+        for (at, units) in &trials {
+            let Some(field) = self
+                .fields
+                .get(*at)
+                .filter(|field| repeats::says_at(&field.pointer))
+            else {
+                continue;
+            };
+            for removed in repeats::added(&units.text(), &field.units.text()) {
+                let key = repeats::key(&removed);
+                if let Some(count) = counts.get_mut(&key) {
+                    *count = count.saturating_sub(1);
+                    if *count == 0 {
+                        counts.remove(&key);
+                    }
+                }
+            }
+        }
         let names = units_named(change);
         for (at, units) in &trials {
             let Some(field) = self.fields.get(*at) else {

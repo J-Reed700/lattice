@@ -211,7 +211,7 @@ export function StudyTangentSelection({
             }}
           >
             {isTooLong && (
-              <p className="px-2 py-1 text-[11px] text-amber-600 dark:text-amber-400">
+              <p className="px-2 py-1 text-[11px] text-warning-fg">
                 Select a shorter passage (up to 8,000 characters)
               </p>
             )}

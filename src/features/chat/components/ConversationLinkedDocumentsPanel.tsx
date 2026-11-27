@@ -342,7 +342,7 @@ export function ConversationLinkedDocumentsPanel({
   }
 
   return (
-    <section className="border-t border-subtle py-4">
+    <section className="border-t border-border-subtle py-4">
       {/* No count when there is nothing to count: "· 0" is a stat that is always
           zero, and there is nothing behind it to open. */}
       {(linkedContextCount > 0 || expanded) && (
@@ -380,7 +380,7 @@ export function ConversationLinkedDocumentsPanel({
             return (
               <article
                 key={document.documentId}
-                className="rounded-sm border border-subtle bg-surface p-3"
+                className="rounded-sm border border-border-subtle bg-surface p-3"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -428,7 +428,7 @@ export function ConversationLinkedDocumentsPanel({
                     would be a control with nothing to control. Say what it
                     actually is, and offer the one thing that changes it. */}
                 {document.attachedToConversation ? (
-                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-sm border border-subtle bg-surface-raised px-2 py-1.5">
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-sm border border-border-subtle bg-surface-raised px-2 py-1.5">
                     <p className="text-xs text-[hsl(var(--text-muted))]">
                       Attached to this chat. Not in your library, and deleted with this
                       conversation.
@@ -458,7 +458,7 @@ export function ConversationLinkedDocumentsPanel({
                   <summary className="cursor-pointer list-none text-xs text-[hsl(var(--text-muted))] hover:text-[hsl(var(--text-secondary))]">
                     Scope: {spaceTriggerLabel}
                   </summary>
-                  <div className="mt-2 grid gap-1 rounded-sm border border-subtle bg-surface-raised p-2">
+                  <div className="mt-2 grid gap-1 rounded-sm border border-border-subtle bg-surface-raised p-2">
                     {loadingMembershipDocumentId === document.documentId && (
                       <p className="text-xs text-[hsl(var(--text-muted))]">Loading spaces...</p>
                     )}
@@ -497,7 +497,7 @@ export function ConversationLinkedDocumentsPanel({
           })}
 
           {citedWebSources.length > 0 && (
-            <article className="rounded-sm border border-subtle bg-surface p-3">
+            <article className="rounded-sm border border-border-subtle bg-surface p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <p className="text-sm font-semibold text-[hsl(var(--text-primary))]">Web sources</p>
@@ -526,7 +526,7 @@ export function ConversationLinkedDocumentsPanel({
                   pendingWebSources.map((source) => (
                     <div
                       key={source.key}
-                      className="rounded-sm border border-subtle bg-surface-raised p-2.5"
+                      className="rounded-sm border border-border-subtle bg-surface-raised p-2.5"
                     >
                       <p className="text-sm font-medium text-[hsl(var(--text-primary))]">{source.label}</p>
                       <p className="mt-0.5 break-all text-xs text-[hsl(var(--text-muted))]">{source.url}</p>

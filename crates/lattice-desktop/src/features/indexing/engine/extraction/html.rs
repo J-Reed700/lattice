@@ -10,7 +10,7 @@ use std::path::Path;
 pub async fn extract_code_file(
     path: &Path,
     mime_type: &str,
-    max_file_size: u64,
+    max_file_size: Option<u64>,
 ) -> Result<ExtractedContent> {
     let text = read_text(path, max_file_size).await?;
     Ok(content_of(text, mime_type))
@@ -20,29 +20,14 @@ pub async fn extract_code_file(
 pub async fn extract_html_file(
     path: &Path,
     mime_type: &str,
-    max_file_size: u64,
+    max_file_size: Option<u64>,
 ) -> Result<ExtractedContent> {
     let text = read_text(path, max_file_size).await?;
     Ok(content_of(html_to_text(&text), mime_type))
 }
 
-async fn read_text(path: &Path, max_file_size: u64) -> Result<String> {
-    let metadata = tokio::fs::metadata(path)
-        .await
-        .map_err(|e| IndexingError::Io {
-            message: e.to_string(),
-            kind: format!("{:?}", e.kind()),
-        })?;
-
-    let file_size = metadata.len();
-
-    if file_size > max_file_size {
-        return Err(IndexingError::FileTooLarge {
-            path: path.display().to_string(),
-            size_bytes: file_size,
-            max_size_bytes: max_file_size,
-        });
-    }
+async fn read_text(path: &Path, max_file_size: Option<u64>) -> Result<String> {
+    super::check_file_size(path, max_file_size).await?;
 
     let bytes = tokio::fs::read(path).await.map_err(|e| IndexingError::Io {
         message: e.to_string(),
@@ -85,7 +70,7 @@ mod tests {
         let path = temp_file.path().with_extension("rs");
         std::fs::copy(temp_file.path(), &path).unwrap();
 
-        let result = extract_code_file(&path, "text/x-rust", 50 * 1024 * 1024).await;
+        let result = extract_code_file(&path, "text/x-rust", None).await;
 
         assert!(result.is_ok());
         let content = result.unwrap();
@@ -108,7 +93,7 @@ mod tests {
         let path = temp_file.path().with_extension("html");
         std::fs::copy(temp_file.path(), &path).unwrap();
 
-        let result = extract_html_file(&path, "text/html", 50 * 1024 * 1024).await;
+        let result = extract_html_file(&path, "text/html", None).await;
 
         assert!(result.is_ok());
         let content = result.unwrap();
@@ -127,9 +112,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("page.html");
         std::fs::write(&path, b"<p>caf\xE9</p>").unwrap();
-        let content = extract_html_file(&path, "text/html", 1 << 20)
-            .await
-            .unwrap();
+        let content = extract_html_file(&path, "text/html", None).await.unwrap();
         assert_eq!(content.text, "caf\u{e9}");
     }
 }

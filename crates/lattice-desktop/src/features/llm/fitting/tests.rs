@@ -54,3 +54,23 @@ fn the_room_the_window_leaves_cuts_the_ceiling() {
     assert_eq!(cut(wanted(Some(300), None, false), 10_000), Some(300));
     assert_eq!(cut(wanted(None, None, false), 50), None);
 }
+
+#[test]
+fn response_budget_scales_with_output_tokens_from_small_ceilings_to_large_windows() {
+    let small = ResponseBudget::for_tokens(16);
+    assert_eq!(small.max_token_events, 16);
+    assert_eq!(small.max_tool_calls, 4);
+    assert!(small.max_event_bytes < 64 * 1024);
+    assert!(small.max_stream_bytes > small.max_event_bytes);
+
+    let large = ResponseBudget::for_tokens(128_000);
+    assert_eq!(large.max_token_events, 128_000);
+    assert_eq!(large.max_tool_calls, 32_000);
+    assert!(large.max_stream_bytes > 62 * 1024 * 1024);
+    assert!(large.max_event_bytes > 16 * 1024 * 1024);
+
+    // Zero clamps to 1 so even degenerate caps keep a floor envelope.
+    let zero = ResponseBudget::for_tokens(0);
+    assert_eq!(zero.max_token_events, 1);
+    assert_eq!(zero.max_tool_calls, 1);
+}

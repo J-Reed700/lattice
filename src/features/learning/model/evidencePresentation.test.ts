@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { checkWords, citationNumbers, citationsByNumber, claimMarkVerdict, partsOfKind, passageKey, resolutionText, UNSTATED_PARTS } from '@/features/learning/model/evidencePresentation';
-import type { LearningCitationDto, LearningClaimEvidenceDto, LearningEvidencePassageDto } from '@/lib/bindings';
+import { checkWords, citationNumbers, citationsByNumber, claimMarkVerdict, partOpening, partsOfKind, passageKey, resolutionText, UNSTATED_PARTS } from '@/features/learning/model/evidencePresentation';
+import type { AnchorDto, LearningCitationDto, LearningClaimEvidenceDto, LearningClaimPartDto, LearningEvidencePassageDto } from '@/lib/bindings';
 
 const passage = (version: string, startByte = 0): LearningEvidencePassageDto => ({
   sourceVersionId: version, startByte, endByte: startByte + 5,
@@ -97,8 +97,63 @@ describe('how a statement was checked, in words', () => {
     expect(partsOfKind(classed({}), 'common')).toEqual([]);
   });
 
-  it('labels the two kinds of unstated part', () => {
-    expect(UNSTATED_PARTS.map(({ kind }) => kind)).toEqual(['common', 'own']);
+  it('lists the parts no passage states but the passages entail', () => {
+    const parts = [
+      { part: 'Quillet reads a file', kind: 'stated' as const, sourceVersionId: 'v1' },
+      { part: 'so Quillet needs a path', kind: 'follows' as const, sourceVersionId: null },
+    ];
+    expect(partsOfKind(classed({ parts }), 'follows')).toEqual(['so Quillet needs a path']);
+  });
+
+  it('labels the three kinds of unstated part', () => {
+    expect(UNSTATED_PARTS.map(({ kind }) => kind)).toEqual(['follows', 'common', 'own']);
+    expect(UNSTATED_PARTS[0]?.label).toBe('Follows from the source: ');
+  });
+});
+
+describe('where the reader opens for a part that names source sentences', () => {
+  const anchor = (start: number, end: number): AnchorDto => ({ exact: 'Quote', span: { start, end } });
+  const part = (kind: LearningClaimPartDto['kind'], anchors: AnchorDto[] | undefined, sourceVersionId: string | null = null): LearningClaimPartDto => ({
+    part: 'A part', kind, sourceVersionId, anchors,
+  });
+  const statement = (overrides: Partial<LearningClaimEvidenceDto> = {}): LearningClaimEvidenceDto => ({
+    ...claim(0, [passage('v1', 100)]), class: 'sourced', cites: [1, 2], ...overrides,
+  });
+  const citations = citationsByNumber({ citations: [citation(1, 'v1', 'First', 100), citation(2, 'v2', 'Second', 0)] });
+
+  it('opens the cited passage that holds the anchors, as the statement’s relation', () => {
+    expect(partOpening(statement({ relation: 'restates' }), part('stated', [anchor(100, 105)]), citations)).toEqual({
+      number: 1, anchoredBy: [{ occurrence: 0, relation: 'restates', anchors: [anchor(100, 105)] }],
+    });
+  });
+
+  it('reads as backing when the statement has no relation', () => {
+    expect(partOpening(statement(), part('follows', [anchor(0, 5)]), citations)?.anchoredBy[0]?.relation).toBe('backs');
+  });
+
+  it('reads a contradicted part as contradicting, whatever the statement’s relation', () => {
+    const opening = partOpening(statement({ relation: 'restates' }), part('contradicted', [anchor(100, 105)]), citations);
+    expect(opening?.anchoredBy[0]?.relation).toBe('contradicts');
+  });
+
+  it('keeps only the anchors inside the passage the first one lies in', () => {
+    const opening = partOpening(statement(), part('stated', [anchor(0, 5), anchor(100, 105)]), citations);
+    expect(opening?.number).toBe(2);
+    expect(opening?.anchoredBy[0]?.anchors).toEqual([anchor(0, 5)]);
+  });
+
+  it('prefers the passage of the part’s own saved version when two cited passages hold the span', () => {
+    const same = citationsByNumber({ citations: [citation(1, 'v1', 'First', 0), citation(2, 'v2', 'Second', 0)] });
+    expect(partOpening(statement(), part('stated', [anchor(0, 5)], 'v2'), same)?.number).toBe(2);
+  });
+
+  it.each([
+    ['no anchors', part('stated', [])],
+    ['anchors left out of an older report', part('stated', undefined)],
+    ['an anchor outside every cited passage', part('stated', [anchor(500, 505)])],
+    ['an anchor with no span', part('stated', [{ exact: 'Quote' }])],
+  ])('opens nothing for a part with %s', (_name, entry) => {
+    expect(partOpening(statement(), entry, citations)).toBeNull();
   });
 });
 

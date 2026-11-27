@@ -29,7 +29,8 @@ pub use lesson::{lesson_schema, prepare_lesson, prepare_lesson_with_references};
 pub(crate) use lesson::{lesson_schema_counting, reads_as_lesson, reads_as_part};
 pub use lesson_rules::lesson_rule_notes;
 pub(crate) use lesson_rules::{
-    lesson_rules, prose_sentences, split_check, teaching_sentences, CHECK_REVEAL,
+    company_framing_findings, lesson_rules, prose_sentences, spec_consistency_findings,
+    split_check, teaching_sentences, CHECK_REVEAL,
 };
 pub(crate) use outline::{
     decode_outline, draft_outline, module_rules, GeneratedEvidenceText, GeneratedModule,
@@ -39,8 +40,6 @@ pub(crate) use recall::recall_output_tokens;
 pub use recall::{generate_recall_drafts, GeneratedLearningCardDraft};
 
 const MIN_TEXT: usize = 3;
-pub(crate) const MIN_QUOTE_CHARS: usize = 25;
-pub(crate) const MIN_QUOTE_WORDS: usize = 5;
 /// The longest span the code itself picks as a quotation; a model's has no ceiling.
 pub(crate) const MAX_QUOTE_CHARS: usize = 1200;
 pub(crate) const OUTLINE_OUTPUT_RESERVE: usize = 4000;
@@ -53,12 +52,6 @@ fn invalid(message: impl Into<String>) -> AppError {
     AppError::InvalidInput(message.into())
 }
 
-/// Whether `quote` is long enough to be a quotation: the floor the prompts state.
-pub(crate) fn long_enough_quote(quote: &str) -> bool {
-    let quote = quote.trim();
-    quote.chars().count() >= MIN_QUOTE_CHARS && quote.split_whitespace().count() >= MIN_QUOTE_WORDS
-}
-
 /// A deterministic excerpt match establishes provenance for a quoted span;
 /// it does not establish that the generated explanation is semantically valid.
 fn validate_quote(quote: &str, source: &LearningSourceDto) -> Result<()> {
@@ -66,7 +59,14 @@ fn validate_quote(quote: &str, source: &LearningSourceDto) -> Result<()> {
 }
 
 pub(crate) fn validate_excerpt_quote(quote: &str, excerpt: &str) -> Result<()> {
-    if !long_enough_quote(quote) || same_text::find(excerpt, quote.trim()).is_none() {
+    let trimmed = quote.trim();
+    if same_text::long_enough_quote(trimmed)
+        && excerpt.contains(trimmed)
+        && !same_text::fold(trimmed).is_empty()
+    {
+        return Ok(());
+    }
+    if same_text::quotation(excerpt, quote).is_none() {
         return Err(invalid("The generated quotation does not match a valid passage in the saved reference. No material was published."));
     }
     Ok(())

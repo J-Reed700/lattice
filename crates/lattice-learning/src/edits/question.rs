@@ -14,10 +14,13 @@ use crate::assessment_engine::{
     LearningAssessmentCandidate, LearningAssessmentKey, LearningItemFormat,
 };
 use crate::assessment_generation::StoredItem;
-use crate::assessment_repository::{content_hash, LearningAssessmentRepository, StoredCandidate};
+use crate::assessment_repository::{
+    content_hash, CandidateReviewStatus, LearningAssessmentRepository, StoredCandidate,
+};
 use crate::edits::keys::{self, affected, learning_scope};
 use crate::edits::BEING_PREPARED;
 use crate::lessons::claim_reviews::repository::{blocks, questions};
+use lattice_core::domain::learning::claim_review::LessonReviewState;
 use lattice_core::shared::edits::{
     Change, ContentKind, EditRegistry, Editability, FieldProblem, FieldSpec, Loaded, TextFormat,
 };
@@ -416,7 +419,7 @@ impl ContentKind for QuestionKind {
         let editability = if home
             .review_state
             .as_deref()
-            .is_some_and(|state| state != "ready")
+            .is_some_and(|state| state != LessonReviewState::Ready.as_str())
         {
             Editability::NotNow {
                 reason: BEING_PREPARED.into(),
@@ -433,7 +436,7 @@ impl ContentKind for QuestionKind {
         if place.on_a_submitted_quiz {
             notes.push(KEPT_AS_ASKED.into());
         }
-        if home.review_status == "reported" || home.has_reports {
+        if home.review_status == CandidateReviewStatus::Reported || home.has_reports {
             notes.push(REPORTED.into());
         }
 

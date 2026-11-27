@@ -65,6 +65,14 @@ impl GroundedRequest {
         request
     }
 
+    /// Tokens left free at the top of the window when filling it, so a follow-up
+    /// step carrying this reply still fits.
+    pub fn leaving_room(&self, tokens: usize) -> Self {
+        let mut request = self.clone();
+        request.output_headroom = tokens;
+        request
+    }
+
     /// This request with its output room, the planner's default when none was set, multiplied by `factor`.
     pub fn larger(&self, factor: usize) -> Self {
         let mut larger = self.clone();

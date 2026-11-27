@@ -93,16 +93,11 @@ const RECENT_FRACTION: f64 = 0.35;
 /// optional allocation.
 const MANDATORY_BORROW_FRACTION: f64 = 0.50;
 
-/// Ceiling on the default generation reservation. A reasoning model spends
-/// much of its answer budget thinking before it writes a word, so this is sized
-/// for a long written answer plus its reasoning, not for the answer alone.
-const OUTPUT_RESERVATION_CAP: usize = 32_768;
-
 /// Default generation reservation when the caller configures none. It
-/// becomes the request's `max_tokens`, so a small fixed cap would cut a
-/// reasoning model off mid-answer on a large window.
+/// becomes the request's `max_tokens`, so it scales with the window rather
+/// than capping large windows at a fixed token count.
 fn default_output_reservation(capacity: usize) -> usize {
-    (capacity / 4).min(OUTPUT_RESERVATION_CAP)
+    capacity / 4
 }
 
 /// Safety margin against tokenizer imprecision and provider framing.
@@ -511,14 +506,11 @@ mod tests {
 
     #[test]
     fn a_model_matrix_reserves_output_and_margin_before_anything_else() {
-        // 4K, 8K, 32K and 128K: the sizes a local build actually meets.
-        for tokens in [4096, 8192, 32_768, 131_072] {
+        // 4K, 8K, 32K, 128K and 256K: the sizes local and cloud builds meet.
+        for tokens in [4096, 8192, 32_768, 131_072, 262_144] {
             let allocation = BudgetAllocation::plan(&capacity(tokens), &fixed(500)).expect("plan");
             assert_eq!(allocation.capacity, tokens);
-            assert_eq!(
-                allocation.output_reserved,
-                (tokens / 4).min(OUTPUT_RESERVATION_CAP)
-            );
+            assert_eq!(allocation.output_reserved, tokens / 4);
             assert_eq!(
                 allocation.safety_margin,
                 ((tokens as f64 * 0.05).ceil() as usize).max(256)
@@ -551,11 +543,11 @@ mod tests {
             // The memory pools leave a share of the window to evidence.
             assert!(allocation.evidence > 0);
         }
-        // A large window carries a longer summary and more recall, not the
-        // same few thousand tokens a small model gets.
+        // A large window carries a longer summary, more recall, and a
+        // proportional output reservation rather than a fixed token cap.
         assert!(large.summary > 1_536 * 10, "{}", large.summary);
         assert!(large.recall > 2_048 * 10, "{}", large.recall);
-        assert_eq!(large.output_reserved, OUTPUT_RESERVATION_CAP);
+        assert_eq!(large.output_reserved, 1_000_000 / 4);
     }
 
     #[test]

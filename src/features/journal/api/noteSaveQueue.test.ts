@@ -21,6 +21,7 @@ const note: WorkspaceNote = {
   stickyNotes: [],
   conversationSnapshots: [],
   sources: [],
+  citations: [],
   createdAt: '',
   updatedAt: '',
 };

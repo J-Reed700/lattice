@@ -1,8 +1,9 @@
-import { useId, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { useMemo, useRef, useState, type KeyboardEvent } from 'react';
 
 import { Database, Folder, FolderX, MoreHorizontal, Pencil, Pin, Search, SlidersHorizontal, Trash2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/Checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
@@ -18,7 +19,7 @@ import type { ExplorerFolder, ExplorerFolders } from '../hooks/useExplorerFolder
 const FILTER_FROM = 7;
 
 const MENU_ITEM_CLASS =
-  'flex w-full items-start gap-2.5 rounded-sm px-2.5 py-2 text-left text-sm text-text-primary transition-colors duration-fast hover:bg-surface focus-visible:bg-surface focus-visible:outline-hidden disabled:cursor-not-allowed disabled:opacity-50';
+  'flex w-full items-start gap-2.5 rounded-md px-2.5 py-2 text-left text-ui text-text-primary transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.06)] focus-visible:bg-[hsl(var(--text-primary)/0.06)] focus-visible:outline-hidden disabled:cursor-not-allowed disabled:opacity-50';
 
 type ChipTone = 'done' | 'paused' | 'live' | 'quiet' | 'alarm';
 
@@ -71,7 +72,7 @@ function FolderStatusChip({ folder }: { folder: ExplorerFolder }) {
     <span
       title={folder.index.message ?? undefined}
       data-tone={chip.tone}
-      className="relative inline-flex h-[19px] shrink-0 items-center gap-1.5 overflow-hidden rounded-full bg-[hsl(var(--text-primary)/0.055)] px-2 text-[11px] font-medium tabular-nums leading-none text-text-secondary"
+      className="relative inline-flex h-5 shrink-0 items-center gap-1.5 overflow-hidden rounded-full bg-[hsl(var(--text-primary)/0.055)] px-2 text-[11px] font-medium tabular-nums leading-none text-text-secondary"
     >
       <span
         aria-hidden="true"
@@ -97,7 +98,7 @@ function FolderStatusChip({ folder }: { folder: ExplorerFolder }) {
   );
 }
 
-interface FolderRowProps {
+interface FolderCardProps {
   folder: ExplorerFolder;
   home: string | null;
   busy: boolean;
@@ -112,7 +113,20 @@ interface FolderRowProps {
   onSettings: () => void;
 }
 
-function FolderRow({ folder, home, busy, opening, renaming, onOpen, onStartRename, onRename, onTogglePin, onDeleteIndex, onRemove, onSettings }: FolderRowProps) {
+function FolderCard({
+  folder,
+  home,
+  busy,
+  opening,
+  renaming,
+  onOpen,
+  onStartRename,
+  onRename,
+  onTogglePin,
+  onDeleteIndex,
+  onRemove,
+  onSettings,
+}: FolderCardProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const { index } = folder;
   const path = tildePath(folder.root, home);
@@ -125,47 +139,61 @@ function FolderRow({ folder, home, busy, opening, renaming, onOpen, onStartRenam
     `opened ${openedAgo(folder.lastOpenedAt)}`,
   ].filter((item): item is string => Boolean(item));
 
-  const body = (
-    <>
-      <span
-        aria-hidden="true"
-        className={cn(
-          'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-sunken ring-1 ring-inset ring-border-subtle',
-          folder.pinned ? 'text-accent' : 'text-text-muted'
-        )}
-      >
-        {missing ? <FolderX className="h-[18px] w-[18px]" strokeWidth={1.5} /> : <Folder className="h-[18px] w-[18px]" strokeWidth={1.5} />}
-      </span>
-      <span className="flex min-w-0 flex-1 flex-col gap-1">
-        <span className="flex min-w-0 items-center gap-2">
+  const cardBody = (
+    <div className="flex min-w-0 flex-1 flex-col gap-3">
+      <div className="flex min-w-0 items-start gap-3">
+        <span
+          aria-hidden="true"
+          className={cn(
+            'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-sunken ring-1 ring-inset ring-border-subtle',
+            folder.pinned ? 'text-accent' : 'text-text-muted'
+          )}
+        >
+          {missing ? <FolderX className="h-[18px] w-[18px]" strokeWidth={1.5} /> : <Folder className="h-[18px] w-[18px]" strokeWidth={1.5} />}
+        </span>
+        <div className="min-w-0 flex-1 pr-14">
           {renaming ? (
             <RenameField name={folder.name} onDone={onRename} />
           ) : (
-            <span className={cn('truncate text-ui font-medium', missing ? 'text-text-tertiary' : 'text-text-primary')}>{folder.name}</span>
+            <div className={cn('truncate font-sans text-[14.5px] font-semibold leading-snug tracking-[-0.02em]', missing ? 'text-text-tertiary' : 'text-text-primary')}>
+              {folder.name}
+            </div>
           )}
-          <FolderStatusChip folder={folder} />
-        </span>
-        <span className="flex min-w-0 items-center gap-1.5 text-xs text-text-muted">
-          <span className="min-w-0 truncate" title={folder.root}>
+          <div className="mt-0.5 truncate text-xs text-text-muted" title={folder.root}>
             {path}
-          </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border-subtle pt-2.5">
+        <FolderStatusChip folder={folder} />
+        <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-[11.5px] tabular-nums text-text-muted">
           {meta.map((item, position) => (
-            <span key={item} className={cn('shrink-0 tabular-nums', position < meta.length - 1 && 'max-sm:hidden')}>
-              <span aria-hidden="true" className="mr-1.5">
-                ·
-              </span>
+            <span key={item} className="shrink-0">
+              {position > 0 && (
+                <span aria-hidden="true" className="mr-1.5">
+                  ·
+                </span>
+              )}
               {item}
             </span>
           ))}
-        </span>
-      </span>
-    </>
+        </div>
+      </div>
+    </div>
   );
 
   return (
-    <li className={cn('row-hover group flex items-center gap-0.5 pr-2', missing && 'bg-[hsl(var(--text-primary)/0.015)]')}>
+    <li
+      className={cn(
+        'group relative flex flex-col rounded-xl border transition-[transform,border-color,background-color,box-shadow] duration-base',
+        missing
+          ? 'border-border-subtle bg-surface/50'
+          : 'border-border-subtle bg-surface shadow-sm hover:-translate-y-px hover:border-border-default hover:shadow-md'
+      )}
+    >
       {renaming ? (
-        <div className="flex min-w-0 flex-1 items-center gap-3 py-3 pl-4 pr-2">{body}</div>
+        <div className="flex flex-1 p-4">{cardBody}</div>
       ) : (
         <button
           type="button"
@@ -174,97 +202,100 @@ function FolderRow({ folder, home, busy, opening, renaming, onOpen, onStartRenam
           aria-busy={opening || undefined}
           onClick={onOpen}
           title={missing ? `${folder.root} is no longer on disk` : `Open ${folder.root}`}
-          className="flex min-w-0 flex-1 items-center gap-3 rounded-lg py-3 pl-4 pr-2 text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[hsl(var(--ring)/0.55)] disabled:cursor-default"
+          className="flex flex-1 rounded-xl p-4 text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default"
         >
-          {body}
+          {cardBody}
         </button>
       )}
-      <button
-        type="button"
-        aria-pressed={folder.pinned}
-        aria-label={folder.pinned ? `Unpin ${folder.name}` : `Pin ${folder.name}`}
-        title={folder.pinned ? 'Unpin' : 'Pin to the top'}
-        disabled={busy}
-        onClick={onTogglePin}
-        className={cn(
-          'flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.06)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] disabled:opacity-40',
-          folder.pinned ? 'text-accent' : 'text-text-disabled hover:text-text-secondary group-hover:text-text-muted'
-        )}
-      >
-        <Pin className={cn('h-3.5 w-3.5', folder.pinned && 'fill-current')} strokeWidth={1.75} />
-      </button>
-      <Popover open={menuOpen} onOpenChange={setMenuOpen}>
-        <PopoverTrigger asChild>
-          <button
-            type="button"
-            aria-label={`Actions for ${folder.name}`}
-            disabled={busy}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.06)] hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] disabled:opacity-40"
-          >
-            <MoreHorizontal className="h-4 w-4" />
-          </button>
-        </PopoverTrigger>
-        <PopoverContent aria-label={`Actions for ${folder.name}`} align="end" className="w-64 p-1.5">
-          <button
-            type="button"
-            className={MENU_ITEM_CLASS}
-            onClick={() => {
-              setMenuOpen(false);
-              onStartRename();
-            }}
-          >
-            <Pencil className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" strokeWidth={1.75} />
-            Rename
-          </button>
-          <button
-            type="button"
-            className={MENU_ITEM_CLASS}
-            onClick={() => {
-              setMenuOpen(false);
-              onSettings();
-            }}
-          >
-            <SlidersHorizontal className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" strokeWidth={1.75} />
-            <span className="flex min-w-0 flex-col">
-              Settings…
-              <span className="text-xs text-text-muted">Space and system prompt</span>
-            </span>
-          </button>
-          <button
-            type="button"
-            className={MENU_ITEM_CLASS}
-            disabled={!hasOwnIndex}
-            onClick={() => {
-              setMenuOpen(false);
-              onDeleteIndex();
-            }}
-          >
-            <Database className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" strokeWidth={1.75} />
-            <span className="flex min-w-0 flex-col">
-              Delete index
-              <span className="text-xs text-text-muted">
-                {reusedFrom
-                  ? `Uses ${reusedFrom}’s index`
-                  : hasOwnIndex
-                    ? `${formatFileSize(index.bytes)} · built again when it opens`
-                    : 'No index to delete'}
+
+      <div className="absolute right-3 top-3 flex items-center gap-0.5">
+        <button
+          type="button"
+          aria-pressed={folder.pinned}
+          aria-label={folder.pinned ? `Unpin ${folder.name}` : `Pin ${folder.name}`}
+          title={folder.pinned ? 'Unpin' : 'Pin to the top'}
+          disabled={busy}
+          onClick={onTogglePin}
+          className={cn(
+            'flex h-7 w-7 shrink-0 items-center justify-center rounded-md transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.06)] focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40',
+            folder.pinned ? 'text-accent' : 'text-text-disabled hover:text-text-secondary group-hover:text-text-muted'
+          )}
+        >
+          <Pin className={cn('h-3.5 w-3.5', folder.pinned && 'fill-current')} strokeWidth={1.75} />
+        </button>
+        <Popover open={menuOpen} onOpenChange={setMenuOpen}>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              aria-label={`Actions for ${folder.name}`}
+              disabled={busy}
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted transition-colors duration-fast hover:bg-[hsl(var(--text-primary)/0.06)] hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
+            >
+              <MoreHorizontal className="h-4 w-4" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent aria-label={`Actions for ${folder.name}`} align="end" className="w-64 p-1.5">
+            <button
+              type="button"
+              className={MENU_ITEM_CLASS}
+              onClick={() => {
+                setMenuOpen(false);
+                onStartRename();
+              }}
+            >
+              <Pencil className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" strokeWidth={1.75} />
+              Rename
+            </button>
+            <button
+              type="button"
+              className={MENU_ITEM_CLASS}
+              onClick={() => {
+                setMenuOpen(false);
+                onSettings();
+              }}
+            >
+              <SlidersHorizontal className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" strokeWidth={1.75} />
+              <span className="flex min-w-0 flex-col">
+                Settings…
+                <span className="text-xs text-text-muted">Space and system prompt</span>
               </span>
-            </span>
-          </button>
-          <div className="my-1 h-px bg-border-subtle" />
-          <button
-            type="button"
-            className={cn(MENU_ITEM_CLASS, 'text-[hsl(var(--danger-fg))] hover:bg-[hsl(var(--danger-muted))] focus-visible:bg-[hsl(var(--danger-muted))]')}
-            onClick={() => {
-              setMenuOpen(false);
-              onRemove();
-            }}
-          >
-            <Trash2 className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={1.75} />
-            Remove…
-          </button>
-        </PopoverContent>
-      </Popover>
+            </button>
+            <button
+              type="button"
+              className={MENU_ITEM_CLASS}
+              disabled={!hasOwnIndex}
+              onClick={() => {
+                setMenuOpen(false);
+                onDeleteIndex();
+              }}
+            >
+              <Database className="mt-0.5 h-4 w-4 shrink-0 text-text-muted" strokeWidth={1.75} />
+              <span className="flex min-w-0 flex-col">
+                Delete index
+                <span className="text-xs text-text-muted">
+                  {reusedFrom
+                    ? `Uses ${reusedFrom}’s index`
+                    : hasOwnIndex
+                      ? `${formatFileSize(index.bytes)} · built again when it opens`
+                      : 'No index to delete'}
+                </span>
+              </span>
+            </button>
+            <div className="my-1 h-px bg-border-subtle" />
+            <button
+              type="button"
+              className={cn(MENU_ITEM_CLASS, 'text-danger-fg hover:bg-danger-muted focus-visible:bg-danger-muted')}
+              onClick={() => {
+                setMenuOpen(false);
+                onRemove();
+              }}
+            >
+              <Trash2 className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={1.75} />
+              Remove…
+            </button>
+          </PopoverContent>
+        </Popover>
+      </div>
     </li>
   );
 }
@@ -290,7 +321,7 @@ function RenameField({ name, onDone }: { name: string; onDone: (_name: string | 
         else if (event.key === 'Escape') finish(null);
       }}
       onBlur={() => finish(value)}
-      className="h-6 min-w-0 flex-1 rounded-md border border-border-default bg-surface px-1.5 text-ui font-medium text-text-primary focus:outline-hidden focus:ring-2 focus:ring-[hsl(var(--ring)/0.5)]"
+      className="h-7 w-full rounded-md border border-border-default bg-surface px-2 text-ui font-medium text-text-primary focus:outline-hidden focus:ring-2 focus:ring-ring"
     />
   );
 }
@@ -306,7 +337,6 @@ interface RemoveFolderDialogProps {
 function RemoveFolderDialog({ folder, home, onCancel, onRemove }: RemoveFolderDialogProps) {
   const [deleteThreads, setDeleteThreads] = useState(false);
   const [removing, setRemoving] = useState(false);
-  const checkboxId = useId();
   const { index } = folder;
   const indexLine =
     index.indexRoot !== null
@@ -325,22 +355,19 @@ function RemoveFolderDialog({ folder, home, onCancel, onRemove }: RemoveFolderDi
           </DialogDescription>
         </DialogHeader>
         {folder.threadCount > 0 && (
-          <label htmlFor={checkboxId} className="flex cursor-pointer items-start gap-3 rounded-lg bg-surface-sunken px-3 py-2.5 ring-1 ring-inset ring-border-subtle">
-            <input
-              id={checkboxId}
-              type="checkbox"
+          <div className="rounded-lg bg-surface-sunken px-3.5 py-3 ring-1 ring-inset ring-border-subtle">
+            <Checkbox
               checked={deleteThreads}
               disabled={removing}
-              onChange={(event) => setDeleteThreads(event.target.checked)}
-              className="mt-0.5 h-4 w-4 shrink-0 accent-[hsl(var(--danger))]"
+              onCheckedChange={setDeleteThreads}
+              label={`Also delete its ${plural(folder.threadCount, 'chat thread', 'chat threads')}`}
+              description={
+                deleteThreads
+                  ? 'Their messages and tangents go too. This can’t be undone.'
+                  : 'Kept threads come back if you add the folder again.'
+              }
             />
-            <span className="flex flex-col text-sm text-text-primary">
-              Also delete its {plural(folder.threadCount, 'chat thread', 'chat threads')}
-              <span className="text-xs text-text-muted">
-                {deleteThreads ? 'Their messages and tangents go too. This can’t be undone.' : 'Kept threads come back if you add the folder again.'}
-              </span>
-            </span>
-          </label>
+          </div>
         )}
         <DialogFooter>
           <Button type="button" variant="outline" disabled={removing} onClick={onCancel}>
@@ -375,10 +402,8 @@ export interface YourFoldersProps {
 }
 
 /**
- * "Your folders": every folder picked in the Explorer, pinned first, then
- * the most recently opened. Each row says where its index stands and opens
- * the folder on click; the pin and the menu (Rename, Settings…, Delete index, Remove…)
- * sit at its end. Arrow keys move between rows.
+ * "Your folders": structured 2-column indexed folder workspace cards, pinned
+ * first, then most recently opened. Arrow keys move between cards.
  */
 export function YourFolders({ list, opening, onOpen }: YourFoldersProps) {
   const [query, setQuery] = useState('');
@@ -400,34 +425,35 @@ export function YourFolders({ list, opening, onOpen }: YourFoldersProps) {
     : folders;
 
   const moveFocus = (event: KeyboardEvent<HTMLUListElement>) => {
-    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
-    const rows = Array.from(listRef.current?.querySelectorAll<HTMLButtonElement>('[data-folder-open]') ?? []);
-    const at = rows.indexOf(document.activeElement as HTMLButtonElement);
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp' && event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
+    const cards = Array.from(listRef.current?.querySelectorAll<HTMLButtonElement>('[data-folder-open]') ?? []);
+    const at = cards.indexOf(document.activeElement as HTMLButtonElement);
     if (at < 0) return;
     event.preventDefault();
-    rows[Math.min(rows.length - 1, Math.max(0, at + (event.key === 'ArrowDown' ? 1 : -1)))]?.focus();
+    const delta = event.key === 'ArrowDown' || event.key === 'ArrowRight' ? 1 : -1;
+    cards[Math.min(cards.length - 1, Math.max(0, at + delta))]?.focus();
   };
 
   if (folders.length === 0) return null;
 
   return (
-    <section aria-labelledby="explorer-your-folders" className="mt-10">
-      <div className="flex items-baseline justify-between gap-3 px-1">
+    <section aria-labelledby="explorer-your-folders" className="mt-2">
+      <div className="flex items-baseline justify-between gap-3 px-0.5">
         <h2 id="explorer-your-folders" className="text-[11px] font-medium uppercase tracking-[.08em] text-text-muted">
           Your folders
         </h2>
-        <p className="text-[11.5px] tabular-nums text-text-muted">{totals}</p>
+        <p className="text-xs tabular-nums text-text-muted">{totals}</p>
       </div>
       {folders.length >= FILTER_FROM && (
-        <div className="relative mt-2.5">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-muted" strokeWidth={1.75} aria-hidden="true" />
+        <div className="relative mt-3 max-w-sm">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-muted" strokeWidth={1.75} aria-hidden="true" />
           <input
             type="search"
             aria-label="Filter folders"
             placeholder="Filter folders"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            className="h-8 w-full rounded-lg border border-border-subtle bg-surface pl-8 pr-3 text-ui text-text-primary placeholder:text-text-muted focus:border-border-default focus:outline-hidden focus:ring-2 focus:ring-[hsl(var(--ring)/0.35)]"
+            className="h-8 w-full rounded-lg border border-border-default bg-surface pl-8 pr-3 text-ui text-text-primary shadow-control placeholder:text-text-muted focus:border-accent/60 focus:outline-hidden focus:ring-2 focus:ring-ring"
           />
         </div>
       )}
@@ -435,10 +461,10 @@ export function YourFolders({ list, opening, onOpen }: YourFoldersProps) {
         <ul
           ref={listRef}
           onKeyDown={moveFocus}
-          className="mt-2.5 divide-y divide-border-subtle overflow-hidden rounded-xl bg-surface shadow-sheet"
+          className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2"
         >
           {shown.map((folder) => (
-            <FolderRow
+            <FolderCard
               key={folder.root}
               folder={folder}
               home={list.home}
@@ -459,7 +485,7 @@ export function YourFolders({ list, opening, onOpen }: YourFoldersProps) {
           ))}
         </ul>
       ) : (
-        <p className="mt-2.5 rounded-xl px-4 py-6 text-center text-sm text-text-muted ring-1 ring-inset ring-border-subtle">
+        <p className="mt-3 rounded-xl border border-border-subtle bg-surface px-4 py-6 text-center text-sm text-text-muted">
           No folders match “{query.trim()}”.
         </p>
       )}

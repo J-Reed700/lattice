@@ -30,12 +30,12 @@ export function LessonQuizCallout({ program, lesson, onOpenForm, onViewResult }:
   const words = status ? quizStatusWords(status) : null;
   const error = status ? launcher.errorFor(status) : undefined;
   return <section id={`quiz-callout-${lesson.id}`} tabIndex={-1} aria-labelledby={`quiz-callout-${lesson.id}-title`}
-    className="mt-6 rounded-2xl border border-accent/25 bg-gradient-to-br from-accent/[.07] to-transparent p-5 outline-hidden focus-visible:ring-2 focus-visible:ring-accent sm:p-6">
+    className="mt-6 rounded-xl border border-border-default bg-surface p-5 shadow-sm outline-hidden focus-visible:ring-2 focus-visible:ring-accent sm:p-6">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[.15em] text-accent"><ClipboardCheck size={14} aria-hidden="true" /> Lesson quiz</div>
       {status?.bankStatus === 'ready' && <span className="text-xs tabular-nums text-text-muted">{status.formSize} questions · about {status.expectedMinutes} min</span>}
     </div>
-    <h4 id={`quiz-callout-${lesson.id}-title`} className="mt-1.5 font-serif text-xl leading-snug text-text-primary">Check what stuck from “{lesson.title}”</h4>
+    <h4 id={`quiz-callout-${lesson.id}-title`} className="mt-1.5 font-sans text-lg font-semibold leading-snug tracking-[-0.02em] text-text-primary">Check what stuck from “{lesson.title}”</h4>
     <p className="mt-1.5 max-w-2xl text-sm leading-6 text-text-secondary">Quick choices, a matching or ordering task, a short answer and one written explanation. Keys are shown after you submit; nothing is locked.</p>
     {!status ? <p role="status" className="mt-4 flex items-center gap-2 text-sm text-text-muted"><LoaderCircle size={15} aria-hidden="true" className="animate-spin motion-reduce:animate-none" /> Checking your quiz…</p>
       : <div className="mt-4 flex flex-wrap items-center justify-between gap-3">

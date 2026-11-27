@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::replies::ReplyPieceDto;
+use super::replies::{ReplyPieceDto, SupportDto};
 use super::sources::SourceDto;
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -67,6 +67,13 @@ pub struct ConversationSnapshotDto {
     pub messages: Vec<SnapshotMessageDto>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceNoteCitationDto {
+    pub number: u32,
+    pub support: SupportDto,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceNoteDto {
@@ -85,6 +92,9 @@ pub struct WorkspaceNoteDto {
     /// Source metadata backing inline citations in this note.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<SourceDto>,
+    /// Relation and excerpt anchors for each entry in `sources`, in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub citations: Vec<WorkspaceNoteCitationDto>,
     pub created_at: String,
     pub updated_at: String,
 }

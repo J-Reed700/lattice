@@ -11,7 +11,7 @@ import {
 } from '@/features/learning/sources/useLearningSources';
 import { fromLearningSourceVersion } from '@/features/reading/model/sourceAdapter';
 import { useReaderStore } from '@/features/reading/stores/readerStore';
-import type { LearningSourceLibraryItemDto, LearningSourceWorkspaceDto } from '@/lib/bindings';
+import type { LearningSourceLibraryItemDto, LearningSourceWorkspaceDto, SupportDto } from '@/lib/bindings';
 import { toast } from '@/stores/toastStore';
 import { unwrapApiResult as unwrap } from '@/types/api/result';
 import type { SourceWithMetadata } from '@/types/conversation';
@@ -22,6 +22,10 @@ export interface SavedSourceTarget {
   /** Looked up from the course's library when the caller only knows the version. */
   sourceId?: string | null;
   quote?: string | null;
+  /** Citation number supplied by the backend; omitted when opening a source directly from the library. */
+  number?: number;
+  /** Backend-verified relation and anchors for this citation. */
+  support?: SupportDto | null;
 }
 
 export interface SavedSourceOpenOptions {
@@ -75,17 +79,21 @@ export function useSavedSourceReader(programId: string) {
         }).catch(() => null))?.sources ?? []
       : [];
 
-    const read = await Promise.allSettled(targets.map(async (target, index) => {
+    const read = await Promise.allSettled(targets.map(async (target) => {
       const sourceId = target.sourceId || sourceIdOf(sources, target.versionId);
       if (!sourceId) throw new Error('This source is no longer in the course library.');
       const detail = await client.fetchQuery({
         ...learningSourceVersionQuery(api, { programId, sourceId, versionId: target.versionId }),
         staleTime: 60_000,
       });
+      const hasByteSpan = Boolean(target.support?.anchors.some((anchor) => anchor.span != null));
       return fromLearningSourceVersion(detail, {
         quote: target.quote,
-        number: index + 1,
-        readerText: formatSourceForReader(detail.fullText, detail.version.extractionVersion, { escapeMarkup: false }),
+        number: target.number,
+        support: target.support,
+        readerText: hasByteSpan
+          ? detail.fullText
+          : formatSourceForReader(detail.fullText, detail.version.extractionVersion, { escapeMarkup: false }),
       }).source;
     }));
 

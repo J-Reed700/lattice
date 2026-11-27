@@ -68,13 +68,12 @@ pub(super) fn section_input(
                     .get("sourceTitle")
                     .and_then(Value::as_str)
                     .map(|title| Told(title.to_owned())),
-                text: Told(
+                text: Told(lattice_core::shared::text::strip_scraped_chrome(
                     entry
                         .get("text")
                         .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_owned(),
-                ),
+                        .unwrap_or_default(),
+                )),
                 source_index: Internal::of(entry.get("sourceIndex").and_then(Value::as_u64)),
             })
         })
@@ -140,13 +139,7 @@ pub(super) fn section_input(
             execution,
         ));
     }
-    let sections: Vec<Value> = candidate
-        .get("blocks")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .map(|block| json!({"kind": block.get("kind"), "title": block.get("title")}))
-        .collect();
+    let sections = section_context(candidate, field, unit);
     let history: Vec<Value> = context
         .get("repairHistory")
         .and_then(Value::as_array)
@@ -155,8 +148,13 @@ pub(super) fn section_input(
         .filter(|finding| finding.get("unit").and_then(Value::as_u64) == Some(unit as u64))
         .cloned()
         .collect();
+    let mut requirements = context.get("requirements").cloned().unwrap_or(Value::Null);
+    if let Some(object) = requirements.as_object_mut() {
+        object.remove("sources");
+        object.remove("referenceCatalog");
+    }
     Ok(Input {
-        requirements: Told(context.get("requirements").cloned().unwrap_or(Value::Null)),
+        requirements: Told(requirements),
         sections: Told(sections),
         section: Told(only_section(candidate, part)),
         lesson: Internal::of(candidate.clone()),
@@ -169,6 +167,68 @@ pub(super) fn section_input(
         wording: Internal::of(wording.clone()),
         output_tokens,
     })
+}
+
+const MAX_CONTEXT_SECTION_CHARS: usize = 800;
+const MAX_TOTAL_SECTION_CONTEXT_CHARS: usize = 3_600;
+
+/// Kind, title, and bounded surrounding body context of each block in the
+/// lesson so claim repair sees adjacent explanations and contrasts without
+/// duplicating the target section already shown in `candidate`.
+fn section_context(candidate: &Value, field: &str, unit: usize) -> Vec<Value> {
+    let Some(blocks) = candidate.get("blocks").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut entries: Vec<Value> = blocks
+        .iter()
+        .map(|block| json!({"kind": block.get("kind"), "title": block.get("title")}))
+        .collect();
+    let mut order: Vec<usize> = (0..blocks.len())
+        .filter(|&index| !(field == "blocks" && index == unit))
+        .collect();
+    // Prioritize immediate neighbors first, then contrast/explanation/worked_example/recap.
+    order.sort_by_key(|&index| {
+        let neighbor = field == "blocks" && index.abs_diff(unit) == 1;
+        let kind = blocks
+            .get(index)
+            .and_then(|block| block.get("kind"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let rank = if neighbor {
+            0
+        } else if matches!(
+            kind,
+            "contrast" | "explanation" | "worked_example" | "recap"
+        ) {
+            1
+        } else {
+            2
+        };
+        (rank, index)
+    });
+    let mut remaining = MAX_TOTAL_SECTION_CONTEXT_CHARS;
+    for index in order {
+        if remaining == 0 {
+            break;
+        }
+        let Some(body) = blocks
+            .get(index)
+            .and_then(|block| block.get("body"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+        else {
+            continue;
+        };
+        let allowance = remaining.min(MAX_CONTEXT_SECTION_CHARS);
+        let excerpt = lattice_core::shared::text::safe_truncate(body, allowance);
+        let used = excerpt.chars().count();
+        remaining = remaining.saturating_sub(used);
+        if let Some(object) = entries.get_mut(index).and_then(Value::as_object_mut) {
+            object.insert("context".into(), Value::String(excerpt));
+        }
+    }
+    entries
 }
 
 /// The entries taken so far: one section's rows with each correction made.

@@ -41,19 +41,28 @@ fn single_choice(outcome_id: &str, prompt: &str, options: &[&str], right: usize)
         rubric: Vec::new(),
         key: LearningAssessmentKey::Choice(right),
         explanation: "Headers preserve whitespace unless trimmed explicitly.".into(),
-        distractor_rationales: vec![
-            String::new(),
-            "Whitespace is not stripped automatically.".into(),
-            "Columns are kept intact.".into(),
-            "Spaces in headers are valid.".into(),
-        ],
+        distractor_rationales: (0..options.len())
+            .map(|index| {
+                if index == right {
+                    String::new()
+                } else {
+                    match index {
+                        0 => "Leading whitespace is not trimmed automatically.",
+                        1 => "Whitespace is not stripped automatically.",
+                        2 => "Columns are kept intact.",
+                        _ => "Spaces in headers are valid.",
+                    }
+                    .into()
+                }
+            })
+            .collect(),
     };
     BankItem {
         item: candidate.into(),
         source_quote: String::new(),
         lesson_id: None,
         origin: "lesson",
-        review_status: "agreed",
+        review_status: crate::assessment_repository::CandidateReviewStatus::Agreed,
     }
 }
 
@@ -121,7 +130,7 @@ async fn course_with_questions() -> Result<(Course, String, Vec<String>)> {
         source_quote: String::new(),
         lesson_id: Some(course.lesson_id.clone()),
         origin: "lesson",
-        review_status: "agreed",
+        review_status: crate::assessment_repository::CandidateReviewStatus::Agreed,
     };
 
     let short = BankItem {
@@ -146,7 +155,7 @@ async fn course_with_questions() -> Result<(Course, String, Vec<String>)> {
         source_quote: String::new(),
         lesson_id: Some(course.lesson_id.clone()),
         origin: "lesson",
-        review_status: "agreed",
+        review_status: crate::assessment_repository::CandidateReviewStatus::Agreed,
     };
 
     let ids: Vec<String> = [&q0, &q1, &tf, &short]

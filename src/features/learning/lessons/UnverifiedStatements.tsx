@@ -110,7 +110,7 @@ export function UnverifiedStatements({ programId, lessonId, statements, onReview
   const review = useLessonClaimReview(programId, lessonId, statements.length > 0).data ?? null;
   if (statements.length === 0) return null;
   return (
-    <div role="note" className="mt-4 rounded-lg border border-amber-600/30 p-3 text-xs leading-5 text-text-primary">
+    <div role="note" className="mt-4 rounded-lg border border-warning/30 bg-surface p-3 text-xs leading-5 text-text-primary shadow-2xs">
       <p className="font-medium">Not verified:</p>
       <ul className="mt-1 space-y-2">
         {statements.map((item) => (

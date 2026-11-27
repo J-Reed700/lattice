@@ -21,39 +21,54 @@ export function LibraryViewActions({
   handleRefresh: () => Promise<void>;
 }) {
   return (
-    <>
-      <IconButton
-        label="List view"
-        active={viewMode === 'list'}
-        onClick={() => setViewMode('list')}
+    <div className="flex items-center gap-1.5">
+      <div
+        role="group"
+        aria-label="View mode"
+        className="inline-flex h-8 items-center gap-0.5 rounded-lg border border-border-subtle bg-surface-sunken/70 p-[3px]"
       >
-        <List strokeWidth={1.75} />
-      </IconButton>
-      <IconButton
-        label="Grid view"
-        active={viewMode === 'grid'}
-        onClick={() => setViewMode('grid')}
-      >
-        <LayoutGrid strokeWidth={1.75} />
-      </IconButton>
-      <IconButton
-        label="Tree view"
-        active={viewMode === 'tree'}
-        onClick={() => setViewMode('tree')}
-      >
-        <ListTree strokeWidth={1.75} />
-      </IconButton>
+        <IconButton
+          label="List view"
+          active={viewMode === 'list'}
+          onClick={() => setViewMode('list')}
+          className={viewMode === 'list' ? 'h-full w-7 rounded-md bg-surface shadow-sm ring-1 ring-border-subtle' : 'h-full w-7 rounded-md'}
+        >
+          <List strokeWidth={1.75} />
+        </IconButton>
+        <IconButton
+          label="Grid view"
+          active={viewMode === 'grid'}
+          onClick={() => setViewMode('grid')}
+          className={viewMode === 'grid' ? 'h-full w-7 rounded-md bg-surface shadow-sm ring-1 ring-border-subtle' : 'h-full w-7 rounded-md'}
+        >
+          <LayoutGrid strokeWidth={1.75} />
+        </IconButton>
+        <IconButton
+          label="Tree view"
+          active={viewMode === 'tree'}
+          onClick={() => setViewMode('tree')}
+          className={viewMode === 'tree' ? 'h-full w-7 rounded-md bg-surface shadow-sm ring-1 ring-border-subtle' : 'h-full w-7 rounded-md'}
+        >
+          <ListTree strokeWidth={1.75} />
+        </IconButton>
+      </div>
+
       <IconButton
         label="Related"
         active={isNeighborhoodOpen}
         disabled={focusedDocumentId === null}
         onClick={toggleNeighborhood}
+        className="h-8 w-8 rounded-lg"
       >
         <PanelRight strokeWidth={1.75} />
       </IconButton>
-      <IconButton label="Refresh" onClick={handleAsyncEvent(handleRefresh)}>
+      <IconButton
+        label="Refresh"
+        onClick={handleAsyncEvent(handleRefresh)}
+        className="h-8 w-8 rounded-lg"
+      >
         <RefreshCw strokeWidth={1.75} />
       </IconButton>
-    </>
+    </div>
   );
 }

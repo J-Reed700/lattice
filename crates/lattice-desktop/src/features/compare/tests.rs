@@ -386,3 +386,35 @@ async fn a_send_fault_is_an_error() {
     );
     assert!(row_of(&model, &row_columns()).await.is_err());
 }
+
+#[tokio::test]
+async fn stated_cells_receive_sequential_backend_numbers_and_cites_support() {
+    use lattice_core::application::contracts::replies::RelationDto;
+
+    let model = Arc::new(ScriptedModel::new().on_request::<CompareRow>(|sent, _| {
+        let prompt = shown(sent);
+        reply(entries(vec![
+            stated(
+                &handle_of(&prompt, "kiln firing"),
+                "at dawn",
+                &[&handle_of(&prompt, KILN)],
+            ),
+            stated(
+                &handle_of(&prompt, "crane count"),
+                "two",
+                &[&handle_of(&prompt, CRANES)],
+            ),
+        ]))
+    }));
+    let row = row_of(&model, &row_columns()).await.unwrap();
+    let first = row.cells[0].citation.as_ref().expect("first citation");
+    let second = row.cells[1].citation.as_ref().expect("second citation");
+    assert_eq!(first.number, 1);
+    assert_eq!(second.number, 2);
+    assert_eq!(first.support.relation, RelationDto::Cites);
+    assert_eq!(first.support.anchors.len(), 1);
+    assert_eq!(first.support.anchors[0].exact, first.excerpt);
+    assert!(first.support.anchors[0].span.is_none());
+    assert_eq!(second.support.relation, RelationDto::Cites);
+    assert_eq!(second.support.anchors[0].exact, second.excerpt);
+}

@@ -8,7 +8,8 @@ use crate::{
     },
     assessment_generation::StoredItem,
     assessment_repository::{
-        insert_bank_items_in, BankItem, ItemGrade, LearningAssessmentRepository, Regrade,
+        insert_bank_items_in, BankItem, CandidateReviewStatus, ItemGrade,
+        LearningAssessmentRepository, Regrade,
     },
     dto::*,
     grade_rationale::{self, Checked, GraderCriterion, GraderItem, GraderVerdict},
@@ -675,7 +676,7 @@ pub(crate) async fn fill_bank(
                 source_quote: String::new(),
                 lesson_id: lesson_id.clone(),
                 origin: "bank",
-                review_status: "agreed",
+                review_status: CandidateReviewStatus::Agreed,
             });
         }
     }
@@ -911,8 +912,8 @@ async fn a_lesson_quiz_grades_keyed_answers_at_once_and_waits_for_written_ones()
         lattice_core::shared::testing::query_counts::count_reads(repo.get_form(&form_id)).await;
     let form = form?;
     assert_eq!(
-        reads, 9,
-        "quiz candidates, outcomes and contests must be loaded per form"
+        reads, 10,
+        "quiz candidates, outcomes, sources and contests must be loaded per form"
     );
     assert!(form.items.len() > 1);
     for item in &form.items {
@@ -1882,7 +1883,7 @@ async fn bank_items_sharing_most_of_their_words_are_both_stored() -> Result<()> 
                 source_quote: String::new(),
                 lesson_id: None,
                 origin: "bank",
-                review_status: "agreed",
+                review_status: CandidateReviewStatus::Agreed,
             }
         })
         .collect();
@@ -1954,7 +1955,7 @@ fn a_lesson_question_is_seeded_with_its_reasons_in_the_writers_order() {
     for _ in 0..30 {
         let seeded = crate::quiz_bank_jobs::lesson_seed_items(&id(), &id(), &questions, &keys);
         assert_eq!(seeded.len(), 1);
-        assert_eq!(seeded[0].review_status, "agreed");
+        assert_eq!(seeded[0].review_status, CandidateReviewStatus::Agreed);
         let candidate = LearningAssessmentCandidate::from(seeded[0].item.clone());
         assert_eq!(candidate.options, questions[0].options);
         assert_eq!(candidate.distractor_rationales, keys[0].rationales);
@@ -2036,21 +2037,272 @@ fn a_lesson_question_that_cannot_be_asked_is_stored_dropped_in_its_place() {
         })
         .unzip();
     let seeded = crate::quiz_bank_jobs::lesson_seed_items(&id(), &id(), &questions, &keys);
-    let seen: Vec<(&str, &str)> = seeded
+    let seen: Vec<(&str, CandidateReviewStatus)> = seeded
         .iter()
         .map(|item| (item.item.prompt.as_str(), item.review_status))
         .collect();
     assert_eq!(
         seen,
         [
-            ("Which layer holds most weather?", "agreed"),
-            ("  ", "dropped"),
-            ("Which of these is named first?", "dropped"),
-            ("Which of these is named second?", "dropped"),
-            ("Which of these is named third?", "dropped"),
-            ("Which of these is named last?", "agreed"),
+            (
+                "Which layer holds most weather?",
+                CandidateReviewStatus::Agreed
+            ),
+            ("  ", CandidateReviewStatus::Dropped),
+            (
+                "Which of these is named first?",
+                CandidateReviewStatus::Dropped
+            ),
+            (
+                "Which of these is named second?",
+                CandidateReviewStatus::Dropped
+            ),
+            (
+                "Which of these is named third?",
+                CandidateReviewStatus::Dropped
+            ),
+            (
+                "Which of these is named last?",
+                CandidateReviewStatus::Agreed
+            ),
         ]
     );
+}
+
+#[tokio::test]
+async fn form_in_populates_item_source_citations_and_hydrates_criterion_rationale_support(
+) -> Result<()> {
+    use lattice_core::application::contracts::replies::RelationDto;
+
+    let pool = crate::tests::pool().await?;
+    let database = Database::new(pool.clone());
+    let program = crate::tests::fixture();
+    let programs = LearningRepository::new(database.clone());
+    programs.create(&program).await?;
+    programs
+        .accept(&AcceptLearningProgramRequestDto {
+            program_id: program.summary.id.clone(),
+            expected_revision: 0,
+            title: program.summary.title.clone(),
+        })
+        .await?;
+    let program_id = program.summary.id.clone();
+    let lesson_id = program.modules[0].lessons[0].id.clone();
+    programs
+        .prepare(
+            &program_id,
+            &lesson_id,
+            1,
+            &crate::tests::prepared(&lesson_id),
+        )
+        .await?;
+
+    let prefix = "Note — café:\n";
+    let quote = "Kinetic competition lowers apparent substrate affinity.";
+    let full_text = format!("{prefix}{quote} Maximum velocity stays unchanged.");
+    let version_id = program.sources[0].id.clone();
+    sqlx::query("UPDATE learning_source_versions SET full_text=?, excerpt=? WHERE id=?")
+        .bind(&full_text)
+        .bind(&full_text)
+        .bind(&version_id)
+        .execute(&pool)
+        .await?;
+
+    let mut second_source = program.sources[0].clone();
+    second_source.id = id();
+    sqlx::query("INSERT INTO learning_source_library(id,program_id,kind,added_by,origin,freshness_policy,active_version_id,revision,created_at,updated_at) VALUES(?1,?2,'pasted','user','origin-2','manual',NULL,1,1,1)")
+        .bind("logical-source-2")
+        .bind(&program_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at) VALUES(?1,?2,'logical-source-2',1,'Second source','Other text.','Other text.','sha-2',2,0,'test',1)")
+        .bind(&second_source.id)
+        .bind(&program_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        "UPDATE learning_source_library SET active_version_id=?1 WHERE id='logical-source-2'",
+    )
+    .bind(&second_source.id)
+    .execute(&pool)
+    .await?;
+
+    let scope = LearningQuizScopeDto {
+        kind: LearningQuizScopeKind::Lesson,
+        id: Some(lesson_id),
+    };
+    let form_id = id();
+    let repo = LearningAssessmentRepository::new(database.clone());
+    let mut tx = database.begin_write().await?;
+    let (blueprint, _) = quiz_blueprints::ensure_blueprint_in(&mut tx, &program_id, &scope)
+        .await?
+        .expect("blueprint for scope");
+    let requirements = quiz_blueprints::requirements_in(&mut tx, &blueprint).await?;
+    let mut items = Vec::new();
+    let mut item_id = None;
+    let mut criterion = None;
+    for requirement in &requirements {
+        let req_lesson: Option<String> =
+            sqlx::query_scalar("SELECT lesson_id FROM learning_outcome_definitions WHERE id=?")
+                .bind(&requirement.outcome_id)
+                .fetch_one(&mut *tx)
+                .await?;
+        for _ in 0..requirement.count {
+            let n = ITEMS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let mut stored = item(
+                requirement.format,
+                &requirement.outcome_id,
+                requirement.difficulty_min,
+                n,
+            );
+            let mut item_quote = String::new();
+            if item_id.is_none() && requirement.format == LearningItemFormat::Explanation {
+                stored.source_version_ids = vec![
+                    version_id.clone(),
+                    second_source.id.clone(),
+                    version_id.clone(),
+                ];
+                item_id = Some(stored.id.clone());
+                criterion = stored.rubric.first().cloned();
+                item_quote = quote.into();
+            }
+            items.push(BankItem {
+                item: stored,
+                source_quote: item_quote,
+                lesson_id: req_lesson.clone(),
+                origin: "bank",
+                review_status: CandidateReviewStatus::Agreed,
+            });
+        }
+    }
+    insert_bank_items_in(&mut tx, &program_id, &items, Some("test-model")).await?;
+    tx.commit().await?;
+    let item_id = item_id.expect("explanation requirement in lesson quiz");
+    let crit_def = criterion.expect("rubric criterion on explanation item");
+
+    let started = repo
+        .start_quiz(
+            &StartLearningQuizRequestDto {
+                operation_id: id(),
+                form_id: form_id.clone(),
+                program_id: program_id.clone(),
+                scope,
+                mode: LearningQuizMode::Graded,
+                retake_of_form_id: None,
+            },
+            "start",
+        )
+        .await?;
+    let target_item = started
+        .items
+        .iter()
+        .find(|i| i.id == item_id)
+        .expect("custom item drawn");
+    assert_eq!(target_item.source_citations.len(), 2);
+    assert_eq!(target_item.source_citations[0].number, 1);
+    assert_eq!(target_item.source_citations[0].version_id, version_id);
+    assert_eq!(
+        target_item.source_citations[0].support.relation,
+        RelationDto::Quotes
+    );
+    let span = target_item.source_citations[0].support.anchors[0]
+        .span
+        .expect("item quote UTF-8 span");
+    assert_eq!(
+        (span.start, span.end),
+        (prefix.len(), prefix.len() + quote.len())
+    );
+    assert_eq!(target_item.source_citations[1].number, 2);
+    assert_eq!(
+        target_item.source_citations[1].support.relation,
+        RelationDto::Cites
+    );
+
+    let mut answer = engine::LearningAssessmentResponse::empty(item_id.clone());
+    answer.text = Some("Competition raises apparent Km.".into());
+    let answered = repo
+        .save_response(
+            &SaveLearningAssessmentResponseRequestDto {
+                operation_id: id(),
+                program_id: program_id.clone(),
+                form_id: form_id.clone(),
+                expected_revision: started.revision,
+                response: answer,
+                assistance: vec![],
+            },
+            "answer",
+        )
+        .await?;
+
+    let (submitted, _) = repo
+        .submit(
+            &MutateLearningAssessmentFormRequestDto {
+                operation_id: id(),
+                program_id,
+                form_id: form_id.clone(),
+                expected_revision: answered.revision,
+            },
+            "submit",
+        )
+        .await?;
+    let ordinal = submitted
+        .items
+        .iter()
+        .position(|i| i.id == item_id)
+        .unwrap() as i64;
+    repo.apply_grades(
+        &form_id,
+        &[ItemGrade::Graded {
+            ordinal,
+            fraction: 1.0,
+            correct: None,
+            status: LearningAssessmentGradeStatus::Provisional,
+            detail: String::new(),
+            rationale: Some(LearningGradeRationaleDto {
+                summary: "Complete explanation.".into(),
+                criteria: vec![LearningCriterionRationaleDto {
+                    criterion_id: crit_def.id,
+                    title: crit_def.title,
+                    verdict: LearningCriterionVerdict::Met,
+                    points: Some(f64::from(crit_def.max_points)),
+                    max_points: f64::from(crit_def.max_points),
+                    what_was_missing: String::new(),
+                    your_words: vec![],
+                    full_credit_includes: String::new(),
+                    source_quote: Some(quote.into()),
+                    source_version_id: Some(version_id),
+                    source_number: None,
+                    source_support: None,
+                }],
+                grader_model: "test-model".into(),
+                rubric_version: "r1".into(),
+                graded_at: 1,
+            }),
+        }],
+        "test-model",
+    )
+    .await?;
+
+    let reloaded = repo.get_form(&form_id).await?;
+    let result = reloaded
+        .submission
+        .unwrap()
+        .item_results
+        .into_iter()
+        .find(|r| r.item_id == item_id)
+        .unwrap();
+    let crit = &result.rationale.unwrap().criteria[0];
+    assert_eq!(crit.source_number, Some(1));
+    let crit_support = crit
+        .source_support
+        .as_ref()
+        .expect("hydrated rationale support");
+    assert_eq!(crit_support.relation, RelationDto::Quotes);
+    assert_eq!(
+        crit_support.anchors[0].span.map(|s| (s.start, s.end)),
+        Some((prefix.len(), prefix.len() + quote.len()))
+    );
+    Ok(())
 }
 
 #[tokio::test]

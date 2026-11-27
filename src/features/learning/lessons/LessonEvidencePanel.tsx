@@ -4,9 +4,10 @@ import { ExternalLink, FileSearch } from 'lucide-react';
 
 import { useLearningLessonEvidence, type LessonEvidenceQuery } from '@/features/learning/api/evidenceQueries';
 import { useLessonCitationSources } from '@/features/learning/lessons/useLessonCitationSources';
-import { checkWords, citationNumbers, citationsByNumber, partsOfKind, passageKey, resolutionText, UNSTATED_PARTS } from '@/features/learning/model/evidencePresentation';
+import { checkWords, citationNumbers, citationsByNumber, partOpening, partsOfKind, passageKey, resolutionText, UNSTATED_PARTS, type PartOpening } from '@/features/learning/model/evidencePresentation';
 import { TrustLevelChip } from '@/features/learning/sources/trust/TrustBadge';
 import { sufficiencyNote, verifiedByLevel } from '@/features/learning/sources/trust/trustPresentation';
+import { relationLabel } from '@/features/reading/citations';
 import { useReaderClosesWithOwner } from '@/features/reading/hooks/useReaderClosesWithOwner';
 import { useReaderStore } from '@/features/reading/stores/readerStore';
 import type {
@@ -45,7 +46,7 @@ export function Passage({
 }) {
   const url = safeUrl(passage.url);
   return (
-    <details className="rounded-lg bg-background p-3" open={defaultOpen}>
+    <details className="rounded-lg bg-bg p-3" open={defaultOpen}>
       <summary className="cursor-pointer text-xs font-medium text-text-secondary">
         <span className="mr-2 inline-grid h-5 min-w-5 place-items-center rounded bg-accent/10 px-1 text-[10px] font-semibold text-accent">
           {number}
@@ -82,10 +83,10 @@ export function Passage({
 function ResolutionChip({ claim }: { claim: LearningClaimEvidenceDto }) {
   const text = resolutionText(claim);
   if (claim.resolution === 'not_verified' || claim.resolution === 'source_removed') {
-    return <span className="rounded-full border border-amber-600/40 px-2 py-1 text-[10px] font-medium text-text-primary">{text}</span>;
+    return <span className="rounded-full border border-warning/40 bg-warning-muted/40 px-2 py-1 text-[10px] font-medium text-text-primary">{text}</span>;
   }
   if (claim.resolution === 'confirmed_by_you') {
-    return <span className="rounded-full border border-border bg-background px-2 py-1 text-[10px] font-medium text-text-secondary">{text}</span>;
+    return <span className="rounded-full border border-border bg-bg px-2 py-1 text-[10px] font-medium text-text-secondary">{text}</span>;
   }
   if (claim.class === 'common') {
     return <span className="rounded-full border border-border px-2 py-1 text-[10px] font-medium text-text-secondary">{text}</span>;
@@ -128,18 +129,27 @@ function ClaimEvidence({
   passageNumbers,
   citations,
   onOpenPassage,
+  onOpenPart,
 }: {
   claim: LearningClaimEvidenceDto;
   passageNumbers: Map<string, number>;
   citations: ReadonlyMap<number, LearningCitationDto>;
   onOpenPassage?: (passage: LearningEvidencePassageDto, number: number) => void;
+  onOpenPart?: (opening: PartOpening) => void;
 }) {
+  const anchoredParts = (claim.parts ?? []).flatMap((part) => {
+    const opening = partOpening(claim, part, citations);
+    return opening ? [{ part, opening }] : [];
+  });
   const how = checkWords(claim, citations) ?? (claim.sufficiency ? sufficiencyNote(claim.sufficiency) : null);
   return (
     <article className="wrap-anywhere rounded-lg border border-border p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <p className="text-sm font-medium leading-6 text-text-primary">{claim.claim}</p>
-        <ResolutionChip claim={claim} />
+        <span className="flex flex-wrap items-center gap-2">
+          {claim.relation && <span className="text-[10px] font-medium uppercase tracking-wider text-text-muted">{relationLabel(claim.relation)}</span>}
+          <ResolutionChip claim={claim} />
+        </span>
       </div>
       {claim.resolution === 'confirmed_by_you' && claim.note && (
         <p className="mt-2 text-xs leading-5 text-text-secondary"><span className="font-medium text-text-primary">Your note: </span>{claim.note}</p>
@@ -160,6 +170,16 @@ function ClaimEvidence({
           <p key={kind} className="mt-2 text-xs leading-5 text-text-secondary"><span className="font-medium text-text-primary">{label}</span>{parts.join('; ')}</p>
         );
       })}
+      {onOpenPart && anchoredParts.length > 0 && (
+        <ul aria-label="Where the source says each part" className="mt-2 space-y-1">
+          {anchoredParts.map(({ part, opening }) => (
+            <li key={`${part.kind}:${part.part}`} className="flex flex-wrap items-center gap-2 text-xs leading-5 text-text-secondary">
+              <span>{part.part}</span>
+              <button type="button" aria-label={`Show in the source: ${part.part}`} onClick={() => onOpenPart(opening)} className="text-accent underline">Show in source</button>
+            </li>
+          ))}
+        </ul>
+      )}
       <p className="mt-2 text-xs leading-5 text-text-secondary">{claim.reason}</p>
       {claim.supportingQuote && (
         <blockquote className="mt-2 border-l-2 border-accent pl-3 text-xs leading-5 text-text-primary">
@@ -209,6 +229,11 @@ export function LessonEvidencePanel({
     if (index >= 0) openReader(ownerKey, sources, index);
   };
 
+  const handleOpenPart = ({ number, anchoredBy }: PartOpening) => {
+    const index = data?.citations.findIndex((citation) => citation.number === number) ?? -1;
+    if (index >= 0) openReader(ownerKey, sources.map((source, at) => (at === index ? { ...source, anchoredBy } : source)), index, 0);
+  };
+
   return (
     <section className="mb-5 rounded-xl border border-border bg-surface p-4" aria-label="Lesson evidence">
       <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} className="flex min-h-10 w-full items-center gap-2 text-left text-sm font-semibold text-accent">
@@ -231,12 +256,12 @@ export function LessonEvidencePanel({
               <p className="text-sm leading-6 text-text-secondary">
                 {evidenceSummary(data)} · {data.executedExamples} examples executed. These checks reduce errors; they do not guarantee that a lesson is correct or complete.
               </p>
-              {sourceRemovedCount(data) > 0 && <p role="status" className="rounded-lg border border-amber-600/30 p-3 text-sm text-text-primary">{sourceRemovedCount(data)} {sourceRemovedCount(data) === 1 ? 'statement lost its source' : 'statements lost their source'} — use Review to look at {sourceRemovedCount(data) === 1 ? 'it' : 'them'}.</p>}
+              {sourceRemovedCount(data) > 0 && <p role="status" className="rounded-lg border border-warning/30 bg-warning-muted/35 p-3 text-sm text-text-primary">{sourceRemovedCount(data)} {sourceRemovedCount(data) === 1 ? 'statement lost its source' : 'statements lost their source'} — use Review to look at {sourceRemovedCount(data) === 1 ? 'it' : 'them'}.</p>}
               <p className="text-xs leading-5 text-text-muted">
                 {data.retrievalMode === 'hybrid' ? 'Semantic and keyword retrieval' : data.retrievalMode === 'lexical' ? 'Keyword retrieval — references were not searched by meaning' : data.retrievalMode === 'partial' ? 'Semantic and keyword retrieval over the embedded references; keyword retrieval for the rest — embedding was not finished' : 'Earlier verification method'} · Checked {new Date(data.checkedAt).toLocaleString()} · {data.checkerModel}
               </p>
-              {data.unexecutedLanguages.length > 0 && <p className="rounded-lg bg-amber-500/10 p-3 text-sm text-text-secondary">Examples in {data.unexecutedLanguages.join(', ')} were checked against references but were not compiled or executed.</p>}
-              {!data.sourcesCurrent && <p role="status" className="rounded-lg bg-amber-500/10 p-3 text-sm text-text-secondary">The reference collection has changed since this check. The citations below still open the exact source versions used for this saved lesson.</p>}
+              {data.unexecutedLanguages.length > 0 && <p className="rounded-lg border border-border-subtle bg-surface-sunken/70 p-3 text-sm text-text-secondary">Examples in {data.unexecutedLanguages.join(', ')} were checked against references but were not compiled or executed.</p>}
+              {!data.sourcesCurrent && <p role="status" className="rounded-lg border border-border-subtle bg-surface-sunken/70 p-3 text-sm text-text-secondary">The reference collection has changed since this check. The citations below still open the exact source versions used for this saved lesson.</p>}
               <details>
                 <summary className="cursor-pointer text-xs text-text-muted">Verification details</summary>
                 <dl className="mt-2 space-y-1 break-all text-xs text-text-secondary">
@@ -253,6 +278,7 @@ export function LessonEvidencePanel({
                     passageNumbers={passageNumbers}
                     citations={citations}
                     onOpenPassage={handleOpenPassage}
+                    onOpenPart={handleOpenPart}
                   />
                 ))}
               </div>

@@ -16,7 +16,7 @@ export function ChoiceRow({ label, letter, checked, focusable, disabled, onSelec
   };
   return <button type="button" role="radio" aria-checked={checked} tabIndex={focusable ? 0 : -1} disabled={disabled}
     onClick={() => onSelect()} onKeyDown={onKeyDown}
-    className={`${rowBase} ${checked ? 'border-accent bg-accent/5 text-text-primary ring-1 ring-accent/30' : 'border-border text-text-secondary hover:bg-background'}`}>
+    className={`${rowBase} ${checked ? 'border-accent bg-accent/5 text-text-primary ring-1 ring-accent/30' : 'border-border text-text-secondary hover:bg-bg'}`}>
     <span aria-hidden="true" className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border text-xs font-semibold ${checked ? 'border-accent bg-accent text-accent-fg' : 'border-border text-text-muted'}`}>{letter}</span>
     <span className="min-w-0 pt-px">{label}</span>
   </button>;

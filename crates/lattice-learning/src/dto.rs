@@ -23,17 +23,56 @@ pub use sources::*;
 pub use tangents::*;
 pub use trust::*;
 
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LearningProgramStatus {
     Draft,
     Active,
 }
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+
+impl LearningProgramStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Draft => "draft",
+            Self::Active => "active",
+        }
+    }
+
+    pub fn parse(raw: &str) -> lattice_core::shared::error::Result<Self> {
+        match raw {
+            "draft" => Ok(Self::Draft),
+            "active" => Ok(Self::Active),
+            _ => Err(lattice_core::shared::error::AppError::Database(
+                "Invalid learning program status".into(),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum LearningPreparation {
     Outline,
     Ready,
+}
+
+impl LearningPreparation {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Outline => "outline",
+            Self::Ready => "ready",
+        }
+    }
+
+    pub fn parse(raw: &str) -> lattice_core::shared::error::Result<Self> {
+        match raw {
+            "outline" => Ok(Self::Outline),
+            "ready" => Ok(Self::Ready),
+            _ => Err(lattice_core::shared::error::AppError::Database(
+                "Invalid lesson preparation state".into(),
+            )),
+        }
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

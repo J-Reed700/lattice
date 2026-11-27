@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { filePiece, reply, said } from '@/tests/replyFixtures';
+import { cites, filePiece, reply, said } from '@/tests/replyFixtures';
 
 import {
   drawReply,
@@ -9,10 +9,15 @@ import {
   findReplyMarks,
   markFor,
   markIndex,
+  markReply,
   plainTextOf,
+  QUOTE_END,
+  QUOTE_START,
   replyOf,
   replyPlainText,
+  withoutMarks,
   writtenOf,
+  type ReplyPiece,
 } from '../replyPieces';
 
 describe('reply pieces', () => {
@@ -83,5 +88,33 @@ describe('reply pieces', () => {
     );
     expect(plainTextOf({ content: 'Spaced  out , as typed.' })).toBe('Spaced  out , as typed.');
     expect(plainTextOf({ content: 'stored [s3]', reply: reply('shown ', 3) })).toBe('shown ');
+  });
+
+  describe('a quotation', () => {
+    const quoted = (text: string): ReplyPiece => ({ type: 'quoted', text });
+    const speech = [said('The guide says '), quoted('Tea is hot.'), said(' Then '), cites(2), said('.')];
+
+    it('is written between its own marks, which withoutMarks takes out again', () => {
+      const { raw, numbers } = markReply(speech);
+
+      expect(raw).toBe(`The guide says ${QUOTE_START}Tea is hot.${QUOTE_END} Then ${markFor(0)}.`);
+      expect(numbers).toEqual([2]);
+      expect(withoutMarks(raw)).toBe('The guide says Tea is hot. Then .');
+    });
+
+    it('uses private-use characters after the reference marks', () => {
+      expect(QUOTE_START).toBe('\uE00E');
+      expect(QUOTE_END).toBe('\uE00F');
+    });
+
+    it('is written in curly quotes where the message keeps its own text', () => {
+      expect(writtenOf(quoted('Tea is hot.'))).toBe('“Tea is hot.”');
+      expect(speech.map(writtenOf).join('')).toBe('The guide says “Tea is hot.” Then [s2].');
+    });
+
+    it('keeps its curly quotes in plain text, copy and export', () => {
+      expect(replyPlainText(speech)).toBe('The guide says “Tea is hot.” Then.');
+      expect(drawReply(speech).readable).toBe('The guide says “Tea is hot.” Then [2].');
+    });
   });
 });

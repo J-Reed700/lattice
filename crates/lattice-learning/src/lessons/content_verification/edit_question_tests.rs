@@ -25,8 +25,8 @@ use crate::lessons::claim_reviews::teaching_findings::{
 use crate::review_findings::{FindingKind, FindingSite, ReviewFinding, SetAside};
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
-    Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation, ClaimState, EventProvenance,
-    Ledger, UnitKind, UnverifiedReason,
+    Actor, CheckResult, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation, ClaimState,
+    EventProvenance, Ledger, UnitKind,
 };
 use lattice_core::shared::edits::{
     ContentEditOutcome, ContentEditPreview, ContentEditRequest, EditOp, EditSource, EditableContent,
@@ -122,7 +122,7 @@ fn bank_item(outcome: &str, spec: &QuestionSpec<'_>) -> BankItem {
         source_quote: String::new(),
         lesson_id: None,
         origin: "lesson",
-        review_status: "agreed",
+        review_status: crate::assessment_repository::CandidateReviewStatus::Agreed,
     }
 }
 
@@ -170,9 +170,11 @@ async fn claim(
             &course.lesson_id,
             &id,
             provenance(),
-            ClaimEvent::PublishedUnverified {
-                reason: UnverifiedReason::Unchecked,
-            },
+            ClaimEvent::Checked(super::acceptance_switch_tests::local_check(
+                CheckResult::KnownCommon,
+                "Common knowledge.",
+                Vec::new(),
+            )),
             revision,
         )
         .await?;

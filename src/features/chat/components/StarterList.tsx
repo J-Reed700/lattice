@@ -12,9 +12,9 @@ export function StarterList({ starters, onPick, note, className }: {
     <>
       {note && <p className="text-sm text-[hsl(var(--text-muted))]">{note}</p>}
       {starters.length > 0 && (
-        <ul className={cn('border-t border-subtle', note && 'mt-4', className)}>
+        <ul className={cn('border-t border-border-subtle', note && 'mt-4', className)}>
           {starters.map((starter) => (
-            <li key={starter} className="border-b border-subtle">
+            <li key={starter} className="border-b border-border-subtle">
               <button
                 type="button"
                 onClick={() => onPick(starter)}

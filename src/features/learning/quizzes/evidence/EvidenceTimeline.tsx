@@ -20,7 +20,7 @@ export function EvidenceTimeline({ outcomes, evidence }: { outcomes: LearningOut
     <p className="mt-1.5 text-xs leading-5 text-text-muted">Each signal is recorded separately. An empty row means nothing has been recorded yet, not that an outcome was missed.</p>
     <div className="mt-4 space-y-2.5">{dimensions.map(({ id, label }) => {
       const events = evidence.filter((event) => event.dimension === id).sort((a, b) => b.observedAt - a.observedAt);
-      return <div key={id} className="rounded-xl border border-border bg-background/40 p-3">
+      return <div key={id} className="rounded-xl border border-border bg-bg/40 p-3">
         <div className="flex items-baseline justify-between gap-2">
           <h4 className="text-xs font-semibold text-text-primary">{label}</h4>
           <span className="text-[11px] tabular-nums text-text-muted">{events.length} {events.length === 1 ? 'signal' : 'signals'}</span>

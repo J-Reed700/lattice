@@ -1,6 +1,7 @@
 import { Bookmark, ChevronDown, ChevronUp, MessageSquare, NotebookPen } from 'lucide-react';
 
 import { IconButton } from '@/components/ui';
+import { anchoredCardDetails } from '@/features/reading/citations';
 import { formatSourceLocation } from '@/shared/sources/passageLocator';
 import type { PassageLocator, SourceWithMetadata } from '@/types/conversation';
 
@@ -12,6 +13,9 @@ import type { PassageLocator, SourceWithMetadata } from '@/types/conversation';
  * around it, and offers the same three capture verbs as the selection toolbar,
  * acting on the excerpt itself.
  *
+ * For a chip that says how it uses its source the excerpt is the sentences it
+ * rests on and the location is the headings above the first of them.
+ *
  * How confidently the passage was found is *not* said here: this rail is
  * `lg:flex`, and below 1024px it would take that admission with it. The
  * match-tier line lives in the viewer column, which always renders.
@@ -21,6 +25,8 @@ export interface CitationRailProps {
   source: SourceWithMetadata;
   locator: PassageLocator;
   resolvedLabel?: string;
+  /** Which of the answer's chips for this source was clicked. */
+  occurrence?: number | null;
   index?: number;
   total?: number;
   onPrevious?: () => void;
@@ -37,6 +43,7 @@ export function CitationRail({
   source,
   locator,
   resolvedLabel,
+  occurrence = null,
   index,
   total,
   onPrevious,
@@ -46,11 +53,13 @@ export function CitationRail({
   onAskAbout,
 }: CitationRailProps) {
   const showNav = typeof total === 'number' && total > 1 && typeof index === 'number';
-  const locationLabel = resolvedLabel ?? formatSourceLocation(source) ?? 'Location unknown';
-  const excerpt = locator.text?.trim() ?? '';
+  const { entry, excerpts, trail: trailList } = anchoredCardDetails(source, occurrence);
+  const trail = trailList.join(' › ');
+  const locationLabel = trail || (resolvedLabel ?? formatSourceLocation(source));
+  const excerpt = (entry ? excerpts.join(' … ') : '') || (locator.text?.trim() ?? '');
 
   return (
-    <aside className="hidden w-[320px] shrink-0 flex-col gap-4 overflow-y-auto border-l border-subtle bg-surface px-5 py-6 lg:flex">
+    <aside className="hidden w-[320px] shrink-0 flex-col gap-4 overflow-y-auto border-l border-border-subtle bg-surface px-5 py-6 lg:flex">
       {showNav && (
         <div className="flex items-center justify-between gap-2">
           <span className="text-xs tabular-nums text-[hsl(var(--text-muted))]">
@@ -77,7 +86,7 @@ export function CitationRail({
         </div>
       )}
 
-      <p className="text-xs text-[hsl(var(--text-muted))]">{locationLabel}</p>
+      {locationLabel ? <p className="text-xs text-[hsl(var(--text-muted))]">{locationLabel}</p> : null}
 
       {excerpt && (
         <blockquote className="border-l-2 border-border-default pl-4 font-serif text-sm leading-relaxed text-[hsl(var(--text-secondary))]">
@@ -85,7 +94,7 @@ export function CitationRail({
         </blockquote>
       )}
 
-      <div className="flex flex-col items-start gap-3 border-t border-subtle pt-4">
+      <div className="flex flex-col items-start gap-3 border-t border-border-subtle pt-4">
         <button type="button" className={VERB_CLASS} onClick={() => void onReference()}>
           <Bookmark className="h-3 w-3" strokeWidth={1.75} />
           Reference

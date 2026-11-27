@@ -34,7 +34,9 @@ impl LearningRepository {
                 .fetch_optional(&mut *tx)
                 .await?
                 .ok_or_else(|| AppError::NotFound("Lesson not found in this program".into()))?;
-        if row.get::<String, _>("preparation") == "ready" {
+        if LearningPreparation::parse(&row.get::<String, _>("preparation"))?
+            == LearningPreparation::Ready
+        {
             tx.rollback().await?;
             return Err(AppError::InvalidInput(
                 "Ready lessons are immutable.".into(),
@@ -59,12 +61,8 @@ impl LearningRepository {
         let outcome_id =
             crate::quiz_blueprints::ensure_lesson_outcome_in(&mut tx, program_id, lesson_id, None)
                 .await?;
-        let seeds = crate::quiz_bank_jobs::lesson_seed_items(
-            lesson_id,
-            &outcome_id,
-            &prepared.questions,
-            &prepared.keys,
-        );
+        let seeds =
+            crate::quiz_bank_jobs::lesson_seed_items_verified(lesson_id, &outcome_id, prepared);
         crate::assessment_repository::insert_bank_items_in(&mut tx, program_id, &seeds, None)
             .await?;
         crate::quiz_blueprints::ensure_blueprint_in(

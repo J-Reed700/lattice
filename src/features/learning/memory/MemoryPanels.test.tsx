@@ -33,10 +33,10 @@ const program: LearningProgramDto = {
   summary: { id: 'program-1', title: 'Reasoning well', goal: 'Learn to reason well.', status: 'active', revision: 1, moduleCount: 1, lessonCount: 1, completedLessons: 0, currentLessonId: lesson.id, createdAt: 1_790_000_000_000 },
   priorKnowledge: '', minutesPerSession: 30, modelName: 'Model', modules: [{ id: 'module-1', title: 'Foundations', summary: 'Start here.', outcomes: ['Explain it'], lessons: [lesson] }], sources: [source],
 };
-const note: WorkspaceNoteDto = { revision: 0, id: 'note-1', title: 'The central idea', journalId: 'journal-1', content: '', linkedDocumentIds: [], linkedConversationIds: [], highlights: [], stickyNotes: [], conversationSnapshots: [], sources: [], createdAt: '2026-09-30T12:00:00Z', updatedAt: '2026-09-30T12:00:00Z' };
+const note: WorkspaceNoteDto = { revision: 0, id: 'note-1', title: 'The central idea', journalId: 'journal-1', content: '', linkedDocumentIds: [], linkedConversationIds: [], highlights: [], stickyNotes: [], conversationSnapshots: [], sources: [], citations: [], createdAt: '2026-09-30T12:00:00Z', updatedAt: '2026-09-30T12:00:00Z' };
 const secondLesson = { ...lesson, id: 'lesson-2', title: 'A second idea', objective: 'Explain another idea' };
 const secondNote: WorkspaceNoteDto = { ...note, id: 'note-2', title: secondLesson.title };
-const card: StudyCardDto = { id: 'card-1', format: 'question_answer', deckId: 'deck-1', question: 'What is the central idea?', answer: 'A practical explanation.', options: [], correctIndex: 0, explanation: 'The source explains why.', source: { chunkId: '', documentId: '', fileName: 'Field guide', filePath: '', excerpt: source.excerpt }, topic: 'The central idea', dueAt: 0, intervalDays: 1, reviewCount: 0, lapses: 0 };
+const card: StudyCardDto = { id: 'card-1', format: 'question_answer', deckId: 'deck-1', question: 'What is the central idea?', answer: 'A practical explanation.', options: [], correctIndex: 0, explanation: 'The source explains why.', source: { chunkId: '', documentId: '', fileName: 'Field guide', filePath: '', excerpt: source.excerpt, citationId: 1, support: { relation: 'cites', anchors: [{ exact: source.excerpt, span: null }] } }, topic: 'The central idea', dueAt: 0, intervalDays: 1, reviewCount: 0, lapses: 0 };
 const ok = <T,>(data: T) => ({ ok: true as const, data });
 const fail = (error: string) => ({ ok: false as const, error });
 

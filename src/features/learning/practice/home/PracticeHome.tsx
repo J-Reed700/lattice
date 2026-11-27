@@ -123,20 +123,20 @@ function Card({ id, programId, definition, promise, badge, onStart }: CardProps)
   const handleChange = useCallback((next: Record<string, string>) => setValues(next), []);
 
   return (
-    <article data-testid={`card-${id}`} aria-labelledby={`${uid}-title`} className="flex flex-col justify-between gap-4 rounded-xl border border-border-default bg-surface p-5">
+    <article data-testid={`card-${id}`} aria-labelledby={`${uid}-title`} className="flex flex-col justify-between gap-4 rounded-xl border border-border-subtle bg-surface p-5 shadow-sm transition-shadow hover:border-border-default hover:shadow-md">
       <div className="space-y-2">
         <div className="flex items-center justify-between gap-2">
-          <span className="grid h-10 w-10 place-items-center rounded-lg bg-surface-raised text-accent">
-            <Icon className="h-5 w-5" aria-hidden="true" />
+          <span className="grid h-9 w-9 place-items-center rounded-lg bg-accent-muted text-accent">
+            <Icon className="h-4.5 w-4.5" aria-hidden="true" />
           </span>
           {badge && (
-            <span className="inline-flex min-h-7 items-center gap-1.5 rounded-full bg-accent-muted px-2.5 text-xs font-semibold text-accent">
-              <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+            <span className="inline-flex min-h-6 items-center gap-1.5 rounded-md bg-accent-muted px-2 py-0.5 text-xs font-semibold text-accent">
+              <Sparkles className="h-3 w-3" aria-hidden="true" />
               {badge}
             </span>
           )}
         </div>
-        <h3 id={`${uid}-title`} className="font-serif text-lg font-medium text-text-primary">
+        <h3 id={`${uid}-title`} className="font-sans text-base font-semibold tracking-[-0.02em] text-text-primary">
           {title}
         </h3>
         <p id={`${uid}-promise`} className="text-sm text-text-secondary">
@@ -313,7 +313,7 @@ export function PracticeHome({ programId, goal, lessonId, onStart, onOpenTarget,
       <DueStrip items={due.items} loading={due.loading} error={due.error} onRetry={due.retry} onStart={onStartDue} />
 
       <section aria-labelledby="practice-start-heading" className="space-y-3">
-        <h2 id="practice-start-heading" className="font-serif text-xl font-semibold text-text-primary">
+        <h2 id="practice-start-heading" className="font-sans text-lg font-semibold tracking-[-0.02em] text-text-primary">
           Start something new
         </h2>
         {fitStatus.checking && <StatusLine state={{ kind: 'busy', label: 'Checking whether this course teaches code…' }} />}

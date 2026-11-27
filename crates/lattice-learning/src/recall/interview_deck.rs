@@ -8,6 +8,7 @@ use crate::practice::{
     interview_answers::{InterviewAnswerGuide, InterviewAnswerGuides, INTERVIEW_ANSWERS_FILE_PATH},
     practical_dto::{
         LearningInterviewPlanDto, LearningInterviewQuestionDto, LearningInterviewRoundKind,
+        LearningPracticalActivityKind, LearningPracticalActivityStatus,
     },
     practical_generation::INTERVIEW_PLAN_FILE_PATH,
 };
@@ -50,12 +51,12 @@ async fn load_in(
     let activity = interview::activity(read, program_id, activity_id)
         .await?
         .ok_or_else(|| AppError::NotFound("Interview activity not found".into()))?;
-    if activity.kind != "interview" {
+    if activity.kind != LearningPracticalActivityKind::Interview.as_str() {
         return Err(AppError::InvalidInput(
             "Only interview activities can become an interview drill.".into(),
         ));
     }
-    if activity.status != "ready" {
+    if activity.status != LearningPracticalActivityStatus::Ready.as_str() {
         return Err(AppError::InvalidInput(
             "This interview is not ready yet. Wait for it to finish preparing.".into(),
         ));
@@ -211,21 +212,29 @@ fn card(
             file_path: String::new(),
             excerpt: citation.quote.clone(),
             url,
+            citation_id: (citations.len() + 1) as u32,
+            support: lattice_core::application::contracts::replies::SupportDto::cites([citation
+                .quote
+                .as_str()]),
         });
     }
-    let source = citations
-        .first()
-        .cloned()
-        .unwrap_or_else(|| StudySourceDto {
+    let source = citations.first().cloned().unwrap_or_else(|| {
+        let excerpt = guide
+            .map(|guide| guide.standard.reference_answer.clone())
+            .unwrap_or_else(|| question.company_rationale.clone());
+        StudySourceDto {
             chunk_id: question.id.clone(),
             document_id: String::new(),
             file_name: format!("Answer guide · {}", material.title),
             file_path: String::new(),
-            excerpt: guide
-                .map(|guide| guide.standard.reference_answer.clone())
-                .unwrap_or_else(|| question.company_rationale.clone()),
+            support: lattice_core::application::contracts::replies::SupportDto::cites([
+                excerpt.as_str()
+            ]),
+            excerpt,
             url: None,
-        });
+            citation_id: 1,
+        }
+    });
     StudyCardDto {
         id: uuid::Uuid::new_v4().to_string(),
         format: StudyCardFormat::QuestionAnswer,

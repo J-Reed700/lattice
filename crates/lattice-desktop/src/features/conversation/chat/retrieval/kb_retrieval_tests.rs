@@ -256,11 +256,3 @@ async fn an_ordered_reading_plan_is_gathered_wide_and_reranked() {
         );
     }
 }
-
-#[test]
-fn unavailable_reason_is_clipped_to_the_trace_limit() {
-    let long = "é".repeat(UNAVAILABLE_REASON_MAX_CHARS * 3);
-    let reason = unavailable_reason(&long);
-    assert_eq!(reason.chars().count(), UNAVAILABLE_REASON_MAX_CHARS);
-    assert_eq!(unavailable_reason("index offline"), "index offline");
-}

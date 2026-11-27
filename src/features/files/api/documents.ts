@@ -397,7 +397,7 @@ export const documentApi = {
     apiCall('saved_web_article', { path }),
 
   /**
-   * Reads the raw bytes of a file from disk.
+   * Reads the raw bytes of a file from disk over binary IPC.
    *
    * @param path - Absolute path to file to read
    * @returns File content as bytes
@@ -405,7 +405,7 @@ export const documentApi = {
   readFileBytes: async (path: string): Promise<ApiResult<Uint8Array>> => {
     const result = await apiCall('read_file_bytes', { path });
     if (!result.ok) return result;
-    return { ok: true, data: Uint8Array.from(result.data) };
+    return { ok: true, data: new Uint8Array(result.data) };
   },
 
   /**

@@ -683,4 +683,5 @@ fn the_course_plan_names_actions_in_no_subjects_terms() {
         rule,
         "actions, the things the learner does (procedures, techniques, operations) that this lesson teaches"
     );
+    assert!(PLAN_SYSTEM.contains("real external company or organisation"));
 }

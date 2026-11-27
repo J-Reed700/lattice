@@ -44,7 +44,7 @@ export function SavedSourcePreview({
   const readingMinutes = Math.max(1, Math.ceil(wordCount / 225));
 
   return (
-    <section className="mt-4 overflow-hidden rounded-2xl border border-border bg-background" aria-label="Saved source">
+    <section className="mt-4 overflow-hidden rounded-2xl border border-border bg-bg" aria-label="Saved source">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-surface/70 px-4 py-3 sm:px-5">
         <div>
           <p className="text-xs font-medium text-text-primary">Saved source</p>

@@ -138,6 +138,17 @@ describe('RerankerRow', () => {
     expect(screen.getByRole('button', { name: 'Remove the reranker' })).toBeEnabled();
   });
 
+  it('shows clear status and retry instead of a blank row when status is unavailable', async () => {
+    const { api, user } = setup({
+      rerankerStatus: async () => ({ ok: false, error: 'backend unavailable' }),
+    });
+    expect(await screen.findByText('Not configured')).toBeInTheDocument();
+    expect(screen.getByText(/results keep their first-stage search order/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(api.getRerankerStatus).toHaveBeenCalledTimes(2));
+  });
+
   it('offers the download when idle, and starts it', async () => {
     const { api, user } = setup();
     const button = await downloadButton();

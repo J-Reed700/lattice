@@ -12,6 +12,7 @@ pub(super) struct Events {
     completed: Option<Value>,
     reasoning: ReasoningParts,
     begun: bool,
+    token_events: usize,
 }
 
 impl EventDecoder for Events {
@@ -30,6 +31,7 @@ impl EventDecoder for Events {
                     .filter(|text| !text.is_empty())
                 {
                     self.begun = true;
+                    self.token_events = self.token_events.saturating_add(1);
                     on_text(text.to_owned())?;
                 }
             }
@@ -39,6 +41,7 @@ impl EventDecoder for Events {
                     .filter(|text| !text.is_empty())
                 {
                     self.begun = true;
+                    self.token_events = self.token_events.saturating_add(1);
                     let part = (
                         field(event, "item_id").as_str().unwrap_or("").to_owned(),
                         field(event, "summary_index").as_u64().unwrap_or(0),
@@ -74,6 +77,14 @@ impl EventDecoder for Events {
 
     fn answer_begun(&self) -> bool {
         self.begun
+    }
+
+    fn token_events(&self) -> usize {
+        self.token_events
+    }
+
+    fn tool_call_count(&self) -> usize {
+        0
     }
 
     fn finish(self: Box<Self>) -> Result<Option<Value>> {

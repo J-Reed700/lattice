@@ -139,20 +139,17 @@ export function SidebarReferences({ query, active }: { query: string; active: bo
             return (
               <div
                 key={bookmark.id}
-                className={`group relative transition-colors duration-fast ${isSelected ? 'bg-surface-raised' : 'hover:bg-surface-raised'
-                  }`}
+                className={`group relative mx-2 my-0.5 rounded-lg transition-[background-color,box-shadow] duration-fast ${
+                  isSelected
+                    ? 'bg-surface shadow-sm ring-1 ring-border-subtle dark:bg-surface-overlay'
+                    : 'row-hover'
+                }`}
               >
-                {isSelected && (
-                  <span
-                    className="absolute inset-y-0 left-0 w-0.5 bg-accent"
-                    aria-hidden="true"
-                  />
-                )}
                 <button
                   onClick={() => setSelectedSnippetId(bookmark.id)}
-                  className="w-full px-4 py-2.5 text-left"
+                  className="w-full px-2.5 py-2.5 text-left"
                 >
-                  <p className="truncate text-sm text-text-primary">
+                  <p className={`truncate text-sm text-text-primary ${isSelected ? 'font-medium' : ''}`}>
                     {bookmark.title || bookmark.conversationTitle}
                   </p>
                   <p className="mt-0.5 truncate text-xs text-text-muted">
@@ -165,7 +162,7 @@ export function SidebarReferences({ query, active }: { query: string; active: bo
                     {bookmark.messagePreview}
                   </p>
                 </button>
-                <div className="pointer-events-none absolute right-2 top-1.5 flex items-center gap-0.5 rounded-sm bg-surface-raised pl-2 opacity-0 transition-opacity duration-fast group-hover:pointer-events-auto group-hover:opacity-100">
+                <div className="pointer-events-none absolute right-2 top-1.5 flex items-center gap-0.5 rounded-md bg-surface pl-1 opacity-0 shadow-sm ring-1 ring-border-subtle transition-opacity duration-fast group-hover:pointer-events-auto group-hover:opacity-100">
                   <IconButton
                     label="Open in chat"
                     onClick={handleAsyncEvent(() => openSnippet(bookmark))}

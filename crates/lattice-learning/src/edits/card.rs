@@ -57,12 +57,12 @@ fn compose_content(
     let prompt = document
         .get("question")
         .and_then(Value::as_str)
-        .ok_or_else(|| AppError::InvalidState("Card question must be a string.".into()))?
+        .ok_or_else(|| AppError::InvalidInput("Card question must be a string.".into()))?
         .to_owned();
     let explanation = document
         .get("explanation")
         .and_then(Value::as_str)
-        .ok_or_else(|| AppError::InvalidState("Card explanation must be a string.".into()))?
+        .ok_or_else(|| AppError::InvalidInput("Card explanation must be a string.".into()))?
         .to_owned();
 
     let (answer, options, correct_option_index) = if format
@@ -71,20 +71,20 @@ fn compose_content(
         let choices = document
             .get("choices")
             .and_then(Value::as_array)
-            .ok_or_else(|| AppError::InvalidState("Card choices must be an array.".into()))?;
+            .ok_or_else(|| AppError::InvalidInput("Card choices must be an array.".into()))?;
         let mut options = Vec::with_capacity(choices.len());
         let mut correct_index = None;
         for (index, item) in choices.iter().enumerate() {
             let text = item
                 .get("text")
                 .and_then(Value::as_str)
-                .ok_or_else(|| AppError::InvalidState("Card choice text must be a string.".into()))?
+                .ok_or_else(|| AppError::InvalidInput("Card choice text must be a string.".into()))?
                 .to_owned();
             let correct = item
                 .get("correct")
                 .and_then(Value::as_bool)
                 .ok_or_else(|| {
-                    AppError::InvalidState("Card choice flag must be a boolean.".into())
+                    AppError::InvalidInput("Card choice flag must be a boolean.".into())
                 })?;
             if correct && correct_index.is_none() {
                 correct_index = Some(index);
@@ -98,14 +98,14 @@ fn compose_content(
             }));
         };
         let answer = options.get(chosen).cloned().ok_or_else(|| {
-            AppError::InvalidState("Selected card choice index out of range.".into())
+            AppError::InvalidInput("Selected card choice index out of range.".into())
         })?;
         (answer, options, Some(chosen))
     } else {
         let answer = document
             .get("answer")
             .and_then(Value::as_str)
-            .ok_or_else(|| AppError::InvalidState("Card answer must be a string.".into()))?
+            .ok_or_else(|| AppError::InvalidInput("Card answer must be a string.".into()))?
             .to_owned();
         (answer, stored.options.clone(), stored.correct_option_index)
     };
@@ -114,14 +114,14 @@ fn compose_content(
         let deletions = document
             .get("deletions")
             .and_then(Value::as_array)
-            .ok_or_else(|| AppError::InvalidState("Cloze deletions must be an array.".into()))?;
+            .ok_or_else(|| AppError::InvalidInput("Cloze deletions must be an array.".into()))?;
         let mut out = Vec::with_capacity(deletions.len());
         for item in deletions {
             let text = item
                 .get("text")
                 .and_then(Value::as_str)
                 .ok_or_else(|| {
-                    AppError::InvalidState("Cloze deletion text must be a string.".into())
+                    AppError::InvalidInput("Cloze deletion text must be a string.".into())
                 })?
                 .to_owned();
             out.push(text);
@@ -135,7 +135,7 @@ fn compose_content(
         let value = document
             .get("language")
             .and_then(Value::as_str)
-            .ok_or_else(|| AppError::InvalidState("Card language must be a string.".into()))?;
+            .ok_or_else(|| AppError::InvalidInput("Card language must be a string.".into()))?;
         if value.is_empty() {
             None
         } else {

@@ -816,6 +816,52 @@ fn a_plain_cite_holds_no_count() {
     });
 }
 
+#[derive(Debug, PartialEq)]
+struct Chosen {
+    choice: Choice,
+}
+
+impl Authored for Chosen {
+    fn form() -> Form {
+        Form::new().one_of::<Choice>("choice")
+    }
+
+    fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        Some(Self {
+            choice: fields.one_of("choice")?,
+        })
+    }
+}
+
+#[test]
+fn one_of_omits_branches_whose_required_pointer_has_nothing_shown() {
+    with_showing(0, 0, |showing| {
+        for pointers in [Held::Enums, Held::Plain] {
+            let schema = schema_of::<Whole<Chosen>>(showing, pointers);
+            assert_dialect(&schema);
+            let choice = &schema["properties"]["choice"];
+            assert!(choice.get("anyOf").is_none());
+            assert_eq!(choice["properties"]["kind"]["enum"], json!(["plain"]));
+            assert!(validate(
+                &schema,
+                &json!({"choice": {"kind": "plain", "note": "ok"}})
+            ));
+            assert!(!validate(
+                &schema,
+                &json!({"choice": {"kind": "pointing", "at": "s1"}})
+            ));
+        }
+    });
+    with_showing(2, 0, |showing| {
+        for pointers in [Held::Enums, Held::Plain] {
+            let schema = schema_of::<Whole<Chosen>>(showing, pointers);
+            assert_dialect(&schema);
+            let branches = schema["properties"]["choice"]["anyOf"].as_array().unwrap();
+            assert_eq!(branches.len(), 2);
+        }
+    });
+}
+
 const STEPS: Count = Count("steps");
 
 /// A statement with a list whose length the request sets.
@@ -2602,5 +2648,29 @@ fn an_answer_anchoring_a_change_after_at_the_start_is_unanswered() {
         };
         assert_eq!(read.edit.change().insert.len(), 1);
         assert_eq!(read.edit.change().moved.len(), 1);
+    });
+}
+
+#[test]
+fn empty_change_and_cite_constrain_to_empty_arrays_under_counts_only() {
+    with_showing(0, 0, |showing| {
+        let change_counts = schema_of::<Change<Sheet, String>>(showing, Held::Counts);
+        let props = &change_counts["properties"];
+        assert_eq!(props["replace"]["maxItems"], json!(0));
+        assert_eq!(props["remove"]["maxItems"], json!(0));
+        assert_eq!(props["move"]["maxItems"], json!(0));
+        assert!(props["insert"].get("maxItems").is_none());
+
+        for held in [Held::Enums, Held::Plain] {
+            let schema = schema_of::<Change<Sheet, String>>(showing, held);
+            assert_dialect(&schema);
+        }
+
+        let cite_counts = schema_of::<Whole<Rich>>(showing, Held::Counts);
+        assert_eq!(cite_counts["properties"]["cites"]["maxItems"], json!(0));
+        for held in [Held::Enums, Held::Plain] {
+            let schema = schema_of::<Whole<Rich>>(showing, held);
+            assert_dialect(&schema);
+        }
     });
 }

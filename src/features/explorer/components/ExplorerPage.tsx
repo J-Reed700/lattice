@@ -286,7 +286,7 @@ export function ExplorerPage() {
               {/* Hidden, not unmounted, so the tree keeps its place and a search its results. */}
               <aside
                 aria-label="Folder tree"
-                className={treeHidden ? 'hidden' : 'flex h-full shrink-0 flex-col border-r border-border-subtle bg-surface'}
+                className={treeHidden ? 'hidden' : 'flex h-full shrink-0 flex-col border-r border-border-subtle bg-surface-sunken/70'}
                 style={{ width: tree }}
               >
                 <ExplorerSearch key={root.root} root={root.root} onActiveChange={setSearching} />

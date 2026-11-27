@@ -3,6 +3,7 @@ import { useMemo, type ReactNode } from 'react';
 import { TiptapViewer } from '@/components/TiptapEditor';
 import { LessonClaimHoverCard } from '@/features/learning/lessons/LessonClaimHoverCard';
 import { citationsByNumber, claimMarkVerdict } from '@/features/learning/model/evidencePresentation';
+import { anchoredOccurrences } from '@/features/reading/citations';
 import { CitationHoverCard } from '@/features/reading/components/CitationHoverCard';
 import { CitationSourcesRow } from '@/features/reading/components/CitationSourcesRow';
 import { useCitationInteractions } from '@/features/reading/hooks/useCitationInteractions';
@@ -34,6 +35,17 @@ export function CitedSection({ lessonId, sectionIndex, body, report, sources, sh
     () => (marked ? claims.map((claim) => ({ sentence: claim.contentQuote, verdict: claimMarkVerdict(claim) })) : undefined),
     [marked, claims],
   );
+  const anchoredSources = useMemo(() => {
+    const sectionOccurrences = anchoredOccurrences(pieces ?? []);
+    const lessonOccurrences = anchoredOccurrences(report?.sections.flatMap((section) => section.pieces) ?? []);
+    return sources.map((source) => {
+      const anchoredBy =
+        source.citationId === undefined
+          ? undefined
+          : (sectionOccurrences.get(source.citationId) ?? lessonOccurrences.get(source.citationId));
+      return anchoredBy ? { ...source, anchoredBy } : source;
+    });
+  }, [pieces, report?.sections, sources]);
   const ownerKey = `lesson:${lessonId}:${sectionIndex}`;
   const citationClaims = useMemo(() => claims.map((claim) => ({ citationIds: claim.cites ?? [] })), [claims]);
 
@@ -41,9 +53,9 @@ export function CitedSection({ lessonId, sectionIndex, body, report, sources, sh
     citationMap, citationNumbers, openSource, articleRef, citationHover, claimHover,
     handleBodyClick, handleBodyMouseOver, handleBodyMouseLeave, hoveredSource,
   } = useCitationInteractions({
-    sources,
+    sources: anchoredSources,
     ownerKey,
-    numbered: sources.length > 0,
+    numbered: anchoredSources.length > 0,
     showCitations,
     claims: citationClaims,
   });

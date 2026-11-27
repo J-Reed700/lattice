@@ -326,6 +326,22 @@ async retryLearningGenerationJob(request: LearningGenerationJobActionRequestDto)
     else return { status: "error", error: e  as any };
 }
 },
+async prioritizeLearningGenerationJob(request: LearningGenerationJobActionRequestDto) : Promise<Result<LearningGenerationJob, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|prioritize_learning_generation_job", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async resetLearningLessonPreparation(request: ResetLearningLessonPreparationRequestDto) : Promise<Result<ResetLearningLessonPreparationResultDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|reset_learning_lesson_preparation", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getLearningGenerationJob(id: string) : Promise<Result<LearningGenerationJob, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_generation_job", { id }) };
@@ -459,6 +475,14 @@ async prepareLearningLesson(request: PrepareLearningLessonRequestDto) : Promise<
 async prepareLearningModule(request: PrepareLearningModuleRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|prepare_learning_module", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async prepareLearningLessons(request: StartLearningLessonsJobsRequestDto) : Promise<Result<LearningGenerationJob[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|prepare_learning_lessons", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2552,9 +2576,9 @@ async readFileContent(path: string) : Promise<Result<string, AppError>> {
 }
 },
 /**
- * Legacy Tauri shim - Reads the content of a file as bytes for preview purposes
+ * Legacy Tauri shim - Reads the content of a file as raw binary bytes for preview purposes
  */
-async readFileBytes(path: string) : Promise<Result<number[], AppError>> {
+async readFileBytes(path: string) : Promise<Result<ArrayBuffer, AppError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:file|read_file_bytes", { path }) };
 } catch (e) {
@@ -4610,6 +4634,10 @@ export type AddLearningTextSourceRequestDto = { operationId: string; sourceId: s
 export type AddLearningWebSourceRequestDto = { operationId: string; sourceId: string; versionId: string; programId: string; url: string; freshnessPolicy: LearningSourcePolicy }
 export type AdoptLearningSourceVersionRequestDto = { operationId: string; programId: string; sourceId: string; versionId: string; expectedRevision: number }
 /**
+ * The words a citation rests on, with where they stand when that is known.
+ */
+export type AnchorDto = { exact: string; span?: ByteSpanDto | null }
+/**
  * Structured error information for API responses.
  *
  * Contains an error code for programmatic handling, a human-readable message,
@@ -5204,6 +5232,10 @@ failedItems: number;
  */
 createdAt: string }
 export type BookmarkConversationMessageRequestDto = { conversationId: string; messageId: string; title: string | null; note: string | null }
+/**
+ * A span of a source version's saved text, in UTF-8 bytes.
+ */
+export type ByteSpanDto = { start: number; end: number }
 export type CacheMetrics = { hits: number; misses: number; totalTimeSavedMs: number; hitRate: number }
 /**
  * The query cache's statistics, reported with each search response.
@@ -6042,7 +6074,7 @@ compressionRatio: number;
  */
 createdAt: string }
 export type CompareCellDto = { value: string | null; citation: CompareCitationDto | null }
-export type CompareCitationDto = { chunkId: string; excerpt: string }
+export type CompareCitationDto = { number: number; chunkId: string; excerpt: string; support: SupportDto }
 export type CompareDocumentsRequestDto = { documentIds: string[]; columns: string[] }
 export type CompareRowDto = { documentId: string; title: string; filePath: string;
 /**
@@ -8122,7 +8154,11 @@ export type LearningAssessmentFormItemDto = { id: string; outcomeIds: string[]; 
 /**
  * The passage the question was written from, for the source line.
  */
-sourceQuote: string; previouslyExposed: boolean;
+sourceQuote: string;
+/**
+ * Numbered, support-checked source citations matching `sourceVersionIds`.
+ */
+sourceCitations?: LearningPracticeCitationDto[]; previouslyExposed: boolean;
 /**
  * Saved choice indices in shown order (single choice, true/false,
  * multi-select).
@@ -8360,7 +8396,11 @@ claimId?: string | null;
  * The numbers, in the lesson's `citations`, of the passages this
  * statement stands on; empty when it cites none.
  */
-cites?: number[] }
+cites?: number[];
+/**
+ * How the statement uses the sources its chips open; none when it cites none.
+ */
+relation?: RelationDto | null }
 /**
  * One part of a statement as the part-wise check read it.
  */
@@ -8368,7 +8408,11 @@ export type LearningClaimPartDto = { part: string; kind: LearningClaimPartKindDt
 /**
  * The saved source version that states the part; none for another.
  */
-sourceVersionId: string | null }
+sourceVersionId: string | null;
+/**
+ * The source sentences the part rests on.
+ */
+anchors?: AnchorDto[] }
 /**
  * What the part-wise check found of one part of a statement (§3.3).
  */
@@ -8377,6 +8421,10 @@ export type LearningClaimPartKindDto =
  * A passage states it.
  */
 "stated" |
+/**
+ * No passage states it, but what the passages state directly entails it.
+ */
+"follows" |
 /**
  * No passage states it, and it is standard knowledge of the field.
  */
@@ -8489,7 +8537,7 @@ yourWords: string[];
  * What a full-credit answer says: names the missing points, never a
  * model answer to copy.
  */
-fullCreditIncludes: string; sourceQuote: string | null; sourceVersionId: string | null }
+fullCreditIncludes: string; sourceQuote: string | null; sourceVersionId: string | null; sourceNumber?: number | null; sourceSupport?: SupportDto | null }
 /**
  * Section 4.3a. Uncertain when a quote failed its check against the answer
  * or the source.
@@ -8593,7 +8641,11 @@ lessonIds?: string[];
 /**
  * The lessons the job finished by holding them for review.
  */
-heldLessonIds?: string[]; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
+heldLessonIds?: string[];
+/**
+ * Queue rank for ranked job kinds (lower runs first).
+ */
+rank?: number | null; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
 export type LearningGenerationJobActionRequestDto = { operationId: string; programId: string; jobId: string; expectedRevision: number }
 export type LearningGenerationJobKind = "program_outline" | "lesson_preparation" | "assessment_variant" | "adaptive_follow_up" | "practical_activity" |
 /**
@@ -8736,7 +8788,7 @@ export type LearningMemoryDto = { programId: string; journalId: string | null; l
 export type LearningModuleDto = { id: string; title: string; summary: string; outcomes: string[]; lessons: LearningLessonDto[]; prerequisiteModuleIds?: string[]; project?: LearningProjectMilestoneDto | null }
 export type LearningModuleQuizzesDto = { moduleId: string; test: LearningQuizStatusDto; lessons: LearningLessonQuizDto[] }
 export type LearningOutcomeDefinitionDto = { id: string; moduleId: string | null; lessonId: string | null; title: string; description: string; ordinal: number; createdAt: number }
-export type LearningOutlineCitationDto = { path: string; target: LearningOutlineCitationTarget; moduleId: string; lessonId: string | null; itemIndex: number | null; claim: string; sourceId: string; sourceTitle: string; sourceUrl: string | null; quote: string }
+export type LearningOutlineCitationDto = { number: number; path: string; target: LearningOutlineCitationTarget; moduleId: string; lessonId: string | null; itemIndex: number | null; claim: string; sourceId: string; sourceTitle: string; sourceUrl: string | null; quote: string; support: SupportDto }
 export type LearningOutlineCitationTarget = "module_summary" | "outcome" | "lesson_objective"
 export type LearningOutlineEvidenceDto = { reviewStatus: LearningOutlineReviewStatus; contentSha256: string; citations: LearningOutlineCitationDto[];
 /**
@@ -8960,7 +9012,7 @@ export type LearningPracticalWorkspaceDto = { programId: string; builtinRuntimes
 export type LearningPracticeArtifactDto = { revision: number; text: string; sha256: string; updatedAt: number }
 export type LearningPracticeAssistanceEventDto = { id: string; kind: LearningPracticeAssistanceKind; mode: LearningPracticeMode; artifactRevision: number; details: JsonValue; createdAt: number }
 export type LearningPracticeAssistanceKind = "source_opened" | "tutor_response" | "hint" | "solution_revealed" | "mode_changed"
-export type LearningPracticeCitationDto = { sourceId: string; versionId: string; quote: string }
+export type LearningPracticeCitationDto = { sourceId: string; versionId: string; quote: string; number?: number; support?: SupportDto }
 export type LearningPracticeCriterionDto = { id: string; dimension: LearningPracticeEvidenceDimension; title: string; description: string; maxPoints: number }
 export type LearningPracticeCriterionResultDto = { criterionId: string; dimension: LearningPracticeEvidenceDimension; score: number | null; maxPoints: number; observation: string; evidenceQuote: string | null }
 export type LearningPracticeEvidenceDimension = "recall" | "explanation" | "application" | "transfer"
@@ -10306,6 +10358,10 @@ export type ReimportLearningSourceRequestDto = { operationId: string; programId:
  */
 export type RelatedContent = { content: ContentRef; label: string }
 /**
+ * How a sentence uses a source, as the frontend names it.
+ */
+export type RelationDto = "quotes" | "restates" | "summarizes" | "infers" | "agrees" | "backs" | "cites" | "contradicts"
+/**
  * Whether each remote server has an authentication header value stored.
  * The values themselves never leave the keyring.
  */
@@ -10402,7 +10458,7 @@ export type RepairOutcomeDto = { outcome: "rewritten" } | { outcome: "removed" }
 /**
  * One piece of a reply, in order.
  */
-export type ReplyPieceDto = { type: "text"; text: string } | { type: "reference"; reference: ReplyReferenceDto }
+export type ReplyPieceDto = { type: "text"; text: string } | { type: "reference"; reference: ReplyReferenceDto } | { type: "quoted"; text: string }
 /**
  * A marker of a reply that resolved, as the frontend draws it.
  */
@@ -10422,7 +10478,11 @@ number: number; lines?: LinesDto | null;
 /**
  * What a kind drawn by name shows: a file's path.
  */
-name?: string | null }
+name?: string | null;
+/**
+ * How the marked sentence uses its source; none when nothing says.
+ */
+support?: SupportDto | null }
 export type ReportLearningQuizItemRequestDto = { operationId: string; programId: string; formId: string; itemId: string; note: string }
 export type ReprofileLearningClaimRequestDto = { programId: string;
 /**
@@ -10472,6 +10532,8 @@ stated: boolean;
  * The `pages_mentioning` versions, newest first.
  */
 relevant: SourceRefDto[] }
+export type ResetLearningLessonPreparationRequestDto = { operationId: string; programId: string; lessonIds: string[]; expectedRevision: number }
+export type ResetLearningLessonPreparationResultDto = { resetLessonIds: string[]; cancelledJobIds: string[]; programRevision: number }
 export type ResolveLearningClaimRequestDto = { programId: string; lessonId: string; claimId: string; action: ClaimActionRequestDto;
 /**
  * The review's revision the user acted on.
@@ -11548,6 +11610,7 @@ title: string;
 heading: string }
 export type StartLearningDiagnosticRequestDto = { operationId: string; programId: string; expectedRevision: number }
 export type StartLearningGenerationJobRequestDto = { operationId: string; programId: string; expectedRevision: number; kind: LearningGenerationJobKind; requestJson: string; progressTotal: number }
+export type StartLearningLessonsJobsRequestDto = { operationId: string; programId: string; lessonIds: string[]; expectedRevision: number }
 export type StartLearningPracticalRunRequestDto = { operationId: string; runId: string; programId: string; activityId: string; expectedActivityRevision: number; practiceSessionId: string | null; learnerFiles: LearningLabFile[] }
 export type StartLearningPracticeSessionRequestDto = { operationId: string; sessionId: string; programId: string; lessonId: string; expectedProgramRevision: number; mode: LearningPracticeMode; taskKind?: LearningPracticeTaskKind; revisesSessionId?: string | null }
 export type StartLearningQuizRequestDto = { operationId: string; formId: string; programId: string; scope: LearningQuizScopeDto; mode: LearningQuizMode; retakeOfFormId: string | null }
@@ -11597,7 +11660,11 @@ export type StudySourceDto = { chunkId: string; documentId: string; fileName: st
 /**
  * External web source URL when this citation is not an indexed document.
  */
-url?: string | null }
+url?: string | null;
+/**
+ * Backend-supplied 1-based citation number within the card's cited sources.
+ */
+citationId?: number; support?: SupportDto }
 export type SubmitLearningDiagnosticRequestDto = { operationId: string; programId: string; diagnosticId: string; expectedRevision: number; responses: LearningDiagnosticResponseDto[]; saveOnly?: boolean; expectedDiagnosticRevision?: number | null }
 export type SubmitLearningPracticeAttemptRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number }
 /**
@@ -11619,6 +11686,10 @@ export type SuiteVerdict =
  * The suite proved nothing: the drill has none, no runtime was there to run it, or the run did not finish.
  */
 { status: "not_run"; why: string }
+/**
+ * How a marker uses its source, and the words it rests on.
+ */
+export type SupportDto = { relation: RelationDto; anchors: AnchorDto[] }
 /**
  * Sync settings.
  */
@@ -12351,7 +12422,11 @@ verification: JsonValue;
  * The turn record with its "Checking the answer" step finished, when the
  * turn kept one.
  */
-turn?: TurnRecordDto | null }
+turn?: TurnRecordDto | null;
+/**
+ * Drawn reply pieces recomputed against completed verification verdicts.
+ */
+reply?: ReplyPieceDto[] | null }
 export type VersionInfoDto = { version: string; buildDate: string | null; commitHash: string | null }
 /**
  * A user's statement that a model takes pictures, and how its encoder
@@ -12539,6 +12614,7 @@ export type WikiLinkDto = { target: string; displayText: string | null; header: 
  * One "word 7 was ___" answer.
  */
 export type WordConfirmationDto = { index: number; word: string }
+export type WorkspaceNoteCitationDto = { number: number; support: SupportDto }
 export type WorkspaceNoteDto = {
 /**
  * Revision of the persisted snapshot; full edits must match it.
@@ -12551,7 +12627,11 @@ journalId: string | null; content: string; linkedDocumentIds: string[]; linkedCo
 /**
  * Source metadata backing inline citations in this note.
  */
-sources: SourceDto[]; createdAt: string; updatedAt: string }
+sources: SourceDto[];
+/**
+ * Relation and excerpt anchors for each entry in `sources`, in order.
+ */
+citations: WorkspaceNoteCitationDto[]; createdAt: string; updatedAt: string }
 
 /** tauri-specta globals **/
 
@@ -12935,12 +13015,14 @@ export type CommandArgs = {
 	practice_due: { request: PracticeDueRequestDto };
 	prepare_learning_ahead: { request: PrepareLearningAheadRequestDto };
 	prepare_learning_lesson: { request: PrepareLearningLessonRequestDto };
+	prepare_learning_lessons: { request: StartLearningLessonsJobsRequestDto };
 	prepare_learning_module: { request: PrepareLearningModuleRequestDto };
 	prepare_learning_quiz_bank: { request: PrepareLearningQuizBankRequestDto };
 	prepare_learning_runtime_preset: { request: PrepareLearningRuntimePresetRequestDto };
 	preview_content_edit: { request: ContentEditRequest };
 	preview_learning_curriculum_revision: { request: PreviewLearningCurriculumRevisionRequestDto };
 	preview_learning_pack_import: { request: PreviewLearningPackImportRequestDto };
+	prioritize_learning_generation_job: { request: LearningGenerationJobActionRequestDto };
 	promote_conversation_tangent: { request: GetConversationRequestDto };
 	quick_capture: { content: string; sources?: SourceDto[] | null; conversationIds?: string[] | null };
 	read_file_bytes: { path: string };
@@ -12981,6 +13063,7 @@ export type CommandArgs = {
 	request_learning_tutor_response: { request: RequestLearningTutorResponseRequestDto };
 	reranker_status: void;
 	rescan_vault: void;
+	reset_learning_lesson_preparation: { request: ResetLearningLessonPreparationRequestDto };
 	reset_settings: void;
 	resolve_learning_claim: { request: ResolveLearningClaimRequestDto };
 	resolve_learning_claims: { request: ResolveLearningClaimsRequestDto };
@@ -13411,15 +13494,17 @@ export type CommandResults = {
 	practice_due: PracticeDueDto;
 	prepare_learning_ahead: LearningProgramDto;
 	prepare_learning_lesson: LearningProgramDto;
+	prepare_learning_lessons: LearningGenerationJob[];
 	prepare_learning_module: LearningProgramDto;
 	prepare_learning_quiz_bank: LearningGenerationJob;
 	prepare_learning_runtime_preset: LearningPracticalWorkspaceDto;
 	preview_content_edit: ContentEditPreview;
 	preview_learning_curriculum_revision: LearningPlanDto;
 	preview_learning_pack_import: LearningPortabilityWorkspaceDto;
+	prioritize_learning_generation_job: LearningGenerationJob;
 	promote_conversation_tangent: ConversationDto;
 	quick_capture: QuickCaptureResultDto;
-	read_file_bytes: number[];
+	read_file_bytes: ArrayBuffer;
 	read_file_content: string;
 	read_model_fits: (FitVerdictDto | null)[];
 	read_web_page: WebPageDto;
@@ -13457,6 +13542,7 @@ export type CommandResults = {
 	request_learning_tutor_response: LearningPracticeWorkspaceDto;
 	reranker_status: RerankerStatusDto;
 	rescan_vault: RescanSummary;
+	reset_learning_lesson_preparation: ResetLearningLessonPreparationResultDto;
 	reset_settings: SettingsDto;
 	resolve_learning_claim: ResolveLearningClaimResultDto;
 	resolve_learning_claims: ResolveLearningClaimResultDto;

@@ -34,6 +34,11 @@ export interface AnswerActionsMenuProps {
   /** The trigger, rendered by the action row so it matches its siblings. */
   children: ReactNode;
   align?: 'start' | 'end';
+  /** Controlled open state when opened from a parent overflow menu. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  /** Anchor to `children` without making `children` a trigger. */
+  anchorOnly?: boolean;
 }
 
 export function AnswerActionsMenu({
@@ -44,10 +49,15 @@ export function AnswerActionsMenu({
   turn,
   children,
   align = 'start',
+  open: controlledOpen,
+  onOpenChange: controlledOnOpenChange,
+  anchorOnly = false,
 }: AnswerActionsMenuProps) {
   const navigate = useAppNavigate();
   const quickCapture = useQuickCapture();
-  const [open, setOpen] = useState(false);
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const open = controlledOpen ?? uncontrolledOpen;
+  const setOpen = controlledOnOpenChange ?? setUncontrolledOpen;
   const [isSaving, setIsSaving] = useState(false);
 
   // Compare reads files, so web pages never count towards the two it needs.
@@ -97,7 +107,11 @@ export function AnswerActionsMenu({
 
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
-      <Popover.Trigger asChild>{children}</Popover.Trigger>
+      {anchorOnly ? (
+        <Popover.Anchor asChild>{children}</Popover.Anchor>
+      ) : (
+        <Popover.Trigger asChild>{children}</Popover.Trigger>
+      )}
       <Popover.Portal>
         <Popover.Content sideOffset={6} align={align} className={ACTION_SURFACE_CLASS}>
           <p className={ACTION_HEADING_CLASS}>Take this answer with you</p>

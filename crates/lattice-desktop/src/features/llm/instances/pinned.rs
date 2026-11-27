@@ -132,6 +132,10 @@ impl LLMPort for PinnedLlm {
         self.inner().thinks_before_answering()
     }
 
+    fn supports_native_thinking(&self) -> bool {
+        self.inner().supports_native_thinking()
+    }
+
     fn vision(&self) -> Option<lattice_core::domain::models::vision::VisionGeometry> {
         self.inner().vision()
     }
