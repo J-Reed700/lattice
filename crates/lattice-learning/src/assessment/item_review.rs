@@ -631,11 +631,24 @@ fn repeat_content_tokens(text: &str) -> HashSet<String> {
         "match",
         "following",
         "based",
+        "pairs",
+        "blanks",
+        "order",
+        "picks",
     ];
     text.split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-')
         .map(|w| w.trim_matches('-').to_ascii_lowercase())
         .filter(|w| w.len() >= 4 && !STOP.contains(&w.as_str()))
         .collect()
+}
+
+fn strip_descriptor_tags(descriptor: &str) -> String {
+    descriptor
+        .replace("[pairs:", " ")
+        .replace("[blanks:", " ")
+        .replace("[order:", " ")
+        .replace("[picks:", " ")
+        .replace(']', " ")
 }
 
 fn extract_bracket_section<'a>(descriptor: &'a str, tag: &str) -> Option<&'a str> {
@@ -696,11 +709,11 @@ pub(crate) fn repeat_overlap_reason(
                             && held_right.iter().any(|hr| {
                                 let shared = cr.intersection(hr).count();
                                 let min_side = cr.len().min(hr.len());
-                                min_side >= 2 && shared * 2 >= min_side
+                                shared >= 2 && min_side >= 2 && shared * 2 >= min_side
                             })
                     })
                     .count();
-                if matching_outcomes >= 2 {
+                if matching_outcomes >= 2 && shared_all >= 3 {
                     return Some(
                         "It tests the same matching outcomes as an existing question.".into(),
                     );
@@ -716,8 +729,12 @@ pub(crate) fn repeat_overlap_reason(
                 .filter(|s| !s.is_empty())
                 .collect();
             let cand_tokens = repeat_content_tokens(&cand_blanks.join(" "));
+            let cand_stem = repeat_content_tokens(&candidate.prompt);
             for held in known_descriptors {
-                let Some(blank_str) = extract_bracket_section(held, " [blanks: ") else {
+                let Some((held_prompt, blank_str)) = held
+                    .split_once(" [blanks: ")
+                    .and_then(|(prompt, rest)| rest.strip_suffix(']').map(|b| (prompt, b)))
+                else {
                     continue;
                 };
                 let held_blanks: Vec<String> = blank_str
@@ -729,7 +746,23 @@ pub(crate) fn repeat_overlap_reason(
                     .iter()
                     .filter(|b| held_blanks.contains(b))
                     .count();
-                if exact_shared >= 1 && (exact_shared == cand_blanks.len() || exact_shared >= 2) {
+                let held_stem = repeat_content_tokens(held_prompt);
+                let shared_stem = cand_stem.intersection(&held_stem).count();
+                let min_stem = cand_stem.len().min(held_stem.len());
+                if cand_blanks.len() == 1 && held_blanks.len() == 1 {
+                    if exact_shared == 1
+                        && min_stem >= 2
+                        && shared_stem >= 2
+                        && shared_stem * 5 >= min_stem * 2
+                    {
+                        return Some(
+                            "It fills the exact same blank answer in the same scenario as an existing cloze question."
+                                .into(),
+                        );
+                    }
+                    continue;
+                }
+                if exact_shared >= 2 {
                     return Some(
                         "It fills the exact same blank answers as an existing cloze question."
                             .into(),
@@ -738,7 +771,7 @@ pub(crate) fn repeat_overlap_reason(
                 let held_tokens = repeat_content_tokens(blank_str);
                 let min_toks = cand_tokens.len().min(held_tokens.len());
                 let shared_toks = cand_tokens.intersection(&held_tokens).count();
-                if min_toks >= 2 && shared_toks * 2 >= min_toks {
+                if min_toks >= 2 && shared_toks * 2 >= min_toks && shared_stem >= 1 {
                     return Some(
                         "It tests the same cloze concept and answers as an existing question."
                             .into(),
@@ -759,7 +792,7 @@ pub(crate) fn overrepresented_topics(descriptors: &[String]) -> Vec<String> {
     }
     let mut counts: HashMap<String, usize> = HashMap::new();
     for descriptor in descriptors {
-        for token in repeat_content_tokens(descriptor) {
+        for token in repeat_content_tokens(&strip_descriptor_tags(descriptor)) {
             *counts.entry(token).or_insert(0) += 1;
         }
     }

@@ -300,6 +300,13 @@ fn ends_terminal_sentence(line: &str) -> bool {
 }
 
 fn high_similarity_prefix_stutter(prev_words: &[String], next_words: &[String]) -> bool {
+    const CONTRAST_OPENERS: &[&str] = &["when", "if", "while", "where", "whereas", "although"];
+    if prev_words
+        .first()
+        .is_some_and(|w| CONTRAST_OPENERS.contains(&w.as_str()))
+    {
+        return false;
+    }
     let aligned_diffs = prev_words
         .iter()
         .zip(next_words)
@@ -307,6 +314,19 @@ fn high_similarity_prefix_stutter(prev_words: &[String], next_words: &[String]) 
         .count()
         + prev_words.len().abs_diff(next_words.len());
     if aligned_diffs < 2 {
+        return false;
+    }
+    let code_tokens = |words: &[String]| -> Vec<&str> {
+        words
+            .iter()
+            .filter(|w| {
+                w.bytes()
+                    .any(|b| b.is_ascii_digit() || matches!(b, b'/' | b'.' | b':' | b'-' | b'_'))
+            })
+            .map(String::as_str)
+            .collect()
+    };
+    if code_tokens(prev_words) != code_tokens(next_words) {
         return false;
     }
     let prev_unique: HashSet<&str> = prev_words.iter().map(String::as_str).collect();
@@ -347,18 +367,30 @@ fn flush_consecutive_unit(
             }
         }
         if !words.is_empty() {
-            if let [.., s0, s1, s2] = history.as_slice() {
-                if s0.1 == s2.1 && s1.1 == words && s0.1 != s1.1 {
-                    out.push(ConsecutiveRepeat {
-                        first: s0.0.clone(),
-                        second: s2.0.clone(),
-                        prefix_stutter: false,
-                    });
+            let matched = match history.as_slice() {
+                [.., s0, s1, s2, s3, s4]
+                    if s0.1 == s3.1
+                        && s1.1 == s4.1
+                        && s2.1 == words
+                        && !(s0.1 == s1.1 && s1.1 == s2.1) =>
+                {
+                    Some((s0.0.clone(), s3.0.clone()))
                 }
+                [.., s0, s1, s2] if s0.1 == s2.1 && s1.1 == words && s0.1 != s1.1 => {
+                    Some((s0.0.clone(), s2.0.clone()))
+                }
+                _ => None,
+            };
+            if let Some((first, second)) = matched {
+                out.push(ConsecutiveRepeat {
+                    first,
+                    second,
+                    prefix_stutter: false,
+                });
             }
         }
         history.push((piece.to_owned(), words));
-        if history.len() > 4 {
+        if history.len() > 6 {
             history.remove(0);
         }
         *prev = Some(piece.to_owned());

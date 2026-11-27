@@ -73,4 +73,14 @@ fn consecutive_repeats_catch_short_duplicates_and_stutters_in_prose_and_list_ite
             "To implement this in NestJS, create an HTTP interceptor that wraps your outgoing requests."
         ]
     );
+
+    assert!(consecutive_repeats(
+        "When an access token is missing or expired, return HTTP 401 Unauthorized. When a token lacks the required scope, return HTTP 403 Forbidden."
+    )
+    .is_empty());
+
+    let three_sentence_cycle = "Validate the JWT signature first. Verify the token expiration timestamp next. Confirm the required FHIR scopes match.\nValidate the JWT signature first. Verify the token expiration timestamp next. Confirm the required FHIR scopes match.";
+    let cycle_repeats = consecutive_repeats(three_sentence_cycle);
+    assert_eq!(cycle_repeats.len(), 1, "{cycle_repeats:?}");
+    assert!(!cycle_repeats[0].prefix_stutter);
 }

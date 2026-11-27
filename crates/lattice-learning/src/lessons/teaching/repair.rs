@@ -12,6 +12,8 @@ use crate::lessons::text_edits::{
 use crate::lessons::writer_excerpts::{self, WriterExcerpts};
 use crate::review_findings::{FindingSite, ReviewFinding};
 use lattice_core::shared::hash::sha256_hex;
+use lattice_core::shared::text::same_text::fold;
+use lattice_core::shared::text::sentences;
 use lattice_core::{
     application::ports::LLMPort,
     application::services::model_contract::ask::{
@@ -534,15 +536,33 @@ struct Taking<'a, 'r> {
     seen_inserts: std::collections::BTreeSet<String>,
 }
 
-fn normalized_inserts(edits: &rows::Edits) -> Vec<String> {
-    edits
-        .sentences
-        .change()
-        .insert
-        .iter()
-        .map(|(_, with)| with.0.text.split_whitespace().collect::<Vec<_>>().join(" "))
-        .filter(|text| !text.is_empty())
-        .collect()
+/// Normalized non-empty sentences inserted in `edits` (plus fallback folded
+/// chunk when an inserted line has no terminal sentence boundary).
+fn inserted_sentences(edits: &rows::Edits) -> Vec<String> {
+    let mut out = Vec::new();
+    for (_, with) in &edits.sentences.change().insert {
+        let body = with.0.text.trim();
+        if body.is_empty() {
+            continue;
+        }
+        let spans = sentences(body);
+        if spans.is_empty() {
+            let key = fold(body);
+            if !key.is_empty() && !out.contains(&key) {
+                out.push(key);
+            }
+            continue;
+        }
+        for (start, end) in spans {
+            if let Some(piece) = body.get(start..end).map(str::trim) {
+                let key = fold(piece);
+                if !key.is_empty() && !out.contains(&key) {
+                    out.push(key);
+                }
+            }
+        }
+    }
+    out
 }
 
 impl Taking<'_, '_> {
@@ -564,7 +584,7 @@ impl Taking<'_, '_> {
         if repair.edits.is_empty() {
             return Ok(declined());
         }
-        let inserts = normalized_inserts(&repair.edits);
+        let inserts = inserted_sentences(&repair.edits);
         if inserts.iter().any(|text| self.seen_inserts.contains(text)) {
             return Ok((
                 Outcome::NotApplied(vec![

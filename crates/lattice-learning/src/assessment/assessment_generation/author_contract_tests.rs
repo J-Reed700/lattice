@@ -861,6 +861,35 @@ fn authored_content_faults_catches_passage_meta_talk_and_scope_401_contradiction
         status_faults.iter().any(|f| f.contains("403 Forbidden")),
         "{status_faults:?}"
     );
+
+    let ungrounded_scope_401 = engine::checks::authored_content_faults_for(
+        &candidate_with(
+            LearningItemFormat::SingleChoice,
+            "Which status code indicates an unprovisioned SMART scope?",
+            "A 401 Unauthorized response indicates an invalid scope mismatch.",
+            vec![],
+        ),
+        "Unprovisioned SMART scopes fail authorization checks.",
+        &[],
+    );
+    assert!(
+        ungrounded_scope_401
+            .iter()
+            .any(|f| f.contains("403 Forbidden")),
+        "{ungrounded_scope_401:?}"
+    );
+
+    let prompted_scope_401 = engine::checks::authored_content_faults_for(
+        &candidate_with(
+            LearningItemFormat::SingleChoice,
+            "An upstream gateway returns HTTP 401 on an invalid scope mismatch; how should the caller log it?",
+            "A 401 Unauthorized error occurred due to an invalid scope mismatch.",
+            vec![],
+        ),
+        "Unprovisioned SMART scopes fail authorization checks.",
+        &[],
+    );
+    assert!(prompted_scope_401.is_empty(), "{prompted_scope_401:?}");
 }
 
 #[test]
@@ -944,9 +973,89 @@ fn repeat_descriptors_and_overlap_guard_catch_duplicate_matching_and_cloze_decis
         std::slice::from_ref(&held_cloze)
     )
     .is_some());
-    assert!(!crate::assessment::item_review::overrepresented_topics(&[
+    let overrepresented = crate::assessment::item_review::overrepresented_topics(&[
         held_cloze.clone(),
-        held_cloze
-    ])
-    .is_empty());
+        held_cloze,
+        crate::assessment::item_review::item_repeat_descriptor(&first_match),
+        crate::assessment::item_review::item_repeat_descriptor(&dup_match),
+    ]);
+    assert!(!overrepresented.is_empty());
+    for tag in ["pairs", "blanks", "order", "picks"] {
+        assert!(
+            !overrepresented.iter().any(|t| t == tag),
+            "{overrepresented:?}"
+        );
+    }
+
+    let two_word_right_a = LearningAssessmentCandidate {
+        id: "tw1".into(),
+        prompt: "Match each HTTP error handling policy.".into(),
+        left: vec!["First rate condition".into(), "Second auth event".into()],
+        options: vec!["Exponential backoff".into(), "Token refresh".into()],
+        key: LearningAssessmentKey::Matching(vec![0, 1]),
+        ..first_match.clone()
+    };
+    let two_word_right_b = LearningAssessmentCandidate {
+        id: "tw2".into(),
+        prompt: "Match each different connector strategy.".into(),
+        left: vec![
+            "Distinct telemetry trigger".into(),
+            "Distinct billing quota".into(),
+        ],
+        options: vec!["Random backoff".into(), "Scope refresh".into()],
+        key: LearningAssessmentKey::Matching(vec![0, 1]),
+        ..first_match
+    };
+    assert!(crate::assessment::item_review::repeat_overlap_reason(
+        &two_word_right_b,
+        &[crate::assessment::item_review::item_repeat_descriptor(
+            &two_word_right_a
+        )],
+    )
+    .is_none());
+
+    let one_blank = |id: &str, prompt: &str, blank: &str| LearningAssessmentCandidate {
+        id: id.into(),
+        prompt: prompt.into(),
+        key: LearningAssessmentKey::Cloze(vec![crate::assessment_engine::LearningTextKey {
+            variants: vec![blank.into()],
+            numeric: None,
+        }]),
+        ..first_cloze.clone()
+    };
+    let cloze_scope = one_blank(
+        "c3",
+        "When client scopes fail validation, respond with HTTP {{1}} Forbidden.",
+        "403",
+    );
+    let cloze_unrelated = one_blank(
+        "c4",
+        "Billing account suspension triggers status {{1}} on unauthorized admin calls.",
+        "403",
+    );
+    assert!(crate::assessment::item_review::repeat_overlap_reason(
+        &cloze_unrelated,
+        &[crate::assessment::item_review::item_repeat_descriptor(
+            &cloze_scope
+        )],
+    )
+    .is_none());
+
+    let cloze_wait_a = one_blank(
+        "c5",
+        "Respect the duration in the {{1}} header on rate limits.",
+        "Retry-After",
+    );
+    let cloze_wait_b = one_blank(
+        "c6",
+        "Pause for the interval inside the {{1}} header on rate limits.",
+        "Retry-After",
+    );
+    assert!(crate::assessment::item_review::repeat_overlap_reason(
+        &cloze_wait_b,
+        &[crate::assessment::item_review::item_repeat_descriptor(
+            &cloze_wait_a
+        )],
+    )
+    .is_some());
 }

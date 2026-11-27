@@ -1482,3 +1482,107 @@ async fn block_dominated_by_no_source_claims_excludes_orphan_scenario_and_taints
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn consistent_claims_count_as_grounded_against_minority_unverified_claims() -> Result<()> {
+    use lattice_core::domain::learning::acceptance::{
+        End, Outcome as StepOutcome, Reading, Step, Then,
+    };
+    use lattice_core::domain::learning::claim_review::{
+        Actor, ClaimEvent, ClaimId, ClaimLocation, EventProvenance, UnitKind, UnverifiedReason,
+    };
+
+    let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
+    let (published, job_id) = published(&db).await?;
+    let lesson_id = &published.lesson_id;
+    let mut tx = db.begin_write().await?;
+    let now = 1_700_000_300i64;
+    sqlx::query(
+        "INSERT OR REPLACE INTO learning_lesson_reviews(lesson_id,program_id,job_id,state,revision,draft_sha256,checker_model,opened_at,updated_at) VALUES(?,?,?,'ready',1,'sha','m',?,?)",
+    )
+    .bind(lesson_id)
+    .bind(&published.program_id)
+    .bind(&job_id)
+    .bind(now)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
+
+    let marker = "Consistent token validation keeps active sessions healthy.";
+    sqlx::query("UPDATE learning_blocks SET body=? WHERE lesson_id=? AND ordinal=0")
+        .bind(marker)
+        .bind(lesson_id)
+        .execute(&mut *tx)
+        .await?;
+
+    let prov = EventProvenance {
+        actor: Actor::Machine,
+        at: now,
+        job_id: None,
+        app_version: "test".into(),
+        checker_model: Some("test-model".into()),
+    };
+    for i in 0..8usize {
+        let id = ClaimId(format!("c-cons-{i}"));
+        crate::lessons::claim_reviews::repository::append_for_test_in(
+            &mut tx,
+            lesson_id,
+            &id,
+            prov.clone(),
+            ClaimEvent::Extracted {
+                location: ClaimLocation::locate(0, UnitKind::Block, "body", marker, marker),
+                statement: format!("Consistent claim {i}."),
+            },
+        )
+        .await?;
+        crate::lessons::claim_reviews::repository::append_for_test_in(
+            &mut tx,
+            lesson_id,
+            &id,
+            prov.clone(),
+            ClaimEvent::Stepped {
+                policy: "acceptance-v4".into(),
+                step: Step::Read(Reading::Consistency),
+                outcome: StepOutcome::Stands,
+                then: Then::End(End::Consistent),
+                reason: "Consistent claim".into(),
+                rewrite_ahead: false,
+            },
+        )
+        .await?;
+    }
+    for i in 0..2usize {
+        let id = ClaimId(format!("c-unv-{i}"));
+        crate::lessons::claim_reviews::repository::append_for_test_in(
+            &mut tx,
+            lesson_id,
+            &id,
+            prov.clone(),
+            ClaimEvent::Extracted {
+                location: ClaimLocation::locate(0, UnitKind::Block, "body", marker, marker),
+                statement: format!("Unverified claim {i}."),
+            },
+        )
+        .await?;
+        crate::lessons::claim_reviews::repository::append_for_test_in(
+            &mut tx,
+            lesson_id,
+            &id,
+            prov.clone(),
+            ClaimEvent::PublishedUnverified {
+                reason: UnverifiedReason::NoSource,
+            },
+        )
+        .await?;
+    }
+    tx.commit().await?;
+
+    let mut read = db.begin_read().await?;
+    let material = LearningAssessmentRepository::lesson_material_in(&mut read, lesson_id).await?;
+    assert!(
+        material.iter().any(|m| m.text.contains(marker)),
+        "block with 8 consistent, 0 verified, 2 unverified claims should remain grounded: {material:?}"
+    );
+    Ok(())
+}

@@ -229,6 +229,41 @@ struct SavedTopic {
 /// Ask which passages cover each topic, for the passages `lists` names per
 /// topic. A topic the answer leaves unsettled is `None`: not judged, which is
 /// neither covered nor uncovered.
+fn is_link_directory_stub(text: &str) -> bool {
+    let url_count = text.matches("](http").count();
+    if url_count < 4 {
+        return false;
+    }
+    let lines: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    if lines.is_empty() {
+        return false;
+    }
+    let link_lines = lines.iter().filter(|line| line.contains("](http")).count();
+    let referral_lines = lines
+        .iter()
+        .filter(|line| {
+            let lower = line.to_ascii_lowercase();
+            lower.contains("](http")
+                && [
+                    "check out",
+                    "see our",
+                    "review our",
+                    "dive into",
+                    "dive right into",
+                    "explore",
+                    "learn more",
+                ]
+                .iter()
+                .any(|cue| lower.contains(cue))
+        })
+        .count();
+    referral_lines >= 3 || link_lines * 5 >= lines.len() * 2
+}
+
 pub(in crate::lessons::generation) async fn judge(
     llm: &dyn LLMPort,
     topics: &[Topic],
@@ -243,8 +278,10 @@ pub(in crate::lessons::generation) async fn judge(
             let candidates: Vec<PassageAt> = lists
                 .get(at)?
                 .iter()
-                .filter_map(|index| store.get(*index))
-                .map(at_of)
+                .filter_map(|index| {
+                    let passage = store.get(*index)?;
+                    (!is_link_directory_stub(&passage.text)).then(|| at_of(passage))
+                })
                 .collect();
             (!candidates.is_empty()).then(|| Subject {
                 at,
@@ -264,7 +301,10 @@ pub(in crate::lessons::generation) async fn judge(
     }
     crate::lesson_progress::stage(format!(
         "Checking which of {} passages cover the lesson's topics",
-        lists.iter().map(Vec::len).sum::<usize>()
+        subjects
+            .iter()
+            .map(|subject| subject.candidates.value().len())
+            .sum::<usize>()
     ));
     let mut listed: HashMap<PassageAt, Costed> = HashMap::new();
     for at in subjects

@@ -141,6 +141,11 @@ impl Knowledge {
     }
 }
 
+struct BrandToken {
+    text: String,
+    allow_case_insensitive: bool,
+}
+
 /// Returns true when a statement asserts product-, vendor-, or specification-release
 /// behavior that must be verified against cited sources instead of general knowledge.
 pub(super) fn requires_source_not_common(
@@ -149,16 +154,37 @@ pub(super) fn requires_source_not_common(
 ) -> bool {
     let lower = statement.replace('\u{2019}', "'").to_ascii_lowercase();
     for vendor in source_brand_tokens(references) {
-        if contains_word(statement, &vendor)
-            || (vendor.chars().all(|c| c.is_ascii_lowercase()) && contains_word(&lower, &vendor))
+        if contains_word(statement, &vendor.text)
+            || (vendor.allow_case_insensitive
+                && contains_word(&lower, &vendor.text.to_ascii_lowercase()))
         {
             return true;
         }
     }
-    if has_proprietary_camel_identifier(statement) || has_mid_sentence_title_setting(statement) {
+    let has_config_context = has_config_or_onboarding_context(&lower);
+    if has_config_context
+        && (has_proprietary_camel_identifier(statement)
+            || has_mid_sentence_title_setting(statement))
+    {
         return true;
     }
-    has_version_profile_claim(&lower)
+    has_version_profile_claim(statement, &lower)
+}
+
+fn has_config_or_onboarding_context(lower: &str) -> bool {
+    [
+        "configur",
+        "onboard",
+        "client registration",
+        "register",
+        "registr",
+        "setting",
+        "parameter",
+        "profile",
+        "tenant",
+    ]
+    .iter()
+    .any(|cue| lower.contains(cue))
 }
 
 fn contains_word(haystack: &str, word: &str) -> bool {
@@ -182,7 +208,7 @@ fn contains_word(haystack: &str, word: &str) -> bool {
     false
 }
 
-fn source_brand_tokens(references: &ReferenceCollection<'_>) -> Vec<String> {
+fn source_brand_tokens(references: &ReferenceCollection<'_>) -> Vec<BrandToken> {
     const GENERIC_BRANDS: &[&str] = &[
         "api",
         "apis",
@@ -256,33 +282,86 @@ fn source_brand_tokens(references: &ReferenceCollection<'_>) -> Vec<String> {
         "using",
         "about",
         "introduction",
+        "standard",
+        "standards",
+        "protocol",
+        "protocols",
+        "security",
+        "health",
+        "healthcare",
+        "authentication",
+        "authorization",
+        "library",
+        "client",
+        "clients",
+        "server",
+        "servers",
+        "service",
+        "services",
+        "framework",
+        "endpoint",
+        "endpoints",
+        "token",
+        "tokens",
+        "launch",
+        "architecture",
+        "design",
+        "testing",
+        "engineering",
+        "concept",
+        "concepts",
+        "practice",
+        "examples",
+        "semantics",
+        "modern",
+        "basics",
+        "handling",
+        "errors",
+        "error",
+        "validation",
+        "profile",
+        "profiles",
+        "version",
+        "versions",
     ];
-    let mut brands = Vec::new();
+    let mut brands: Vec<BrandToken> = Vec::new();
     let mut push_clean = |raw: &str, preserve_case: bool| {
         let trimmed = raw.trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-');
         let clean = trimmed.to_ascii_lowercase();
+        let all_generic_parts = clean
+            .split('-')
+            .all(|part| part.is_empty() || GENERIC_BRANDS.contains(&part));
         if clean.len() < 4
             || GENERIC_BRANDS.contains(&clean.as_str())
+            || all_generic_parts
             || !clean.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
         {
             return;
         }
-        if preserve_case {
+        let allow_case_insensitive = clean.len() >= 8;
+        let candidate = if preserve_case {
             if trimmed
                 .chars()
                 .next()
                 .is_some_and(|c| c.is_ascii_uppercase())
-                || clean.len() >= 8
+                || allow_case_insensitive
             {
-                let owned = trimmed.to_owned();
-                if !brands.contains(&owned) {
-                    brands.push(owned);
-                }
+                Some(trimmed.to_owned())
+            } else {
+                None
             }
         } else {
-            let titled = capitalize_first(&clean);
-            if !brands.contains(&titled) {
-                brands.push(titled);
+            Some(capitalize_first(&clean))
+        };
+        if let Some(text) = candidate {
+            if !brands
+                .iter()
+                .any(|existing| existing.text.eq_ignore_ascii_case(&text))
+            {
+                brands.push(BrandToken {
+                    text,
+                    allow_case_insensitive,
+                });
             }
         }
     };
@@ -355,13 +434,25 @@ fn has_mid_sentence_title_setting(statement: &str) -> bool {
     false
 }
 
-fn has_version_profile_claim(lower: &str) -> bool {
-    let mentions_fhir_release = ["r4", "r4b", "r5", "stu3", "dstu2"]
-        .iter()
-        .any(|rel| contains_word(lower, rel));
-    mentions_fhir_release
+fn is_release_version_token(token: &str) -> bool {
+    let bytes = token.as_bytes();
+    if bytes.len() < 2 || !bytes[0].is_ascii_uppercase() || !bytes[1].is_ascii_digit() {
+        return false;
+    }
+    let mut i = 1;
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        i += 1;
+    }
+    i == bytes.len() || (i + 1 == bytes.len() && bytes[i].is_ascii_uppercase())
+}
+
+fn has_version_profile_claim(statement: &str, lower: &str) -> bool {
+    let mentions_release_version = statement
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .any(is_release_version_token);
+    mentions_release_version
         && [
-            "register", "profile", "scope", "reject", "default", "support",
+            "register", "registr", "profile", "scope", "reject", "default", "support",
         ]
         .iter()
         .any(|cue| lower.contains(cue))
@@ -407,16 +498,29 @@ mod tests {
 
     #[test]
     fn guards_vendor_product_config_and_release_profile_claims_from_true_common() {
-        let sources = vec![LearningSourceDto {
-            id: "s1".into(),
-            title: "Technical Specifications".into(),
-            url: Some("https://open.epic.com/Technical-Specifications".into()),
-            excerpt: "Overview".into(),
-            acquired_at: 0,
-        }];
+        let sources = vec![
+            LearningSourceDto {
+                id: "s1".into(),
+                title: "Technical Specifications".into(),
+                url: Some("https://open.epic.com/Technical-Specifications".into()),
+                excerpt: "Overview".into(),
+                acquired_at: 0,
+            },
+            LearningSourceDto {
+                id: "s2".into(),
+                title: "Standard Library | Engineering Concepts".into(),
+                url: Some("https://docs.athenahealth.com/api".into()),
+                excerpt: "Overview".into(),
+                acquired_at: 0,
+            },
+        ];
         let refs = ReferenceCollection::lexical(&sources).unwrap();
         assert!(requires_source_not_common(
             "Epic performs scope validation to ensure permissions match the registered client profile.",
+            &refs
+        ));
+        assert!(requires_source_not_common(
+            "athenahealth enforces registered scope defaults for tenant requests.",
             &refs
         ));
         assert!(requires_source_not_common(
@@ -442,6 +546,18 @@ mod tests {
         ));
         assert!(!requires_source_not_common(
             "An epic outage in upstream DNS resolution delays requests.",
+            &refs
+        ));
+        assert!(!requires_source_not_common(
+            "Calling addEventListener or getElementById attaches DOM callbacks safely.",
+            &refs
+        ));
+        assert!(!requires_source_not_common(
+            "Transport Layer Security Protocol protects HTTP traffic in transit.",
+            &refs
+        ));
+        assert!(!requires_source_not_common(
+            "A standard library provides helper functions across engineering services.",
             &refs
         ));
     }

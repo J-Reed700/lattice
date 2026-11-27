@@ -1196,3 +1196,33 @@ fn company_framing_and_spec_consistency_findings_flag_ungrounded_claims_and_bad_
         "{spec_issues:?}"
     );
 }
+
+#[test]
+fn check_block_ignores_wrong_scope_401_prompt_when_reveal_teaches_403() {
+    let mut candidate = lesson();
+    candidate["blocks"][0]["body"] = json!(
+        "Insufficient scopes fail validation with HTTP 403 Forbidden (`insufficient_scope`)."
+    );
+    candidate["blocks"][3]["body"] = json!(format!(
+        "Does an unprovisioned scope fail with 401 Unauthorized?\n{CHECK_REVEAL}\nNo, return HTTP 403 Forbidden instead of 401."
+    ));
+    let safe_issues = spec_consistency_findings(&candidate, &[]);
+    assert!(
+        !safe_issues
+            .iter()
+            .any(|f| f.place().site == FindingSite::Section(3)),
+        "{safe_issues:?}"
+    );
+
+    candidate["blocks"][3]["body"] = json!(format!(
+        "Does an unprovisioned scope fail?\n{CHECK_REVEAL}\nYes, return HTTP 401 Unauthorized on invalid scope."
+    ));
+    let bad_issues = spec_consistency_findings(&candidate, &[]);
+    assert!(
+        bad_issues
+            .iter()
+            .any(|f| f.place().site == FindingSite::Section(3)
+                && f.note.contains("Uses HTTP `401` for scope")),
+        "{bad_issues:?}"
+    );
+}

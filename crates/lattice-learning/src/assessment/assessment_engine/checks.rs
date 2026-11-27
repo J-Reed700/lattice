@@ -482,23 +482,27 @@ pub(crate) fn authored_content_faults_for(
             }
         }
     }
-    if crate::lessons::spec_checks::mentions_403_scope_error(quote)
-        && !quote.contains("401")
-        && (crate::lessons::spec_checks::asserts_401_for_scope_error(
-            &candidate.explanation.to_ascii_lowercase(),
-        ) || candidate
-            .options
-            .iter()
-            .enumerate()
-            .filter(|(idx, _)| right_indices.contains(idx))
-            .any(|(_, opt)| {
-                crate::lessons::spec_checks::asserts_401_for_scope_error(&opt.to_ascii_lowercase())
-            }))
+    let mentions_403_quote = crate::lessons::spec_checks::mentions_403_scope_error(quote);
+    let claims_scope_401 = crate::lessons::spec_checks::asserts_401_for_scope_error(
+        &candidate.explanation.to_ascii_lowercase(),
+    ) || candidate
+        .options
+        .iter()
+        .enumerate()
+        .filter(|(idx, _)| right_indices.contains(idx))
+        .any(|(_, opt)| {
+            crate::lessons::spec_checks::asserts_401_for_scope_error(&opt.to_ascii_lowercase())
+        });
+    if claims_scope_401
+        && (mentions_403_quote || (!quote.contains("401") && !candidate.prompt.contains("401")))
     {
-        faults.push(
+        faults.push(if mentions_403_quote {
             "Claims HTTP `401` for a scope validation failure when the grounded lesson passage specifies `403 Forbidden`."
-                .into(),
-        );
+                .into()
+        } else {
+            "Claims HTTP `401` for a scope validation failure when neither the grounded lesson passage nor the question prompt specifies `401` (`403 Forbidden` applies to insufficient scopes)."
+                .into()
+        });
     }
     faults
 }

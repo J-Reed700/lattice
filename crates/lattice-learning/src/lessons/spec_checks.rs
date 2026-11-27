@@ -275,7 +275,7 @@ pub(crate) fn block_consistency_fault_entries(
                 message: fault,
             });
         }
-        collect_protocol_and_stack_faults(
+        collect_protocol_consistency_faults(
             index,
             body,
             lesson_smart_context,
@@ -668,15 +668,27 @@ pub(crate) fn asserts_401_for_scope_error(sentence_lower: &str) -> bool {
     scope_cue && !token_auth_cue
 }
 
-fn collect_protocol_and_stack_faults(
+pub(crate) fn contains_401_scope_error(text: &str) -> bool {
+    let prose = prose_without_fences(text);
+    sentences(&prose)
+        .into_iter()
+        .filter_map(|(start, end)| prose.get(start..end))
+        .any(|sentence| {
+            let lower = sentence.replace('\u{2019}', "'").to_ascii_lowercase();
+            asserts_401_for_scope_error(&lower)
+        })
+}
+
+fn collect_protocol_consistency_faults(
     block_index: usize,
     body: &str,
     smart_context: bool,
     expect_403_for_scope: bool,
     issues: &mut Vec<BlockConsistencyFault>,
 ) {
-    for (start, end) in sentences(body) {
-        let Some(raw_sentence) = body.get(start..end) else {
+    let prose = prose_without_fences(body);
+    for (start, end) in sentences(&prose) {
+        let Some(raw_sentence) = prose.get(start..end) else {
             continue;
         };
         let sentence = raw_sentence.trim();

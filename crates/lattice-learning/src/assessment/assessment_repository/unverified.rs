@@ -104,8 +104,7 @@ struct BlockClaimStats {
 
 impl BlockClaimStats {
     fn is_ungrounded_dominated(self) -> bool {
-        self.unverified > self.verified
-            && (self.verified + self.consistent >= 1 || self.unverified >= 2)
+        self.unverified > self.verified + self.consistent && self.unverified >= 2
     }
 }
 

@@ -570,3 +570,35 @@ async fn an_unjudged_topic_is_not_researched_on_a_guess() -> Result<()> {
     assert!(!planner.contains("Allocation concealment"));
     Ok(())
 }
+
+#[tokio::test]
+async fn link_directory_stubs_do_not_pass_pre_draft_coverage() -> Result<()> {
+    let stub = [
+        "# Developer Resources",
+        "* Check out a [summary of APIs](https://docs.example.com/summary)",
+        "* Review our [OAuth2 tutorial](https://docs.example.com/oauth2)",
+        "* Dive right into [Authentication](https://docs.example.com/auth)",
+        "* See our [Sandbox docs](https://docs.example.com/sandbox)",
+    ]
+    .join("\n");
+    let substantive = "Client authentication requires a signed JWT assertion bounded in lifetime as defined in [RFC 7523](https://datatracker.ietf.org/doc/html/rfc7523).";
+    let sources = vec![source("a", &stub), source("b", substantive)];
+    let references = ReferenceCollection::lexical(&sources)?;
+    let store = vec![passage("a", 0, &stub), passage("b", 0, substantive)];
+    let topics = vec![
+        topic("Vendor onboarding settings"),
+        topic("Signed JWT client assertions"),
+    ];
+    let lists = vec![vec![0], vec![1]];
+    let answer = json!({"entries": [{"of": "t1", "covering": ["p1"]}]});
+    let llm = scripted(vec![answer.to_string()]);
+
+    let covered = judge(&llm, &topics, &store, &lists, &references).await?;
+
+    assert_eq!(covered, vec![Some(Vec::new()), Some(vec![1])]);
+    let prompts = llm.prompts.lock().unwrap();
+    assert_eq!(prompts.len(), 1);
+    assert!(!prompts[0].contains("Vendor onboarding settings"));
+    assert!(prompts[0].contains("Signed JWT client assertions"));
+    Ok(())
+}

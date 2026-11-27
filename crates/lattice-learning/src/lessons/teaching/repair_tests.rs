@@ -854,3 +854,50 @@ async fn duplicate_inserts_after_a_list_item_across_findings_land_only_once() ->
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn duplicate_subset_sentence_insert_across_findings_is_refused() -> Result<()> {
+    let body = "Validate the token response first.";
+    let pair = "Check the status code immediately. Log the Retry-After header when throttled.";
+    let subset = "Check the status code immediately.";
+    let mat = json!({
+        "blocks": [block("Explanation", body)],
+        "questions": []
+    });
+    let model = scripted(move |task, _| {
+        let labels = finding_labels(task);
+        let anchor = first_label(task, "/blocks/0/body").unwrap();
+        let make = |id: &str, text: &str| {
+            entry(
+                id,
+                "Insert guidance.",
+                json!({
+                    "sentences": {
+                        "replace": [],
+                        "insert": [{"after": anchor, "with": {"text": text, "from": []}}],
+                        "remove": [],
+                        "move": []
+                    },
+                    "cite": [], "recite": [], "uncite": [], "keys": []
+                }),
+            )
+        };
+        vec![make(&labels[0], pair), make(&labels[1], subset)]
+    });
+    let findings = [
+        at(FindingSite::Section(0), 1),
+        at(FindingSite::Section(0), 2),
+    ];
+    let made = mended(&model, &findings, Keeps::Anything, &mat).await?;
+    assert!(matches!(made.outcomes[0], Outcome::Applied));
+    assert!(matches!(made.outcomes[1], Outcome::NotApplied(_)));
+    let final_body = made.candidate["blocks"][0]["body"].as_str().unwrap();
+    assert_eq!(
+        final_body
+            .matches("Check the status code immediately.")
+            .count(),
+        1,
+        "{final_body}"
+    );
+    Ok(())
+}
