@@ -198,7 +198,11 @@ impl Union for Finding {
             ),
             (
                 "contradiction",
-                Form::new().point::<Unit>("first").point::<Unit>("second"),
+                // Keep field names alphabetically after "kind" so constrained JSON-schema
+                // decoders (`anyOf`) always select the discriminator before emitting arguments.
+                Form::new()
+                    .point::<Unit>("statement")
+                    .point::<Unit>("otherStatement"),
             ),
             (
                 "unseen",
@@ -218,8 +222,8 @@ impl Union for Finding {
                 later: fields.cite("taughtLater"),
             }),
             "contradiction" => Some(Self::Clash {
-                first: fields.point("first")?,
-                second: fields.point("second")?,
+                first: fields.point("statement")?,
+                second: fields.point("otherStatement")?,
             }),
             "unseen" => Some(Self::Unseen {
                 words: fields.point("words")?,
