@@ -279,10 +279,11 @@ fn a_quote_citing_a_sentence_of_one_of_two_passages_keeps_only_that_passages_ids
 }
 
 #[test]
-fn the_author_is_told_items_rest_on_sentences_of_the_passages_not_of_one_passage() {
+fn the_author_is_told_items_rest_on_sentences_from_a_single_passage() {
     let said = system();
     assert!(said.contains("sentences of the passages"), "{said}");
-    assert!(!said.contains("one passage"), "{said}");
+    assert!(said.contains("from a single passage"), "{said}");
+    assert!(said.contains("without mixing passages"), "{said}");
 }
 
 #[test]

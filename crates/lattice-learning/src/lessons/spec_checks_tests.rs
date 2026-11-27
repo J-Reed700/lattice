@@ -103,3 +103,12 @@ fn ignores_non_smart_paths_in_unrelated_courses() {
     let unrelated = "Mount system/Key.pem and user/Config.cfg under /etc/tls, inspect system/App.rb, back up patient/Record.db, and within project scope check user/State.raw.";
     assert!(smart_scope_faults(unrelated, &[]).is_empty());
 }
+
+#[test]
+fn catches_backticked_smart_scope_before_trailing_punctuation() {
+    let faults = smart_scope_faults("Check `patient/Observation.w`.", &[]);
+    assert!(
+        faults.iter().any(|f| f.contains("patient/Observation.w")),
+        "{faults:?}"
+    );
+}

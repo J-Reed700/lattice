@@ -607,8 +607,7 @@ pub(crate) fn company_framing_findings(lesson: &Value, companies: &[String]) -> 
                         "{} presents unverified company internals as facts instead of a proposed scenario.",
                         site.label()
                     ))
-                    .with_sentence(&sentence)
-                    .with_passage(value),
+                    .with_passage(&sentence),
                 );
             }
         }
@@ -627,12 +626,12 @@ pub(crate) fn spec_consistency_findings(
         return Vec::new();
     };
     let mut findings = Vec::new();
-    for (index, target, fault) in
-        crate::lessons::spec_checks::block_consistency_fault_entries(lesson, sources_text)
+    for fault in crate::lessons::spec_checks::block_consistency_fault_entries(lesson, sources_text)
     {
-        if let Some(block) = blocks.get(index) {
+        if let Some(block) = blocks.get(fault.block_index) {
             let body = text(block, "body");
-            if text(block, "kind") == "check" && fault.contains("invalid SMART FHIR scope") {
+            if text(block, "kind") == "check" && fault.message.contains("invalid SMART FHIR scope")
+            {
                 if let Some((_, reveal)) = split_check(body) {
                     if crate::lessons::spec_checks::smart_scope_faults(reveal, sources_text)
                         .is_empty()
@@ -641,21 +640,20 @@ pub(crate) fn spec_consistency_findings(
                     }
                 }
             }
-            let site = FindingSite::Section(index);
+            let site = FindingSite::Section(fault.block_index);
             findings.push(
                 ReviewFinding::rule_about(
                     Rule::SpecConsistency,
                     FindingKind::Teaching,
                     site,
-                    &target,
-                    format!("{}: {fault}", site.note_label()),
+                    &fault.subject,
+                    format!("{}: {}", site.note_label(), fault.message),
                 )
                 .with_summary(format!(
                     "{} has a specification or code consistency issue.",
                     site.label()
                 ))
-                .with_sentence(&target)
-                .with_passage(body),
+                .with_passage(&fault.passage),
             );
         }
     }

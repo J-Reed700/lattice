@@ -1154,8 +1154,9 @@ fn company_framing_and_spec_consistency_findings_flag_ungrounded_claims_and_bad_
         ),
         "{company_issues:?}"
     );
+    assert!(company_issues[0].sentence.is_none(), "{company_issues:?}");
     assert_eq!(
-        company_issues[0].sentence.as_deref(),
+        company_issues[0].passage.as_deref(),
         Some("Documo\u{2019}s PostgreSQL database stores tenant keys.")
     );
 
@@ -1164,6 +1165,8 @@ fn company_framing_and_spec_consistency_findings_flag_ungrounded_claims_and_bad_
         spec_issues.iter().any(|f| {
             f.place().site == FindingSite::Section(0)
                 && f.note.contains("system/Binary.w")
+                && f.sentence.is_none()
+                && f.passage.as_deref() == Some("Request system/Binary.w for upload.")
                 && matches!(
                     f.origin,
                     crate::review_findings::Origin::Rule {
@@ -1178,6 +1181,10 @@ fn company_framing_and_spec_consistency_findings_flag_ungrounded_claims_and_bad_
         spec_issues.iter().any(|f| {
             f.place().site == FindingSite::Section(1)
                 && f.note.contains("ConfigService")
+                && f.sentence.is_none()
+                && f.passage
+                    .as_deref()
+                    .is_some_and(|p| p.starts_with("```typescript") && p.contains("ConfigService"))
                 && matches!(
                     f.origin,
                     crate::review_findings::Origin::Rule {

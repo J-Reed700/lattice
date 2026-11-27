@@ -203,6 +203,15 @@ pub(crate) fn smart_scope_fault_entries(
     faults
 }
 
+/// Structured block-level specification or code consistency defect, scoped to
+/// the narrow `passage` (sentence or fenced code block) that repair may edit.
+pub(crate) struct BlockConsistencyFault {
+    pub(crate) block_index: usize,
+    pub(crate) subject: String,
+    pub(crate) passage: String,
+    pub(crate) message: String,
+}
+
 /// Checks lesson blocks for internal TypeScript/code-fence and protocol naming
 /// contradictions (undeclared injected types, `refreshToken` naming on
 /// `client_credentials`, and mismatched `expires_in` buffer seconds across prose
@@ -214,14 +223,14 @@ pub(crate) fn block_consistency_faults(
 ) -> Vec<(usize, String)> {
     block_consistency_fault_entries(lesson, sources_text)
         .into_iter()
-        .map(|(index, _, message)| (index, message))
+        .map(|fault| (fault.block_index, fault.message))
         .collect()
 }
 
 pub(crate) fn block_consistency_fault_entries(
     lesson: &Value,
     sources_text: &[&str],
-) -> Vec<(usize, String, String)> {
+) -> Vec<BlockConsistencyFault> {
     let Some(blocks) = lesson.get("blocks").and_then(Value::as_array) else {
         return Vec::new();
     };
@@ -250,7 +259,12 @@ pub(crate) fn block_consistency_fault_entries(
             .and_then(Value::as_str)
             .unwrap_or_default();
         for (target, fault) in smart_scope_fault_entries(body, sources_text) {
-            issues.push((index, target, fault));
+            issues.push(BlockConsistencyFault {
+                block_index: index,
+                subject: target.clone(),
+                passage: target,
+                message: fault,
+            });
         }
 
         let section_has_client_creds = body.contains("client_credentials")
@@ -260,15 +274,17 @@ pub(crate) fn block_consistency_fault_entries(
         for fence in code_fences(body) {
             let lang = fence.language.trim().to_ascii_lowercase();
             let code = body.get(fence.text.clone()).unwrap_or_default();
+            let fence_passage = body.get(fence.whole()).unwrap_or(code).to_owned();
             if TS_LANGS.contains(&lang.as_str()) {
                 for missing in undeclared_injected_types(code, &declared_types) {
-                    issues.push((
-                        index,
-                        missing.clone(),
-                        format!(
+                    issues.push(BlockConsistencyFault {
+                        block_index: index,
+                        subject: missing.clone(),
+                        passage: fence_passage.clone(),
+                        message: format!(
                             "TypeScript code references `{missing}` without importing or defining `{missing}` in the lesson."
                         ),
-                    ));
+                    });
                 }
             }
             if JS_TS_LANGS.contains(&lang.as_str()) {
@@ -277,19 +293,25 @@ pub(crate) fn block_consistency_fault_entries(
                 {
                     for ident in ["refreshToken", "refreshPromises", "refresh_token"] {
                         if contains_ident(code, ident) {
-                            issues.push((
-                                index,
-                                ident.to_owned(),
-                                format!(
+                            issues.push(BlockConsistencyFault {
+                                block_index: index,
+                                subject: ident.to_owned(),
+                                passage: fence_passage.clone(),
+                                message: format!(
                                     "Code uses `grant_type: 'client_credentials'` (which issues no refresh tokens) while naming `{ident}`; rename to `requestAccessToken` / `inflightTokenRequests`."
                                 ),
-                            ));
+                            });
                             break;
                         }
                     }
                 }
                 if let Some((snippet, mismatch)) = code_buffer_mismatch(code, &prose_buffers) {
-                    issues.push((index, snippet, mismatch));
+                    issues.push(BlockConsistencyFault {
+                        block_index: index,
+                        subject: snippet,
+                        passage: fence_passage,
+                        message: mismatch,
+                    });
                 }
             }
         }
@@ -354,14 +376,12 @@ fn contains_ascii_word(haystack: &str, word: &str) -> bool {
 fn extract_smart_tokens(text: &str) -> Vec<String> {
     let mut found = Vec::new();
     for raw in text.split_whitespace() {
-        let trimmed = raw
-            .trim_matches(|ch: char| {
-                matches!(
-                    ch,
-                    '`' | '\'' | '"' | '(' | ')' | '[' | ']' | ',' | ';' | ':'
-                )
-            })
-            .trim_end_matches('.');
+        let trimmed = raw.trim_matches(|ch: char| {
+            matches!(
+                ch,
+                '`' | '\'' | '"' | '(' | ')' | '[' | ']' | ',' | ';' | ':' | '.' | '?' | '!'
+            )
+        });
         let Some((ctx, rest)) = trimmed.split_once('/') else {
             continue;
         };

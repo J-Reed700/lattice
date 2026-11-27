@@ -158,3 +158,20 @@ fn citations_naming_other_sentences_of_the_body_survive_a_repair_of_the_whole_se
         repaired["blocks"][0]["citations"]
     );
 }
+
+#[test]
+fn company_framing_and_spec_consistency_are_not_held_by_other_protected_claims_in_same_block() {
+    let body = format!(
+        "{PROTECTED} Documo\u{2019}s PostgreSQL database stores tenant keys. Request system/Binary.w for upload.\n```typescript\nclass Svc {{\n  constructor(private readonly cfg: ConfigService) {{}}\n}}\n```"
+    );
+    let candidate = lesson(&body);
+    let mut findings =
+        crate::generation::company_framing_findings(&candidate, &["Documo".to_owned()]);
+    findings.extend(crate::generation::spec_consistency_findings(
+        &candidate,
+        &[],
+    ));
+    assert!(findings.len() >= 3, "{findings:?}");
+    let held = on_protected(&candidate, &findings, &[protect()]);
+    assert!(held.is_empty(), "{held:?}");
+}
