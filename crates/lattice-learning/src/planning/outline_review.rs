@@ -86,15 +86,40 @@ fn path_text(candidate: &Value, path: &str) -> Option<String> {
     if path.ends_with("/summary") || path.contains("/outcomes/") {
         return item.get("text").and_then(Value::as_str).map(str::to_owned);
     }
-    Some(format!(
-        "{} {}",
-        item.get("title")
-            .and_then(Value::as_str)
-            .unwrap_or_default(),
-        item.get("project")
-            .map(Value::to_string)
-            .unwrap_or_default()
-    ))
+    Some(module_text(item))
+}
+
+fn module_text(module: &Value) -> String {
+    let text = |value: &Value| value.as_str().unwrap_or_default().trim().to_owned();
+    let list = |value: &Value| {
+        value
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(text)
+            .filter(|item| !item.is_empty())
+            .collect::<Vec<_>>()
+            .join("; ")
+    };
+    let labelled = |label: &str, value: String| {
+        if value.is_empty() {
+            value
+        } else {
+            format!("{label}: {value}")
+        }
+    };
+    let project = &module["project"];
+    [
+        text(&module["title"]),
+        labelled("Project", text(&project["title"])),
+        text(&project["brief"]),
+        labelled("Deliverables", list(&project["deliverables"])),
+        labelled("Success criteria", list(&project["successCriteria"])),
+    ]
+    .into_iter()
+    .filter(|line| !line.is_empty())
+    .collect::<Vec<_>>()
+    .join("\n")
 }
 
 /// The phrases a reason quotes: text between matching double, single or
@@ -227,15 +252,6 @@ fn normalized(text: &str) -> String {
         .join(" ")
 }
 
-fn contains_text(value: &Value, needle: &str) -> bool {
-    match value {
-        Value::String(text) => text.contains(needle),
-        Value::Array(items) => items.iter().any(|item| contains_text(item, needle)),
-        Value::Object(object) => object.values().any(|item| contains_text(item, needle)),
-        _ => false,
-    }
-}
-
 /// Assertions a strict judge found supported whose text, and attached
 /// evidence, are still in the candidate. The reviewer is told about them and
 /// code drops a factual finding that names one again.
@@ -264,10 +280,9 @@ pub(crate) fn verified_assertions(
                         }
                     }
             }
-            None => draft
-                .candidate
-                .pointer(&receipt.path)
-                .is_some_and(|module| contains_text(module, &receipt.claim)),
+            None => {
+                claim_of(&draft.candidate, &receipt.path).as_deref() == Some(receipt.claim.as_str())
+            }
         })
         .map(|receipt| receipt.claim.clone())
         .collect();
@@ -775,5 +790,67 @@ mod apply_tests {
             .map(|issue| issue.path.as_str())
             .collect();
         assert_eq!(paths, vec!["/modules/0/lessons/0", "/modules/0/summary"]);
+    }
+}
+
+#[cfg(test)]
+mod module_claim_tests {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+    use super::*;
+    use crate::lessons::course_generation_tests::request;
+
+    fn candidate() -> Value {
+        json!({"modules":[{
+            "title":"Connector foundations",
+            "summary":{"text":"Why connectors share one contract."},
+            "outcomes":[{"text":"Explain the connector contract."}],
+            "project":{
+                "title":"Connector contract draft",
+                "brief":"Write the first version of the shared connector interface.",
+                "deliverables":["An interface definition.","A list of failure modes."],
+                "successCriteria":["Every connector operation has a typed result."]
+            },
+            "lessons":[{"title":"Contracts","objective":"Describe a connector contract."}]
+        }]})
+    }
+
+    #[test]
+    fn a_module_claim_reads_as_text_not_json() {
+        let claim = claim_of(&candidate(), "/modules/0").unwrap();
+        for part in [
+            "Connector foundations",
+            "Connector contract draft",
+            "Write the first version of the shared connector interface.",
+            "An interface definition.",
+            "A list of failure modes.",
+            "Every connector operation has a typed result.",
+        ] {
+            assert!(claim.contains(part), "{part} missing from {claim}");
+        }
+        for json_mark in ["{", "}", "\"title\"", "successCriteria"] {
+            assert!(!claim.contains(json_mark), "{json_mark} in {claim}");
+        }
+    }
+
+    #[test]
+    fn a_supported_module_claim_stays_verified_until_the_module_changes() {
+        let mut draft = OutlineDraft::new(request(LearningCourseDepth::Course), candidate(), &[]);
+        let claim = claim_of(&draft.candidate, "/modules/0").unwrap();
+        draft.claim_receipts.insert(
+            "module".into(),
+            OutlineClaimReceipt {
+                verdict: ClaimVerdict::Supported,
+                reason: "The page says so.".into(),
+                supporting_quote: None,
+                checked_at: 1,
+                claim: claim.clone(),
+                path: "/modules/0".into(),
+                source_id: None,
+                shown: None,
+            },
+        );
+        assert_eq!(verified_assertions(&draft, &[]), vec![claim]);
+        draft.candidate["modules"][0]["project"]["brief"] = json!("Write a different interface.");
+        assert!(verified_assertions(&draft, &[]).is_empty());
     }
 }
