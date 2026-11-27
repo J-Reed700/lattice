@@ -29,7 +29,8 @@ fn distinct<'p>(
         .collect()
 }
 
-/// The passages a statement cites, each once and never an example's run.
+/// The passages a statement cites, each once and never an example's run; a
+/// statement whose check named no passage cites none.
 pub(super) fn stands_on(finding: &Finding) -> Vec<&EvidencePassage> {
     let sources = || finding.evidence.iter().filter(|passage| !passage.is_run());
     match finding
@@ -56,7 +57,6 @@ pub(super) fn stands_on(finding: &Finding) -> Vec<&EvidencePassage> {
                 .as_deref()
                 .filter(|quote| !quote.is_empty())
                 .and_then(|quote| sources().find(|passage| passage.text.contains(quote)))
-                .or_else(|| sources().next())
                 .into_iter()
                 .collect()
         }
