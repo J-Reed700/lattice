@@ -1303,11 +1303,21 @@ async fn block_dominated_by_no_source_claims_excludes_orphan_scenario_and_taints
 
     let pool = crate::tests::pool().await?;
     let db = Database::new(pool.clone());
-    let (published, _job_id) = published(&db).await?;
+    let (published, job_id) = published(&db).await?;
     let lesson_id = &published.lesson_id;
     let outcome_id = lesson_outcome(&pool, lesson_id).await;
     let mut tx = db.begin_write().await?;
     let now = 1_700_000_200i64;
+    sqlx::query(
+        "INSERT OR REPLACE INTO learning_lesson_reviews(lesson_id,program_id,job_id,state,revision,draft_sha256,checker_model,opened_at,updated_at) VALUES(?,?,?,'ready',1,'sha','m',?,?)",
+    )
+    .bind(lesson_id)
+    .bind(&published.program_id)
+    .bind(&job_id)
+    .bind(now)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
     let prov = EventProvenance {
         actor: Actor::Machine,
         at: now,

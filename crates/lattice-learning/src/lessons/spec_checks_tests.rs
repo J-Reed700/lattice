@@ -114,24 +114,16 @@ fn catches_backticked_smart_scope_before_trailing_punctuation() {
 }
 
 #[test]
-fn catches_scope_401_vs_403_contradiction_token_launch_token_version_and_angular_nestjs() {
+fn catches_scope_401_vs_403_contradiction_and_smart_token_launch_placement() {
     let lesson = json!({
         "blocks": [
             {
                 "kind": "explanation",
-                "body": "```mermaid\nflowchart TD\nF -->|Fail| H[403 Forbidden]\n```\nExchange the authorization code at the token endpoint, including the launch context parameter."
-            },
-            {
-                "kind": "worked_example",
-                "body": "4. Construct the token request URL using Epic's endpoint, ensuring you include the required scope and version parameters in the body."
+                "body": "```mermaid\nflowchart TD\nS[Scope Validation] -->|Fail| H[403 Forbidden]\n```\nIn SMART on FHIR, exchange the authorization code at the token endpoint, including the launch context parameter."
             },
             {
                 "kind": "check",
                 "body": "Expect a 401 Unauthorized error for invalid scopes after registration."
-            },
-            {
-                "kind": "independent_practice",
-                "body": "Implement an Angular/NestJS interceptor that handles retries cleanly."
             }
         ]
     });
@@ -145,19 +137,7 @@ fn catches_scope_401_vs_403_contradiction_token_launch_token_version_and_angular
     assert!(
         faults
             .iter()
-            .any(|(idx, m)| *idx == 1 && m.contains("`version` parameter")),
-        "{faults:?}"
-    );
-    assert!(
-        faults
-            .iter()
-            .any(|(idx, m)| *idx == 2 && m.contains("`401`")),
-        "{faults:?}"
-    );
-    assert!(
-        faults
-            .iter()
-            .any(|(idx, m)| *idx == 3 && m.contains("`NestJS` alone")),
+            .any(|(idx, m)| *idx == 1 && m.contains("`401`")),
         "{faults:?}"
     );
 }

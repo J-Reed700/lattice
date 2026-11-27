@@ -54,6 +54,11 @@ fn consecutive_repeats_catch_short_duplicates_and_stutters_in_prose_and_list_ite
     assert_eq!(similar_stutter.len(), 1);
     assert!(similar_stutter[0].prefix_stutter);
 
+    assert!(consecutive_repeats(
+        "A long explanation of the idea aa, with no figures in it. A long explanation of the idea ab, with no figures in it."
+    )
+    .is_empty());
+
     let two_sentence_block = "6. Write unit tests verifying the retry behavior.\n\nTo implement this in NestJS, create an HTTP interceptor that wraps your outgoing requests. In your unit tests, mock the HTTP client to simulate 429 responses.\nTo implement this in NestJS, create an HTTP interceptor that wraps your outgoing requests. In your unit tests, mock the HTTP client to simulate 429 responses.";
     let period_two = consecutive_repeats(two_sentence_block);
     assert_eq!(period_two.len(), 1, "{period_two:?}");

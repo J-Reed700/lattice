@@ -237,6 +237,7 @@ pub(crate) fn block_consistency_fault_entries(
     let mut declared_types: HashSet<String> = HashSet::new();
     let mut prose_buffers: Vec<usize> = Vec::new();
     let mut lesson_uses_403_for_scope = false;
+    let mut lesson_smart_context = false;
 
     for block in blocks {
         let body = block
@@ -245,6 +246,9 @@ pub(crate) fn block_consistency_fault_entries(
             .unwrap_or_default();
         if mentions_403_scope_error(body) {
             lesson_uses_403_for_scope = true;
+        }
+        if mentions_smart_fhir_context(body, sources_text) {
+            lesson_smart_context = true;
         }
         for fence in code_fences(body) {
             let lang = fence.language.trim().to_ascii_lowercase();
@@ -256,13 +260,6 @@ pub(crate) fn block_consistency_fault_entries(
         collect_prose_expiry_buffers(body, &mut prose_buffers);
     }
     let sources_use_403_for_scope = sources_text.iter().any(|src| mentions_403_scope_error(src));
-    let sources_mention_token_version_param = sources_text.iter().any(|src| {
-        let lower = src.to_ascii_lowercase();
-        lower.contains("version parameter")
-            || lower.contains("fhir_version")
-            || lower.contains("fhirversion")
-            || (lower.contains("appdefaultfhirversion") && lower.contains("/token"))
-    });
 
     let mut issues = Vec::new();
     for (index, block) in blocks.iter().enumerate() {
@@ -281,9 +278,8 @@ pub(crate) fn block_consistency_fault_entries(
         collect_protocol_and_stack_faults(
             index,
             body,
-            sources_text,
+            lesson_smart_context,
             lesson_uses_403_for_scope || sources_use_403_for_scope,
-            sources_mention_token_version_param,
             &mut issues,
         );
 
@@ -675,12 +671,10 @@ pub(crate) fn asserts_401_for_scope_error(sentence_lower: &str) -> bool {
 fn collect_protocol_and_stack_faults(
     block_index: usize,
     body: &str,
-    sources_text: &[&str],
+    smart_context: bool,
     expect_403_for_scope: bool,
-    sources_mention_token_version_param: bool,
     issues: &mut Vec<BlockConsistencyFault>,
 ) {
-    let smart_context = mentions_smart_fhir_context(body, sources_text);
     for (start, end) in sentences(body) {
         let Some(raw_sentence) = body.get(start..end) else {
             continue;
@@ -719,38 +713,6 @@ fn collect_protocol_and_stack_faults(
                 subject: sentence.to_owned(),
                 passage: sentence.to_owned(),
                 message: "Places the SMART App Launch `launch` parameter at the token endpoint; in SMART App Launch, `launch` is sent to the `/authorize` endpoint and launch context parameters are returned in the `/token` response."
-                    .to_owned(),
-            });
-        }
-
-        if !sources_mention_token_version_param
-            && (lower.contains("token request")
-                || lower.contains("/token")
-                || lower.contains("token endpoint"))
-            && lower.contains("body")
-            && (lower.contains("version parameter")
-                || lower.contains("version parameters")
-                || lower.contains("fhir_version")
-                || lower.contains("fhirversion"))
-            && !lower.contains("no version parameter")
-            && !lower.contains("does not include a version")
-            && !lower.contains("do not send a version")
-        {
-            issues.push(BlockConsistencyFault {
-                block_index,
-                subject: sentence.to_owned(),
-                passage: sentence.to_owned(),
-                message: "Claims an OAuth2 `/token` request body takes a `version` parameter that the supplied specifications do not define; send only documented token parameters (such as `grant_type`, `scope`, `client_assertion_type`, and `client_assertion`)."
-                    .to_owned(),
-            });
-        }
-
-        if lower.contains("angular/nestjs") || lower.contains("nestjs/angular") {
-            issues.push(BlockConsistencyFault {
-                block_index,
-                subject: sentence.to_owned(),
-                passage: sentence.to_owned(),
-                message: "Combines frontend Angular and backend NestJS as `Angular/NestJS`; specify `NestJS` alone for backend service HTTP interceptors and connectors."
                     .to_owned(),
             });
         }

@@ -147,27 +147,11 @@ pub(super) fn requires_source_not_common(
     statement: &str,
     references: &ReferenceCollection<'_>,
 ) -> bool {
-    const VENDOR_CASE_SENSITIVE: &[&str] = &["Epic", "Cerner"];
-    const VENDOR_LOWER: &[&str] = &[
-        "athenahealth",
-        "veradigm",
-        "allscripts",
-        "eclinicalworks",
-        "meditech",
-        "documo",
-    ];
     let lower = statement.replace('\u{2019}', "'").to_ascii_lowercase();
-    if VENDOR_CASE_SENSITIVE
-        .iter()
-        .any(|brand| contains_word(statement, brand))
-        || VENDOR_LOWER
-            .iter()
-            .any(|brand| contains_word(&lower, brand))
-    {
-        return true;
-    }
     for vendor in source_brand_tokens(references) {
-        if contains_word(statement, &vendor) {
+        if contains_word(statement, &vendor)
+            || (vendor.chars().all(|c| c.is_ascii_lowercase()) && contains_word(&lower, &vendor))
+        {
             return true;
         }
     }
@@ -247,6 +231,11 @@ fn source_brand_tokens(references: &ReferenceCollection<'_>) -> Vec<String> {
         "app",
         "portal",
         "www",
+        "com",
+        "org",
+        "net",
+        "gov",
+        "edu",
         "technical",
         "specifications",
         "specification",
@@ -255,8 +244,48 @@ fn source_brand_tokens(references: &ReferenceCollection<'_>) -> Vec<String> {
         "reference",
         "overview",
         "home",
+        "resources",
+        "resource",
+        "documentation",
+        "platform",
+        "system",
+        "systems",
+        "more",
+        "with",
+        "from",
+        "using",
+        "about",
+        "introduction",
     ];
     let mut brands = Vec::new();
+    let mut push_clean = |raw: &str, preserve_case: bool| {
+        let trimmed = raw.trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-');
+        let clean = trimmed.to_ascii_lowercase();
+        if clean.len() < 4
+            || GENERIC_BRANDS.contains(&clean.as_str())
+            || !clean.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        {
+            return;
+        }
+        if preserve_case {
+            if trimmed
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_uppercase())
+                || clean.len() >= 8
+            {
+                let owned = trimmed.to_owned();
+                if !brands.contains(&owned) {
+                    brands.push(owned);
+                }
+            }
+        } else {
+            let titled = capitalize_first(&clean);
+            if !brands.contains(&titled) {
+                brands.push(titled);
+            }
+        }
+    };
     for source in &references.sources {
         if let Some(url) = &source.url {
             if let Some(host) = url
@@ -264,18 +293,21 @@ fn source_brand_tokens(references: &ReferenceCollection<'_>) -> Vec<String> {
                 .nth(1)
                 .and_then(|rest| rest.split(['/', '?', '#']).next())
             {
-                for label in host.split('.') {
-                    let clean = label.trim().to_ascii_lowercase();
-                    if clean.len() >= 4
-                        && !GENERIC_BRANDS.contains(&clean.as_str())
-                        && clean.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-                    {
-                        let titled = capitalize_first(&clean);
-                        if !brands.contains(&titled) {
-                            brands.push(titled);
-                        }
-                    }
+                let labels: Vec<&str> = host.split('.').collect();
+                for label in labels.iter().take(labels.len().saturating_sub(1)) {
+                    push_clean(label, false);
                 }
+            }
+        }
+        for segment in source.title.split(" | ").skip(1).chain(
+            source
+                .title
+                .split(" :: ")
+                .take(1)
+                .filter(|_| source.title.contains(" :: ")),
+        ) {
+            for word in segment.split(|ch: char| ch.is_whitespace() || ch == '.') {
+                push_clean(word, true);
             }
         }
     }

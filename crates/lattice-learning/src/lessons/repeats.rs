@@ -300,6 +300,15 @@ fn ends_terminal_sentence(line: &str) -> bool {
 }
 
 fn high_similarity_prefix_stutter(prev_words: &[String], next_words: &[String]) -> bool {
+    let aligned_diffs = prev_words
+        .iter()
+        .zip(next_words)
+        .filter(|(left, right)| left != right)
+        .count()
+        + prev_words.len().abs_diff(next_words.len());
+    if aligned_diffs < 2 {
+        return false;
+    }
     let prev_unique: HashSet<&str> = prev_words.iter().map(String::as_str).collect();
     let next_unique: HashSet<&str> = next_words.iter().map(String::as_str).collect();
     let shared: Vec<&str> = prev_unique.intersection(&next_unique).copied().collect();
