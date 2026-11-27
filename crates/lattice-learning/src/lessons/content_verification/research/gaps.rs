@@ -503,21 +503,24 @@ enum SearchOutcome {
     Found(Vec<web_research::Candidate>),
 }
 
+pub(super) struct NeedSearch<'a> {
+    pub(super) llm: &'a dyn LLMPort,
+    pub(super) context: &'a Context,
+    pub(super) gaps: &'a [Value],
+    pub(super) urls: &'a HashSet<String>,
+    pub(super) need: &'a web_research::PlannedNeed,
+    pub(super) gap: Option<usize>,
+    pub(super) looking: &'a str,
+    pub(super) pages_left: bool,
+}
+
 /// Runs `need` and, if that yields zero usable selections and alternative
 /// queries exist within budget, tries those rewordings (falling back from
 /// specialized registry/body kinds to general web search when empty) until
 /// one yields selected candidates.
-#[allow(clippy::too_many_arguments)]
 pub(super) async fn select_need_candidates(
-    llm: &dyn LLMPort,
-    context: &Context,
-    gaps: &[Value],
-    urls: &HashSet<String>,
+    search: &NeedSearch<'_>,
     searched: &mut Searched,
-    need: &web_research::PlannedNeed,
-    gap: Option<usize>,
-    looking: &str,
-    pages_left: bool,
 ) -> Result<NeedSelection> {
     let mut reached = false;
     let mut failed = false;
@@ -525,30 +528,47 @@ pub(super) async fn select_need_candidates(
     let mut owner = Vec::new();
     let mut completed_lines = Vec::new();
 
-    match search_once(llm, context, gaps, searched, need, looking).await {
+    match search_once(
+        search.llm,
+        search.context,
+        search.gaps,
+        searched,
+        search.need,
+        search.looking,
+    )
+    .await
+    {
         SearchOutcome::AlreadySearched => {}
         SearchOutcome::Unavailable => failed = true,
         SearchOutcome::Found(results) => {
             reached = true;
-            completed_lines.push(search_dedup_key(need));
-            (owner, selected) =
-                filter_and_select(llm, context, gaps, urls, gap, &need.query, results).await?;
+            completed_lines.push(search_dedup_key(search.need));
+            (owner, selected) = filter_and_select(
+                search.llm,
+                search.context,
+                search.gaps,
+                search.urls,
+                search.gap,
+                &search.need.query,
+                results,
+            )
+            .await?;
         }
     }
 
-    if selected.is_empty() && pages_left && !need.alternatives.is_empty() {
-        'alts: for alt in &need.alternatives {
+    if selected.is_empty() && search.pages_left && !search.need.alternatives.is_empty() {
+        'alts: for alt in &search.need.alternatives {
             let mut variants = Vec::new();
-            let mut primary_alt = need.clone();
+            let mut primary_alt = search.need.clone();
             primary_alt.query = alt.clone();
             primary_alt.alternatives = Vec::new();
             variants.push(primary_alt);
             if !matches!(
-                need.kind,
+                search.need.kind,
                 lattice_core::domain::sourcing::NeedKind::Web
                     | lattice_core::domain::sourcing::NeedKind::OfficialDocs
             ) {
-                let mut web_alt = need.clone();
+                let mut web_alt = search.need.clone();
                 web_alt.query = alt.clone();
                 web_alt.kind = lattice_core::domain::sourcing::NeedKind::Web;
                 web_alt.identifier = None;
@@ -557,7 +577,16 @@ pub(super) async fn select_need_candidates(
                 variants.push(web_alt);
             }
             for variant in variants {
-                match search_once(llm, context, gaps, searched, &variant, looking).await {
+                match search_once(
+                    search.llm,
+                    search.context,
+                    search.gaps,
+                    searched,
+                    &variant,
+                    search.looking,
+                )
+                .await
+                {
                     SearchOutcome::AlreadySearched => continue,
                     SearchOutcome::Unavailable => {
                         failed = true;
@@ -567,11 +596,11 @@ pub(super) async fn select_need_candidates(
                         reached = true;
                         completed_lines.push(search_dedup_key(&variant));
                         let (ov, sel) = filter_and_select(
-                            llm,
-                            context,
-                            gaps,
-                            urls,
-                            gap,
+                            search.llm,
+                            search.context,
+                            search.gaps,
+                            search.urls,
+                            search.gap,
                             &variant.query,
                             results,
                         )

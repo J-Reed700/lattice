@@ -84,3 +84,22 @@ fn catches_undeclared_ts_injections_refresh_token_naming_and_expiry_buffer_drift
     });
     assert!(block_consistency_faults(&clean, &[]).is_empty());
 }
+
+#[test]
+fn accepts_multiline_typescript_imports_with_and_without_semicolons() {
+    let lesson = json!({
+        "blocks": [
+            {
+                "kind": "worked_example",
+                "body": "```typescript\nimport {\n  Injectable,\n  ConfigService,\n} from '@nestjs/config'\n@Injectable()\nexport class SmartTokenService {\n  constructor(private readonly cfg: ConfigService) {}\n}\n```"
+            }
+        ]
+    });
+    assert!(block_consistency_faults(&lesson, &[]).is_empty());
+}
+
+#[test]
+fn ignores_non_smart_paths_in_unrelated_courses() {
+    let unrelated = "Mount system/Key.pem and user/Config.cfg under /etc/tls, inspect system/App.rb, back up patient/Record.db, and within project scope check user/State.raw.";
+    assert!(smart_scope_faults(unrelated, &[]).is_empty());
+}

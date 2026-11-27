@@ -35,7 +35,18 @@ pub(crate) fn lesson_question_item(
         rubric: vec![],
         key: engine::LearningAssessmentKey::Choice(key.correct_index),
         explanation: key.explanation.clone(),
-        distractor_rationales: key.rationales.clone(),
+        distractor_rationales: key
+            .rationales
+            .iter()
+            .enumerate()
+            .map(|(index, reason)| {
+                if index == key.correct_index {
+                    String::new()
+                } else {
+                    reason.clone()
+                }
+            })
+            .collect(),
     }
 }
 
@@ -155,19 +166,31 @@ pub(crate) struct LessonBank {
     pub marks: Vec<lattice_core::shared::edits::ReadMark>,
 }
 
+/// Inputs for writing a prepared lesson's quiz bank around its reviewed seed questions.
+pub(crate) struct LessonBankRequest<'a> {
+    pub program_id: &'a str,
+    pub lesson_id: &'a str,
+    pub title: &'a str,
+    pub objective: &'a str,
+    pub material: Vec<MaterialPassage>,
+    pub seeds: Vec<StoredItem>,
+}
+
 /// Write the rest of a published lesson's quiz bank from its blocks
 /// (`material`), around its own reviewed questions (`seeds`).
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn lesson_bank_stage(
     llm: &dyn LLMPort,
     database: &Database,
-    program_id: &str,
-    lesson_id: &str,
-    title: &str,
-    objective: &str,
-    material: Vec<MaterialPassage>,
-    seeds: Vec<StoredItem>,
+    request: LessonBankRequest<'_>,
 ) -> Result<LessonBank> {
+    let LessonBankRequest {
+        program_id,
+        lesson_id,
+        title,
+        objective,
+        material,
+        seeds,
+    } = request;
     let (outcome_id, settings, quiz_formats, program) = {
         let mut tx = database.begin_read().await?;
         let existing =

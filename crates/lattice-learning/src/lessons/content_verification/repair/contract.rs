@@ -338,8 +338,13 @@ fn touches_other_failed(
             .any(|key| other_failed.contains(&key.right.reference))
 }
 
-/// Why the entry for the failed sentence `id` is refused, when it is.
-fn check(input: &Input, id: &str, correction: &Correction) -> std::result::Result<(), Refusal> {
+/// Why the entry for the failed sentence `id` (shown to the model as `entry`) is refused, when it is.
+fn check(
+    input: &Input,
+    id: &str,
+    entry: &str,
+    correction: &Correction,
+) -> std::result::Result<(), Refusal> {
     let Some(item) = input.items.iter().find(|item| item.id == id) else {
         return Ok(());
     };
@@ -348,7 +353,7 @@ fn check(input: &Input, id: &str, correction: &Correction) -> std::result::Resul
     if correction.edits.is_empty() {
         if !own.is_empty() {
             return Err(Refusal(format!(
-                "Your entry for {id} made no edits to its failed sentence; edit or remove only that sentence."
+                "Your entry for {entry} made no edits to its failed sentence; edit or remove only that sentence."
             )));
         }
         return Ok(());
@@ -362,7 +367,7 @@ fn check(input: &Input, id: &str, correction: &Correction) -> std::result::Resul
         &correction.edits,
     ) {
         return Err(Refusal(format!(
-            "Your edits for {id} also change another failed claim's sentence; put each failed claim's edits under its own entry id."
+            "Your edits for {entry} also change another failed claim's sentence; put each failed claim's edits under its own entry id."
         )));
     }
     let narrowed = narrowed(&rows, input.part.value(), item, &correction.edits);
@@ -513,6 +518,7 @@ impl Answered for SectionRepair {
         of: &Picked<Failed>,
         correction: &Correction,
     ) -> std::result::Result<(), Refusal> {
-        check(input, &of.reference, correction)
+        let entry = of.handle.written();
+        check(input, &of.reference, &entry, correction)
     }
 }

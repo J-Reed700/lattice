@@ -110,16 +110,7 @@ fn without_marker(sentence: &str) -> &str {
 
 /// `text` without its code fences.
 fn prose(text: &str) -> String {
-    let fences = code_fences(text);
-    let mut prose = String::new();
-    let mut offset = 0;
-    for line in text.split_inclusive('\n') {
-        if !fences.iter().any(|fence| fence.whole().contains(&offset)) {
-            prose.push_str(line);
-        }
-        offset += line.len();
-    }
-    prose
+    crate::lessons::spec_checks::prose_without_fences(text)
 }
 
 /// The sentences of `text` that teach: its prose outside code fences, without
@@ -601,19 +592,22 @@ pub(crate) fn company_framing_findings(lesson: &Value, companies: &[String]) -> 
         let site = FindingSite::Section(index);
         for field in ["title", "body"] {
             let value = text(block, field);
-            for fault in crate::lessons::company_framing::company_framing_faults(value, companies) {
+            for (sentence, fault) in
+                crate::lessons::company_framing::company_framing_fault_entries(value, companies)
+            {
                 findings.push(
                     ReviewFinding::rule_about(
-                        Rule::Uncited,
+                        Rule::CompanyFraming,
                         FindingKind::Teaching,
                         site,
-                        value,
+                        &sentence,
                         format!("{} ({}): {fault}", site.note_label(), field),
                     )
                     .with_summary(format!(
                         "{} presents unverified company internals as facts instead of a proposed scenario.",
                         site.label()
                     ))
+                    .with_sentence(&sentence)
                     .with_passage(value),
                 );
             }
@@ -633,8 +627,8 @@ pub(crate) fn spec_consistency_findings(
         return Vec::new();
     };
     let mut findings = Vec::new();
-    for (index, fault) in
-        crate::lessons::spec_checks::block_consistency_faults(lesson, sources_text)
+    for (index, target, fault) in
+        crate::lessons::spec_checks::block_consistency_fault_entries(lesson, sources_text)
     {
         if let Some(block) = blocks.get(index) {
             let body = text(block, "body");
@@ -650,16 +644,17 @@ pub(crate) fn spec_consistency_findings(
             let site = FindingSite::Section(index);
             findings.push(
                 ReviewFinding::rule_about(
-                    Rule::Uncited,
+                    Rule::SpecConsistency,
                     FindingKind::Teaching,
                     site,
-                    &fault,
+                    &target,
                     format!("{}: {fault}", site.note_label()),
                 )
                 .with_summary(format!(
                     "{} has a specification or code consistency issue.",
                     site.label()
                 ))
+                .with_sentence(&target)
                 .with_passage(body),
             );
         }

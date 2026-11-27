@@ -503,9 +503,9 @@ pub(super) struct Unbuilt {
     pub(super) difficulty: u8,
 }
 
-/// The passages the cited sentences lie in, each once in the order first cited,
-/// and what the sentences say, read from the app's own copy of the passages; a
-/// fault when they name no sentence of any.
+/// The single passage whose prose sentences are cited, and what the contiguous
+/// run says, read from the app's own copy of the passage; a fault when they name
+/// no sentence, mix multiple passages, or skip intermediate sentences/code blocks.
 fn quoted<'a>(
     cited: &[Picked<Unit>],
     passages: &[&'a MaterialPassage],
@@ -515,30 +515,30 @@ fn quoted<'a>(
         .map(|passage| (*passage, Units::of(&passage.text, Grain::Sentence)))
         .collect();
     let mut homes: Vec<&'a MaterialPassage> = Vec::new();
-    let mut said: Vec<String> = Vec::new();
     for cite in cited {
-        let found = sentences.iter().find_map(|(passage, units)| {
-            units
-                .text_of(cite.reference)
-                .map(|text| (*passage, text.to_owned()))
-        });
-        let Some((passage, text)) = found else {
+        let Some(passage) = sentences
+            .iter()
+            .find_map(|(passage, units)| units.text_of(cite.reference).map(|_| *passage))
+        else {
             continue;
         };
         if !homes.iter().any(|held| std::ptr::eq(*held, passage)) {
             homes.push(passage);
         }
-        said.push(text);
     }
     if homes.is_empty() {
         return Err("The item's quote cites no sentence of the supplied passages.".into());
     }
-    if homes.len() == 1 {
-        if let Some((passage, units)) = sentences.iter().find(|(p, _)| std::ptr::eq(*p, homes[0])) {
-            return Ok((homes, single_passage_quote(passage, units, cited)?));
-        }
+    if homes.len() > 1 {
+        return Err(
+            "The item's quote cites sentences from multiple passages; cite consecutive prose sentences from a single passage without mixing blocks."
+                .into(),
+        );
     }
-    Ok((homes, said.join(" ")))
+    if let Some((passage, units)) = sentences.iter().find(|(p, _)| std::ptr::eq(*p, homes[0])) {
+        return Ok((homes, single_passage_quote(passage, units, cited)?));
+    }
+    Err("The item's quote cites no sentence of the supplied passages.".into())
 }
 
 fn single_passage_quote(

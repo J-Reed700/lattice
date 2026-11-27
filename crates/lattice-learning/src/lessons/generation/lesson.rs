@@ -604,6 +604,7 @@ pub async fn prepare_lesson_with_references<'a>(
         restart,
     )
     .await?;
+    let raw = crate::content_verification::clear_right_choice_reasons(raw);
     let value: serde_json::Value = parse_json(&raw).map_err(unusable)?;
     // The lesson is saved with the texts its quotations were checked against.
     let sources: Vec<_> = numbered

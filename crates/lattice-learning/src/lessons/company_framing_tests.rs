@@ -37,6 +37,9 @@ fn extracts_ungrounded_employer_without_flagging_documented_tech_or_roles() {
 
     let generic_goal = "Prepare for a Senior Backend Engineer role building REST APIs with Python";
     assert!(ungrounded_companies(&[generic_goal], &public_sources).is_empty());
+
+    let protocol_goal = "Prepare for a role building for Client Credentials at a Patient Portal using OAuth Token Server";
+    assert!(ungrounded_companies(&[protocol_goal], &public_sources).is_empty());
 }
 
 #[test]
@@ -60,6 +63,16 @@ fn catches_proprietary_assertions_and_allows_neutral_or_goal_framing() {
     .is_empty());
     assert!(!company_framing_faults(
         "Documo is a confidential client connected to a clinic EHR.",
+        &companies
+    )
+    .is_empty());
+    assert!(!company_framing_faults(
+        "Use the public key that Documo registered during Step 1.",
+        &companies
+    )
+    .is_empty());
+    assert!(!company_framing_faults(
+        "Documo configured its webhook delivery pipeline cleanly.",
         &companies
     )
     .is_empty());

@@ -453,6 +453,7 @@ pub(crate) fn authored_content_faults_for(
     let right_indices: std::collections::HashSet<usize> = match &candidate.key {
         LearningAssessmentKey::Choice(idx) => std::iter::once(*idx).collect(),
         LearningAssessmentKey::Choices(idxs) => idxs.iter().copied().collect(),
+        LearningAssessmentKey::Matching(pairs) => pairs.iter().copied().collect(),
         _ => std::collections::HashSet::new(),
     };
     let checked_for_scopes = std::iter::once(candidate.prompt.as_str())

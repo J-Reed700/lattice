@@ -1,8 +1,8 @@
 //! Ungrounded external company/employer framing detection for Finding D.5 and
 //! scenario-local research filtering.
 
+use super::spec_checks::prose_without_fences;
 use crate::dto::LearningSourceDto;
-use lattice_core::shared::text::segmentation::code_fences;
 use lattice_core::shared::text::sentences;
 
 #[cfg(test)]
@@ -102,6 +102,39 @@ const NON_COMPANY_TITLE_WORDS: &[&str] = &[
     "production",
     "staging",
     "local",
+    "client",
+    "patient",
+    "user",
+    "portal",
+    "tenant",
+    "token",
+    "server",
+    "gateway",
+    "oauth",
+    "fhir",
+    "smart",
+    "ehr",
+    "connector",
+    "api",
+    "credentials",
+    "credential",
+    "webhook",
+    "webhooks",
+    "endpoint",
+    "endpoints",
+    "assertion",
+    "assertions",
+    "bundle",
+    "route",
+    "routes",
+    "handler",
+    "handlers",
+    "worker",
+    "workers",
+    "queue",
+    "store",
+    "schema",
+    "schemas",
     "docker",
     "kubernetes",
     "linux",
@@ -154,38 +187,76 @@ const FACTUAL_VERBS: &[&str] = &[
     "have",
     "runs",
     "run",
+    "ran",
     "uses",
     "use",
+    "used",
     "stores",
     "store",
+    "stored",
     "assigns",
     "assign",
+    "assigned",
     "sends",
     "send",
+    "sent",
     "receives",
     "receive",
+    "received",
     "keeps",
     "keep",
+    "kept",
     "maintains",
     "maintain",
+    "maintained",
     "exposes",
     "expose",
+    "exposed",
     "connects",
     "connect",
+    "connected",
     "needs",
     "need",
+    "needed",
     "requires",
     "require",
+    "required",
     "supports",
     "support",
+    "supported",
     "permits",
     "permit",
+    "permitted",
     "allows",
     "allow",
+    "allowed",
     "authenticates",
     "authenticate",
+    "authenticated",
     "registers",
     "register",
+    "registered",
+    "configures",
+    "configure",
+    "configured",
+    "deploys",
+    "deploy",
+    "deployed",
+    "builds",
+    "build",
+    "built",
+    "delivers",
+    "deliver",
+    "delivered",
+    "processes",
+    "process",
+    "processed",
+    "manages",
+    "manage",
+    "managed",
+    "handles",
+    "handle",
+    "handled",
     "holds",
     "hold",
     "logs",
@@ -229,11 +300,21 @@ pub(crate) fn ungrounded_companies(
 /// invented proprietary facts, architecture, rules or actions to any
 /// ungrounded company name in `companies`.
 pub(crate) fn company_framing_faults(text: &str, companies: &[String]) -> Vec<String> {
+    company_framing_fault_entries(text, companies)
+        .into_iter()
+        .map(|(_, message)| message)
+        .collect()
+}
+
+pub(crate) fn company_framing_fault_entries(
+    text: &str,
+    companies: &[String],
+) -> Vec<(String, String)> {
     if companies.is_empty() || text.trim().is_empty() {
         return Vec::new();
     }
-    let prose = prose_only(text);
-    let mut faults = Vec::new();
+    let prose = prose_without_fences(text);
+    let mut faults: Vec<(String, String)> = Vec::new();
     for (start, end) in sentences(&prose) {
         let Some(sentence) = prose.get(start..end) else {
             continue;
@@ -248,8 +329,8 @@ pub(crate) fn company_framing_faults(text: &str, companies: &[String]) -> Vec<St
                 let message = format!(
                     "States invented internals, rules, or actions as facts about external company {company} without verified company sources; frame as a proposed design or neutral scenario instead."
                 );
-                if !faults.contains(&message) {
-                    faults.push(message);
+                if !faults.iter().any(|(_, existing)| existing == &message) {
+                    faults.push((sentence.trim().to_owned(), message));
                 }
             }
         }
@@ -277,22 +358,6 @@ pub(crate) fn contains_whole_phrase(haystack: &str, phrase: &str) -> bool {
         from = start + 1;
     }
     false
-}
-
-fn prose_only(text: &str) -> String {
-    let fences = code_fences(text);
-    if fences.is_empty() {
-        return text.to_owned();
-    }
-    let mut prose = String::new();
-    let mut offset = 0;
-    for line in text.split_inclusive('\n') {
-        if !fences.iter().any(|fence| fence.whole().contains(&offset)) {
-            prose.push_str(line);
-        }
-        offset += line.len();
-    }
-    prose
 }
 
 fn normalize_for_matching(text: &str) -> String {

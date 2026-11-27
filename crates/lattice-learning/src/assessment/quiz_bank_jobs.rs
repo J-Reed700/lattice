@@ -356,12 +356,14 @@ impl QuizBankWorker {
                             Box::pin(lesson_bank_stage(
                                 pin.llm.as_ref(),
                                 &self.database,
-                                program_id,
-                                lesson_id,
-                                &inputs.title,
-                                &inputs.objective,
-                                inputs.material,
-                                inputs.seeds,
+                                LessonBankRequest {
+                                    program_id,
+                                    lesson_id,
+                                    title: &inputs.title,
+                                    objective: &inputs.objective,
+                                    material: inputs.material,
+                                    seeds: inputs.seeds,
+                                },
                             ))
                             .instrument(trace::lesson_span(lesson_id)),
                         )
@@ -456,4 +458,5 @@ pub use grading::{grade_written_answer, judge_short_answer, QuizGradingWorker};
 pub(crate) use lesson_stage::lesson_seed_items;
 pub(crate) use lesson_stage::{
     lesson_bank_stage, lesson_question_item, lesson_seed_items_verified, LessonBank,
+    LessonBankRequest,
 };

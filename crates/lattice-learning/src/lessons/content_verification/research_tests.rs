@@ -2146,3 +2146,64 @@ async fn expand_filters_scenario_local_gaps_populates_bare_metadata_and_chunks_l
     )
     .await
 }
+
+#[tokio::test]
+async fn expand_reads_ungrounded_company_names_from_prior_knowledge_too() -> Result<()> {
+    let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
+    let repo = LearningRepository::new(db.clone());
+    let mut program = crate::tests::fixture();
+    program.summary.status = crate::dto::LearningProgramStatus::Active;
+    program.summary.goal = "SMART Backend Services Authentication".into();
+    program.prior_knowledge = "Onboarding as a backend engineer at Documo.".into();
+    repo.create(&program).await?;
+    let sources = repo.verification_sources(&program.summary.id).await?;
+    let references = ReferenceCollection::lexical(&sources)?;
+
+    let findings = vec![
+        Finding {
+            statement: "Documo runs a backend queue for local delivery retries.".into(),
+            quote: "Documo runs a backend queue for local delivery retries.".into(),
+            ..gap()
+        },
+        Finding {
+            statement: "Under RFC 7523, client_assertion_type is required on token requests."
+                .into(),
+            quote: "Under RFC 7523, client_assertion_type is required on token requests.".into(),
+            ..gap()
+        },
+    ];
+
+    let llm = ScriptedModel {
+        outputs: Mutex::new(
+            [
+                crate::references::web_research::needs_answer(json!([
+                    {"gap": 0, "query": "RFC 7523 client_assertion_type", "kind": "standard"}
+                ]))
+                .to_string(),
+                selection(&[0]),
+            ]
+            .into(),
+        ),
+        prompts: Mutex::new(vec![]),
+    };
+    let web = web_capture(false, "https://www.rfc-editor.org/rfc/rfc7523", CAPTURE);
+
+    run_with_prior(
+        db,
+        program.summary.id,
+        program.summary.goal,
+        program.prior_knowledge,
+        Some(web),
+        async {
+            let _expanded =
+                expand(&llm, &references, &findings, &[], &ClaimChecks::default()).await?;
+            let prompts = llm.prompts.lock().unwrap();
+            let first = &prompts[0];
+            assert!(!first.contains("Documo"), "{first}");
+            assert!(first.contains("client_assertion_type"), "{first}");
+            Ok(())
+        },
+    )
+    .await
+}

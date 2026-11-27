@@ -12,10 +12,67 @@ use std::collections::HashSet;
 mod tests;
 
 const SMART_CONTEXTS: &[&str] = &["system", "patient", "user"];
-const NON_SCOPE_EXTS: &[&str] = &[
-    "json", "ts", "js", "jsx", "tsx", "py", "md", "txt", "yml", "yaml", "xml", "html", "css",
-    "sql", "csv", "pdf", "png", "jpg", "env", "lock", "toml", "sh",
+const FHIR_RESOURCES: &[&str] = &[
+    "AllergyIntolerance",
+    "AuditEvent",
+    "Binary",
+    "Bundle",
+    "CapabilityStatement",
+    "CarePlan",
+    "Claim",
+    "Communication",
+    "Condition",
+    "Consent",
+    "Coverage",
+    "Device",
+    "DiagnosticReport",
+    "DocumentReference",
+    "Encounter",
+    "ExplanationOfBenefit",
+    "Goal",
+    "ImagingStudy",
+    "Immunization",
+    "Location",
+    "Medication",
+    "MedicationRequest",
+    "Observation",
+    "OperationOutcome",
+    "Organization",
+    "Patient",
+    "Practitioner",
+    "Procedure",
+    "Provenance",
+    "Questionnaire",
+    "QuestionnaireResponse",
+    "ServiceRequest",
+    "Specimen",
 ];
+const NON_SCOPE_EXTS: &[&str] = &[
+    "json", "ts", "js", "jsx", "tsx", "mjs", "cjs", "py", "md", "txt", "yml", "yaml", "xml",
+    "html", "css", "scss", "sql", "csv", "pdf", "png", "jpg", "jpeg", "svg", "env", "lock", "toml",
+    "sh", "bash", "zsh", "pem", "key", "crt", "cer", "der", "p12", "pfx", "pub", "cfg", "conf",
+    "ini", "log", "db", "sqlite", "sqlite3", "rb", "kt", "kts", "php", "swift", "go", "java", "rs",
+    "c", "h", "cpp", "hpp", "cs", "ex", "exs", "pl", "lua", "r", "wasm", "bin", "tmp", "bak",
+    "out", "exe", "dll", "so", "dylib", "jar", "war", "class", "pyc", "pyo", "o", "obj", "dat",
+    "raw", "tar", "gz", "zip",
+];
+
+/// Returns `text` with fenced code blocks omitted so prose checks skip code.
+pub(crate) fn prose_without_fences(text: &str) -> String {
+    let fences = code_fences(text);
+    if fences.is_empty() {
+        return text.to_owned();
+    }
+    let mut prose = String::with_capacity(text.len());
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        if !fences.iter().any(|fence| fence.whole().contains(&offset)) {
+            prose.push_str(line);
+        }
+        offset += line.len();
+    }
+    prose
+}
 
 const TS_LANGS: &[&str] = &["ts", "typescript"];
 const JS_TS_LANGS: &[&str] = &["ts", "typescript", "js", "javascript"];
@@ -71,7 +128,20 @@ const NEGATIVE_SCOPE_CUES: &[&str] = &[
 /// that is not already quoted in `sources_text` and not presented explicitly as
 /// nonexistent/invalid.
 pub(crate) fn smart_scope_faults(text: &str, sources_text: &[&str]) -> Vec<String> {
-    let mut faults = Vec::new();
+    smart_scope_fault_entries(text, sources_text)
+        .into_iter()
+        .map(|(_, message)| message)
+        .collect()
+}
+
+pub(crate) fn smart_scope_fault_entries(
+    text: &str,
+    sources_text: &[&str],
+) -> Vec<(String, String)> {
+    if !mentions_smart_fhir_context(text, sources_text) {
+        return Vec::new();
+    }
+    let mut faults: Vec<(String, String)> = Vec::new();
     for (start, end) in sentences(text) {
         let Some(sentence) = text.get(start..end) else {
             continue;
@@ -98,41 +168,35 @@ pub(crate) fn smart_scope_faults(text: &str, sources_text: &[&str]) -> Vec<Strin
             let message = format!(
                 "Uses invalid SMART FHIR scope `{token}` (SMART v1 uses `.read`/`.write`; SMART v2 uses `.c`/`.r`/`.u`/`.d`/`.s`, not `.{suffix}`)."
             );
-            if !faults.contains(&message) {
-                faults.push(message);
+            if !faults.iter().any(|(_, existing)| existing == &message) {
+                faults.push((sentence.trim().to_owned(), message));
             }
         }
     }
 
-    let full_lower = text.replace('\u{2019}', "'").to_ascii_lowercase();
-    let mentions_smart_context = full_lower.contains(".cruds")
-        || full_lower.contains("smart")
-        || !extract_smart_tokens(text).is_empty();
-    if mentions_smart_context {
-        const WRITE_W_PHRASES: &[&str] = &[
-            "'w' (write)",
-            "`.w` (write)",
-            "the 'w' permission",
-            "`.w` permission",
-            ".w permission",
-        ];
-        for (start, end) in sentences(text) {
-            let Some(sentence) = text.get(start..end) else {
-                continue;
-            };
-            let lower = sentence.replace('\u{2019}', "'").to_ascii_lowercase();
-            let has_negative_cue = NEGATIVE_SCOPE_CUES.iter().any(|cue| lower.contains(cue));
-            if !has_negative_cue
-                && WRITE_W_PHRASES.iter().any(|phrase| lower.contains(phrase))
-                && !sources_text
-                    .iter()
-                    .any(|src| src.to_ascii_lowercase().contains("'w'"))
-            {
-                let message = "Claims `.w` / `'w'` is a SMART write permission; SMART v2 uses `.c` (create) and `.u` (update), while SMART v1 uses `.write`."
-                    .to_owned();
-                if !faults.contains(&message) {
-                    faults.push(message);
-                }
+    const WRITE_W_PHRASES: &[&str] = &[
+        "'w' (write)",
+        "`.w` (write)",
+        "the 'w' permission",
+        "`.w` permission",
+        ".w permission",
+    ];
+    for (start, end) in sentences(text) {
+        let Some(sentence) = text.get(start..end) else {
+            continue;
+        };
+        let lower = sentence.replace('\u{2019}', "'").to_ascii_lowercase();
+        let has_negative_cue = NEGATIVE_SCOPE_CUES.iter().any(|cue| lower.contains(cue));
+        if !has_negative_cue
+            && WRITE_W_PHRASES.iter().any(|phrase| lower.contains(phrase))
+            && !sources_text
+                .iter()
+                .any(|src| src.to_ascii_lowercase().contains("'w'"))
+        {
+            let message = "Claims `.w` / `'w'` is a SMART write permission; SMART v2 uses `.c` (create) and `.u` (update), while SMART v1 uses `.write`."
+                .to_owned();
+            if !faults.iter().any(|(_, existing)| existing == &message) {
+                faults.push((sentence.trim().to_owned(), message));
             }
         }
     }
@@ -143,10 +207,21 @@ pub(crate) fn smart_scope_faults(text: &str, sources_text: &[&str]) -> Vec<Strin
 /// contradictions (undeclared injected types, `refreshToken` naming on
 /// `client_credentials`, and mismatched `expires_in` buffer seconds across prose
 /// and code).
+#[cfg(test)]
 pub(crate) fn block_consistency_faults(
     lesson: &Value,
     sources_text: &[&str],
 ) -> Vec<(usize, String)> {
+    block_consistency_fault_entries(lesson, sources_text)
+        .into_iter()
+        .map(|(index, _, message)| (index, message))
+        .collect()
+}
+
+pub(crate) fn block_consistency_fault_entries(
+    lesson: &Value,
+    sources_text: &[&str],
+) -> Vec<(usize, String, String)> {
     let Some(blocks) = lesson.get("blocks").and_then(Value::as_array) else {
         return Vec::new();
     };
@@ -174,8 +249,8 @@ pub(crate) fn block_consistency_faults(
             .get("body")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        for fault in smart_scope_faults(body, sources_text) {
-            issues.push((index, fault));
+        for (target, fault) in smart_scope_fault_entries(body, sources_text) {
+            issues.push((index, target, fault));
         }
 
         let section_has_client_creds = body.contains("client_credentials")
@@ -189,6 +264,7 @@ pub(crate) fn block_consistency_faults(
                 for missing in undeclared_injected_types(code, &declared_types) {
                     issues.push((
                         index,
+                        missing.clone(),
                         format!(
                             "TypeScript code references `{missing}` without importing or defining `{missing}` in the lesson."
                         ),
@@ -203,6 +279,7 @@ pub(crate) fn block_consistency_faults(
                         if contains_ident(code, ident) {
                             issues.push((
                                 index,
+                                ident.to_owned(),
                                 format!(
                                     "Code uses `grant_type: 'client_credentials'` (which issues no refresh tokens) while naming `{ident}`; rename to `requestAccessToken` / `inflightTokenRequests`."
                                 ),
@@ -211,13 +288,67 @@ pub(crate) fn block_consistency_faults(
                         }
                     }
                 }
-                if let Some(mismatch) = code_buffer_mismatch(code, &prose_buffers) {
-                    issues.push((index, mismatch));
+                if let Some((snippet, mismatch)) = code_buffer_mismatch(code, &prose_buffers) {
+                    issues.push((index, snippet, mismatch));
                 }
             }
         }
     }
     issues
+}
+
+fn mentions_smart_fhir_context(text: &str, sources_text: &[&str]) -> bool {
+    let text_lower = text.replace('\u{2019}', "'").to_ascii_lowercase();
+    let has_explicit_cue = |haystack: &str| {
+        haystack.contains("fhir")
+            || haystack.contains("smart")
+            || haystack.contains("hl7")
+            || haystack.contains(".cruds")
+            || haystack.contains("launch/patient")
+            || haystack.contains("launch/encounter")
+    };
+    if has_explicit_cue(&text_lower)
+        || sources_text
+            .iter()
+            .any(|src| has_explicit_cue(&src.to_ascii_lowercase()))
+    {
+        return true;
+    }
+    let mentions_scope_word =
+        contains_ascii_word(&text_lower, "scope") || contains_ascii_word(&text_lower, "scopes");
+    extract_smart_tokens(text).into_iter().any(|token| {
+        let Some((_, rest)) = token.split_once('/') else {
+            return false;
+        };
+        let Some((resource, suffix)) = rest.split_once('.') else {
+            return false;
+        };
+        FHIR_RESOURCES.contains(&resource)
+            || matches!(suffix, "read" | "write")
+            || (mentions_scope_word
+                && (suffix == "*"
+                    || (!suffix.is_empty()
+                        && suffix.len() <= 5
+                        && suffix
+                            .bytes()
+                            .all(|byte| matches!(byte, b'c' | b'r' | b'u' | b'd' | b's' | b'w')))))
+    })
+}
+
+fn contains_ascii_word(haystack: &str, word: &str) -> bool {
+    let bytes = haystack.as_bytes();
+    let mut from = 0;
+    while let Some(rel) = haystack[from..].find(word) {
+        let start = from + rel;
+        let end = start + word.len();
+        let left_ok = start == 0 || !bytes[start - 1].is_ascii_alphanumeric();
+        let right_ok = end == bytes.len() || !bytes[end].is_ascii_alphanumeric();
+        if left_ok && right_ok {
+            return true;
+        }
+        from = start + 1;
+    }
+    false
 }
 
 fn extract_smart_tokens(text: &str) -> Vec<String> {
@@ -274,23 +405,55 @@ fn is_valid_smart_suffix(suffix: &str) -> bool {
 }
 
 fn collect_declared_types(code: &str, out: &mut HashSet<String>) {
+    let mut in_import = false;
     for line in code.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("import ") {
-            for word in trimmed.split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_') {
+        if trimmed.is_empty() || trimmed.starts_with("//") {
+            continue;
+        }
+        if in_import
+            && trimmed.starts_with([
+                "@",
+                "class ",
+                "interface ",
+                "type ",
+                "enum ",
+                "export ",
+                "function ",
+                "const ",
+                "let ",
+                "var ",
+                "abstract ",
+            ])
+        {
+            in_import = false;
+        }
+        if trimmed.starts_with("import ") || trimmed.starts_with("import{") {
+            in_import = true;
+        }
+        if in_import {
+            let before_from = split_import_from(trimmed);
+            for word in before_from.split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_') {
                 if word.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
                     out.insert(word.to_owned());
                 }
             }
+            if import_statement_ends(trimmed) {
+                in_import = false;
+            }
+            continue;
         }
         for kw in [
             "class ",
             "interface ",
             "type ",
             "enum ",
+            "abstract class ",
             "export class ",
+            "export abstract class ",
             "export interface ",
             "export type ",
+            "export enum ",
         ] {
             if let Some(rest) = trimmed.strip_prefix(kw) {
                 if let Some(name) = rest
@@ -302,6 +465,35 @@ fn collect_declared_types(code: &str, out: &mut HashSet<String>) {
             }
         }
     }
+}
+
+fn split_import_from(line: &str) -> &str {
+    if line.starts_with("from ") {
+        return "";
+    }
+    if let Some((before, _)) = line.split_once(" from ") {
+        return before;
+    }
+    if let Some((before, _)) = line.split_once("}from ") {
+        return before;
+    }
+    if line.starts_with("import '") || line.starts_with("import \"") {
+        return "";
+    }
+    line
+}
+
+fn import_statement_ends(trimmed: &str) -> bool {
+    let without_comment = trimmed.split("//").next().unwrap_or(trimmed).trim_end();
+    if without_comment.ends_with(';') {
+        return true;
+    }
+    let has_from = without_comment.starts_with("from ")
+        || without_comment.contains(" from ")
+        || without_comment.contains("}from ");
+    let side_effect =
+        without_comment.starts_with("import '") || without_comment.starts_with("import \"");
+    (has_from || side_effect) && (without_comment.ends_with('\'') || without_comment.ends_with('"'))
 }
 
 fn undeclared_injected_types(code: &str, declared: &HashSet<String>) -> Vec<String> {
@@ -353,16 +545,7 @@ fn contains_ident(code: &str, ident: &str) -> bool {
 }
 
 fn collect_prose_expiry_buffers(body: &str, out: &mut Vec<usize>) {
-    let fences = code_fences(body);
-    let mut prose = String::new();
-    let mut offset = 0;
-    for line in body.split_inclusive('\n') {
-        if !fences.iter().any(|fence| fence.whole().contains(&offset)) {
-            prose.push_str(line);
-        }
-        offset += line.len();
-    }
-    let normalized = prose.replace('`', "");
+    let normalized = prose_without_fences(body).replace('`', "");
     let mut search = normalized.as_str();
     while let Some(at) = search.find("expires_in - ") {
         let after = &search[at + "expires_in - ".len()..];
@@ -376,7 +559,7 @@ fn collect_prose_expiry_buffers(body: &str, out: &mut Vec<usize>) {
     }
 }
 
-fn code_buffer_mismatch(code: &str, prose_buffers: &[usize]) -> Option<String> {
+fn code_buffer_mismatch(code: &str, prose_buffers: &[usize]) -> Option<(String, String)> {
     if prose_buffers.len() != 1 {
         return None;
     }
@@ -389,8 +572,11 @@ fn code_buffer_mismatch(code: &str, prose_buffers: &[usize]) -> Option<String> {
             let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
             if let Ok(val) = digits.parse::<usize>() {
                 if val > 0 && val < 300 && val != expected {
-                    return Some(format!(
-                        "Code expiry buffer (`expires_in - {val}`) disagrees with lesson prose (`expires_in - {expected}`); use the same buffer value across sections."
+                    return Some((
+                        format!("expires_in - {val}"),
+                        format!(
+                            "Code expiry buffer (`expires_in - {val}`) disagrees with lesson prose (`expires_in - {expected}`); use the same buffer value across sections."
+                        ),
                     ));
                 }
             }

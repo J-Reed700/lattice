@@ -25,6 +25,7 @@ mod query;
 mod saving;
 use gaps::{
     claim_gap as claim_gap_value, is_scenario_local_gap, select_need_candidates, topic_gap,
+    NeedSearch,
 };
 pub(super) use query::select_noted;
 pub use query::select_references;
@@ -40,6 +41,7 @@ struct Context {
     database: Database,
     program_id: String,
     topic: String,
+    prior_knowledge: String,
     web: Arc<dyn WebServiceTrait>,
     searched: Arc<Mutex<HashSet<String>>>,
 }
@@ -53,6 +55,17 @@ pub(crate) async fn run<T>(
     web: Option<Arc<dyn WebServiceTrait>>,
     future: impl std::future::Future<Output = T>,
 ) -> T {
+    run_with_prior(database, program_id, topic, String::new(), web, future).await
+}
+
+pub(crate) async fn run_with_prior<T>(
+    database: Database,
+    program_id: String,
+    topic: String,
+    prior_knowledge: String,
+    web: Option<Arc<dyn WebServiceTrait>>,
+    future: impl std::future::Future<Output = T>,
+) -> T {
     match web {
         Some(web) => {
             CURRENT
@@ -61,6 +74,7 @@ pub(crate) async fn run<T>(
                         database,
                         program_id,
                         topic,
+                        prior_knowledge,
                         web,
                         searched: Default::default(),
                     },
@@ -188,8 +202,10 @@ pub(super) async fn expand<'a>(
     // searches that failed and the pages that could not be read are part of
     // what researching a claim costs.
     let started = Instant::now();
-    let companies =
-        company_framing::ungrounded_companies(&[context.topic.as_str()], &references.sources);
+    let companies = company_framing::ungrounded_companies(
+        &[context.topic.as_str(), context.prior_knowledge.as_str()],
+        &references.sources,
+    );
     let mut seen_statements: HashSet<String> = HashSet::new();
     let looked_for: Vec<Finding> = findings
         .iter()
@@ -551,18 +567,17 @@ async fn research<'a>(
     };
     crate::lesson_progress::stage(looking.clone());
     for (need, gap) in needs {
-        let selection = select_need_candidates(
+        let search = NeedSearch {
             llm,
             context,
             gaps,
-            &urls,
-            &mut searched,
-            &need,
+            urls: &urls,
+            need: &need,
             gap,
-            &looking,
-            pages.allows(gap, false) || pages.allows(gap, true),
-        )
-        .await?;
+            looking: &looking,
+            pages_left: pages.allows(gap, false) || pages.allows(gap, true),
+        };
+        let selection = select_need_candidates(&search, &mut searched).await?;
         if selection.failed {
             failed = true;
         }

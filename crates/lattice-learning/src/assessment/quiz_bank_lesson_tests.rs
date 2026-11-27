@@ -1241,3 +1241,33 @@ async fn lesson_material_strips_code_fences_and_preserves_verbatim_contiguous_ru
     assert!(crate::grade_rationale::verbatim(&raw_body, verified_c));
     Ok(())
 }
+
+#[test]
+fn lesson_question_item_clears_right_choice_rationale_before_bank_validation() {
+    let q = LessonQuestion {
+        id: "q-1".into(),
+        kind: LessonQuestionKind::Quiz,
+        prompt: "Which scope creates a Binary resource?".into(),
+        options: vec![
+            "system/Binary.c".into(),
+            "system/Binary.r".into(),
+            "system/Binary.u".into(),
+            "system/Binary.d".into(),
+        ],
+        source_ids: vec![],
+    };
+    let key = LessonAnswerKey {
+        question_id: "q-1".into(),
+        correct_index: 0,
+        explanation: "SMART v2 uses .c for create permissions.".into(),
+        rationales: vec![
+            "Correct because .c creates Binary resources.".into(),
+            "Read-only does not create resources.".into(),
+            "Update modifies existing resources.".into(),
+            "Delete removes resources.".into(),
+        ],
+    };
+    let candidate = crate::quiz_bank_jobs::lesson_question_item(&q, &key, vec!["o-1".into()]);
+    assert_eq!(candidate.distractor_rationales[0], "");
+    crate::assessment_engine::validate_candidate(&candidate).unwrap();
+}

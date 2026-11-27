@@ -1778,7 +1778,11 @@ async fn a_correction_that_also_removes_another_failed_sentence_leaves_that_sent
     let unchanged_beta = json!({"edits":[
         {"path":"/blocks/0/body","before":BETA,"after":BETA},
     ]});
-    let llm = recording(vec![merging.to_string(), unchanged_beta.to_string()]);
+    let llm = recording(vec![
+        merging.to_string(),
+        merging.to_string(),
+        unchanged_beta.to_string(),
+    ]);
     let mut ledger = rewriting(&llm, &body, &[("alpha", ALPHA), ("beta", BETA)]).await?;
     let context = context_of(
         &body,
@@ -1799,6 +1803,7 @@ async fn a_correction_that_also_removes_another_failed_sentence_leaves_that_sent
         matches!(reasons.as_slice(), [reason] if reason == NO_CHANGE),
         "{reasons:?}"
     );
+    assert_eq!(llm.sent.lock().unwrap().len(), 3);
     Ok(())
 }
 
@@ -1972,5 +1977,21 @@ async fn bundling_other_failed_claims_into_one_entry_is_refused_and_reasked_sepa
     );
     assert!(rejections(ledger.entry(&ClaimId("a".into())).unwrap()).is_empty());
     assert!(rejections(ledger.entry(&ClaimId("c".into())).unwrap()).is_empty());
+    assert_eq!(llm.sent.lock().unwrap().len(), 3);
+    let sent = llm.sent.lock().unwrap().clone();
+    assert!(
+        messages(&sent[1])
+            .iter()
+            .any(|(_, text)| text.contains("Your edits for f1")),
+        "{:?}",
+        messages(&sent[1])
+    );
+    assert!(
+        messages(&sent[2])
+            .iter()
+            .any(|(_, text)| text.contains("Your entry for f2")),
+        "{:?}",
+        messages(&sent[2])
+    );
     Ok(())
 }

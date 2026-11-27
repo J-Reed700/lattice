@@ -1144,18 +1144,48 @@ fn company_framing_and_spec_consistency_findings_flag_ungrounded_claims_and_bad_
     let company_issues = company_framing_findings(&candidate, &["Documo".to_owned()]);
     assert_eq!(company_issues.len(), 1, "{company_issues:?}");
     assert_eq!(company_issues[0].place().site, FindingSite::Section(0));
+    assert!(
+        matches!(
+            company_issues[0].origin,
+            crate::review_findings::Origin::Rule {
+                rule: Rule::CompanyFraming,
+                subject: Some(_),
+            }
+        ),
+        "{company_issues:?}"
+    );
+    assert_eq!(
+        company_issues[0].sentence.as_deref(),
+        Some("Documo\u{2019}s PostgreSQL database stores tenant keys.")
+    );
 
     let spec_issues = spec_consistency_findings(&candidate, &[]);
     assert!(
-        spec_issues.iter().any(
-            |f| f.place().site == FindingSite::Section(0) && f.note.contains("system/Binary.w")
-        ),
+        spec_issues.iter().any(|f| {
+            f.place().site == FindingSite::Section(0)
+                && f.note.contains("system/Binary.w")
+                && matches!(
+                    f.origin,
+                    crate::review_findings::Origin::Rule {
+                        rule: Rule::SpecConsistency,
+                        subject: Some(_),
+                    }
+                )
+        }),
         "{spec_issues:?}"
     );
     assert!(
-        spec_issues
-            .iter()
-            .any(|f| f.place().site == FindingSite::Section(1) && f.note.contains("ConfigService")),
+        spec_issues.iter().any(|f| {
+            f.place().site == FindingSite::Section(1)
+                && f.note.contains("ConfigService")
+                && matches!(
+                    f.origin,
+                    crate::review_findings::Origin::Rule {
+                        rule: Rule::SpecConsistency,
+                        subject: Some(_),
+                    }
+                )
+        }),
         "{spec_issues:?}"
     );
 }
