@@ -187,7 +187,7 @@ async fn grade_row(llm: &dyn LLMPort, row: &Value, item: &Value) -> Result<Vec<V
 }
 
 /// The rows and bank of one registered grading set, with their file hashes.
-pub(super) fn grading_set(name: &str) -> Result<(Vec<Value>, Value, String, String)> {
+pub(in super::super) fn grading_set(name: &str) -> Result<(Vec<Value>, Value, String, String)> {
     let dir = repo_root().join(GRADING_DIR);
     let registry = read_json(&dir.join("sets.json"))?
         .ok_or_else(|| refuse("evals/courses/grading/sets.json is missing"))?;
