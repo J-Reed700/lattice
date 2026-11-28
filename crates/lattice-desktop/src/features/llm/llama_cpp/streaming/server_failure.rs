@@ -177,6 +177,18 @@ impl ServerFailure {
         matches!(self.status, Some(400 | 413 | 422))
     }
 
+    /// The server aborted a structured-output response because it exhausted
+    /// its output token budget (`finish_reason=length`). Surface as
+    /// [`AppError::AnswerCutOff`] rather than a fatal [`AppError::InvalidState`]
+    /// so contract-level cut-off recovery can react.
+    pub fn structured_output_cut_off(&self) -> bool {
+        self.kind.contains("structured_output_failed")
+            && self
+                .message
+                .as_deref()
+                .is_some_and(|message| message.contains("finish_reason=length"))
+    }
+
     /// The server's own words, safe to show: a fixed account of a message
     /// the client recognises, otherwise the words sanitized against the
     /// request. An authentication failure's words are not shown at all: they
@@ -221,6 +233,9 @@ impl ServerFailure {
         } else {
             format!("{}{}: {words}", self.preface, self.kind)
         };
+        if self.structured_output_cut_off() {
+            return AppError::AnswerCutOff(description);
+        }
         match self.status {
             Some(429) => AppError::RateLimitExceeded(description),
             Some(408 | 502 | 503 | 504) => AppError::Network(description),
@@ -269,5 +284,38 @@ impl ServerFailure {
             attempt,
             "llm.request_rejected"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn structured_output_length_cutoff_maps_to_answer_cut_off() {
+        for error_event in [
+            json!({
+                "type": "structured_output_failed",
+                "message": "structured output was incomplete (finish_reason=length); increase the output budget"
+            }),
+            json!({
+                "code": 500,
+                "type": "structured_output_failed",
+                "message": "structured output was incomplete (finish_reason=length); increase the output budget"
+            }),
+        ] {
+            let failure = ServerFailure::streamed(&error_event);
+            assert!(failure.structured_output_cut_off());
+            let err = failure.error(&[]);
+            assert!(matches!(err, AppError::AnswerCutOff(_)), "{err:?}");
+        }
+
+        let other = ServerFailure::streamed(&json!({
+            "type": "structured_output_failed",
+            "message": "grammar compilation error"
+        }));
+        assert!(!other.structured_output_cut_off());
+        assert!(matches!(other.error(&[]), AppError::InvalidState(_)));
     }
 }

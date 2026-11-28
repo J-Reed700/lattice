@@ -157,6 +157,9 @@ impl LlamaCppLlm {
                     Err(Failure::Server(failure)) => {
                         let texts = rejection::request_texts(&body);
                         failure.log(&texts, attempt, size, window);
+                        if failure.structured_output_cut_off() {
+                            return Err(failure.error(&texts));
+                        }
                         if failure.refusal() {
                             return Err(failure.rejected(&texts, Some((size, window)), false));
                         }
