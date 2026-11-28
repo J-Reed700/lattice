@@ -47,4 +47,40 @@ fn consecutive_repeats_catch_short_duplicates_and_stutters_in_prose_and_list_ite
     );
     assert_eq!(dup_fallback.len(), 1);
     assert!(dup_fallback[0].prefix_stutter);
+
+    let similar_stutter = consecutive_repeats(
+        "This prevents multiple connectors from retrying at the exact same moment. This prevents thundering herds if multiple connectors hit the limit simultaneously.",
+    );
+    assert_eq!(similar_stutter.len(), 1);
+    assert!(similar_stutter[0].prefix_stutter);
+
+    assert!(consecutive_repeats(
+        "A long explanation of the idea aa, with no figures in it. A long explanation of the idea ab, with no figures in it."
+    )
+    .is_empty());
+
+    let two_sentence_block = "6. Write unit tests verifying the retry behavior.\n\nTo implement this in NestJS, create an HTTP interceptor that wraps your outgoing requests. In your unit tests, mock the HTTP client to simulate 429 responses.\nTo implement this in NestJS, create an HTTP interceptor that wraps your outgoing requests. In your unit tests, mock the HTTP client to simulate 429 responses.";
+    let period_two = consecutive_repeats(two_sentence_block);
+    assert_eq!(period_two.len(), 1, "{period_two:?}");
+    assert!(!period_two[0].prefix_stutter);
+
+    let unindented_after_list =
+        "6. Write unit tests verifying the retry behavior.\nTo implement this in NestJS, create an HTTP interceptor that wraps your outgoing requests.";
+    let extracted = comparable(unindented_after_list);
+    assert_eq!(
+        extracted,
+        vec![
+            "To implement this in NestJS, create an HTTP interceptor that wraps your outgoing requests."
+        ]
+    );
+
+    assert!(consecutive_repeats(
+        "When an access token is missing or expired, return HTTP 401 Unauthorized. When a token lacks the required scope, return HTTP 403 Forbidden."
+    )
+    .is_empty());
+
+    let three_sentence_cycle = "Validate the JWT signature first. Verify the token expiration timestamp next. Confirm the required FHIR scopes match.\nValidate the JWT signature first. Verify the token expiration timestamp next. Confirm the required FHIR scopes match.";
+    let cycle_repeats = consecutive_repeats(three_sentence_cycle);
+    assert_eq!(cycle_repeats.len(), 1, "{cycle_repeats:?}");
+    assert!(!cycle_repeats[0].prefix_stutter);
 }

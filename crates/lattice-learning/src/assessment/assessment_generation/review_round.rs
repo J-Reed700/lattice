@@ -88,9 +88,33 @@ pub(super) async fn reviewed_round(
 ) -> Result<(Vec<AuthoredItem>, Vec<Dropped>)> {
     let mut fresh = Vec::new();
     let mut flawed = Vec::new();
+    let mut known_with_batch = need.existing_prompts.clone();
+    let mut dropped = Vec::new();
     for result in written {
         match result {
-            Ok(item) => fresh.push(item),
+            Ok(item) => {
+                let candidate: LearningAssessmentCandidate = item.candidate.clone().into();
+                if let Some(reason) =
+                    item_review::repeat_overlap_reason(&candidate, &known_with_batch)
+                {
+                    if need.pass == super::BankPass::Retakes {
+                        dropped.push(Dropped {
+                            reason,
+                            repeat: true,
+                        });
+                    } else {
+                        flawed.push(ToRewrite {
+                            prompt: item.candidate.prompt,
+                            options: item.candidate.options,
+                            findings: vec![reason],
+                            difficulty: item.candidate.difficulty,
+                        });
+                    }
+                } else {
+                    known_with_batch.push(item_review::item_repeat_descriptor(&candidate));
+                    fresh.push(item);
+                }
+            }
             Err(unbuilt) => flawed.push(ToRewrite {
                 prompt: unbuilt.prompt,
                 options: unbuilt.options,
@@ -100,7 +124,6 @@ pub(super) async fn reviewed_round(
         }
     }
     let mut kept = Vec::new();
-    let mut dropped = Vec::new();
     if !fresh.is_empty() {
         match review_items(llm, need, &fresh, &need.existing_prompts).await? {
             Ok(findings) => {
@@ -126,7 +149,10 @@ pub(super) async fn reviewed_round(
         return Ok((kept, dropped));
     }
     let mut known = need.existing_prompts.clone();
-    known.extend(kept.iter().map(|i| i.candidate.prompt.clone()));
+    known.extend(kept.iter().map(|i| {
+        let candidate: LearningAssessmentCandidate = i.candidate.clone().into();
+        item_review::item_repeat_descriptor(&candidate)
+    }));
     let mut own = need.clone();
     own.existing_prompts = known.clone();
     let repairs = flawed.iter().map(|flawed| {
@@ -159,9 +185,22 @@ pub(super) async fn reviewed_round(
     });
     let repaired = futures::future::try_join_all(repairs).await?;
     let mut again = Vec::new();
+    let mut second_known = known.clone();
     for (flawed, repair) in flawed.into_iter().zip(repaired) {
         match repair {
-            Some(Ok(item)) => again.push(item),
+            Some(Ok(item)) => {
+                let candidate: LearningAssessmentCandidate = item.candidate.clone().into();
+                if let Some(reason) = item_review::repeat_overlap_reason(&candidate, &second_known)
+                {
+                    dropped.push(Dropped {
+                        reason,
+                        repeat: true,
+                    });
+                } else {
+                    second_known.push(item_review::item_repeat_descriptor(&candidate));
+                    again.push(item);
+                }
+            }
             Some(Err(unbuilt)) => dropped.push(Dropped::flawed(unbuilt.faults.join(" "))),
             None => dropped.push(Dropped::flawed(flawed.findings.join(" "))),
         }

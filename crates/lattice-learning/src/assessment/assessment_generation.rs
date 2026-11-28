@@ -591,6 +591,14 @@ pub(crate) async fn author_items_for(
         if remaining == 0 {
             break;
         }
+        let mut round_notes = notes.clone();
+        let overrepresented = super::item_review::overrepresented_topics(&need.existing_prompts);
+        if !overrepresented.is_empty() {
+            round_notes.push(format!(
+                "Existing questions already heavily cover ({}); ask about DIFFERENT, untested concepts or mechanisms from the other supplied passages.",
+                overrepresented.join(", ")
+            ));
+        }
         // As many items as one request holds: fewer items leave their
         // answers' room to the passages.
         let mut count = remaining;
@@ -598,7 +606,7 @@ pub(crate) async fn author_items_for(
             let batch = Batch {
                 need: &need,
                 count,
-                notes: notes.clone(),
+                notes: round_notes.clone(),
                 repair: None,
                 companies,
             };
@@ -625,7 +633,9 @@ pub(crate) async fn author_items_for(
         let (kept, dropped) =
             review_round::reviewed_round(llm, &need, &collection, written, companies).await?;
         for item in kept {
-            need.existing_prompts.push(item.candidate.prompt.clone());
+            let candidate: LearningAssessmentCandidate = item.candidate.clone().into();
+            need.existing_prompts
+                .push(super::item_review::item_repeat_descriptor(&candidate));
             out.items.push(item);
         }
         repeats += dropped.iter().filter(|d| d.repeat).count();

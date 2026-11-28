@@ -831,3 +831,231 @@ fn single_passage_quote_picks_contiguous_verbatim_slice_and_rejects_disjoint_sho
         err.faults
     );
 }
+
+#[test]
+fn authored_content_faults_catches_passage_meta_talk_and_scope_401_contradiction() {
+    let passage_ref = candidate_with(
+        LearningItemFormat::SingleChoice,
+        "What happens when Retry-After is missing?",
+        "Based on the provided principles, the passage states that exponential backoff is required, while the passage does not mention 500 errors.",
+        vec![],
+    );
+    let meta_faults = engine::checks::authored_content_faults(&passage_ref, "");
+    assert!(
+        meta_faults.iter().any(|f| f.contains("meta-talk")),
+        "{meta_faults:?}"
+    );
+
+    let wrong_status = candidate_with(
+        LearningItemFormat::SingleChoice,
+        "Which HTTP status code occurs when scopes are missing?",
+        "A 401 Unauthorized error stems from an invalid scope mismatch.",
+        vec![],
+    );
+    let status_faults = engine::checks::authored_content_faults_for(
+        &wrong_status,
+        "Insufficient scopes return HTTP 403 Forbidden with insufficient_scope.",
+        &[],
+    );
+    assert!(
+        status_faults.iter().any(|f| f.contains("403 Forbidden")),
+        "{status_faults:?}"
+    );
+
+    let ungrounded_scope_401 = engine::checks::authored_content_faults_for(
+        &candidate_with(
+            LearningItemFormat::SingleChoice,
+            "Which status code indicates an unprovisioned SMART scope?",
+            "A 401 Unauthorized response indicates an invalid scope mismatch.",
+            vec![],
+        ),
+        "Unprovisioned SMART scopes fail authorization checks.",
+        &[],
+    );
+    assert!(
+        ungrounded_scope_401
+            .iter()
+            .any(|f| f.contains("403 Forbidden")),
+        "{ungrounded_scope_401:?}"
+    );
+
+    let prompted_scope_401 = engine::checks::authored_content_faults_for(
+        &candidate_with(
+            LearningItemFormat::SingleChoice,
+            "An upstream gateway returns HTTP 401 on an invalid scope mismatch; how should the caller log it?",
+            "A 401 Unauthorized error occurred due to an invalid scope mismatch.",
+            vec![],
+        ),
+        "Unprovisioned SMART scopes fail authorization checks.",
+        &[],
+    );
+    assert!(prompted_scope_401.is_empty(), "{prompted_scope_401:?}");
+}
+
+#[test]
+fn repeat_descriptors_and_overlap_guard_catch_duplicate_matching_and_cloze_decisions() {
+    let first_match = LearningAssessmentCandidate {
+        id: "m1".into(),
+        outcome_ids: vec!["o1".into()],
+        format: LearningItemFormat::Matching,
+        difficulty: 3,
+        prompt: "Match each rate-limiting scenario to the connector action.".into(),
+        left: vec![
+            "429 with Retry-After header".into(),
+            "429 without Retry-After header".into(),
+            "Repeated retries violating Retry-After".into(),
+        ],
+        options: vec![
+            "Pause for the Retry-After duration".into(),
+            "Apply exponential backoff with jitter".into(),
+            "Risk API key suspension".into(),
+        ],
+        source_version_ids: vec![],
+        rubric: vec![],
+        key: LearningAssessmentKey::Matching(vec![0, 1, 2]),
+        explanation: "Respect Retry-After, use jittered backoff as fallback, and avoid suspension."
+            .into(),
+        distractor_rationales: vec![],
+    };
+    let dup_match = LearningAssessmentCandidate {
+        id: "m2".into(),
+        prompt: "A healthcare data connector faces HTTP 429 conditions. Match each condition to its outcome.".into(),
+        left: vec![
+            "Server returns Retry-After: 60".into(),
+            "Retry-After header omitted".into(),
+            "Sustained violation of rate contract".into(),
+        ],
+        options: vec![
+            "Pause for Retry-After duration specified".into(),
+            "Compute exponential backoff with random jitter".into(),
+            "API key suspension from sustained violation".into(),
+        ],
+        ..first_match.clone()
+    };
+    let held_desc = crate::assessment::item_review::item_repeat_descriptor(&first_match);
+    assert!(held_desc.contains("[pairs: "), "{held_desc}");
+    assert!(
+        crate::assessment::item_review::repeat_overlap_reason(&dup_match, &[held_desc]).is_some()
+    );
+
+    let first_cloze = LearningAssessmentCandidate {
+        id: "c1".into(),
+        outcome_ids: vec!["o1".into()],
+        format: LearningItemFormat::Cloze,
+        difficulty: 3,
+        prompt: "Parse the {{1}} header, or fall back to {{2}}.".into(),
+        left: vec![],
+        options: vec![],
+        source_version_ids: vec![],
+        rubric: vec![],
+        key: LearningAssessmentKey::Cloze(vec![
+            crate::assessment_engine::LearningTextKey {
+                variants: vec!["Retry-After".into()],
+                numeric: None,
+            },
+            crate::assessment_engine::LearningTextKey {
+                variants: vec!["exponential backoff with jitter".into()],
+                numeric: None,
+            },
+        ]),
+        explanation: "Parse Retry-After or apply exponential backoff with jitter.".into(),
+        distractor_rationales: vec![],
+    };
+    let dup_cloze = LearningAssessmentCandidate {
+        id: "c2".into(),
+        prompt: "When {{1}} is absent, the connector falls back to {{2}}.".into(),
+        ..first_cloze.clone()
+    };
+    let held_cloze = crate::assessment::item_review::item_repeat_descriptor(&first_cloze);
+    assert!(held_cloze.contains("[blanks: "), "{held_cloze}");
+    assert!(crate::assessment::item_review::repeat_overlap_reason(
+        &dup_cloze,
+        std::slice::from_ref(&held_cloze)
+    )
+    .is_some());
+    let overrepresented = crate::assessment::item_review::overrepresented_topics(&[
+        held_cloze.clone(),
+        held_cloze,
+        crate::assessment::item_review::item_repeat_descriptor(&first_match),
+        crate::assessment::item_review::item_repeat_descriptor(&dup_match),
+    ]);
+    assert!(!overrepresented.is_empty());
+    for tag in ["pairs", "blanks", "order", "picks"] {
+        assert!(
+            !overrepresented.iter().any(|t| t == tag),
+            "{overrepresented:?}"
+        );
+    }
+
+    let two_word_right_a = LearningAssessmentCandidate {
+        id: "tw1".into(),
+        prompt: "Match each HTTP error handling policy.".into(),
+        left: vec!["First rate condition".into(), "Second auth event".into()],
+        options: vec!["Exponential backoff".into(), "Token refresh".into()],
+        key: LearningAssessmentKey::Matching(vec![0, 1]),
+        ..first_match.clone()
+    };
+    let two_word_right_b = LearningAssessmentCandidate {
+        id: "tw2".into(),
+        prompt: "Match each different connector strategy.".into(),
+        left: vec![
+            "Distinct telemetry trigger".into(),
+            "Distinct billing quota".into(),
+        ],
+        options: vec!["Random backoff".into(), "Scope refresh".into()],
+        key: LearningAssessmentKey::Matching(vec![0, 1]),
+        ..first_match
+    };
+    assert!(crate::assessment::item_review::repeat_overlap_reason(
+        &two_word_right_b,
+        &[crate::assessment::item_review::item_repeat_descriptor(
+            &two_word_right_a
+        )],
+    )
+    .is_none());
+
+    let one_blank = |id: &str, prompt: &str, blank: &str| LearningAssessmentCandidate {
+        id: id.into(),
+        prompt: prompt.into(),
+        key: LearningAssessmentKey::Cloze(vec![crate::assessment_engine::LearningTextKey {
+            variants: vec![blank.into()],
+            numeric: None,
+        }]),
+        ..first_cloze.clone()
+    };
+    let cloze_scope = one_blank(
+        "c3",
+        "When client scopes fail validation, respond with HTTP {{1}} Forbidden.",
+        "403",
+    );
+    let cloze_unrelated = one_blank(
+        "c4",
+        "Billing account suspension triggers status {{1}} on unauthorized admin calls.",
+        "403",
+    );
+    assert!(crate::assessment::item_review::repeat_overlap_reason(
+        &cloze_unrelated,
+        &[crate::assessment::item_review::item_repeat_descriptor(
+            &cloze_scope
+        )],
+    )
+    .is_none());
+
+    let cloze_wait_a = one_blank(
+        "c5",
+        "Respect the duration in the {{1}} header on rate limits.",
+        "Retry-After",
+    );
+    let cloze_wait_b = one_blank(
+        "c6",
+        "Pause for the interval inside the {{1}} header on rate limits.",
+        "Retry-After",
+    );
+    assert!(crate::assessment::item_review::repeat_overlap_reason(
+        &cloze_wait_b,
+        &[crate::assessment::item_review::item_repeat_descriptor(
+            &cloze_wait_a
+        )],
+    )
+    .is_some());
+}

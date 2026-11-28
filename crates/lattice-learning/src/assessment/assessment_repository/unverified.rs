@@ -1,8 +1,8 @@
 //! Guards quiz-bank authoring and quiz draws against lesson claims that are
 //! unverified (`no_source`, `unsupported`, `contradicted`, or still unsettled).
 use crate::content_verification::{
-    is_claim_active_unverified, report_unverified_block_quotes, report_unverified_question_indices,
-    LessonVerificationReport,
+    is_claim_active_unverified, report_block_claim_counts, report_unverified_block_quotes,
+    report_unverified_question_indices, LessonVerificationReport,
 };
 use crate::lessons::claim_reviews::repository::load_in;
 use crate::persistence::decode;
@@ -95,9 +95,53 @@ pub(super) async fn verified_block_bodies_in(
     Box::pin(verified_block_bodies_inner(connection, lesson_id, blocks)).await
 }
 
+#[derive(Default, Clone, Copy)]
+struct BlockClaimStats {
+    unverified: usize,
+    verified: usize,
+    consistent: usize,
+}
+
+impl BlockClaimStats {
+    fn is_ungrounded_dominated(self) -> bool {
+        self.unverified > self.verified + self.consistent && self.unverified >= 2
+    }
+}
+
 fn filter_blocks_with_report(raw: &str, blocks: &[(usize, String)]) -> Option<Vec<String>> {
     let report = decode::<LessonVerificationReport>(raw).ok()?;
     let by_block = report_unverified_block_quotes(&report, blocks.len());
+    let counts = report_block_claim_counts(&report, blocks.len());
+    let filtered: Vec<String> = blocks
+        .iter()
+        .map(|(ordinal, body)| match by_block.get(ordinal) {
+            Some(_)
+                if counts
+                    .get(ordinal)
+                    .copied()
+                    .map(|(unverified, verified)| BlockClaimStats {
+                        unverified,
+                        verified,
+                        consistent: 0,
+                    })
+                    .unwrap_or_default()
+                    .is_ungrounded_dominated() =>
+            {
+                String::new()
+            }
+            Some(quotes) => {
+                let claims: Vec<UnverifiedClaim<'_>> = quotes
+                    .iter()
+                    .map(|quote| UnverifiedClaim { span: None, quote })
+                    .collect();
+                strip_unverified_sentences(body, &claims)
+            }
+            None => strip_unverified_sentences(body, &[]),
+        })
+        .collect();
+    if filtered.iter().any(|body| !body.trim().is_empty()) {
+        return Some(filtered);
+    }
     Some(
         blocks
             .iter()
@@ -113,6 +157,32 @@ fn filter_blocks_with_report(raw: &str, blocks: &[(usize, String)]) -> Option<Ve
             })
             .collect(),
     )
+}
+
+fn collect_block_claim_stats(
+    claims: &[ClaimLedgerEntry],
+    block_count: usize,
+    by_id: &HashMap<&str, &ClaimState>,
+) -> HashMap<usize, BlockClaimStats> {
+    let mut stats: HashMap<usize, BlockClaimStats> = HashMap::new();
+    for entry in claims {
+        let loc = entry.location();
+        if loc.unit_kind == UnitKind::Block && loc.field == "body" && loc.unit_index < block_count {
+            let counts = stats.entry(loc.unit_index).or_default();
+            if is_claim_active_unverified(entry.state(), by_id) {
+                counts.unverified += 1;
+            } else {
+                match entry.state() {
+                    ClaimState::ResolvedByEvidence { .. }
+                    | ClaimState::GeneralKnowledge { .. }
+                    | ClaimState::Confirmed { .. } => counts.verified += 1,
+                    ClaimState::Consistent { .. } => counts.consistent += 1,
+                    _ => {}
+                }
+            }
+        }
+    }
+    stats
 }
 
 async fn verified_block_bodies_inner(
@@ -142,6 +212,26 @@ async fn verified_block_bodies_inner(
                         quote: &loc.quote,
                     });
             }
+        }
+        let stats = collect_block_claim_stats(&ledger.claims, blocks.len(), &by_id);
+        let filtered: Vec<String> = blocks
+            .iter()
+            .map(|(ordinal, body)| match by_block.get(ordinal) {
+                Some(_)
+                    if stats
+                        .get(ordinal)
+                        .copied()
+                        .unwrap_or_default()
+                        .is_ungrounded_dominated() =>
+                {
+                    String::new()
+                }
+                Some(claims) => strip_unverified_sentences(body, claims),
+                None => strip_unverified_sentences(body, &[]),
+            })
+            .collect();
+        if filtered.iter().any(|body| !body.trim().is_empty()) {
+            return Ok(filtered);
         }
         return Ok(blocks
             .iter()
@@ -233,7 +323,7 @@ async fn unverified_candidates_inner(
     for lesson_id in lesson_ids {
         let block_count = block_counts.get(&lesson_id).copied().unwrap_or(0);
         let ledger = Box::pin(load_in(connection, &lesson_id)).await?;
-        if !ledger.claims.is_empty() {
+        let poisoned_blocks = if !ledger.claims.is_empty() {
             let by_id: HashMap<&str, &ClaimState> = ledger
                 .claims
                 .iter()
@@ -247,22 +337,48 @@ async fn unverified_candidates_inner(
                 &mut unverified_questions,
                 &mut unverified_quotes,
             );
-            continue;
-        }
-        let report_json: Option<String> = sqlx::query_scalar(
-            "SELECT report_json FROM learning_lesson_verifications WHERE lesson_id=? ORDER BY checked_at DESC LIMIT 1",
-        )
-        .bind(&lesson_id)
-        .fetch_optional(&mut *connection)
-        .await?;
-        if let Some(raw) = report_json {
-            collect_report_unverified(
-                &raw,
-                &lesson_id,
-                block_count,
-                &mut unverified_questions,
-                &mut unverified_quotes,
-            );
+            ledger_poisoned_blocks(block_count, &ledger.claims, &by_id)
+        } else {
+            let report_json: Option<String> = sqlx::query_scalar(
+                "SELECT report_json FROM learning_lesson_verifications WHERE lesson_id=? ORDER BY checked_at DESC LIMIT 1",
+            )
+            .bind(&lesson_id)
+            .fetch_optional(&mut *connection)
+            .await?;
+            if let Some(raw) = report_json {
+                collect_report_unverified(
+                    &raw,
+                    &lesson_id,
+                    block_count,
+                    &mut unverified_questions,
+                    &mut unverified_quotes,
+                );
+            }
+            HashSet::new()
+        };
+        if !poisoned_blocks.is_empty() {
+            let block_rows: Vec<(i64, String)> =
+                sqlx::query_as("SELECT ordinal, body FROM learning_blocks WHERE lesson_id=?")
+                    .bind(&lesson_id)
+                    .fetch_all(&mut *connection)
+                    .await?;
+            for (ordinal, body) in block_rows {
+                if usize::try_from(ordinal)
+                    .ok()
+                    .is_some_and(|idx| poisoned_blocks.contains(&idx))
+                {
+                    for (start, end) in sentences(&body) {
+                        if let Some(piece) = body.get(start..end).map(str::trim) {
+                            if piece.chars().count() >= 25 {
+                                unverified_quotes
+                                    .entry(lesson_id.clone())
+                                    .or_default()
+                                    .push(piece.to_owned());
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -342,6 +458,18 @@ fn contains_word_bounded(haystack: &str, needle: &str) -> bool {
         let right_ok = !ends_word || after.is_none_or(|c| !is_word(c));
         left_ok && right_ok
     })
+}
+
+fn ledger_poisoned_blocks(
+    block_count: usize,
+    claims: &[ClaimLedgerEntry],
+    by_id: &HashMap<&str, &ClaimState>,
+) -> HashSet<usize> {
+    collect_block_claim_stats(claims, block_count, by_id)
+        .into_iter()
+        .filter(|(_, s)| s.is_ungrounded_dominated())
+        .map(|(unit, _)| unit)
+        .collect()
 }
 
 fn collect_ledger_unverified(

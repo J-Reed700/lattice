@@ -640,6 +640,14 @@ pub(crate) fn spec_consistency_findings(
                     }
                 }
             }
+            if text(block, "kind") == "check" && fault.message.contains("Uses HTTP `401` for scope")
+            {
+                if let Some((_, reveal)) = split_check(body) {
+                    if !crate::lessons::spec_checks::contains_401_scope_error(reveal) {
+                        continue;
+                    }
+                }
+            }
             let site = FindingSite::Section(fault.block_index);
             findings.push(
                 ReviewFinding::rule_about(

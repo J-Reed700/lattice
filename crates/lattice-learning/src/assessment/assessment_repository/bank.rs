@@ -487,7 +487,7 @@ impl LearningAssessmentRepository {
                 existing_prompts: bank
                     .iter()
                     .filter(|c| c.candidate.outcome_ids.contains(&requirement.outcome_id))
-                    .map(|c| c.candidate.prompt.clone())
+                    .map(|c| crate::assessment::item_review::item_repeat_descriptor(&c.candidate))
                     .collect(),
             });
         }
