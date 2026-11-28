@@ -231,7 +231,9 @@ impl KeptRule {
         match self {
             Self::Explanation => "at least one explanation".to_owned(),
             Self::ShownBeforeCheck => "each check after a worked example shown since the previous check, except the last of two or more checks, which mixes the lesson's ideas".to_owned(),
-            Self::RecapAfterReflection => "the recap after the reflection when it has both".to_owned(),
+            Self::RecapAfterReflection => {
+                "the recap closing the lesson after the reflection".to_owned()
+            }
             Self::Question => format!("at least one question of each kind: {}", question_kinds()),
         }
     }

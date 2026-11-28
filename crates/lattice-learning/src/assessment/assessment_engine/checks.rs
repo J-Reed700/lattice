@@ -527,10 +527,7 @@ pub(crate) fn authored_content_faults_for(
     }
     if std::iter::once(candidate.explanation.as_str())
         .chain(candidate.distractor_rationales.iter().map(String::as_str))
-        .any(|text| {
-            contains_option_letter_or_number_reference(text)
-                || contains_ordinal_option_reference(text)
-        })
+        .any(|text| contains_option_position_reference(text))
     {
         faults.push(
             "Names an answer choice by letter, number, or position instead of stating what it says (options are shuffled)."
@@ -541,8 +538,8 @@ pub(crate) fn authored_content_faults_for(
 }
 
 mod text;
-pub(crate) use text::contains_option_letter_or_number_reference;
-use text::{contains_non_choice_distractor_reference, contains_ordinal_option_reference};
+use text::contains_non_choice_distractor_reference;
+pub(crate) use text::contains_option_position_reference;
 
 fn contains_course_meta_talk(text: &str) -> bool {
     let normalized = text.replace('\u{2019}', "'").to_ascii_lowercase();

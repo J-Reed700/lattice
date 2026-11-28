@@ -1,4 +1,4 @@
-//! Deterministic wording guards for option-letter/position references and
+//! Deterministic wording guards for option-position references and
 //! non-choice distractor leaks in quiz items and lesson questions.
 
 fn contains_word_bounded_ascii(haystack: &str, needle: &str) -> bool {
@@ -21,7 +21,7 @@ fn contains_any_bounded(haystack: &str, patterns: &[&str]) -> bool {
         .any(|pat| contains_word_bounded_ascii(haystack, pat))
 }
 
-pub(crate) fn contains_option_letter_or_number_reference(text: &str) -> bool {
+pub(crate) fn contains_option_position_reference(text: &str) -> bool {
     let normalized = text.replace('\u{2019}', "'");
     if contains_any_bounded(
         &normalized,
@@ -57,15 +57,6 @@ pub(crate) fn contains_option_letter_or_number_reference(text: &str) -> bool {
             "is choice a",
             "see choice a",
             "select choice a",
-        ],
-    )
-}
-
-pub(super) fn contains_ordinal_option_reference(text: &str) -> bool {
-    let lower = text.replace('\u{2019}', "'").to_ascii_lowercase();
-    contains_any_bounded(
-        &lower,
-        &[
             "first option",
             "second option",
             "third option",
@@ -91,8 +82,6 @@ pub(super) fn contains_non_choice_distractor_reference(text: &str) -> bool {
             "incorrect options",
             "wrong option",
             "wrong options",
-            "other options",
-            "other choices",
         ],
     )
 }

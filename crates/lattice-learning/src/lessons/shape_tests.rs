@@ -250,7 +250,7 @@ fn a_cut_leaves_the_mixed_check_alone_and_takes_the_one_before_it() {
 fn a_kept_lesson_is_told_the_last_of_several_checks_mixes_the_ideas() {
     assert_eq!(
         StandardShape.asked(Phase::Kept)[1],
-        "It is held to this instead: at least one explanation; each check after a worked example shown since the previous check, except the last of two or more checks, which mixes the lesson's ideas; the recap after the reflection when it has both; and at least one question of each kind: practice, quiz and test."
+        "It is held to this instead: at least one explanation; each check after a worked example shown since the previous check, except the last of two or more checks, which mixes the lesson's ideas; the recap closing the lesson after the reflection; and at least one question of each kind: practice, quiz and test."
     );
 }
 

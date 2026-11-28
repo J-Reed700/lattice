@@ -1116,9 +1116,10 @@ fn authored_content_faults_catch_option_letters_free_response_distractors_and_ex
     let clone_exp = LearningAssessmentCandidate {
         id: "exp-2".into(),
         prompt: "A delivery service receives a DocumentDeliveryRequested event for a new referral document requiring create while the tenant's Capability Descriptor lists supportedOperations as [\"read\"]. Describe how ConnectorRouterService should handle this request before any adapter is instantiated, and explain the operational benefit of this pre-flight validation.".into(),
-        explanation: "Reject the request or route it to a dead-letter queue to avoid wasted network calls.".into(),
+        explanation: "Unlike other options, pre-flight rejection avoids wasted network calls.".into(),
         ..free_response_distractors.clone()
     };
+    assert!(engine::checks::authored_content_faults_for(&clone_exp, "", &[]).is_empty());
     assert!(crate::assessment::item_review::repeat_overlap_reason(
         &clone_exp,
         &[crate::assessment::item_review::item_repeat_descriptor(
