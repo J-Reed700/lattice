@@ -1,5 +1,6 @@
 use super::config::BESIDE_GPU_THREADS;
 use super::*;
+use lattice_core::domain::models::fit::CHAT_CTX_CHECKPOINTS;
 use lattice_core::shared::error::WithCauses;
 
 /// Ports handed out and not yet released: binding `127.0.0.1:0` gives the
@@ -52,10 +53,6 @@ pub(super) fn reserve_free_port(ports: &Arc<ReservedPorts>) -> std::io::Result<P
     ))
 }
 
-/// Prompt-cache checkpoints kept per slot: llama-server's default, pinned so a
-/// change upstream cannot quietly change how far a slot can roll back.
-const CTX_CHECKPOINTS: u32 = 32;
-
 /// Tokens between two checkpoints. A hybrid model cannot trim its recurrent
 /// state, so a changed prompt rolls back to the last checkpoint before the
 /// difference; pure-attention models never consult these checkpoints.
@@ -65,7 +62,7 @@ pub(crate) fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String
     if let Some(serving) = &config.pooling {
         return pooling_server_args(config, serving, port);
     }
-    let checkpoint_min_step = (config.context_size / CTX_CHECKPOINTS).max(CHECKPOINT_MIN_STEP);
+    let checkpoint_min_step = (config.context_size / CHAT_CTX_CHECKPOINTS).max(CHECKPOINT_MIN_STEP);
     let mut args = vec![
         "-m".to_string(),
         config.model_path.to_string_lossy().to_string(),
@@ -89,7 +86,7 @@ pub(crate) fn build_server_args(config: &SidecarConfig, port: u16) -> Vec<String
         // parse `tool_calls` back out, and the tool loop gets plain text.
         "--jinja".to_string(),
         "--ctx-checkpoints".to_string(),
-        CTX_CHECKPOINTS.to_string(),
+        CHAT_CTX_CHECKPOINTS.to_string(),
         "--checkpoint-min-step".to_string(),
         checkpoint_min_step.to_string(),
         "--cache-reuse".to_string(),
@@ -488,8 +485,9 @@ mod checkpoint_step_tests {
     #[test]
     fn checkpoint_min_step_scales_with_context_size_above_floor() {
         assert_eq!(checkpoint_min_step(0).as_deref(), Some("1024"));
-        assert_eq!(checkpoint_min_step(32_768).as_deref(), Some("1024"));
-        assert_eq!(checkpoint_min_step(131_072).as_deref(), Some("4096"));
-        assert_eq!(checkpoint_min_step(262_144).as_deref(), Some("8192"));
+        assert_eq!(checkpoint_min_step(8_192).as_deref(), Some("1024"));
+        assert_eq!(checkpoint_min_step(32_768).as_deref(), Some("4096"));
+        assert_eq!(checkpoint_min_step(131_072).as_deref(), Some("16384"));
+        assert_eq!(checkpoint_min_step(262_144).as_deref(), Some("32768"));
     }
 }

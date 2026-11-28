@@ -215,6 +215,11 @@ impl ModelShape {
     /// layers hold about 0.2 GB. 0 for a model without them, or whose header
     /// does not describe them.
     pub fn recurrent_state_bytes(&self) -> u64 {
+        self.recurrent_state_bytes_for_slots(SERVER_SLOTS as u32)
+    }
+
+    /// Bytes of recurrent state llama-server keeps for `slots` parallel slots.
+    pub fn recurrent_state_bytes_for_slots(&self, slots: u32) -> u64 {
         let (Some(blocks), Some(kernel), Some(state), Some(inner)) = (
             self.block_count,
             self.ssm_conv_kernel,
@@ -230,7 +235,7 @@ impl ModelShape {
         let (state, inner) = (u64::from(state), u64::from(inner));
         let groups = u64::from(self.ssm_group_count.unwrap_or(0));
         let convolution = u64::from(kernel.saturating_sub(1)) * (inner + 2 * groups * state);
-        layers * SERVER_SLOTS * (convolution + state * inner) * F32_BYTES
+        layers * u64::from(slots) * (convolution + state * inner) * F32_BYTES
     }
 
     /// Bytes of compute buffer llama-server reserves for a window of

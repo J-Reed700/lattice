@@ -144,17 +144,31 @@ impl SidecarRegistry {
     /// what the memory hint for `model_path` counts as already taken. A
     /// server of the same GGUF is left out, because a role asking for it is
     /// handed that server rather than a second one.
-    pub fn other_models_gpu_bytes(&self, model_path: &std::path::Path) -> u64 {
-        gpu_bytes_where(&self.running_servers(), |running| {
-            running.model_path != model_path
-        })
+    pub fn other_models_gpu_bytes(
+        &self,
+        model_path: &std::path::Path,
+        capabilities: &SystemCapabilities,
+    ) -> u64 {
+        gpu_bytes_where(
+            &self.running_servers(),
+            is_dedicated_gpu(capabilities),
+            |running| running.model_path != model_path,
+        )
     }
 
     /// GPU memory held by running, GPU-offloaded servers other than the one
     /// started for `config`. Another window of the same GGUF counts: it is a
     /// second process with its own copy of the weights and its own cache.
-    pub fn resident_gpu_bytes(&self, config: &SidecarConfig) -> u64 {
-        gpu_bytes_where(&self.running_servers(), |running| running != config)
+    pub fn resident_gpu_bytes(
+        &self,
+        config: &SidecarConfig,
+        capabilities: &SystemCapabilities,
+    ) -> u64 {
+        gpu_bytes_where(
+            &self.running_servers(),
+            is_dedicated_gpu(capabilities),
+            |running| running != config,
+        )
     }
 
     /// The configuration of the running server a role asking for `config` is
@@ -235,6 +249,7 @@ pub(super) fn running_alike(
 /// configuration is `counted`.
 pub(super) fn gpu_bytes_where(
     servers: &[RunningServer],
+    dedicated_gpu: bool,
     counted: impl Fn(&SidecarConfig) -> bool,
 ) -> u64 {
     servers
@@ -243,11 +258,12 @@ pub(super) fn gpu_bytes_where(
             counted(&server.config) && server.n_gpu_layers > 0 && server.config.on_offload_gpu()
         })
         .map(|server| {
-            resident_bytes_of(
-                &server.config.model_path,
-                server.context_size,
-                server.config.buffers(),
-            )
+            let buffers = if dedicated_gpu {
+                server.config.buffers().for_dedicated_gpu()
+            } else {
+                server.config.buffers()
+            };
+            resident_bytes_of(&server.config.model_path, server.context_size, buffers)
         })
         .fold(0, u64::saturating_add)
 }
@@ -259,6 +275,15 @@ pub(super) fn gpu_bytes_where(
 /// starts, at the window the user chose; if it will not allocate, the start
 /// fails with llama-server's own error and these numbers beside it. A pooling
 /// server goes where its claim seats it (`LlmInstances::claim_gpu`).
+fn is_dedicated_gpu(capabilities: &SystemCapabilities) -> bool {
+    use crate::features::llm::engine::system::GPUVendor;
+
+    capabilities
+        .gpu
+        .as_ref()
+        .is_some_and(|gpu| gpu.vendor.is_accelerated() && gpu.vendor != GPUVendor::Apple)
+}
+
 pub(super) fn admission(
     servers: &[RunningServer],
     config: &SidecarConfig,
@@ -270,7 +295,9 @@ pub(super) fn admission(
     if !config.on_offload_gpu() {
         return Admission::NoOffload;
     }
-    let held = gpu_bytes_where(servers, |running| running != config);
+    let held = gpu_bytes_where(servers, is_dedicated_gpu(capabilities), |running| {
+        running != config
+    });
     let info = read_model_info(&config.model_path);
     let Some(hint) = memory_hint(config, capabilities, held, info.as_ref()) else {
         return Admission::Unmetered;

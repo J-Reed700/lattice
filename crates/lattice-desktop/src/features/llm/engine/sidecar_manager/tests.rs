@@ -1340,7 +1340,7 @@ fn build_server_args_checkpoint_the_prompt_cache_every_thousand_tokens() {
         &SidecarConfig::for_model(PathBuf::from("/models/qwen.gguf")),
         12345,
     );
-    assert_eq!(flag_value(&args, "--ctx-checkpoints"), Some("32"));
+    assert_eq!(flag_value(&args, "--ctx-checkpoints"), Some("8"));
     assert_eq!(flag_value(&args, "--checkpoint-min-step"), Some("1024"));
     assert!(
         !args.iter().any(|a| a == "-fa"),
@@ -1569,11 +1569,15 @@ fn a_hint_prices_weights_cache_recurrent_state_and_compute() {
             // 4 KiB a token each.
             cache: 60_416 * 9 * 4 * 1024,
             state: info.shape.recurrent_state_bytes(),
+            checkpoints: info.shape.recurrent_state_bytes() * 8,
             compute: info.shape.compute_buffer_bytes(60_416, 512),
             window: 60_416,
         }
     );
-    assert_eq!(hint.needed.total(), 8_453_959_616);
+    assert_eq!(
+        hint.needed.total(),
+        8_453_959_616 + info.shape.recurrent_state_bytes() * 8
+    );
     assert!(hint.fits());
     assert_eq!(
         hint.fits_window,
@@ -1637,17 +1641,11 @@ fn eight_gigabyte_card() -> (
         room(0),
     );
     let reranker = move |held| {
-        let buffers = ServerBuffers {
-            kv_cache_quantization: false,
-            micro_batch: 4_096,
-        };
+        let buffers = ServerBuffers::pooling(4_096);
         hint_for(639_153_184, Some(&qwen3_0_6b()), 4_096, buffers, room(held))
     };
     let embedder = move |held| {
-        let buffers = ServerBuffers {
-            kv_cache_quantization: false,
-            micro_batch: 2_048,
-        };
+        let buffers = ServerBuffers::pooling(2_048);
         hint_for(
             1_197_629_632,
             Some(&qwen3_0_6b()),
@@ -1728,7 +1726,15 @@ fn the_fitting_window_is_the_largest_thousand_that_fits_and_never_past_the_train
     assert!(!hint.fits());
     let fits = hint.fits_window.unwrap();
     assert_eq!(fits % 1024, 0);
-    let total = |window| footprint_from(ORNITH_9B_BYTES, Some(&info), window, chat).total();
+    let total = |window| {
+        footprint_from(
+            ORNITH_9B_BYTES,
+            Some(&info),
+            window,
+            chat.for_dedicated_gpu(),
+        )
+        .total()
+    };
     assert!(total(fits) <= spare, "the window it names fits");
     assert!(total(fits + 1024) > spare, "and the next thousand does not");
 
@@ -1780,13 +1786,49 @@ fn a_hint_tells_the_user_the_numbers_and_the_fix() {
 
     let text = hint.describe();
     assert!(
-        text.starts_with("At 262,144 tokens this model needs about 15.4 GB (5.4 GB weights + 9.0 GB context + 0.2 GB recurrent state + 0.8 GB compute); this Mac's GPU working set is 16.0 GB, and other models hold 1.0 GB of it. About "),
+        text.starts_with("At 262,144 tokens this model needs about 16.9 GB (5.4 GB weights + 9.0 GB context + 0.2 GB recurrent state + 1.6 GB checkpoints + 0.8 GB compute); this Mac's GPU working set is 16.0 GB, and other models hold 1.0 GB of it. About "),
         "{text}"
     );
     assert!(
         text.ends_with(" tokens fit. Lower its context length in Settings → Downloaded."),
         "{text}"
     );
+}
+
+#[test]
+fn mtp_single_slot_config_prices_one_slot_of_recurrent_state_and_checkpoints() {
+    let mut cfg = SidecarConfig::for_model(PathBuf::from("/models/qwen-mtp.gguf"));
+    let four_slot = cfg.buffers();
+    assert_eq!(four_slot.slots, None);
+    assert_eq!(four_slot.ctx_checkpoints, 8);
+
+    cfg.mtp_capable = true;
+    cfg.speculative_decoding = SpeculativeDecoding::MtpDraft { n_max: 3 };
+    let one_slot = cfg.buffers();
+    assert_eq!(one_slot.slots, Some(1));
+    assert_eq!(one_slot.ctx_checkpoints, 8);
+
+    let info = ornith_9b();
+    let unified_four = hint_for(
+        ORNITH_9B_BYTES,
+        Some(&info),
+        32_768,
+        four_slot,
+        metal_room(0),
+    );
+    let unified_one = hint_for(
+        ORNITH_9B_BYTES,
+        Some(&info),
+        32_768,
+        one_slot,
+        metal_room(0),
+    );
+    assert_eq!(unified_four.needed.state, unified_one.needed.state * 4);
+    assert_eq!(
+        unified_four.needed.checkpoints,
+        unified_one.needed.checkpoints * 4
+    );
+    assert_eq!(unified_one.needed.checkpoints, unified_one.needed.state * 8);
 }
 
 /// Gemma 4 12B as its header reads: 8 global layers of 1 KV head at 512 + 512,
@@ -1897,17 +1939,17 @@ fn a_second_window_of_the_same_model_counts_against_the_gpu_but_does_not_size_th
     };
 
     assert_eq!(
-        gpu_bytes_where(&servers, |running| running != &larger_window),
+        gpu_bytes_where(&servers, false, |running| running != &larger_window),
         8 * GIB,
         "the 8,704-token server is a second process with its own weights"
     );
     assert_eq!(
-        gpu_bytes_where(&servers, |running| running.model_path != ornith),
+        gpu_bytes_where(&servers, false, |running| running.model_path != ornith),
         3 * GIB,
         "a window is sized beside other models only, so roles on one model agree on it"
     );
     assert_eq!(
-        gpu_bytes_where(&servers, |running| running != &servers[0].config),
+        gpu_bytes_where(&servers, false, |running| running != &servers[0].config),
         3 * GIB,
         "a server never counts against itself, and a CPU server holds no GPU memory"
     );
@@ -1929,17 +1971,19 @@ fn a_server_on_the_spare_gpu_or_the_cpu_holds_nothing_of_the_priced_one() {
     };
 
     assert_eq!(
-        gpu_bytes_where(&[server(on_the_card.clone())], |_| true),
+        gpu_bytes_where(&[server(on_the_card.clone())], false, |_| true),
         2 * GIB
     );
     assert_eq!(
-        gpu_bytes_where(&[server(on_the_card.off_the_gpu(Some("Vulkan0")))], |_| {
-            true
-        }),
+        gpu_bytes_where(
+            &[server(on_the_card.off_the_gpu(Some("Vulkan0")))],
+            false,
+            |_| { true }
+        ),
         0
     );
     assert_eq!(
-        gpu_bytes_where(&[server(on_the_card.off_the_gpu(None))], |_| true),
+        gpu_bytes_where(&[server(on_the_card.off_the_gpu(None))], false, |_| true),
         0
     );
 }
@@ -1984,6 +2028,7 @@ fn admission_shares_a_running_server_and_otherwise_prices_against_what_is_left()
                 weights: 2 * GIB,
                 cache: 0,
                 state: 0,
+                checkpoints: 0,
                 compute: 0,
                 window: 0,
             },
@@ -2412,9 +2457,9 @@ fn a_fitted_server_differs_from_the_one_at_the_trained_length_only_in_its_window
 fn the_cpu_attempt_takes_a_window_fitted_to_ram_unless_the_user_saved_one() {
     let (_dir, path) = ornith_on_disk();
     let mut caps = rtx_4070_laptop();
-    caps.available_memory_bytes = Some(8 * GIB);
+    caps.available_memory_bytes = Some(10 * GIB);
     let cpu_fit = ornith_fit(memory_room(&caps, false, 0).unwrap()).unwrap();
-    assert!(cpu_fit < ORNITH_TRAINED_WINDOW, "{cpu_fit}");
+    assert!(cpu_fit > 0 && cpu_fit < ORNITH_TRAINED_WINDOW, "{cpu_fit}");
 
     let config = start_ornith(&path, LocalServerOptions::default(), &caps, 0);
     let cpu = config.without_gpu_offload();
