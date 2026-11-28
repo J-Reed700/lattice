@@ -641,6 +641,7 @@ fn only_a_taught_text_takes_a_citation() {
     let told = |handle: &str| {
         format!("{handle} is not in a block's body or a question's explanation or reasons; only those sentences take a citation.")
     };
+    // A standalone cite of a non-taught field still fails clearly.
     assert_eq!(
         refused(take(
             &mut rows,
@@ -649,15 +650,28 @@ fn only_a_taught_text_takes_a_citation() {
         )),
         vec![told(&title)]
     );
-    let given = json!({"replace": [{
-        "at": option,
-        "with": {"text": "The times of high water", "from": [q(&quotes, QUOTE_A)]}
-    }]});
-    assert_eq!(
-        refused(take(&mut rows, &quotes, given)),
-        vec![told(&option)]
-    );
     assert_eq!(rows.value(), lesson());
+
+    // Replacing a non-taught option while supplying grounding in `with.from`
+    // (or a stray cite on that option) applies the text edit cleanly without
+    // refusing the whole finding or attaching a citation to the option.
+    let given = json!({
+        "replace": [{
+            "at": option,
+            "with": {"text": "The times of high water", "from": [q(&quotes, QUOTE_A)]}
+        }],
+        "cite": [{"sentence": option, "quote": q(&quotes, QUOTE_A)}]
+    });
+    assert!(take(&mut rows, &quotes, given).is_ok());
+    let updated = rows.value();
+    assert_eq!(
+        updated["questions"][0]["options"][0],
+        "The times of high water"
+    );
+    assert_eq!(
+        updated["questions"][0]["citations"],
+        lesson()["questions"][0]["citations"]
+    );
 }
 
 #[test]
