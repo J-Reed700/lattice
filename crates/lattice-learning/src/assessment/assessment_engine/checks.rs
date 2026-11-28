@@ -527,7 +527,7 @@ pub(crate) fn authored_content_faults_for(
     }
     if std::iter::once(candidate.explanation.as_str())
         .chain(candidate.distractor_rationales.iter().map(String::as_str))
-        .any(|text| contains_option_position_reference(text))
+        .any(contains_option_position_reference)
     {
         faults.push(
             "Names an answer choice by letter, number, or position instead of stating what it says (options are shuffled)."
