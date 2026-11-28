@@ -328,13 +328,14 @@ impl Units {
         };
         let mut out = String::from(lead);
         let mut lays = Vec::new();
-        let mut previous: Option<(Option<usize>, bool, bool)> = None;
+        let mut previous: Option<(Option<usize>, bool, bool, bool)> = None;
         for place in self.edited.places() {
-            let (held, text, wrote, inserted_item) = match place.laid {
+            let (held, text, wrote, inserted_item, wrote_block_end) = match place.laid {
                 Laid::Kept(unit) if positions.contains(&unit.index) => continue,
                 Laid::Kept(unit) => (
                     Some(*unit),
                     self.text_of(*unit).unwrap_or_default(),
+                    false,
                     false,
                     false,
                 ),
@@ -343,18 +344,30 @@ impl Units {
                     content.as_str(),
                     true,
                     replaces.is_none() && starts_list_item(content),
+                    ends_markdown_block(content),
                 ),
             };
-            if let Some((before, ended, prev_inserted_item)) = previous {
+            if let Some((before, ended, prev_inserted_item, prev_wrote_block_end)) = previous {
                 let begins = wrote && (text.starts_with('\n') || text.starts_with("\r\n"));
                 if !begins && !ended {
-                    out.push_str(self.separator(before, place.at, prev_inserted_item, text));
+                    out.push_str(self.separator(
+                        before,
+                        place.at,
+                        prev_inserted_item,
+                        prev_wrote_block_end || (wrote && starts_markdown_block(text)),
+                        text,
+                    ));
                 }
             }
             let start = out.len();
             out.push_str(text);
             lays.push((held, start..out.len()));
-            previous = Some((place.at, wrote && text.ends_with('\n'), inserted_item));
+            previous = Some((
+                place.at,
+                wrote && text.ends_with('\n'),
+                inserted_item,
+                wrote_block_end,
+            ));
         }
         out.push_str(tail);
         (out, lays)
@@ -389,10 +402,17 @@ impl Units {
         before: Option<usize>,
         after: Option<usize>,
         prev_inserted_item: bool,
+        markdown_block_boundary: bool,
         next_text: &str,
     ) -> &str {
         if let Some(gap) = self.between(before, after) {
+            if self.grain == Grain::Sentence && markdown_block_boundary && !gap.contains('\n') {
+                return "\n\n";
+            }
             return gap;
+        }
+        if self.grain == Grain::Sentence && markdown_block_boundary {
+            return "\n\n";
         }
         if self.grain == Grain::Sentence && (prev_inserted_item || starts_list_item(next_text)) {
             return "\n";
@@ -424,6 +444,29 @@ impl Units {
 fn starts_list_item(text: &str) -> bool {
     let first = text.trim_start_matches(['\r', '\n']).lines().next();
     first.is_some_and(|line| crate::shared::text::item_marker_end(line).is_some())
+}
+
+fn is_markdown_block_line(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+        return true;
+    }
+    let hashes = trimmed.bytes().take_while(|&b| b == b'#').count();
+    (1..=6).contains(&hashes)
+        && trimmed
+            .as_bytes()
+            .get(hashes)
+            .is_some_and(|&b| b == b' ' || b == b'\t')
+}
+
+fn starts_markdown_block(text: &str) -> bool {
+    let first = text.trim_start_matches(['\r', '\n']).lines().next();
+    first.is_some_and(is_markdown_block_line)
+}
+
+fn ends_markdown_block(text: &str) -> bool {
+    let last = text.trim_end_matches(['\r', '\n']).lines().next_back();
+    last.is_some_and(is_markdown_block_line)
 }
 
 /// Several texts shown in one request, each as units, and what each is a text of.

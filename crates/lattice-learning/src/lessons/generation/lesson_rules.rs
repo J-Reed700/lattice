@@ -230,19 +230,27 @@ fn scaffolding(
     site: FindingSite,
     findings: &mut Vec<ReviewFinding>,
 ) {
-    if site.pointer().is_none() {
+    let Some(part_pointer) = site.pointer() else {
         return;
-    }
+    };
     let label = site.note_label();
-    let mut texts: Vec<&str> = Vec::new();
+    let mut texts: Vec<(bool, &str)> = Vec::new();
     for field in fields {
+        let citable = crate::lessons::text_edits::taught_at(&format!("{part_pointer}/{field}"));
         match item.get(*field) {
-            Some(Value::String(value)) => texts.push(value),
-            Some(Value::Array(values)) => texts.extend(values.iter().filter_map(Value::as_str)),
+            Some(Value::String(value)) => texts.push((citable, value)),
+            Some(Value::Array(values)) => {
+                texts.extend(
+                    values
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(|v| (citable, v)),
+                );
+            }
             _ => {}
         }
     }
-    for body in texts {
+    for (citable, body) in texts {
         let labels: Vec<String> = prose(body)
             .lines()
             .filter(|line| is_citation_label(line))
@@ -252,7 +260,11 @@ fn scaffolding(
             let summary = format!(
                 "This line is a citation written into the lesson's text: \u{201c}{line}\u{201d}"
             );
-            let note = format!("{label} has a citation written into its text: \"{line}\". Remove that line from the text and cite the sentence it supports against the supplied excerpt sentences instead.");
+            let note = if citable {
+                format!("{label} has a citation written into its text: \"{line}\". Remove that line from the text and cite the sentence it supports against the supplied excerpt sentences instead.")
+            } else {
+                format!("{label} has a citation written into its text: \"{line}\". Remove that line from the text.")
+            };
             findings.push(citation(
                 Rule::CitationLabel,
                 site,
@@ -271,7 +283,11 @@ fn scaffolding(
             let summary = format!(
                 "This sentence names a source by its number, which learners never see: \u{201c}{sentence}\u{201d}"
             );
-            let note = format!("{label} names a source by its number in \"{sentence}\". Learners never see source numbers: state what the source says as the lesson's own sentence without naming a source, and cite that sentence against the supplied excerpt sentences instead.");
+            let note = if citable {
+                format!("{label} names a source by its number in \"{sentence}\". Learners never see source numbers: state what the source says as the lesson's own sentence without naming a source, and cite that sentence against the supplied excerpt sentences instead.")
+            } else {
+                format!("{label} names a source by its number in \"{sentence}\". Learners never see source numbers: reword it in the question's own words without naming a source.")
+            };
             findings.push(citation(
                 Rule::SourceNumber,
                 site,

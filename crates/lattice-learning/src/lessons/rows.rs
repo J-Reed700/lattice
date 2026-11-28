@@ -440,7 +440,7 @@ impl Rows {
         for cite in &edits.cite {
             if self
                 .field_of(&cite.sentence.reference)
-                .is_some_and(|field| field.part == part)
+                .is_some_and(|field| field.part == part && taught_at(&field.pointer))
             {
                 brought.push(&cite.quote);
             }
@@ -463,7 +463,7 @@ impl Rows {
         for (place, with) in places {
             let here = place
                 .and_then(|unit| self.field_of(&unit.reference))
-                .is_some_and(|field| field.part == part);
+                .is_some_and(|field| field.part == part && taught_at(&field.pointer));
             if here {
                 brought.extend(with.0.from.iter());
             }
@@ -532,20 +532,18 @@ impl Rows {
         let not_taught = |name: String| {
             format!("{name} is not in a block's body or a question's explanation or reasons; only those sentences take a citation.")
         };
-        for cite in &edits.cite {
-            if !teaches(&cite.sentence.reference) {
-                push_once(&mut problems, not_taught(cite.sentence.handle.written()));
-            }
-        }
-        for (at, with) in &change.replace {
-            if !with.0.from.is_empty() && !teaches(&at.reference) {
-                push_once(&mut problems, not_taught(at.handle.written()));
-            }
-        }
-        for (anchor, with) in &change.insert {
-            if let Anchor::After(after) = anchor {
-                if !with.0.from.is_empty() && !teaches(&after.reference) {
-                    push_once(&mut problems, not_taught(after.handle.written()));
+        let has_other_work = !change.is_empty()
+            || !edits.recite.is_empty()
+            || !edits.uncite.is_empty()
+            || !edits.keys.is_empty()
+            || edits
+                .cite
+                .iter()
+                .any(|cite| teaches(&cite.sentence.reference));
+        if !has_other_work {
+            for cite in &edits.cite {
+                if !teaches(&cite.sentence.reference) {
+                    push_once(&mut problems, not_taught(cite.sentence.handle.written()));
                 }
             }
         }
@@ -738,10 +736,14 @@ impl Rows {
             self.recited.push((uncite.reference.clone(), None));
         }
         for cite in &edits.cite {
-            let part = self
+            let Some(field) = self
                 .field_of(&cite.sentence.reference)
-                .map(|field| field.part.clone());
-            if let (Some(part), Some((source, text))) = (part, quotes.get(cite.quote.reference)) {
+                .filter(|field| taught_at(&field.pointer))
+            else {
+                continue;
+            };
+            let part = field.part.clone();
+            if let Some((source, text)) = quotes.get(cite.quote.reference) {
                 self.added.push(Added::Cite {
                     unit: cite.sentence.reference,
                     part,
@@ -763,6 +765,7 @@ impl Rows {
         for (place, with) in places {
             let part = place
                 .and_then(|unit| self.field_of(&unit.reference))
+                .filter(|field| taught_at(&field.pointer))
                 .map(|field| field.part.clone());
             let Some(part) = part else {
                 continue;

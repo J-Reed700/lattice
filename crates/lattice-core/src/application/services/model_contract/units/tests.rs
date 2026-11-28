@@ -824,3 +824,64 @@ fn inserted_and_moved_list_items_keep_line_breaks_while_inline_sentences_join_wi
         "- First item. Clarifying detail.\n- Second item."
     );
 }
+
+#[test]
+fn markdown_headings_and_fences_inserted_or_replaced_always_sit_on_their_own_lines() {
+    // Inserting a check reveal heading + answer after a question keeps the heading on its own line.
+    let inserted_reveal = edited(
+        "What does this status code signify?",
+        Grain::Sentence,
+        |u, change| {
+            change.insert.push((
+                after(&u[0]),
+                "### Check your thinking\n\nIt signals multiple matches.".to_owned(),
+            ));
+        },
+    );
+    assert_eq!(
+        inserted_reveal,
+        "What does this status code signify?\n\n### Check your thinking\n\nIt signals multiple matches."
+    );
+
+    // Inserting a standalone heading between two kept sentences puts blank lines on both sides.
+    let inserted_between = edited(
+        "Case question? Answer sentence.",
+        Grain::Sentence,
+        |u, change| {
+            change
+                .insert
+                .push((after(&u[0]), "### Check your thinking".to_owned()));
+        },
+    );
+    assert_eq!(
+        inserted_between,
+        "Case question?\n\n### Check your thinking\n\nAnswer sentence."
+    );
+
+    // Replacing a sentence separated by a space with a heading + answer upgrades the space to a block break.
+    let replaced_with_heading = edited(
+        "Case question? Answer sentence.",
+        Grain::Sentence,
+        |u, change| {
+            change.replace.push((
+                u[1].clone(),
+                "### Check your thinking\n\nAnswer sentence.".to_owned(),
+            ));
+        },
+    );
+    assert_eq!(
+        replaced_with_heading,
+        "Case question?\n\n### Check your thinking\n\nAnswer sentence."
+    );
+
+    // Inserting a fenced code block starts on its own paragraph instead of inline.
+    let inserted_fence = edited("Run the check.", Grain::Sentence, |u, change| {
+        change
+            .insert
+            .push((after(&u[0]), "```http\nGET /Patient\n```".to_owned()));
+    });
+    assert_eq!(
+        inserted_fence,
+        "Run the check.\n\n```http\nGET /Patient\n```"
+    );
+}

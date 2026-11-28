@@ -1241,3 +1241,32 @@ fn choice_questions_cannot_refer_to_choices_by_option_letter_or_number() {
         "{issues:?}"
     );
 }
+
+#[test]
+fn scaffolding_on_non_citable_question_prompt_does_not_ask_to_cite_it() {
+    let mut candidate = lesson();
+    candidate["questions"][0]["prompt"] =
+        json!("According to source 2, which command lists files?");
+    candidate["questions"][0]["explanation"] = json!("Source 2 explains that ls lists files.");
+    let findings = lesson_rules(&candidate);
+    let prompt_finding = findings
+        .iter()
+        .find(|f| {
+            f.sentence.as_deref() == Some("According to source 2, which command lists files?")
+        })
+        .expect("prompt scaffolding finding");
+    let explanation_finding = findings
+        .iter()
+        .find(|f| f.sentence.as_deref() == Some("Source 2 explains that ls lists files."))
+        .expect("explanation scaffolding finding");
+    assert!(
+        !prompt_finding.note.contains("cite that sentence"),
+        "non-citable prompt must not ask repair to cite it: {}",
+        prompt_finding.note
+    );
+    assert!(
+        explanation_finding.note.contains("cite that sentence"),
+        "citable explanation should still ask repair to cite it: {}",
+        explanation_finding.note
+    );
+}
