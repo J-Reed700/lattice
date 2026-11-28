@@ -1,7 +1,7 @@
 use super::*;
 use crate::features::llm::engine::gguf_metadata::{read_model_info, GgufModelInfo};
 use lattice_core::domain::models::fit::{
-    footprint, Footprint, ServerBuffers, FIT_TARGET_BYTES, MICRO_BATCH_TOKENS,
+    footprint, Footprint, ServerBuffers, CHAT_CTX_CHECKPOINTS, FIT_TARGET_BYTES, MICRO_BATCH_TOKENS,
 };
 
 /// A bundled llama-server build.
@@ -370,6 +370,11 @@ impl MemoryHint {
         } else {
             String::new()
         };
+        let checkpoints = if needed.checkpoints > 0 {
+            format!(" + {} checkpoints", gigabytes(needed.checkpoints))
+        } else {
+            String::new()
+        };
         let room = match self.room.source {
             MemorySource::MetalWorkingSet => format!(
                 "this Mac's GPU working set is {}",
@@ -401,7 +406,7 @@ impl MemoryHint {
         };
         format!(
             "At {window} tokens this model needs about {total} ({weights} weights + {cache} \
-             context{state} + {compute} compute); {room}{held}.{fit} Lower its context length \
+             context{state}{checkpoints} + {compute} compute); {room}{held}.{fit} Lower its context length \
              in Settings → Downloaded.",
             window = tokens(needed.window),
             total = gigabytes(needed.total()),
@@ -442,6 +447,10 @@ pub(super) fn hint_for(
     buffers: ServerBuffers,
     room: MemoryRoom,
 ) -> MemoryHint {
+    let buffers = match room.source {
+        MemorySource::GpuFree => buffers.for_dedicated_gpu(),
+        MemorySource::MetalWorkingSet | MemorySource::SystemRam => buffers,
+    };
     MemoryHint {
         needed: footprint_from(weights, info, window, buffers),
         room,
@@ -515,12 +524,19 @@ impl SidecarConfig {
 
     /// What sizes its buffers beside its window.
     pub(crate) fn buffers(&self) -> ServerBuffers {
+        if let Some(pooling) = &self.pooling {
+            return ServerBuffers::pooling(pooling.ubatch);
+        }
+        let slots = if self.mtp_draft().is_some() {
+            Some(1)
+        } else {
+            self.parallel_slots.filter(|&s| s > 0)
+        };
         ServerBuffers {
             kv_cache_quantization: self.kv_cache_quantization,
-            micro_batch: self
-                .pooling
-                .as_ref()
-                .map_or(MICRO_BATCH_TOKENS, |pooling| pooling.ubatch),
+            micro_batch: MICRO_BATCH_TOKENS,
+            ctx_checkpoints: CHAT_CTX_CHECKPOINTS,
+            slots,
         }
     }
 

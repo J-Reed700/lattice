@@ -53,6 +53,10 @@ pub fn fit(
     placement: &dyn Placement,
 ) -> FitVerdict {
     let budget = placement.budget_bytes();
+    let buffers = match placement.device().kind {
+        DeviceKind::Dedicated => buffers.for_dedicated_gpu(),
+        DeviceKind::Unified | DeviceKind::Processor => buffers,
+    };
     let needs_at = |window: u32| footprint(gpu_weight_bytes, shape, window, buffers).total();
     let comfortable = needs_at(COMFORTABLE_WINDOW_TOKENS);
     let minimum = needs_at(MINIMUM_WINDOW_TOKENS);

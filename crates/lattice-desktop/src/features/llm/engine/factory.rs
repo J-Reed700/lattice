@@ -256,9 +256,9 @@ async fn create_local_llm_sidecar(
 
     // Leave room for servers other models already hold on the GPU.
     let registry = app.try_state::<SidecarRegistry>();
-    let other_models_bytes = registry
-        .as_ref()
-        .map_or(0, |registry| registry.other_models_gpu_bytes(model_path));
+    let other_models_bytes = registry.as_ref().map_or(0, |registry| {
+        registry.other_models_gpu_bytes(model_path, &capabilities)
+    });
     let gguf_info = crate::features::llm::engine::gguf_metadata::read_model_info(model_path);
     let Some(config) = starting_config(
         model_path,

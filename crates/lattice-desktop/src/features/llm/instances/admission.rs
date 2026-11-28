@@ -89,7 +89,7 @@ impl SidecarBudget {
         let registry = app.try_state::<SidecarRegistry>()?;
         let capabilities = detect_capabilities_with_app(app, self.devices()).await;
         let info = read_model_info(path);
-        let held = registry.other_models_gpu_bytes(path);
+        let held = registry.other_models_gpu_bytes(path, &capabilities);
         let config = starting_config(path, -1, launch, &capabilities, info.as_ref(), held)?;
         let config = registry.running_alike(&config).unwrap_or(config);
         Some(Plan {
@@ -126,7 +126,9 @@ impl GpuBudget for SidecarBudget {
         let Some(plan) = self.plan(path, LocalServerOptions::default()).await else {
             return ContextFit::default();
         };
-        let held = plan.registry.other_models_gpu_bytes(path);
+        let held = plan
+            .registry
+            .other_models_gpu_bytes(path, &plan.capabilities);
         let fits = |config: &SidecarConfig| {
             memory_hint(config, &plan.capabilities, held, plan.info.as_ref())
                 .and_then(|hint| hint.fits_window)

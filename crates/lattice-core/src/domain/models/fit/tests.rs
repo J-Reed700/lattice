@@ -187,20 +187,14 @@ fn companions() -> Companions {
             shape: Some(small_shape()),
             window_tokens: 2_048,
             slots: 4,
-            buffers: ServerBuffers {
-                kv_cache_quantization: false,
-                micro_batch: 2_048,
-            },
+            buffers: ServerBuffers::pooling(2_048),
         },
         reranker: CompanionServer {
             gpu_weight_bytes: 639_153_184,
             shape: Some(small_shape()),
             window_tokens: 4_096,
             slots: 1,
-            buffers: ServerBuffers {
-                kv_cache_quantization: false,
-                micro_batch: 4_096,
-            },
+            buffers: ServerBuffers::pooling(4_096),
         },
     }
 }
@@ -723,11 +717,15 @@ fn the_footprint_is_the_runtimes_weights_cache_state_and_compute() {
     assert_eq!(got.weights, 5_000_000_000);
     assert_eq!(got.cache, shape.kv_cache_bytes(32_768, false).unwrap());
     assert_eq!(got.state, shape.recurrent_state_bytes());
+    assert_eq!(
+        got.checkpoints,
+        shape.recurrent_state_bytes() * u64::from(CHAT_CTX_CHECKPOINTS)
+    );
     assert_eq!(got.compute, shape.compute_buffer_bytes(32_768, 512));
     assert_eq!(got.window, 32_768);
     assert_eq!(
         got.total(),
-        got.weights + got.cache + got.state + got.compute
+        got.weights + got.cache + got.state + got.checkpoints + got.compute
     );
     assert_eq!(footprint(7, None, 4_096, buffers).total(), 7);
 }
@@ -739,7 +737,7 @@ fn the_recommender_judges_a_sliding_window_model_by_the_runtimes_footprint() {
         model.gpu_weight_bytes,
         model.shape.as_ref(),
         COMFORTABLE_WINDOW_TOKENS,
-        ServerBuffers::chat(false),
+        ServerBuffers::chat(false).for_dedicated_gpu(),
     )
     .total();
 
@@ -751,17 +749,41 @@ fn the_recommender_judges_a_sliding_window_model_by_the_runtimes_footprint() {
 #[test]
 fn the_recommender_judges_a_hybrid_by_the_runtimes_footprint() {
     let model = qwen_9b_local(50);
-    let want = footprint(
+    let want_dedicated = footprint(
+        model.gpu_weight_bytes,
+        model.shape.as_ref(),
+        COMFORTABLE_WINDOW_TOKENS,
+        ServerBuffers::chat(false).for_dedicated_gpu(),
+    )
+    .total();
+    let want_unified = footprint(
         model.gpu_weight_bytes,
         model.shape.as_ref(),
         COMFORTABLE_WINDOW_TOKENS,
         ServerBuffers::chat(false),
     )
     .total();
+    assert!(
+        want_unified > want_dedicated,
+        "unified memory prices hybrid prompt-cache checkpoints"
+    );
 
-    let list = recommend(&rtx_4080(), std::slice::from_ref(&model));
+    let dedicated = recommend(&rtx_4080(), std::slice::from_ref(&model));
+    assert_eq!(needs(&dedicated[0].verdict), want_dedicated);
 
-    assert_eq!(needs(&list[0].verdict), want);
+    let unified = recommend(
+        &machine(
+            vec![accelerator(
+                "Apple M3 Max",
+                28 * GIB,
+                AcceleratorKind::Unified,
+                Backend::Metal,
+            )],
+            36 * GIB,
+        ),
+        std::slice::from_ref(&model),
+    );
+    assert_eq!(needs(&unified[0].verdict), want_unified);
 }
 
 #[test]
@@ -823,20 +845,14 @@ fn the_default_companions_are_priced_as_the_runtime_launches_them() {
         embedder_bytes - embedder.cpu_weight_bytes,
         Some(&embedder.shape),
         2_048 * 4,
-        ServerBuffers {
-            kv_cache_quantization: false,
-            micro_batch: 2_048,
-        },
+        ServerBuffers::pooling(2_048),
     )
     .total()
         + footprint(
             CURATED_RERANKER.bytes - reranker.cpu_weight_bytes,
             Some(&reranker.shape),
             4_096,
-            ServerBuffers {
-                kv_cache_quantization: false,
-                micro_batch: 4_096,
-            },
+            ServerBuffers::pooling(4_096),
         )
         .total();
 
@@ -1029,7 +1045,7 @@ fn the_9bs_footprint_is_what_llama_cpp_allocated_for_it_on_the_laptop_card() {
         nine.gpu_weight_bytes,
         nine.shape.as_ref(),
         65_536,
-        ServerBuffers::chat(false),
+        ServerBuffers::chat(false).for_dedicated_gpu(),
     );
 
     assert_eq!(mib(estimate.cache), 2_048.0);
