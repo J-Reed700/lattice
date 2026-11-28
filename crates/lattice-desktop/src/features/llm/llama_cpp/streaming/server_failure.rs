@@ -115,13 +115,15 @@ pub(crate) struct ServerFailure {
 impl ServerFailure {
     /// An `error` event inside an answering stream.
     pub fn streamed(error: &Value) -> Self {
+        let kind = error_kind(error);
+        let explicit_status = error
+            .get("code")
+            .and_then(Value::as_u64)
+            .and_then(|code| u16::try_from(code).ok());
         Self {
-            status: error
-                .get("code")
-                .and_then(Value::as_u64)
-                .and_then(|code| u16::try_from(code).ok()),
+            status: rejection::inferred_status(explicit_status, &kind),
             preface: "llama.cpp reported a generation error".into(),
-            kind: error_kind(error),
+            kind,
             message: error.get("message").and_then(Value::as_str).map(Into::into),
             retry_after: None,
         }
@@ -177,16 +179,13 @@ impl ServerFailure {
         matches!(self.status, Some(400 | 413 | 422))
     }
 
-    /// The server aborted a structured-output response because it exhausted
-    /// its output token budget (`finish_reason=length`). Surface as
-    /// [`AppError::AnswerCutOff`] rather than a fatal [`AppError::InvalidState`]
-    /// so contract-level cut-off recovery can react.
-    pub fn structured_output_cut_off(&self) -> bool {
-        self.kind.contains("structured_output_failed")
-            && self
-                .message
-                .as_deref()
-                .is_some_and(|message| message.contains("finish_reason=length"))
+    /// Classifies a server-reported structured-output failure through the
+    /// shared cross-backend classifier in [`rejection`].
+    pub fn structured_output_fault(&self) -> Option<rejection::StructuredOutputFault> {
+        rejection::classify_structured_output(
+            &self.kind,
+            self.message.as_deref().unwrap_or_default(),
+        )
     }
 
     /// The server's own words, safe to show: a fixed account of a message
@@ -233,8 +232,11 @@ impl ServerFailure {
         } else {
             format!("{}{}: {words}", self.preface, self.kind)
         };
-        if self.structured_output_cut_off() {
-            return AppError::AnswerCutOff(description);
+        if let Some(error) = self
+            .structured_output_fault()
+            .and_then(|fault| fault.into_error(description.clone()))
+        {
+            return error;
         }
         match self.status {
             Some(429) => AppError::RateLimitExceeded(description),
@@ -306,16 +308,69 @@ mod tests {
             }),
         ] {
             let failure = ServerFailure::streamed(&error_event);
-            assert!(failure.structured_output_cut_off());
+            assert_eq!(
+                failure.structured_output_fault(),
+                Some(rejection::StructuredOutputFault::CutOff)
+            );
             let err = failure.error(&[]);
             assert!(matches!(err, AppError::AnswerCutOff(_)), "{err:?}");
         }
+
+        let invalid_json = ServerFailure::streamed(&json!({
+            "type": "structured_output_failed",
+            "message": "model did not return valid JSON: duplicate JSON key: plan"
+        }));
+        assert_eq!(
+            invalid_json.structured_output_fault(),
+            Some(rejection::StructuredOutputFault::UnusableOutput)
+        );
+        assert!(matches!(
+            invalid_json.error(&[]),
+            AppError::ModelAnswerUnusable(_)
+        ));
+
+        let schema_mismatch = ServerFailure::streamed(&json!({
+            "type": "structured_output_failed",
+            "message": "model output did not satisfy schema: missing field 'edits'"
+        }));
+        assert_eq!(
+            schema_mismatch.structured_output_fault(),
+            Some(rejection::StructuredOutputFault::UnusableOutput)
+        );
+        assert!(matches!(
+            schema_mismatch.error(&[]),
+            AppError::ModelAnswerUnusable(_)
+        ));
 
         let other = ServerFailure::streamed(&json!({
             "type": "structured_output_failed",
             "message": "grammar compilation error"
         }));
-        assert!(!other.structured_output_cut_off());
+        assert_eq!(
+            other.structured_output_fault(),
+            Some(rejection::StructuredOutputFault::SchemaRejected)
+        );
         assert!(matches!(other.error(&[]), AppError::InvalidState(_)));
+    }
+
+    #[test]
+    fn streamed_server_error_without_code_is_retryable_service_not_available() {
+        let failure = ServerFailure::streamed(&json!({
+            "type": "server_error",
+            "message": "the engine stopped unexpectedly (process exited; status unavailable)"
+        }));
+        assert!(failure.server_error());
+        assert!(!failure.refusal());
+        assert!(matches!(
+            failure.error(&[]),
+            AppError::ServiceNotAvailable(_)
+        ));
+
+        let overloaded = ServerFailure::streamed(&json!({
+            "type": "overloaded_error",
+            "message": "server is busy"
+        }));
+        assert!(overloaded.outage());
+        assert!(matches!(overloaded.error(&[]), AppError::Network(_)));
     }
 }

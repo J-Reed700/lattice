@@ -10,7 +10,7 @@ use super::fitting::{fits, fitted, render};
 use super::{handle_of, written, Answered, Refusal, Statement, Transport};
 use crate::application::ports::llm_port::{Finish, LLMPort};
 use crate::application::services::grounded_generation::CallOptions;
-use crate::shared::error::{ErrorClass, Result};
+use crate::shared::error::{smaller_parts_may_succeed, Result};
 
 /// One item of an [`ask_each`] and how it settled.
 pub type Entry<C> = (
@@ -83,7 +83,7 @@ where
                 let asked = request.clone();
                 match transport.send(batch_llm, request).await {
                     Ok(sent) => Some((asked, sent)),
-                    Err(error) if ErrorClass::of(&error) == ErrorClass::DoesNotFit => None,
+                    Err(error) if smaller_parts_may_succeed(&error) => None,
                     Err(error) => return Err(error),
                 }
             };

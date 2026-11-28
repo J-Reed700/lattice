@@ -157,23 +157,42 @@ impl LlamaCppLlm {
                     Err(Failure::Server(failure)) => {
                         let texts = rejection::request_texts(&body);
                         failure.log(&texts, attempt, size, window);
-                        if failure.structured_output_cut_off() {
-                            return Err(failure.error(&texts));
-                        }
-                        if failure.refusal() {
-                            return Err(failure.rejected(&texts, Some((size, window)), false));
-                        }
-                        if failure.server_error() {
-                            let (status, kind) = failure.signature();
-                            if previous
-                                .as_ref()
-                                .is_some_and(|last| last.0 == status && last.1 == kind)
-                            {
-                                return Err(failure.rejected(&texts, Some((size, window)), true));
+                        match failure.structured_output_fault() {
+                            Some(rejection::StructuredOutputFault::CutOff) => {
+                                return Err(failure.error(&texts));
                             }
-                            previous = Some((status, kind.to_owned()));
-                        } else if !failure.outage() {
-                            return Err(failure.error(&texts));
+                            Some(rejection::StructuredOutputFault::UnusableOutput) => {
+                                // Fall through to DRY / frequency-penalty retry in `resend`
+                                // (which treats `ModelAnswerUnusable` as loop-breaking retry).
+                            }
+                            Some(rejection::StructuredOutputFault::SchemaRejected) => {
+                                return Err(if failure.refusal() {
+                                    failure.rejected(&texts, Some((size, window)), false)
+                                } else {
+                                    failure.error(&texts)
+                                });
+                            }
+                            None if failure.refusal() => {
+                                return Err(failure.rejected(&texts, Some((size, window)), false));
+                            }
+                            None if failure.server_error() => {
+                                let (status, kind) = failure.signature();
+                                if previous
+                                    .as_ref()
+                                    .is_some_and(|last| last.0 == status && last.1 == kind)
+                                {
+                                    return Err(failure.rejected(
+                                        &texts,
+                                        Some((size, window)),
+                                        true,
+                                    ));
+                                }
+                                previous = Some((status, kind.to_owned()));
+                            }
+                            None if !failure.outage() => {
+                                return Err(failure.error(&texts));
+                            }
+                            None => {}
                         }
                         (failure.error(&texts), failure.retry_after)
                     }

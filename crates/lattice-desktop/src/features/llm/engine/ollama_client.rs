@@ -636,7 +636,26 @@ impl Answer {
         })?;
         // A failure after the headers arrives as a line of its own. Its text
         // can quote the prompt, so only the fact of it is reported.
-        if value.get("error").is_some() {
+        if let Some(error_value) = value.get("error") {
+            let message = error_value.as_str().unwrap_or_default();
+            if let Some(fault) =
+                crate::features::llm::scheduler::rejection::classify_structured_output("", message)
+            {
+                let description = match fault {
+                    crate::features::llm::scheduler::rejection::StructuredOutputFault::CutOff => {
+                        "Ollama truncated the structured output".into()
+                    }
+                    crate::features::llm::scheduler::rejection::StructuredOutputFault::UnusableOutput => {
+                        "Ollama did not return valid structured output".into()
+                    }
+                    crate::features::llm::scheduler::rejection::StructuredOutputFault::SchemaRejected => {
+                        String::new()
+                    }
+                };
+                if let Some(typed) = fault.into_error(description) {
+                    return Err(typed);
+                }
+            }
             return Err(AppError::ServiceNotAvailable(
                 "Ollama reported an error while generating".into(),
             ));

@@ -192,5 +192,189 @@ pub(crate) fn rejected(
     AppError::ModelRejected(text)
 }
 
+/// How a server-reported structured-output failure should be handled across
+/// backends, regardless of backend-specific phrasing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum StructuredOutputFault {
+    /// Generation exhausted its output token budget before closing the
+    /// structured value (`finish_reason=length`, `max_tokens`, incomplete,
+    /// truncated). Surface as [`AppError::AnswerCutOff`] so callers can retry
+    /// with a larger budget or smaller batch.
+    CutOff,
+    /// The server rejected the JSON schema or grammar itself before generating
+    /// (invalid/unsupported schema, grammar compilation error). Retrying the
+    /// same request cannot succeed.
+    SchemaRejected,
+    /// The model attempted to generate structured output and produced malformed
+    /// or schema-violating output (invalid JSON, duplicate keys, missing
+    /// required fields, wrong types, enum/validation failure). Surface as
+    /// [`AppError::ModelAnswerUnusable`] so loop-breaking retry and
+    /// contract-level recovery can react.
+    UnusableOutput,
+}
+
+impl StructuredOutputFault {
+    /// Converts a recoverable structured-output fault into the typed
+    /// [`AppError`] callers recover on, leaving [`Self::SchemaRejected`] to the
+    /// backend's refusal path.
+    pub(crate) fn into_error(self, description: String) -> Option<AppError> {
+        match self {
+            Self::CutOff => Some(AppError::AnswerCutOff(description)),
+            Self::UnusableOutput => Some(AppError::ModelAnswerUnusable(description)),
+            Self::SchemaRejected => None,
+        }
+    }
+}
+
+/// Classifies a server-reported error as a structured-output fault when its
+/// error `kind` or `message` identifies a structured-output / JSON-schema
+/// generation failure.
+///
+/// Context-size refusals always return `None` so they stay on the window-size
+/// refusal path. Once a failure is identified as structured-output related,
+/// schema/grammar rejections map to [`StructuredOutputFault::SchemaRejected`],
+/// length/budget cutoffs map to [`StructuredOutputFault::CutOff`], and every
+/// other generation or validation failure defaults to
+/// [`StructuredOutputFault::UnusableOutput`] so new server phrasings do not
+/// fall through to fatal [`AppError::InvalidState`].
+pub(crate) fn classify_structured_output(
+    kind: &str,
+    message: &str,
+) -> Option<StructuredOutputFault> {
+    if is_size_refusal(None, kind, message) {
+        return None;
+    }
+    let kind_lower = kind.to_ascii_lowercase();
+    let msg_lower = message.to_ascii_lowercase();
+
+    let kind_is_structured = [
+        "structured_output",
+        "json_validate",
+        "failed_generation",
+        "invalid_json",
+        "grammar",
+    ]
+    .iter()
+    .any(|needle| kind_lower.contains(needle));
+
+    let msg_is_structured = [
+        "structured output",
+        "structured_output",
+        "did not return valid json",
+        "failed to generate valid json",
+        "failed to generate json",
+        "failed to validate json",
+        "duplicate json key",
+        "json_validate_failed",
+    ]
+    .iter()
+    .any(|needle| msg_lower.contains(needle))
+        || ((msg_lower.contains("response_format") || msg_lower.contains("json_schema"))
+            && [
+                "invalid",
+                "unsupported",
+                "compil",
+                "grammar",
+                "too complex",
+                "failed",
+                "schema",
+            ]
+            .iter()
+            .any(|needle| msg_lower.contains(needle)));
+
+    if !kind_is_structured && !msg_is_structured {
+        return None;
+    }
+
+    let schema_rejected = kind_lower.contains("grammar")
+        || [
+            "grammar",
+            "invalid schema",
+            "invalid_json_schema",
+            "invalid json schema",
+            "unsupported schema",
+            "schema is too complex",
+            "schema compilation",
+            "failed to compile schema",
+            "failed to parse schema",
+            "output_config.format",
+            "schemas contains",
+        ]
+        .iter()
+        .any(|needle| msg_lower.contains(needle));
+    if schema_rejected {
+        return Some(StructuredOutputFault::SchemaRejected);
+    }
+
+    let cut_off = [
+        "finish_reason=length",
+        "finish_reason: length",
+        "\"finish_reason\":\"length\"",
+        "\"finish_reason\": \"length\"",
+        "max_tokens",
+        "max_output_tokens",
+        "output budget",
+        "token limit",
+        "token budget",
+        "incomplete",
+        "truncated",
+        "cut off",
+        "unexpected end of json",
+        "eof while parsing",
+    ]
+    .iter()
+    .any(|needle| msg_lower.contains(needle));
+    if cut_off {
+        return Some(StructuredOutputFault::CutOff);
+    }
+
+    Some(StructuredOutputFault::UnusableOutput)
+}
+
+/// Infers a standard HTTP status class for a streamed or structured error event
+/// when the server omitted a numeric `code` and identified the error only by
+/// its `type`/`kind` label (for example `{"type": "server_error", ...}`).
+///
+/// An explicit `status` is always preserved unchanged.
+pub(crate) fn inferred_status(status: Option<u16>, kind: &str) -> Option<u16> {
+    if status.is_some() {
+        return status;
+    }
+    let kind = kind.to_ascii_lowercase();
+    if kind.contains("rate_limit") || kind.contains("too_many_requests") {
+        Some(429)
+    } else if kind.contains("timeout") || kind.contains("timed_out") {
+        Some(408)
+    } else if kind.contains("overloaded")
+        || kind.contains("service_unavailable")
+        || kind.contains("unavailable")
+        || kind.contains("bad_gateway")
+    {
+        Some(503)
+    } else if kind.contains("server_error")
+        || kind.contains("internal_error")
+        || kind.contains("engine_error")
+        || kind.contains("api_error")
+    {
+        Some(500)
+    } else if kind.contains("exceed_context_size")
+        || kind.contains("context_length_exceeded")
+        || kind.contains("payload_too_large")
+    {
+        Some(413)
+    } else if kind.contains("invalid_request")
+        || kind.contains("bad_request")
+        || kind.contains("unprocessable")
+    {
+        Some(400)
+    } else if kind.contains("authentication") || kind.contains("unauthorized") {
+        Some(401)
+    } else if kind.contains("permission") || kind.contains("forbidden") {
+        Some(403)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests;

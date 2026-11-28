@@ -373,7 +373,27 @@ async fn complete_reply<T: Transport>(
     transport: &T,
     request: T::Request,
 ) -> Result<Reply<T::Request>> {
-    let response = transport.send(llm, &request).await?;
+    let response = match transport.send(llm, &request).await {
+        Ok(response) => response,
+        Err(AppError::AnswerCutOff(_)) => {
+            if call.splits {
+                return Err(cut_off());
+            }
+            return match transport.cut_off(llm, &request).await {
+                CutOffRemedy::Larger(larger) => {
+                    let response = transport.send(llm, &larger).await?;
+                    match response.finish() {
+                        Finish::Complete => Ok(Reply::Complete(larger, response)),
+                        Finish::CutOff => Err(cut_off()),
+                        Finish::Declined => Err(AppError::ModelAnswerUnusable(DECLINED.into())),
+                        Finish::Filtered => Err(AppError::ModelAnswerUnusable(CUT_OFF.into())),
+                    }
+                }
+                CutOffRemedy::Correct | CutOffRemedy::Stop => Err(cut_off()),
+            };
+        }
+        Err(error) => return Err(error),
+    };
     let (request, response) = match response.finish() {
         Finish::CutOff if call.splits => return Err(cut_off()),
         Finish::CutOff => match transport.cut_off(llm, &request).await {
