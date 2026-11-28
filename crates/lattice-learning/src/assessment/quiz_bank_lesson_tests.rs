@@ -1593,3 +1593,74 @@ async fn consistent_claims_count_as_grounded_against_minority_unverified_claims(
     );
     Ok(())
 }
+
+#[test]
+fn lesson_seed_items_drop_option_letter_leaks() {
+    let qid_bad = uuid::Uuid::new_v4().to_string();
+    let qid_ord = uuid::Uuid::new_v4().to_string();
+    let qid_ok = uuid::Uuid::new_v4().to_string();
+    let outcome_id = uuid::Uuid::new_v4().to_string();
+    let make_q = |id: &str| LessonQuestion {
+        id: id.to_owned(),
+        kind: LessonQuestionKind::Quiz,
+        prompt: "What does $export perform?".into(),
+        options: vec![
+            "Import patient records.".into(),
+            "Send Direct messages.".into(),
+            "Export NDJSON resources.".into(),
+            "Update coverage records.".into(),
+        ],
+        source_ids: vec![],
+    };
+    let questions = vec![make_q(&qid_bad), make_q(&qid_ord), make_q(&qid_ok)];
+    let keys = vec![
+        LessonAnswerKey {
+            question_id: qid_bad.clone(),
+            correct_index: 2,
+            explanation: "This matches option C. Option A describes an import.".into(),
+            rationales: vec![
+                "Wrong.".into(),
+                "Wrong.".into(),
+                String::new(),
+                "Wrong.".into(),
+            ],
+        },
+        LessonAnswerKey {
+            question_id: qid_ord.clone(),
+            correct_index: 2,
+            explanation: "The third option is correct because $export emits NDJSON.".into(),
+            rationales: vec![
+                "Wrong.".into(),
+                "Wrong.".into(),
+                String::new(),
+                "Wrong.".into(),
+            ],
+        },
+        LessonAnswerKey {
+            question_id: qid_ok.clone(),
+            correct_index: 2,
+            explanation: "Bulk Data exports NDJSON mapped to FHIR R4 resources.".into(),
+            rationales: vec![
+                "Wrong.".into(),
+                "Wrong.".into(),
+                String::new(),
+                "Wrong.".into(),
+            ],
+        },
+    ];
+    let seeded =
+        crate::quiz_bank_jobs::lesson_seed_items("lesson-1", &outcome_id, &questions, &keys);
+    assert_eq!(seeded.len(), 3);
+    assert_eq!(
+        seeded[0].review_status,
+        crate::assessment_repository::CandidateReviewStatus::Dropped
+    );
+    assert_eq!(
+        seeded[1].review_status,
+        crate::assessment_repository::CandidateReviewStatus::Dropped
+    );
+    assert_eq!(
+        seeded[2].review_status,
+        crate::assessment_repository::CandidateReviewStatus::Agreed
+    );
+}

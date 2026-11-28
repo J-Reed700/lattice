@@ -112,7 +112,25 @@ fn lesson_seed_items_with_unverified(
         .filter_map(|(index, q)| {
             let key = keys.iter().find(|k| k.question_id == q.id)?;
             let candidate = lesson_question_item(q, key, vec![outcome_id.to_string()]);
+            let has_option_position = engine::checks::contains_option_position_reference(
+                &candidate.explanation,
+            ) || candidate
+                .distractor_rationales
+                .iter()
+                .any(|reason| engine::checks::contains_option_position_reference(reason));
             let review_status = match engine::validate_candidate(&candidate) {
+                Ok(()) if has_option_position => {
+                    tracing::info!(question = %q.id, "A lesson question naming option letters, numbers, or positions was kept out of the quiz bank's draws");
+                    crate::lessons::trace::lesson_span(lesson_id).in_scope(|| {
+                        crate::lessons::trace::decided(
+                            crate::lessons::trace::Stage::Quiz,
+                            &format!("question {}", q.prompt),
+                            "kept out of the bank's draws",
+                            "Question names an option by letter, number, or position instead of by what it says.",
+                        );
+                    });
+                    crate::assessment_repository::CandidateReviewStatus::Dropped
+                }
                 Ok(()) if unverified_indices.contains(&index) => {
                     tracing::info!(question = %q.id, "An unverified lesson question was kept out of the quiz bank's draws");
                     crate::lessons::trace::lesson_span(lesson_id).in_scope(|| {

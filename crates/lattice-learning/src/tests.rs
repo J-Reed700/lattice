@@ -23,7 +23,7 @@ pub(super) fn prepared(lesson_id: &str) -> PreparedLearningLesson {
         keys.push(LessonAnswerKey {
             question_id: qid,
             correct_index: 0,
-            explanation: "The source supports the first option.".into(),
+            explanation: "The source supports the verified answer.".into(),
             rationales: vec![],
         });
     }
