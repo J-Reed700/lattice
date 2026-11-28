@@ -504,8 +504,45 @@ pub(crate) fn authored_content_faults_for(
                 .into()
         });
     }
+    if !matches!(
+        candidate.format,
+        LearningItemFormat::SingleChoice
+            | LearningItemFormat::MultiSelect
+            | LearningItemFormat::Matching
+    ) {
+        let mut non_choice_texts = std::iter::once(candidate.prompt.as_str())
+            .chain(std::iter::once(candidate.explanation.as_str()))
+            .chain(
+                candidate
+                    .rubric
+                    .iter()
+                    .flat_map(|c| [c.title.as_str(), c.description.as_str()]),
+            );
+        if non_choice_texts.any(contains_non_choice_distractor_reference) {
+            faults.push(
+                "A non-choice question's prompt, explanation, or rubric refers to distractors or answer options."
+                    .into(),
+            );
+        }
+    }
+    if std::iter::once(candidate.explanation.as_str())
+        .chain(candidate.distractor_rationales.iter().map(String::as_str))
+        .any(|text| {
+            contains_option_letter_or_number_reference(text)
+                || contains_ordinal_option_reference(text)
+        })
+    {
+        faults.push(
+            "Names an answer choice by letter, number, or position instead of stating what it says (options are shuffled)."
+                .into(),
+        );
+    }
     faults
 }
+
+mod text;
+pub(crate) use text::contains_option_letter_or_number_reference;
+use text::{contains_non_choice_distractor_reference, contains_ordinal_option_reference};
 
 fn contains_course_meta_talk(text: &str) -> bool {
     let normalized = text.replace('\u{2019}', "'").to_ascii_lowercase();

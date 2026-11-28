@@ -539,3 +539,20 @@ fn the_lengths_the_writer_is_asked_for_agree_with_the_shapes_numbers() {
     assert!(lengths.ideas.0 * lengths.sections.0 <= SECTIONS.0);
     assert_eq!(lengths.ideas.1 * lengths.sections.1 + exact, SECTIONS.1);
 }
+
+#[test]
+fn teaching_blocks_cannot_follow_recap_in_either_phase() {
+    for phase in [Phase::Draft, Phase::Kept] {
+        let mut out_of_order = lesson();
+        let tail = block("contrast", "Late Contrast");
+        out_of_order["blocks"].as_array_mut().unwrap().push(tail);
+        let findings = found(&out_of_order, phase);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.place().site == FindingSite::Section(11)
+                    && f.note.contains("appears after the recap")),
+            "{findings:?}"
+        );
+    }
+}

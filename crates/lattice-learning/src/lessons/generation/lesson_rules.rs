@@ -575,6 +575,19 @@ fn choice_findings(
             ),
         ));
     }
+    let has_option_letter = std::iter::once(text(question, "explanation"))
+        .chain(reasons(question))
+        .any(crate::assessment::assessment_engine::checks::contains_option_letter_or_number_reference);
+    if has_option_letter {
+        found.push(structure(
+            Rule::AnswerInPrompt,
+            site,
+            format!("{label} refers to an answer choice by letter or number."),
+            format!(
+                "{note_label} refers to an answer choice by letter or number (for example 'option A' or 'option C'); choices are shuffled when shown, so explain each choice by what it says instead."
+            ),
+        ));
+    }
     found
 }
 

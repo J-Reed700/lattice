@@ -11,6 +11,8 @@ use crate::features::indexing::engine::extraction::ContentExtractor;
 pub(super) enum BodyKind {
     Html,
     Pdf,
+    /// Binary ZIP / OpenXML archives that must not be decoded as raw text.
+    Archive,
     /// Text as it is: plain text, markdown, CSV, JSON, XML.
     Text,
 }
@@ -21,12 +23,19 @@ pub(super) fn body_kind(content_type: Option<&str>, body: &[u8]) -> BodyKind {
     if body.starts_with(b"%PDF-") {
         return BodyKind::Pdf;
     }
+    if body.starts_with(b"PK\x03\x04") || body.starts_with(b"PK\x05\x06") {
+        return BodyKind::Archive;
+    }
     let declared = content_type
         .and_then(|value| value.split(';').next())
         .map(|value| value.trim().to_ascii_lowercase())
         .unwrap_or_default();
     match declared.as_str() {
         "application/pdf" | "application/x-pdf" => BodyKind::Pdf,
+        "application/zip" | "application/x-zip-compressed" => BodyKind::Archive,
+        other if other.starts_with("application/vnd.openxmlformats-officedocument.") => {
+            BodyKind::Archive
+        }
         "text/html" | "application/xhtml+xml" | "" => BodyKind::Html,
         "application/json" | "application/xml" | "text/xml" => BodyKind::Text,
         other if other.starts_with("text/") => BodyKind::Text,
@@ -44,6 +53,9 @@ pub(super) async fn body_text(
 ) -> Result<String> {
     match kind {
         BodyKind::Pdf => pdf_text(body).await,
+        BodyKind::Archive => Err(AppError::InvalidInput(
+            "Fetched URL returned binary ZIP/archive bytes instead of readable text.".into(),
+        )),
         BodyKind::Text | BodyKind::Html => Ok(lattice_core::shared::text::strip_scraped_chrome(
             decode_response_text(body, content_type).trim(),
         )),
@@ -110,5 +122,28 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(stripped, "# Real Heading");
+
+        assert_eq!(
+            body_kind(Some("text/html"), b"PK\x03\x04\x14\x00[Content_Types].xml"),
+            BodyKind::Archive
+        );
+        assert_eq!(
+            body_kind(Some("application/zip"), b"binary"),
+            BodyKind::Archive
+        );
+        assert_eq!(
+            body_kind(
+                Some("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+                b"binary",
+            ),
+            BodyKind::Archive
+        );
+        assert!(body_text(
+            BodyKind::Archive,
+            b"PK\x03\x04[Content_Types].xml".to_vec(),
+            Some("application/octet-stream"),
+        )
+        .await
+        .is_err());
     }
 }

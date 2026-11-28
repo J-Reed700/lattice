@@ -1226,3 +1226,18 @@ fn check_block_ignores_wrong_scope_401_prompt_when_reveal_teaches_403() {
         "{bad_issues:?}"
     );
 }
+
+#[test]
+fn choice_questions_cannot_refer_to_choices_by_option_letter_or_number() {
+    let mut candidate = lesson();
+    candidate["questions"][0]["explanation"] =
+        json!("This matches option C. Option A describes an import rather than bulk export.");
+    let issues = lesson_rules(&candidate);
+    assert!(
+        issues
+            .iter()
+            .any(|f| f.place().site == FindingSite::Question(0)
+                && f.note.contains("shuffled when shown")),
+        "{issues:?}"
+    );
+}

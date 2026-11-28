@@ -289,7 +289,65 @@ fn classify_consecutive(prev: &str, next: &str) -> Option<ConsecutiveRepeat> {
             prefix_stutter: true,
         });
     }
+    if has_contiguous_clause_overlap(&prev_words, &next_words) {
+        return Some(ConsecutiveRepeat {
+            first: prev.to_owned(),
+            second: next.to_owned(),
+            prefix_stutter: true,
+        });
+    }
     None
+}
+
+fn has_contiguous_clause_overlap(prev_words: &[String], next_words: &[String]) -> bool {
+    const CONTRAST_OPENERS: &[&str] = &[
+        "when",
+        "if",
+        "while",
+        "where",
+        "whereas",
+        "although",
+        "however",
+        "instead",
+        "otherwise",
+        "unless",
+    ];
+    if prev_words
+        .first()
+        .is_some_and(|w| CONTRAST_OPENERS.contains(&w.as_str()))
+        || next_words
+            .first()
+            .is_some_and(|w| CONTRAST_OPENERS.contains(&w.as_str()))
+    {
+        return false;
+    }
+    let aligned_diffs = prev_words
+        .iter()
+        .zip(next_words)
+        .filter(|(left, right)| left != right)
+        .count()
+        + prev_words.len().abs_diff(next_words.len());
+    if aligned_diffs < 2 {
+        return false;
+    }
+    let prev_codes = code_tokens(prev_words);
+    let next_codes = code_tokens(next_words);
+    if !next_codes.iter().all(|tok| prev_codes.contains(tok))
+        || (prev_words.len() <= next_words.len() && prev_codes != next_codes)
+    {
+        return false;
+    }
+    let has_six_word_run = next_words.len() >= 6
+        && next_words
+            .windows(6)
+            .any(|win| prev_words.windows(6).any(|p| p == win));
+    if !has_six_word_run {
+        return false;
+    }
+    let prev_unique: HashSet<&str> = prev_words.iter().map(String::as_str).collect();
+    let next_unique: HashSet<&str> = next_words.iter().map(String::as_str).collect();
+    let shared = prev_unique.intersection(&next_unique).count();
+    shared >= 6 && shared * 2 >= next_words.len()
 }
 
 fn ends_terminal_sentence(line: &str) -> bool {

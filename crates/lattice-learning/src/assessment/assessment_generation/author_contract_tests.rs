@@ -1059,3 +1059,71 @@ fn repeat_descriptors_and_overlap_guard_catch_duplicate_matching_and_cloze_decis
     )
     .is_some());
 }
+
+#[test]
+fn authored_content_faults_catch_option_letters_free_response_distractors_and_explanation_clones() {
+    let letter_leak = candidate_with(
+        LearningItemFormat::SingleChoice,
+        "What does $export perform in bulk data access?",
+        "This matches option C. Option A describes import rather than export.",
+        vec![String::new(), "Option B refers to Direct messaging.".into()],
+    );
+    let letter_faults =
+        engine::checks::authored_content_faults_for(&letter_leak, "Bulk Data exports NDJSON.", &[]);
+    assert!(
+        letter_faults
+            .iter()
+            .any(|f| f.contains("letter, number, or position")),
+        "{letter_faults:?}"
+    );
+
+    let english_a_ok = candidate_with(
+        LearningItemFormat::SingleChoice,
+        "Which capability grants bulk data export?",
+        "This option a server chooses enables asynchronous NDJSON export.",
+        vec![String::new(), "Import is a separate operation.".into()],
+    );
+    assert!(engine::checks::authored_content_faults_for(&english_a_ok, "", &[]).is_empty());
+
+    let free_response_distractors = LearningAssessmentCandidate {
+        id: "exp-1".into(),
+        outcome_ids: vec!["o1".into()],
+        format: LearningItemFormat::Explanation,
+        difficulty: 4,
+        prompt: "A delivery service receives a request to send a new referral document to a tenant whose Capability Descriptor specifies supportedOperations: [\"read\"]. Describe how ConnectorRouterService should handle this request before any adapter is instantiated, and explain the operational benefit of this pre-flight validation.".into(),
+        left: vec![],
+        options: vec![],
+        source_version_ids: vec![],
+        rubric: vec![crate::assessment_engine::LearningRubricCriterion {
+            id: "r1".into(),
+            title: "Pre-flight action".into(),
+            description: "Reject before adapter instantiation.".into(),
+            max_points: 4,
+        }],
+        key: LearningAssessmentKey::Rubric,
+        explanation: "The distractors fail because they either skip validation or alter the descriptor dynamically.".into(),
+        distractor_rationales: vec![],
+    };
+    let non_choice_faults =
+        engine::checks::authored_content_faults_for(&free_response_distractors, "", &[]);
+    assert!(
+        non_choice_faults
+            .iter()
+            .any(|f| f.contains("non-choice question")),
+        "{non_choice_faults:?}"
+    );
+
+    let clone_exp = LearningAssessmentCandidate {
+        id: "exp-2".into(),
+        prompt: "A delivery service receives a DocumentDeliveryRequested event for a new referral document requiring create while the tenant's Capability Descriptor lists supportedOperations as [\"read\"]. Describe how ConnectorRouterService should handle this request before any adapter is instantiated, and explain the operational benefit of this pre-flight validation.".into(),
+        explanation: "Reject the request or route it to a dead-letter queue to avoid wasted network calls.".into(),
+        ..free_response_distractors.clone()
+    };
+    assert!(crate::assessment::item_review::repeat_overlap_reason(
+        &clone_exp,
+        &[crate::assessment::item_review::item_repeat_descriptor(
+            &free_response_distractors
+        )],
+    )
+    .is_some());
+}
