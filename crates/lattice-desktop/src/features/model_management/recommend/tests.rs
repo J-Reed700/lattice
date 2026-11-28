@@ -343,7 +343,7 @@ fn price(facts: &GgufFacts, window: u32, quantized: bool) -> u64 {
         facts.gpu_weight_bytes,
         Some(&facts.shape),
         window,
-        ServerBuffers::chat(quantized),
+        ServerBuffers::chat(quantized).for_dedicated_gpu(),
     )
     .total()
 }
@@ -473,7 +473,7 @@ async fn the_list_judges_each_model_at_its_own_saved_setting() {
             candidate.gpu_weight_bytes,
             candidate.shape.as_ref(),
             COMFORTABLE_WINDOW_TOKENS,
-            ServerBuffers::chat(quantized),
+            ServerBuffers::chat(quantized).for_dedicated_gpu(),
         )
         .total()
     };

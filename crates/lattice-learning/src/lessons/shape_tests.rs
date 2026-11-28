@@ -250,7 +250,7 @@ fn a_cut_leaves_the_mixed_check_alone_and_takes_the_one_before_it() {
 fn a_kept_lesson_is_told_the_last_of_several_checks_mixes_the_ideas() {
     assert_eq!(
         StandardShape.asked(Phase::Kept)[1],
-        "It is held to this instead: at least one explanation; each check after a worked example shown since the previous check, except the last of two or more checks, which mixes the lesson's ideas; the recap after the reflection when it has both; and at least one question of each kind: practice, quiz and test."
+        "It is held to this instead: at least one explanation; each check after a worked example shown since the previous check, except the last of two or more checks, which mixes the lesson's ideas; the recap closing the lesson after the reflection; and at least one question of each kind: practice, quiz and test."
     );
 }
 
@@ -538,4 +538,21 @@ fn the_lengths_the_writer_is_asked_for_agree_with_the_shapes_numbers() {
     assert_eq!(lengths.ideas, IDEAS);
     assert!(lengths.ideas.0 * lengths.sections.0 <= SECTIONS.0);
     assert_eq!(lengths.ideas.1 * lengths.sections.1 + exact, SECTIONS.1);
+}
+
+#[test]
+fn teaching_blocks_cannot_follow_recap_in_either_phase() {
+    for phase in [Phase::Draft, Phase::Kept] {
+        let mut out_of_order = lesson();
+        let tail = block("contrast", "Late Contrast");
+        out_of_order["blocks"].as_array_mut().unwrap().push(tail);
+        let findings = found(&out_of_order, phase);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.place().site == FindingSite::Section(11)
+                    && f.note.contains("appears after the recap")),
+            "{findings:?}"
+        );
+    }
 }

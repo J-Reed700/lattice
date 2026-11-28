@@ -41,6 +41,8 @@ pub(crate) struct BankWriting {
     queue: VecDeque<AuthoringNeed>,
     /// Every question written so far, with the outcomes it counts for.
     written: Vec<(Vec<String>, String)>,
+    /// Kept source quotes so subsequent steps rotate onto fresher blocks.
+    written_quotes: Vec<(Vec<String>, String)>,
     /// Requirements whose first form came back short.
     short: Vec<LearningBlueprintRequirement>,
 }
@@ -50,6 +52,7 @@ impl BankWriting {
         Self {
             queue: needs.into(),
             written: Vec::new(),
+            written_quotes: Vec::new(),
             short: Vec::new(),
         }
     }
@@ -68,6 +71,30 @@ impl BankWriting {
                     need.existing_prompts.push(prompt.clone());
                 }
             }
+            let outcome_quotes: Vec<&str> = self
+                .written_quotes
+                .iter()
+                .filter(|(outcomes, _)| outcomes.contains(&need.requirement.outcome_id))
+                .map(|(_, quote)| quote.as_str())
+                .collect();
+            if !outcome_quotes.is_empty() && need.material.len() >= 3 {
+                let counts: Vec<usize> = need
+                    .material
+                    .iter()
+                    .map(|passage| passage_quote_count(&passage.text, &outcome_quotes))
+                    .collect();
+                let unsaturated = counts.iter().filter(|&&c| c < 2).count();
+                if unsaturated >= 2 {
+                    let filtered = need
+                        .material
+                        .iter()
+                        .zip(&counts)
+                        .filter(|&(_, &c)| c < 2)
+                        .map(|(passage, _)| passage.clone())
+                        .collect();
+                    need.material = filtered;
+                }
+            }
             return Some(need);
         }
     }
@@ -77,13 +104,35 @@ impl BankWriting {
         if need.pass == BankPass::FirstForm && authored.items.len() < need.count {
             self.short.push(need.requirement.clone());
         }
-        self.written.extend(authored.items.iter().map(|item| {
-            (
+        for item in &authored.items {
+            let candidate =
+                crate::assessment_engine::LearningAssessmentCandidate::from(item.candidate.clone());
+            self.written.push((
                 item.candidate.outcome_ids.clone(),
-                item.candidate.prompt.clone(),
-            )
-        }));
+                crate::assessment::item_review::item_repeat_descriptor(&candidate),
+            ));
+            let trimmed = item.source_quote.trim();
+            if trimmed.len() >= 30 {
+                self.written_quotes
+                    .push((item.candidate.outcome_ids.clone(), trimmed.to_owned()));
+            }
+        }
     }
+}
+
+fn normalize_quote_ws(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn passage_quote_count(passage_text: &str, outcome_quotes: &[&str]) -> usize {
+    let norm_passage = normalize_quote_ws(passage_text);
+    outcome_quotes
+        .iter()
+        .filter(|quote| {
+            let norm_quote = normalize_quote_ws(quote);
+            norm_quote.len() >= 30 && norm_passage.contains(&norm_quote)
+        })
+        .count()
 }
 
 #[cfg(test)]
@@ -222,5 +271,75 @@ mod tests {
             rest.push((need.requirement.format, need.pass));
         }
         assert_eq!(rest, [(single, Retakes)]);
+    }
+
+    #[test]
+    fn saturated_block_is_filtered_when_at_least_two_other_blocks_remain() {
+        use crate::assessment_generation::MaterialPassage;
+        let passage = |title: &str, text: &str| MaterialPassage {
+            lesson_title: "Lesson".into(),
+            title: title.into(),
+            text: text.into(),
+            source_version_ids: vec![],
+        };
+        let mut first_need = need(
+            "a",
+            LearningItemFormat::SingleChoice,
+            2,
+            BankPass::FirstForm,
+        );
+        first_need.material = vec![
+            passage(
+                "Block 0",
+                "Alpha sentence explains capability descriptors in detail for tenants.",
+            ),
+            passage(
+                "Block 1",
+                "Beta sentence describes OAuth2 credential verification steps.",
+            ),
+            passage(
+                "Block 2",
+                "Gamma sentence covers Direct Secure Messaging trust certificates.",
+            ),
+        ];
+        let second_need = AuthoringNeed {
+            requirement: requirement("a", LearningItemFormat::Ordering, 1),
+            ..first_need.clone()
+        };
+        let mut writing = BankWriting::new(vec![first_need, second_need]);
+        let current = writing.next().unwrap();
+        let make_item = |id: &str| AuthoredItem {
+            candidate: StoredItem {
+                id: id.into(),
+                outcome_ids: vec!["a".into()],
+                format: LearningItemFormat::SingleChoice,
+                difficulty: 2,
+                prompt: format!("Prompt {id}"),
+                options: vec![],
+                left: vec![],
+                source_version_ids: vec![],
+                rubric: vec![],
+                key: LearningAssessmentKey::Choice(0),
+                explanation: String::new(),
+                distractor_rationales: vec![],
+            },
+            source_quote: "Alpha sentence explains capability descriptors in detail for tenants."
+                .into(),
+            lesson_id: None,
+        };
+        writing.wrote(
+            &current,
+            &Authored {
+                items: vec![make_item("i1"), make_item("i2")],
+                dropped: vec![],
+            },
+        );
+        let next_need = writing.next().unwrap();
+        let titles: Vec<&str> = next_need
+            .material
+            .iter()
+            .map(|m| m.title.as_str())
+            .collect();
+        assert_eq!(titles, ["Block 1", "Block 2"]);
     }
 }

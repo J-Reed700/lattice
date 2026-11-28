@@ -482,8 +482,64 @@ pub(crate) fn authored_content_faults_for(
             }
         }
     }
+    let mentions_403_quote = crate::lessons::spec_checks::mentions_403_scope_error(quote);
+    let claims_scope_401 = crate::lessons::spec_checks::asserts_401_for_scope_error(
+        &candidate.explanation.to_ascii_lowercase(),
+    ) || candidate
+        .options
+        .iter()
+        .enumerate()
+        .filter(|(idx, _)| right_indices.contains(idx))
+        .any(|(_, opt)| {
+            crate::lessons::spec_checks::asserts_401_for_scope_error(&opt.to_ascii_lowercase())
+        });
+    if claims_scope_401
+        && (mentions_403_quote || (!quote.contains("401") && !candidate.prompt.contains("401")))
+    {
+        faults.push(if mentions_403_quote {
+            "Claims HTTP `401` for a scope validation failure when the grounded lesson passage specifies `403 Forbidden`."
+                .into()
+        } else {
+            "Claims HTTP `401` for a scope validation failure when neither the grounded lesson passage nor the question prompt specifies `401` (`403 Forbidden` applies to insufficient scopes)."
+                .into()
+        });
+    }
+    if !matches!(
+        candidate.format,
+        LearningItemFormat::SingleChoice
+            | LearningItemFormat::MultiSelect
+            | LearningItemFormat::Matching
+    ) {
+        let mut non_choice_texts = std::iter::once(candidate.prompt.as_str())
+            .chain(std::iter::once(candidate.explanation.as_str()))
+            .chain(
+                candidate
+                    .rubric
+                    .iter()
+                    .flat_map(|c| [c.title.as_str(), c.description.as_str()]),
+            );
+        if non_choice_texts.any(contains_non_choice_distractor_reference) {
+            faults.push(
+                "A non-choice question's prompt, explanation, or rubric refers to distractors or answer options."
+                    .into(),
+            );
+        }
+    }
+    if std::iter::once(candidate.explanation.as_str())
+        .chain(candidate.distractor_rationales.iter().map(String::as_str))
+        .any(contains_option_position_reference)
+    {
+        faults.push(
+            "Names an answer choice by letter, number, or position instead of stating what it says (options are shuffled)."
+                .into(),
+        );
+    }
     faults
 }
+
+mod text;
+use text::contains_non_choice_distractor_reference;
+pub(crate) use text::contains_option_position_reference;
 
 fn contains_course_meta_talk(text: &str) -> bool {
     let normalized = text.replace('\u{2019}', "'").to_ascii_lowercase();
@@ -500,8 +556,34 @@ fn contains_course_meta_talk(text: &str) -> bool {
         "from this lesson",
         "nothing in this lesson",
         "taught in this lesson",
+        "based on the provided",
+        "the provided passage",
+        "the provided excerpt",
+        "the provided text",
+        "the provided principles",
     ];
-    PHRASES.iter().any(|phrase| normalized.contains(phrase))
+    if PHRASES.iter().any(|phrase| normalized.contains(phrase)) {
+        return true;
+    }
+    const SOURCE_REFS: &[&str] = &[
+        "the passage's",
+        "this passage's",
+        "the passage",
+        "this passage",
+        "that passage",
+        "the excerpt's",
+        "the excerpt",
+        "this excerpt",
+        "that excerpt",
+    ];
+    SOURCE_REFS.iter().any(|phrase| {
+        normalized.match_indices(phrase).any(|(pos, _)| {
+            let before = normalized[..pos].chars().next_back();
+            let after = normalized[pos + phrase.len()..].chars().next();
+            before.is_none_or(|c| !c.is_ascii_alphanumeric())
+                && after.is_none_or(|c| !c.is_ascii_alphanumeric())
+        })
+    })
 }
 
 fn find_phantom_version(candidate: &LearningAssessmentCandidate, quote: &str) -> Option<String> {

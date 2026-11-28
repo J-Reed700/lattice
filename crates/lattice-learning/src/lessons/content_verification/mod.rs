@@ -463,6 +463,26 @@ pub(crate) fn report_unverified_block_quotes(
     by_block
 }
 
+/// Counts `(unverified, verified)` findings per block ordinal (`unit < block_count`).
+pub(crate) fn report_block_claim_counts(
+    report: &LessonVerificationReport,
+    block_count: usize,
+) -> std::collections::HashMap<usize, (usize, usize)> {
+    let mut counts: std::collections::HashMap<usize, (usize, usize)> =
+        std::collections::HashMap::new();
+    for finding in &report.findings {
+        if finding.unit < block_count {
+            let entry = counts.entry(finding.unit).or_default();
+            if finding_is_unverified(finding) {
+                entry.0 += 1;
+            } else {
+                entry.1 += 1;
+            }
+        }
+    }
+    counts
+}
+
 /// Seeded question indices (`0..questions.len()`) carrying an unverified or
 /// unsettled finding in `report`.
 pub(crate) fn report_unverified_question_indices(

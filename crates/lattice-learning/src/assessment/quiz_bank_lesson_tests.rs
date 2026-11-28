@@ -1290,3 +1290,377 @@ fn lesson_question_item_clears_right_choice_rationale_before_bank_validation() {
     );
     assert!(crate::assessment_engine::validate_candidate(&candidate).is_ok());
 }
+
+#[tokio::test]
+async fn block_dominated_by_no_source_claims_excludes_orphan_scenario_and_taints_bank() -> Result<()>
+{
+    use lattice_core::domain::learning::acceptance::{
+        End, Outcome as StepOutcome, Reading, Step, Then,
+    };
+    use lattice_core::domain::learning::claim_review::{
+        Actor, ClaimEvent, ClaimId, ClaimLocation, EventProvenance, UnitKind, UnverifiedReason,
+    };
+
+    let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
+    let (published, job_id) = published(&db).await?;
+    let lesson_id = &published.lesson_id;
+    let outcome_id = lesson_outcome(&pool, lesson_id).await;
+    let mut tx = db.begin_write().await?;
+    let now = 1_700_000_200i64;
+    sqlx::query(
+        "INSERT OR REPLACE INTO learning_lesson_reviews(lesson_id,program_id,job_id,state,revision,draft_sha256,checker_model,opened_at,updated_at) VALUES(?,?,?,'ready',1,'sha','m',?,?)",
+    )
+    .bind(lesson_id)
+    .bind(&published.program_id)
+    .bind(&job_id)
+    .bind(now)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
+    let prov = EventProvenance {
+        actor: Actor::Machine,
+        at: now,
+        job_id: None,
+        app_version: "test".into(),
+        checker_model: Some("test-model".into()),
+    };
+
+    let scenario_setup =
+        "Scenario A: You omit the configuration flag assuming R4 works by default.";
+    let unverified_c1 = "Proprietary validation fails at onboarding when this setting is omitted.";
+    let unverified_c2 = "Some endpoints silently fall back to legacy defaults.";
+    let block0_body = format!("{scenario_setup} {unverified_c1} {unverified_c2}");
+    sqlx::query("UPDATE learning_blocks SET body=? WHERE lesson_id=? AND ordinal=0")
+        .bind(&block0_body)
+        .bind(lesson_id)
+        .execute(&mut *tx)
+        .await?;
+
+    let mut clean_ordinal = None;
+    let blocks: Vec<(i64,)> = sqlx::query_as(
+        "SELECT ordinal FROM learning_blocks WHERE lesson_id=? AND ordinal > 0 ORDER BY ordinal",
+    )
+    .bind(lesson_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    if let Some((ord,)) = blocks.first() {
+        clean_ordinal = Some(*ord);
+        let clean_claim_text =
+            "HTTP 429 responses may return a Retry-After header dictating wait time.";
+        sqlx::query("UPDATE learning_blocks SET body=? WHERE lesson_id=? AND ordinal=?")
+            .bind(clean_claim_text)
+            .bind(lesson_id)
+            .bind(ord)
+            .execute(&mut *tx)
+            .await?;
+        let cid = ClaimId("c-clean".into());
+        crate::lessons::claim_reviews::repository::append_for_test_in(
+            &mut tx,
+            lesson_id,
+            &cid,
+            prov.clone(),
+            ClaimEvent::Extracted {
+                location: ClaimLocation::locate(
+                    usize::try_from(*ord).unwrap_or(1),
+                    UnitKind::Block,
+                    "body",
+                    clean_claim_text,
+                    clean_claim_text,
+                ),
+                statement: clean_claim_text.into(),
+            },
+        )
+        .await?;
+        crate::lessons::claim_reviews::repository::append_for_test_in(
+            &mut tx,
+            lesson_id,
+            &cid,
+            prov.clone(),
+            ClaimEvent::Stepped {
+                policy: "acceptance-v4".into(),
+                step: Step::Read(Reading::Consistency),
+                outcome: StepOutcome::Stands,
+                then: Then::End(End::Consistent),
+                reason: "Consistent fallback".into(),
+                rewrite_ahead: false,
+            },
+        )
+        .await?;
+    }
+
+    let c_scenario = ClaimId("c-scenario".into());
+    crate::lessons::claim_reviews::repository::append_for_test_in(
+        &mut tx,
+        lesson_id,
+        &c_scenario,
+        prov.clone(),
+        ClaimEvent::Extracted {
+            location: ClaimLocation::locate(
+                0,
+                UnitKind::Block,
+                "body",
+                scenario_setup,
+                scenario_setup,
+            ),
+            statement: scenario_setup.into(),
+        },
+    )
+    .await?;
+    crate::lessons::claim_reviews::repository::append_for_test_in(
+        &mut tx,
+        lesson_id,
+        &c_scenario,
+        prov.clone(),
+        ClaimEvent::Stepped {
+            policy: "acceptance-v4".into(),
+            step: Step::Read(Reading::Consistency),
+            outcome: StepOutcome::Stands,
+            then: Then::End(End::Consistent),
+            reason: "Internal scenario setup".into(),
+            rewrite_ahead: false,
+        },
+    )
+    .await?;
+
+    for (cid, sentence) in [("c-u1", unverified_c1), ("c-u2", unverified_c2)] {
+        let id = ClaimId(cid.into());
+        crate::lessons::claim_reviews::repository::append_for_test_in(
+            &mut tx,
+            lesson_id,
+            &id,
+            prov.clone(),
+            ClaimEvent::Extracted {
+                location: ClaimLocation::locate(0, UnitKind::Block, "body", sentence, sentence),
+                statement: sentence.into(),
+            },
+        )
+        .await?;
+        crate::lessons::claim_reviews::repository::append_for_test_in(
+            &mut tx,
+            lesson_id,
+            &id,
+            prov.clone(),
+            ClaimEvent::PublishedUnverified {
+                reason: UnverifiedReason::Unsupported,
+            },
+        )
+        .await?;
+    }
+
+    let orphan_bank_id = uuid::Uuid::new_v4().to_string();
+    insert_bank_items_in(
+        &mut tx,
+        &published.program_id,
+        &[BankItem {
+            item: stored(
+                &orphan_bank_id,
+                &outcome_id,
+                LearningItemFormat::SingleChoice,
+                2,
+            ),
+            source_quote: scenario_setup.into(),
+            lesson_id: Some(lesson_id.clone()),
+            origin: "bank",
+            review_status: CandidateReviewStatus::Agreed,
+        }],
+        None,
+    )
+    .await?;
+    tx.commit().await?;
+
+    let mut read = db.begin_read().await?;
+    let material = LearningAssessmentRepository::lesson_material_in(&mut read, lesson_id).await?;
+    assert!(
+        clean_ordinal.is_none() || material.iter().all(|m| !m.text.contains("Scenario A")),
+        "orphan scenario block should be excluded when clean blocks remain: {material:?}"
+    );
+    let bank = LearningAssessmentRepository::bank_in(&mut read, &published.program_id).await?;
+    assert!(
+        bank.iter().all(|b| b.candidate.id != orphan_bank_id),
+        "bank item quoting orphan scenario from unverified-dominated block should be held back"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn consistent_claims_count_as_grounded_against_minority_unverified_claims() -> Result<()> {
+    use lattice_core::domain::learning::acceptance::{
+        End, Outcome as StepOutcome, Reading, Step, Then,
+    };
+    use lattice_core::domain::learning::claim_review::{
+        Actor, ClaimEvent, ClaimId, ClaimLocation, EventProvenance, UnitKind, UnverifiedReason,
+    };
+
+    let pool = crate::tests::pool().await?;
+    let db = Database::new(pool.clone());
+    let (published, job_id) = published(&db).await?;
+    let lesson_id = &published.lesson_id;
+    let mut tx = db.begin_write().await?;
+    let now = 1_700_000_300i64;
+    sqlx::query(
+        "INSERT OR REPLACE INTO learning_lesson_reviews(lesson_id,program_id,job_id,state,revision,draft_sha256,checker_model,opened_at,updated_at) VALUES(?,?,?,'ready',1,'sha','m',?,?)",
+    )
+    .bind(lesson_id)
+    .bind(&published.program_id)
+    .bind(&job_id)
+    .bind(now)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
+
+    let marker = "Consistent token validation keeps active sessions healthy.";
+    let unv_sentences = [
+        "Optional vendor field defaults may vary across regional sandboxes.",
+        "Legacy client tenants permit temporary fallback credentials.",
+    ];
+    let body0 = format!("{marker} {} {}", unv_sentences[0], unv_sentences[1]);
+    sqlx::query("UPDATE learning_blocks SET body=? WHERE lesson_id=? AND ordinal=0")
+        .bind(&body0)
+        .bind(lesson_id)
+        .execute(&mut *tx)
+        .await?;
+
+    let prov = EventProvenance {
+        actor: Actor::Machine,
+        at: now,
+        job_id: None,
+        app_version: "test".into(),
+        checker_model: Some("test-model".into()),
+    };
+    for i in 0..8usize {
+        let id = ClaimId(format!("c-cons-{i}"));
+        crate::lessons::claim_reviews::repository::append_for_test_in(
+            &mut tx,
+            lesson_id,
+            &id,
+            prov.clone(),
+            ClaimEvent::Extracted {
+                location: ClaimLocation::locate(0, UnitKind::Block, "body", marker, marker),
+                statement: format!("Consistent claim {i}."),
+            },
+        )
+        .await?;
+        crate::lessons::claim_reviews::repository::append_for_test_in(
+            &mut tx,
+            lesson_id,
+            &id,
+            prov.clone(),
+            ClaimEvent::Stepped {
+                policy: "acceptance-v4".into(),
+                step: Step::Read(Reading::Consistency),
+                outcome: StepOutcome::Stands,
+                then: Then::End(End::Consistent),
+                reason: "Consistent claim".into(),
+                rewrite_ahead: false,
+            },
+        )
+        .await?;
+    }
+    for (i, sent) in unv_sentences.iter().enumerate() {
+        let id = ClaimId(format!("c-unv-{i}"));
+        crate::lessons::claim_reviews::repository::append_for_test_in(
+            &mut tx,
+            lesson_id,
+            &id,
+            prov.clone(),
+            ClaimEvent::Extracted {
+                location: ClaimLocation::locate(0, UnitKind::Block, "body", *sent, sent),
+                statement: format!("Unverified claim {i}."),
+            },
+        )
+        .await?;
+        crate::lessons::claim_reviews::repository::append_for_test_in(
+            &mut tx,
+            lesson_id,
+            &id,
+            prov.clone(),
+            ClaimEvent::PublishedUnverified {
+                reason: UnverifiedReason::Unsupported,
+            },
+        )
+        .await?;
+    }
+    tx.commit().await?;
+
+    let mut read = db.begin_read().await?;
+    let material = LearningAssessmentRepository::lesson_material_in(&mut read, lesson_id).await?;
+    assert!(
+        material.iter().any(|m| m.text.contains(marker)
+            && !m.text.contains(unv_sentences[0])
+            && !m.text.contains(unv_sentences[1])),
+        "block with 8 consistent, 0 verified, 2 unverified claims should keep grounded prose while stripping unverified sentences: {material:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn lesson_seed_items_drop_option_letter_leaks() {
+    let qid_bad = uuid::Uuid::new_v4().to_string();
+    let qid_ord = uuid::Uuid::new_v4().to_string();
+    let qid_ok = uuid::Uuid::new_v4().to_string();
+    let outcome_id = uuid::Uuid::new_v4().to_string();
+    let make_q = |id: &str| LessonQuestion {
+        id: id.to_owned(),
+        kind: LessonQuestionKind::Quiz,
+        prompt: "What does $export perform?".into(),
+        options: vec![
+            "Import patient records.".into(),
+            "Send Direct messages.".into(),
+            "Export NDJSON resources.".into(),
+            "Update coverage records.".into(),
+        ],
+        source_ids: vec![],
+    };
+    let questions = vec![make_q(&qid_bad), make_q(&qid_ord), make_q(&qid_ok)];
+    let keys = vec![
+        LessonAnswerKey {
+            question_id: qid_bad.clone(),
+            correct_index: 2,
+            explanation: "This matches option C. Option A describes an import.".into(),
+            rationales: vec![
+                "Wrong.".into(),
+                "Wrong.".into(),
+                String::new(),
+                "Wrong.".into(),
+            ],
+        },
+        LessonAnswerKey {
+            question_id: qid_ord.clone(),
+            correct_index: 2,
+            explanation: "The third option is correct because $export emits NDJSON.".into(),
+            rationales: vec![
+                "Wrong.".into(),
+                "Wrong.".into(),
+                String::new(),
+                "Wrong.".into(),
+            ],
+        },
+        LessonAnswerKey {
+            question_id: qid_ok.clone(),
+            correct_index: 2,
+            explanation: "Bulk Data exports NDJSON mapped to FHIR R4 resources.".into(),
+            rationales: vec![
+                "Wrong.".into(),
+                "Wrong.".into(),
+                String::new(),
+                "Wrong.".into(),
+            ],
+        },
+    ];
+    let seeded =
+        crate::quiz_bank_jobs::lesson_seed_items("lesson-1", &outcome_id, &questions, &keys);
+    assert_eq!(seeded.len(), 3);
+    assert_eq!(
+        seeded[0].review_status,
+        crate::assessment_repository::CandidateReviewStatus::Dropped
+    );
+    assert_eq!(
+        seeded[1].review_status,
+        crate::assessment_repository::CandidateReviewStatus::Dropped
+    );
+    assert_eq!(
+        seeded[2].review_status,
+        crate::assessment_repository::CandidateReviewStatus::Agreed
+    );
+}

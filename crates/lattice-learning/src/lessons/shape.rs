@@ -231,7 +231,9 @@ impl KeptRule {
         match self {
             Self::Explanation => "at least one explanation".to_owned(),
             Self::ShownBeforeCheck => "each check after a worked example shown since the previous check, except the last of two or more checks, which mixes the lesson's ideas".to_owned(),
-            Self::RecapAfterReflection => "the recap after the reflection when it has both".to_owned(),
+            Self::RecapAfterReflection => {
+                "the recap closing the lesson after the reflection".to_owned()
+            }
             Self::Question => format!("at least one question of each kind: {}", question_kinds()),
         }
     }
@@ -584,22 +586,34 @@ fn recap_findings(blocks: &[Value]) -> Vec<ReviewFinding> {
             .iter()
             .position(|block| text(block, "kind") == kind.as_str())
     };
-    let (Some(reflection), Some(recap)) = (
-        first(LearningBlockKind::Reflection),
-        first(LearningBlockKind::Recap),
-    ) else {
-        return Vec::new();
+    let mut found = Vec::new();
+    let Some(recap) = first(LearningBlockKind::Recap) else {
+        return found;
     };
-    if reflection < recap {
-        return Vec::new();
+    let reflection = first(LearningBlockKind::Reflection);
+    if reflection.is_some_and(|reflection| reflection >= recap) {
+        let site = FindingSite::Section(recap);
+        found.push(structure(
+            Rule::RecapFirst,
+            site,
+            format!("{} recaps the lesson before the learner is asked to explain it from memory.", site.label()),
+            format!("{} recaps before the reflection asks the learner to explain the lesson from memory; put the reflection first, so the recap is what they compare their explanation with.", site.note_label()),
+        ));
     }
-    let site = FindingSite::Section(recap);
-    vec![structure(
-        Rule::RecapFirst,
-        site,
-        format!("{} recaps the lesson before the learner is asked to explain it from memory.", site.label()),
-        format!("{} recaps before the reflection asks the learner to explain the lesson from memory; put the reflection first, so the recap is what they compare their explanation with.", site.note_label()),
-    )]
+    for (index, block) in blocks.iter().enumerate().skip(recap + 1) {
+        if LearningBlockKind::parse(text(block, "kind")) != Some(LearningBlockKind::Recap)
+            && reflection != Some(index)
+        {
+            let site = FindingSite::Section(index);
+            found.push(structure(
+                Rule::RecapFirst,
+                site,
+                format!("{} appears after the recap, which must close the lesson.", site.label()),
+                format!("{} appears after the recap; move every teaching, practice, and reflection section before the recap so the recap closes the lesson.", site.note_label()),
+            ));
+        }
+    }
+    found
 }
 
 fn section_mix_finding(blocks: &[Value]) -> Option<ReviewFinding> {

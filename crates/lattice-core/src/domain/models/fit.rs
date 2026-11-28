@@ -13,8 +13,8 @@ mod verdict;
 
 pub use companions::{CompanionServer, Companions};
 pub use footprint::{
-    footprint, Footprint, ServerBuffers, COMFORTABLE_WINDOW_TOKENS, FIT_TARGET_BYTES,
-    MINIMUM_WINDOW_TOKENS,
+    footprint, Footprint, ServerBuffers, CHAT_CTX_CHECKPOINTS, COMFORTABLE_WINDOW_TOKENS,
+    FIT_TARGET_BYTES, MINIMUM_WINDOW_TOKENS,
 };
 pub use machine::{Accelerator, AcceleratorKind, Backend, MachineProfile};
 pub use placement::{

@@ -112,3 +112,52 @@ fn catches_backticked_smart_scope_before_trailing_punctuation() {
         "{faults:?}"
     );
 }
+
+#[test]
+fn catches_scope_401_vs_403_contradiction_and_smart_token_launch_placement() {
+    let lesson = json!({
+        "blocks": [
+            {
+                "kind": "explanation",
+                "body": "```mermaid\nflowchart TD\nS[Scope Validation] -->|Fail| H[403 Forbidden]\n```\nIn SMART on FHIR, exchange the authorization code at the token endpoint, including the launch context parameter."
+            },
+            {
+                "kind": "check",
+                "body": "Expect a 401 Unauthorized error for invalid scopes after registration."
+            }
+        ]
+    });
+    let faults = block_consistency_faults(&lesson, &[]);
+    assert!(
+        faults
+            .iter()
+            .any(|(idx, m)| *idx == 0 && m.contains("`/authorize`")),
+        "{faults:?}"
+    );
+    assert!(
+        faults
+            .iter()
+            .any(|(idx, m)| *idx == 1 && m.contains("`401`")),
+        "{faults:?}"
+    );
+
+    let fenced_only = json!({
+        "blocks": [
+            {
+                "kind": "explanation",
+                "body": "```http\nPOST /token HTTP/1.1\nlaunch=xyz\n```\nSend `launch` to `/authorize` in SMART App Launch, and return HTTP 403 Forbidden for insufficient_scope."
+            },
+            {
+                "kind": "example",
+                "body": "```text\nHTTP 401 due to invalid scope inside fence only.\n```\nClient credentials requests succeed with valid scopes."
+            }
+        ]
+    });
+    assert!(block_consistency_faults(&fenced_only, &[]).is_empty());
+    assert!(!contains_401_scope_error(
+        "```text\nHTTP 401 due to invalid scope inside fence.\n```\nUse 403 Forbidden."
+    ));
+    assert!(contains_401_scope_error(
+        "An invalid scope mismatch returns HTTP 401 Unauthorized."
+    ));
+}

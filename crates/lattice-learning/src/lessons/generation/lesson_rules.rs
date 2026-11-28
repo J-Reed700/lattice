@@ -591,6 +591,19 @@ fn choice_findings(
             ),
         ));
     }
+    let has_option_position = std::iter::once(text(question, "explanation"))
+        .chain(reasons(question))
+        .any(crate::assessment::assessment_engine::checks::contains_option_position_reference);
+    if has_option_position {
+        found.push(structure(
+            Rule::AnswerInPrompt,
+            site,
+            format!("{label} refers to an answer choice by letter, number, or position."),
+            format!(
+                "{note_label} refers to an answer choice by letter, number, or position (for example 'option A' or 'the first option'); choices are shuffled when shown, so explain each choice by what it says instead."
+            ),
+        ));
+    }
     found
 }
 
@@ -652,6 +665,14 @@ pub(crate) fn spec_consistency_findings(
                     if crate::lessons::spec_checks::smart_scope_faults(reveal, sources_text)
                         .is_empty()
                     {
+                        continue;
+                    }
+                }
+            }
+            if text(block, "kind") == "check" && fault.message.contains("Uses HTTP `401` for scope")
+            {
+                if let Some((_, reveal)) = split_check(body) {
+                    if !crate::lessons::spec_checks::contains_401_scope_error(reveal) {
                         continue;
                     }
                 }

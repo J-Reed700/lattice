@@ -12,6 +12,8 @@ use crate::lessons::text_edits::{
 use crate::lessons::writer_excerpts::{self, WriterExcerpts};
 use crate::review_findings::{FindingSite, ReviewFinding};
 use lattice_core::shared::hash::sha256_hex;
+use lattice_core::shared::text::same_text::fold;
+use lattice_core::shared::text::sentences;
 use lattice_core::{
     application::ports::LLMPort,
     application::services::model_contract::ask::{
@@ -530,6 +532,37 @@ struct Taking<'a, 'r> {
     rows: Rows,
     /// The id of each entry that stands and the parts it changed.
     standing: Vec<(String, BTreeSet<String>)>,
+    /// Normalized non-empty texts already inserted in this repair batch.
+    seen_inserts: std::collections::BTreeSet<String>,
+}
+
+/// Normalized non-empty sentences inserted in `edits` (plus fallback folded
+/// chunk when an inserted line has no terminal sentence boundary).
+fn inserted_sentences(edits: &rows::Edits) -> Vec<String> {
+    let mut out = Vec::new();
+    for (_, with) in &edits.sentences.change().insert {
+        let body = with.0.text.trim();
+        if body.is_empty() {
+            continue;
+        }
+        let spans = sentences(body);
+        if spans.is_empty() {
+            let key = fold(body);
+            if !key.is_empty() && !out.contains(&key) {
+                out.push(key);
+            }
+            continue;
+        }
+        for (start, end) in spans {
+            if let Some(piece) = body.get(start..end).map(str::trim) {
+                let key = fold(piece);
+                if !key.is_empty() && !out.contains(&key) {
+                    out.push(key);
+                }
+            }
+        }
+    }
+    out
 }
 
 impl Taking<'_, '_> {
@@ -550,6 +583,15 @@ impl Taking<'_, '_> {
         let declined = || (Outcome::Declined(repair.plan.clone()), Vec::new());
         if repair.edits.is_empty() {
             return Ok(declined());
+        }
+        let inserts = inserted_sentences(&repair.edits);
+        if inserts.iter().any(|text| self.seen_inserts.contains(text)) {
+            return Ok((
+                Outcome::NotApplied(vec![
+                    "Another finding in this repair already inserted the same text.".into(),
+                ]),
+                Vec::new(),
+            ));
         }
         let mut trial = self.rows.clone();
         let held = Held {
@@ -573,6 +615,7 @@ impl Taking<'_, '_> {
         if let Some(reasons) = self.request.keeps.refuses(self.request, &made, &taken)? {
             return Ok((refusal(&reasons), Vec::new()));
         }
+        self.seen_inserts.extend(inserts);
         self.rows = trial;
         self.standing.push((id.to_owned(), took.parts));
         Ok((Outcome::Applied, took.written))
@@ -617,6 +660,7 @@ pub(super) async fn mend(llm: &dyn LLMPort, request: &Request<'_>) -> Result<Men
         quotes: Quotes::of(excerpts.iter().map(|excerpt| &excerpt.entry.0)),
         rows: Rows::of(request.candidate),
         standing: Vec::new(),
+        seen_inserts: std::collections::BTreeSet::new(),
     };
     let mut results: Vec<(String, Outcome, Vec<String>)> = Vec::new();
     for (sent, settled) in sents.iter().zip(settled) {

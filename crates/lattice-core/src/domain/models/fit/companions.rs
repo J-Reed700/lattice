@@ -76,10 +76,7 @@ impl Companions {
                     shape: Some(pinned.shape),
                     window_tokens,
                     slots,
-                    buffers: ServerBuffers {
-                        kv_cache_quantization: false,
-                        micro_batch: window_tokens,
-                    },
+                    buffers: ServerBuffers::pooling(window_tokens),
                 }
             };
         Companions {

@@ -395,7 +395,7 @@ fn says_of(
         listed.push(Value::Object(fields));
     }
     let mut says = Says::new(instructions, json!({ "questions": listed }).to_string());
-    says.output_tokens = 350 * input.questions.len() + 300;
+    says.output_tokens = 700 * input.questions.len() + 500;
     Ok(says)
 }
 
@@ -546,7 +546,7 @@ impl Answered for SolveOrder {
             format!("{HEAD}{ORDER_CLAUSE}{ORDER_FORM}{TAIL}"),
             task.to_string(),
         );
-        says.output_tokens = 650;
+        says.output_tokens = 1200;
         Ok(says)
     }
 
