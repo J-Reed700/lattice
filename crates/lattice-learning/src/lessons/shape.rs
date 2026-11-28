@@ -590,19 +590,20 @@ fn recap_findings(blocks: &[Value]) -> Vec<ReviewFinding> {
     let Some(recap) = first(LearningBlockKind::Recap) else {
         return found;
     };
-    if let Some(reflection) = first(LearningBlockKind::Reflection) {
-        if reflection >= recap {
-            let site = FindingSite::Section(recap);
-            found.push(structure(
-                Rule::RecapFirst,
-                site,
-                format!("{} recaps the lesson before the learner is asked to explain it from memory.", site.label()),
-                format!("{} recaps before the reflection asks the learner to explain the lesson from memory; put the reflection first, so the recap is what they compare their explanation with.", site.note_label()),
-            ));
-        }
+    let reflection = first(LearningBlockKind::Reflection);
+    if reflection.is_some_and(|reflection| reflection >= recap) {
+        let site = FindingSite::Section(recap);
+        found.push(structure(
+            Rule::RecapFirst,
+            site,
+            format!("{} recaps the lesson before the learner is asked to explain it from memory.", site.label()),
+            format!("{} recaps before the reflection asks the learner to explain the lesson from memory; put the reflection first, so the recap is what they compare their explanation with.", site.note_label()),
+        ));
     }
     for (index, block) in blocks.iter().enumerate().skip(recap + 1) {
-        if LearningBlockKind::parse(text(block, "kind")) != Some(LearningBlockKind::Recap) {
+        if LearningBlockKind::parse(text(block, "kind")) != Some(LearningBlockKind::Recap)
+            && reflection != Some(index)
+        {
             let site = FindingSite::Section(index);
             found.push(structure(
                 Rule::RecapFirst,
