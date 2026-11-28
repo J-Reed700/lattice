@@ -1,0 +1,533 @@
+{
+  "planned": [
+    {
+      "name": "idea-clearly-taught",
+      "kind": "idea",
+      "text": "Idempotent operations leave server state unchanged when repeated",
+      "candidate": {
+        "blocks": [
+          {
+            "kind": "explanation",
+            "title": "Why Retries Need Safety",
+            "body": "Networks drop packets and hide responses, so clients frequently retry timed-out calls."
+          },
+          {
+            "kind": "explanation",
+            "title": "Idempotency",
+            "body": "An operation is idempotent when executing the same request once or multiple times leaves the server in the exact same final state, preventing duplicate side effects on retry."
+          }
+        ],
+        "questions": []
+      },
+      "expectedTaught": true
+    },
+    {
+      "name": "idea-only-mentioned-in-passing",
+      "kind": "idea",
+      "text": "Idempotent operations leave server state unchanged when repeated",
+      "candidate": {
+        "blocks": [
+          {
+            "kind": "explanation",
+            "title": "Retry Loops",
+            "body": "When building an HTTP client, always keep idempotency in mind before adding retry loops. Configure a timeout and log each attempt."
+          }
+        ],
+        "questions": []
+      },
+      "expectedTaught": false
+    },
+    {
+      "name": "term-defined-explicitly",
+      "kind": "term",
+      "text": "ETag",
+      "candidate": {
+        "blocks": [
+          {
+            "kind": "explanation",
+            "title": "Versioning Responses",
+            "body": "An ETag (entity tag) is an opaque identifier assigned by an HTTP server to a specific version of a resource representation."
+          }
+        ],
+        "questions": []
+      },
+      "expectedTaught": true
+    },
+    {
+      "name": "term-used-without-definition",
+      "kind": "term",
+      "text": "ETag",
+      "candidate": {
+        "blocks": [
+          {
+            "kind": "explanation",
+            "title": "Updating Orders",
+            "body": "Pass the order's ETag in your PUT request so concurrent updates do not overwrite each other. Store the new ETag returned in the response."
+          }
+        ],
+        "questions": []
+      },
+      "expectedTaught": false
+    },
+    {
+      "name": "action-taught-with-steps-and-result",
+      "kind": "action",
+      "text": "Send a conditional PUT request using If-Match",
+      "candidate": {
+        "blocks": [
+          {
+            "kind": "explanation",
+            "title": "Performing a Conditional PUT",
+            "body": "First run GET /orders/42 and copy the ETag header value (for example, \"v3\"). Next send PUT /orders/42 with the header If-Match: \"v3\" and the updated JSON body. If no other client modified the order, the server saves the update and returns 200 OK with a new ETag; if the resource changed, the server rejects the write with 412 Precondition Failed."
+          }
+        ],
+        "questions": []
+      },
+      "expectedTaught": true
+    },
+    {
+      "name": "action-goal-named-without-steps",
+      "kind": "action",
+      "text": "Send a conditional PUT request using If-Match",
+      "candidate": {
+        "blocks": [
+          {
+            "kind": "explanation",
+            "title": "Avoiding Lost Updates",
+            "body": "Conditional PUT requests with If-Match are a standard way to avoid lost updates in REST APIs. Teams commonly rely on them for collaborative editing."
+          }
+        ],
+        "questions": []
+      },
+      "expectedTaught": false
+    },
+    {
+      "name": "contrast-taught-in-contrast-section",
+      "kind": "contrast",
+      "text": "Confusing safe HTTP methods with idempotent HTTP methods",
+      "candidate": {
+        "blocks": [
+          {
+            "kind": "explanation",
+            "title": "Idempotency",
+            "body": "Idempotent methods leave server state identical whether invoked once or many times."
+          },
+          {
+            "kind": "contrast",
+            "title": "Safe vs. Idempotent",
+            "body": "Learners often confuse safe methods with idempotent ones. Safe methods such as GET never mutate server state at all, whereas idempotent methods like PUT and DELETE do mutate server state on the first call while ensuring repeated calls produce the same final state."
+          }
+        ],
+        "questions": []
+      },
+      "expectedTaught": true
+    },
+    {
+      "name": "contrast-missing-confusion-not-addressed",
+      "kind": "contrast",
+      "text": "Confusing safe HTTP methods with idempotent HTTP methods",
+      "candidate": {
+        "blocks": [
+          {
+            "kind": "explanation",
+            "title": "Idempotency",
+            "body": "Idempotent methods leave server state identical whether invoked once or many times. PUT and DELETE are both idempotent."
+          },
+          {
+            "kind": "contrast",
+            "title": "Retries vs. Caching",
+            "body": "Retries recover from transient transport failures, while HTTP caching reduces redundant origin requests."
+          }
+        ],
+        "questions": []
+      },
+      "expectedTaught": false
+    }
+  ],
+  "uses": [
+    {
+      "name": "untaught-cli-tool-never-taught",
+      "what": "jq",
+      "partIndex": 1,
+      "quote": "Pipe the JSON response into jq -r '.orderId' to extract the identifier.",
+      "priorKnowledge": "Basic familiarity with HTTP GET requests.",
+      "earlierLessons": [],
+      "candidate": {
+        "blocks": [
+          {
+            "kind": "explanation",
+            "title": "Fetching an Order",
+            "body": "Calling GET /orders/42 returns a JSON object containing orderId and status."
+          },
+          {
+            "kind": "practice",
+            "title": "Extract the Order ID",
+            "body": "Pipe the JSON response into jq -r '.orderId' to extract the identifier."
+          }
+        ],
+        "questions": []
+      },
+      "expectedOutcome": "stands"
+    },
+    {
+      "name": "used-in-section-0-taught-only-later-in-section-1",
+      "what": "If-Match header",
+      "partIndex": 0,
+      "quote": "Attach an If-Match header with the current ETag to your PUT request to prevent lost updates.",
+      "priorKnowledge": "Basic familiarity with JSON.",
+      "earlierLessons": [],
+      "candidate": {
+        "blocks": [
+          {
+            "kind": "practice",
+            "title": "Guarded Update",
+            "body": "Attach an If-Match header with the current ETag to your PUT request to prevent lost updates."
+          },
+          {
+            "kind": "explanation",
+            "title": "How If-Match Works",
+            "body": "To use If-Match, read the ETag header from a prior GET response and pass If-Match: <etag> on your PUT request; the server returns 200 OK on match or 412 Precondition Failed on mismatch."
+          }
+        ],
+        "questions": []
+      },
+      "expectedOutcome": "stands"
+    },
+    {
+      "name": "variant-not-taught-git-amend",
+      "what": "git commit --amend --no-edit",
+      "partIndex": 1,
+      "quote": "Now fold the staged typo fix into the previous commit by running git commit --amend --no-edit.",
+      "priorKnowledge": "None.",
+      "earlierLessons": [],
+      "candidate": {
+        "blocks": [
+          {
+            "kind": "explanation",
+            "title": "Creating a Commit",
+            "body": "To record staged changes as a new commit, run git commit -m \"Describe change\"; Git prints the new commit hash and summary of changed files."
+          },
+          {
+            "kind": "practice",
+            "title": "Fix a Typo in Your Last Commit",
+            "body": "Now fold the staged typo fix into the previous commit by running git commit --amend --no-edit."
+          }
+        ],
+        "questions": []
+      },
+      "expectedOutcome": "stands"
+    },
+    {
+      "name": "taught-in-earlier-section-of-same-lesson",
+      "what": "If-Match header",
+      "partIndex": 1,
+      "quote": "Send PUT /orders/42 with the If-Match header set to the ETag from your GET response.",
+      "priorKnowledge": "Basic HTTP familiarity.",
+      "earlierLessons": [],
+      "candidate": {
+        "blocks": [
+          {
+            "kind": "explanation",
+            "title": "How If-Match Guards Writes",
+            "body": "The If-Match header prevents lost updates during concurrent edits. Copy the ETag value from a GET response and include If-Match: <etag> in your PUT request; the server applies the write and returns 200 OK if it still matches, or rejects it with 412 Precondition Failed if another writer updated the record."
+          },
+          {
+            "kind": "practice",
+            "title": "Guarded Update",
+            "body": "Send PUT /orders/42 with the If-Match header set to the ETag from your GET response."
+          }
+        ],
+        "questions": []
+      },
+      "expectedOutcome": "taught"
+    },
+    {
+      "name": "taught-inline-in-same-sentence",
+      "what": "HTTP status check with curl -I",
+      "partIndex": 0,
+      "quote": "To inspect only the response headers and confirm a 200 OK status line, run curl -I https://example.com/healthz and verify the first line reads HTTP/1.1 200 OK.",
+      "priorKnowledge": "Terminal basics.",
+      "earlierLessons": [],
+      "candidate": {
+        "blocks": [
+          {
+            "kind": "practice",
+            "title": "Check Headers",
+            "body": "To inspect only the response headers and confirm a 200 OK status line, run curl -I https://example.com/healthz and verify the first line reads HTTP/1.1 200 OK."
+          }
+        ],
+        "questions": []
+      },
+      "expectedOutcome": "taught"
+    },
+    {
+      "name": "covered-by-earlier-lesson-action",
+      "what": "sending an HTTP POST with curl",
+      "partIndex": 0,
+      "quote": "Send a POST request to /payments with curl and inspect the returned paymentId.",
+      "priorKnowledge": "Basic web concepts.",
+      "earlierLessons": [
+        {
+          "title": "Calling REST APIs",
+          "actions": ["Send HTTP GET and POST requests with curl"],
+          "terms": ["HTTP status code"]
+        }
+      ],
+      "candidate": {
+        "blocks": [
+          {
+            "kind": "practice",
+            "title": "Create a Payment",
+            "body": "Send a POST request to /payments with curl and inspect the returned paymentId."
+          }
+        ],
+        "questions": []
+      },
+      "expectedOutcome": "taught"
+    },
+    {
+      "name": "covered-by-prior-knowledge",
+      "what": "UUIDv4 generation",
+      "partIndex": 0,
+      "quote": "Generate a UUIDv4 string and attach it as the Idempotency-Key header value.",
+      "priorKnowledge": "The learner already knows how to generate UUIDv4 strings in their language of choice and attach HTTP headers.",
+      "earlierLessons": [],
+      "candidate": {
+        "blocks": [
+          {
+            "kind": "practice",
+            "title": "Attach an Idempotency Key",
+            "body": "Generate a UUIDv4 string and attach it as the Idempotency-Key header value."
+          }
+        ],
+        "questions": []
+      },
+      "expectedOutcome": "taught"
+    },
+    {
+      "name": "merely-mentioned-in-passing-not-asked",
+      "what": "Prometheus metrics",
+      "partIndex": 0,
+      "quote": "In large production deployments, teams often export retry counts to Prometheus metrics for alerting.",
+      "priorKnowledge": "Basic HTTP familiarity.",
+      "earlierLessons": [],
+      "candidate": {
+        "blocks": [
+          {
+            "kind": "explanation",
+            "title": "Observability Context",
+            "body": "Retry loops can amplify traffic during partial outages. In large production deployments, teams often export retry counts to Prometheus metrics for alerting."
+          }
+        ],
+        "questions": []
+      },
+      "expectedOutcome": "not_asked"
+    }
+  ],
+  "clashes": [
+    {
+      "name": "direct-status-code-contradiction",
+      "firstPartIndex": 0,
+      "firstQuote": "When an If-Match header fails to match, the server always responds with 412 Precondition Failed.",
+      "secondPartIndex": 1,
+      "secondQuote": "On an If-Match mismatch, the server returns 409 Conflict and never returns 412.",
+      "candidate": {
+        "blocks": [
+          {
+            "kind": "explanation",
+            "title": "Precondition Checks",
+            "body": "When an If-Match header fails to match, the server always responds with 412 Precondition Failed."
+          },
+          {
+            "kind": "explanation",
+            "title": "Handling Mismatches",
+            "body": "On an If-Match mismatch, the server returns 409 Conflict and never returns 412."
+          }
+        ],
+        "questions": []
+      },
+      "expectedContradict": true
+    },
+    {
+      "name": "worked-example-violates-idempotency-key-rule",
+      "firstPartIndex": 0,
+      "firstQuote": "Every retry of the same logical payment must reuse the exact same Idempotency-Key value.",
+      "secondPartIndex": 1,
+      "secondQuote": "On retry attempt 2 of that same payment, generate a brand-new Idempotency-Key UUID so the server processes it fresh.",
+      "candidate": {
+        "blocks": [
+          {
+            "kind": "explanation",
+            "title": "Idempotency Key Rule",
+            "body": "Every retry of the same logical payment must reuse the exact same Idempotency-Key value."
+          },
+          {
+            "kind": "explanation",
+            "title": "Worked Example",
+            "body": "Suppose the first payment request times out. On retry attempt 2 of that same payment, generate a brand-new Idempotency-Key UUID so the server processes it fresh."
+          }
+        ],
+        "questions": []
+      },
+      "expectedContradict": true
+    },
+    {
+      "name": "unstated-transition-trap-same-configuration",
+      "firstPartIndex": 0,
+      "firstQuote": "In this service configuration, automatic retries are completely disabled.",
+      "secondPartIndex": 1,
+      "secondQuote": "This service configuration automatically retries timed-out requests up to three times.",
+      "candidate": {
+        "blocks": [
+          {
+            "kind": "explanation",
+            "title": "Client Setup",
+            "body": "In this service configuration, automatic retries are completely disabled."
+          },
+          {
+            "kind": "explanation",
+            "title": "Failure Behaviour",
+            "body": "This service configuration automatically retries timed-out requests up to three times."
+          }
+        ],
+        "questions": []
+      },
+      "expectedContradict": true
+    },
+    {
+      "name": "section-vs-question-explanation-contradiction",
+      "firstPartIndex": 0,
+      "firstQuote": "Deleting a key removes it immediately so any subsequent read returns 404 Not Found.",
+      "secondPartIndex": 1,
+      "secondQuote": "After a key is deleted, subsequent reads still return the cached entry with 200 OK.",
+      "candidate": {
+        "blocks": [
+          {
+            "kind": "explanation",
+            "title": "Deletion Semantics",
+            "body": "Deleting a key removes it immediately so any subsequent read returns 404 Not Found."
+          }
+        ],
+        "questions": [
+          {
+            "kind": "multiple_choice",
+            "prompt": "What happens when you read a key right after deleting it?",
+            "options": [
+              "It returns the cached entry with 200 OK.",
+              "It returns 404 Not Found."
+            ],
+            "correctIndex": 0,
+            "rationales": [
+              "Correct.",
+              "Incorrect."
+            ],
+            "explanation": "After a key is deleted, subsequent reads still return the cached entry with 200 OK."
+          }
+        ]
+      },
+      "expectedContradict": true
+    },
+    {
+      "name": "compatible-different-isolation-levels",
+      "firstPartIndex": 0,
+      "firstQuote": "Under Read Committed isolation, each statement sees rows committed before that statement begins.",
+      "secondPartIndex": 1,
+      "secondQuote": "Under Repeatable Read isolation, every query in a transaction continues seeing the snapshot taken when the transaction began.",
+      "candidate": {
+        "blocks": [
+          {
+            "kind": "explanation",
+            "title": "Read Committed",
+            "body": "Under Read Committed isolation, each statement sees rows committed before that statement begins."
+          },
+          {
+            "kind": "explanation",
+            "title": "Repeatable Read",
+            "body": "Under Repeatable Read isolation, every query in a transaction continues seeing the snapshot taken when the transaction began."
+          }
+        ],
+        "questions": []
+      },
+      "expectedContradict": false
+    },
+    {
+      "name": "compatible-default-vs-explicit-override",
+      "firstPartIndex": 0,
+      "firstQuote": "By default, HttpClient times out after 100 seconds.",
+      "secondPartIndex": 1,
+      "secondQuote": "Setting Timeout to 10 seconds overrides the default so requests time out after 10 seconds.",
+      "candidate": {
+        "blocks": [
+          {
+            "kind": "explanation",
+            "title": "Default Timeout",
+            "body": "By default, HttpClient times out after 100 seconds."
+          },
+          {
+            "kind": "explanation",
+            "title": "Configuring a Shorter Timeout",
+            "body": "Setting Timeout to 10 seconds overrides the default so requests time out after 10 seconds."
+          }
+        ],
+        "questions": []
+      },
+      "expectedContradict": false
+    },
+    {
+      "name": "compatible-wrong-option-distractor",
+      "firstPartIndex": 0,
+      "firstQuote": "HTTP GET is a safe method that never modifies server state.",
+      "secondPartIndex": 1,
+      "secondQuote": "HTTP GET deletes the target resource on every call.",
+      "candidate": {
+        "blocks": [
+          {
+            "kind": "explanation",
+            "title": "Safe Methods",
+            "body": "HTTP GET is a safe method that never modifies server state."
+          }
+        ],
+        "questions": [
+          {
+            "kind": "multiple_choice",
+            "prompt": "Which statement describes HTTP GET?",
+            "options": [
+              "HTTP GET retrieves data without modifying server state.",
+              "HTTP GET deletes the target resource on every call."
+            ],
+            "correctIndex": 0,
+            "rationales": [
+              "Correct: GET is read-only.",
+              "Incorrect: GET does not delete resources."
+            ],
+            "explanation": "GET retrieves representations safely without mutating state."
+          }
+        ]
+      },
+      "expectedContradict": false
+    },
+    {
+      "name": "compatible-idempotent-yet-not-safe",
+      "firstPartIndex": 0,
+      "firstQuote": "HTTP PUT is idempotent because repeating the same request leaves the resource in the same final state.",
+      "secondPartIndex": 1,
+      "secondQuote": "HTTP PUT is not safe because it modifies server state on the first call.",
+      "candidate": {
+        "blocks": [
+          {
+            "kind": "explanation",
+            "title": "Idempotency of PUT",
+            "body": "HTTP PUT is idempotent because repeating the same request leaves the resource in the same final state."
+          },
+          {
+            "kind": "explanation",
+            "title": "Safety of PUT",
+            "body": "HTTP PUT is not safe because it modifies server state on the first call."
+          }
+        ],
+        "questions": []
+      },
+      "expectedContradict": false
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 [
   {
+    "name": "monotreme-exception-dropped",
     "units": [
       {
         "content": {
@@ -16,6 +17,7 @@
     ]
   },
   {
+    "name": "universal-false-claim-faithfully-represented",
     "units": [
       {
         "content": {
@@ -30,6 +32,7 @@
     "expectedIncomplete": []
   },
   {
+    "name": "instruction-with-dropped-empirical-guarantee",
     "units": [
       {
         "content": {
@@ -46,6 +49,7 @@
     ]
   },
   {
+    "name": "scoped-recipe-caveat-represented",
     "units": [
       {
         "content": {
@@ -60,6 +64,7 @@
     "expectedIncomplete": []
   },
   {
+    "name": "pure-exercise-deliverables",
     "units": [
       {
         "content": {
@@ -72,6 +77,7 @@
     "expectedIncomplete": []
   },
   {
+    "name": "dropped-second-consequence-rise",
     "units": [
       {
         "content": {
@@ -93,6 +99,7 @@
     }
   },
   {
+    "name": "dropped-consequence-plant-height",
     "units": [
       {
         "content": {
@@ -114,6 +121,7 @@
     }
   },
   {
+    "name": "assessment-explanation-complete",
     "units": [
       {
         "content": {
@@ -135,6 +143,7 @@
     "expectedIncomplete": []
   },
   {
+    "name": "assessment-explanation-weakened-scope",
     "units": [
       {
         "content": {
@@ -156,5 +165,289 @@
     "expectedIncomplete": [
       0
     ]
+  },
+  {
+    "name": "version-qualifier-and-earlier-behavior-dropped",
+    "units": [
+      {
+        "content": {
+          "body": "Since PostgreSQL 14, idle_session_timeout closes idle sessions after the configured duration; in earlier versions, only idle_in_transaction_session_timeout existed."
+        },
+        "statements": [
+          "PostgreSQL's idle_session_timeout closes idle sessions after the configured duration."
+        ],
+        "nonFactualReason": ""
+      }
+    ],
+    "expectedIncomplete": [
+      0
+    ],
+    "requiredMissingTerms": {
+      "0": [
+        "14"
+      ]
+    }
+  },
+  {
+    "name": "quantitative-caps-dropped-from-backoff",
+    "units": [
+      {
+        "content": {
+          "body": "Exponential backoff spaces out retries by doubling the delay up to a 30-second cap and aborting after 5 failed attempts."
+        },
+        "statements": [
+          "Exponential backoff spaces out retries by doubling the delay."
+        ],
+        "nonFactualReason": ""
+      }
+    ],
+    "expectedIncomplete": [
+      0
+    ],
+    "requiredMissingTerms": {
+      "0": [
+        "30",
+        "5"
+      ]
+    }
+  },
+  {
+    "name": "middle-sentence-causal-claim-dropped",
+    "units": [
+      {
+        "content": {
+          "body": "HTTP PUT is idempotent, meaning repeating the same request leaves the target resource in the same state. However, PUT is not safe because it modifies server state on the first request. By contrast, GET is both safe and idempotent."
+        },
+        "statements": [
+          "HTTP PUT is idempotent, meaning repeating the same request leaves the target resource in the same state.",
+          "HTTP GET is both safe and idempotent."
+        ],
+        "nonFactualReason": ""
+      }
+    ],
+    "expectedIncomplete": [
+      0
+    ],
+    "requiredMissingTerms": {
+      "0": [
+        "safe"
+      ]
+    }
+  },
+  {
+    "name": "presupposed-factual-premise-in-lab-instruction",
+    "units": [
+      {
+        "content": {
+          "body": "For this lab, enable SQLite's PRAGMA synchronous = NORMAL so that commits in WAL mode remain durable across process crashes without calling fsync on every transaction."
+        },
+        "statements": [],
+        "nonFactualReason": "The paragraph gives a lab setup instruction."
+      }
+    ],
+    "expectedIncomplete": [
+      0
+    ],
+    "requiredMissingTerms": {
+      "0": [
+        "synchronous"
+      ]
+    }
+  },
+  {
+    "name": "invented-class-mixed-with-dropped-http-fact",
+    "units": [
+      {
+        "content": {
+          "body": "Our OrderRetryHandler checks for HTTP 429 Too Many Requests because servers may include a Retry-After header specifying how long the client should wait before retrying."
+        },
+        "statements": [],
+        "nonFactualReason": "Describes the lesson's invented OrderRetryHandler example."
+      }
+    ],
+    "expectedIncomplete": [
+      0
+    ],
+    "requiredMissingTerms": {
+      "0": [
+        "retry-after"
+      ]
+    }
+  },
+  {
+    "name": "guarantee-weakened-to-possibility",
+    "units": [
+      {
+        "content": {
+          "body": "Serializable Snapshot Isolation in PostgreSQL detects and aborts transactions that would cause write skew anomalies."
+        },
+        "statements": [
+          "Serializable Snapshot Isolation in PostgreSQL can sometimes reduce concurrency issues."
+        ],
+        "nonFactualReason": ""
+      }
+    ],
+    "expectedIncomplete": [
+      0
+    ],
+    "requiredMissingTerms": {
+      "0": [
+        "write skew"
+      ]
+    }
+  },
+  {
+    "name": "assessment-trailing-column-limitation-dropped",
+    "units": [
+      {
+        "content": {
+          "kind": "assessment",
+          "prompt": "A table has a composite B-tree index on (customer_id, created_at). Which query can use the index for an ordered range scan?",
+          "options": [
+            "WHERE customer_id = 42 AND created_at >= '2026-01-01'",
+            "WHERE created_at >= '2026-01-01'"
+          ],
+          "correctIndex": 0,
+          "explanation": "B-tree composite indexes store keys sorted by the leading column first, so filtering on customer_id enables a range scan on created_at, whereas filtering only on the trailing column created_at cannot use that leading ordering for a range scan."
+        },
+        "statements": [
+          "B-tree composite indexes store keys sorted by the leading column first, so filtering on the leading column enables a range scan on the next column."
+        ],
+        "nonFactualReason": ""
+      }
+    ],
+    "expectedIncomplete": [
+      0
+    ],
+    "requiredMissingTerms": {
+      "0": [
+        "trailing"
+      ]
+    }
+  },
+  {
+    "name": "faithful-paraphrase-reordered-clauses",
+    "units": [
+      {
+        "content": {
+          "body": "When a TCP receiver's buffer fills up, it advertises a zero receive window to pause the sender until buffer space becomes available again."
+        },
+        "statements": [
+          "A TCP receiver pauses the sender by advertising a zero receive window whenever its buffer is full, resuming once buffer space is available."
+        ],
+        "nonFactualReason": ""
+      }
+    ],
+    "expectedIncomplete": []
+  },
+  {
+    "name": "single-sentence-split-into-two-claims",
+    "units": [
+      {
+        "content": {
+          "body": "Idempotency-Key headers are scoped to a single client and typically expire after 24 hours."
+        },
+        "statements": [
+          "Idempotency-Key headers are scoped to a single client.",
+          "Idempotency-Key headers typically expire after 24 hours."
+        ],
+        "nonFactualReason": ""
+      }
+    ],
+    "expectedIncomplete": []
+  },
+  {
+    "name": "invented-class-real-world-fact-captured-generically",
+    "units": [
+      {
+        "content": {
+          "body": "In our PaymentGatewayClient, calling ExecuteAsync with a CancellationToken throws OperationCanceledException when the token is canceled."
+        },
+        "statements": [
+          "In .NET, an async operation passed a CancellationToken throws OperationCanceledException when the token is canceled."
+        ],
+        "nonFactualReason": ""
+      }
+    ],
+    "expectedIncomplete": []
+  },
+  {
+    "name": "pure-lesson-internal-example-trace",
+    "units": [
+      {
+        "content": {
+          "body": "In the sample cart.add(item) walkthrough above, calling add twice prints items: 2 and sets total to 40."
+        },
+        "statements": [],
+        "nonFactualReason": "Describes only what the lesson's own example code prints and sets."
+      }
+    ],
+    "expectedIncomplete": []
+  },
+  {
+    "name": "pure-course-scope-and-rubric-framing",
+    "units": [
+      {
+        "content": {
+          "body": "In the next module we will compare distributed consensus algorithms; for now, focus on single-node durability and submit two short paragraphs explaining your trade-off choice."
+        },
+        "statements": [],
+        "nonFactualReason": "States course scope and exercise submission instructions."
+      }
+    ],
+    "expectedIncomplete": []
+  },
+  {
+    "name": "assessment-false-distractor-must-not-be-flagged",
+    "units": [
+      {
+        "content": {
+          "kind": "assessment",
+          "prompt": "Which SQL isolation level prevents dirty reads?",
+          "options": [
+            "Read Committed",
+            "Read Uncommitted guarantees zero anomalies across all databases."
+          ],
+          "correctIndex": 0,
+          "explanation": "Read Committed prevents a transaction from reading uncommitted writes made by other transactions."
+        },
+        "statements": [
+          "Read Committed prevents a transaction from reading uncommitted writes made by other transactions."
+        ],
+        "nonFactualReason": ""
+      }
+    ],
+    "expectedIncomplete": []
+  },
+  {
+    "name": "false-rfc-claim-faithfully-represented",
+    "units": [
+      {
+        "content": {
+          "body": "RFC 9110 guarantees that every HTTP POST request is strictly idempotent."
+        },
+        "statements": [
+          "RFC 9110 guarantees that every HTTP POST request is strictly idempotent."
+        ],
+        "nonFactualReason": ""
+      }
+    ],
+    "expectedIncomplete": []
+  },
+  {
+    "name": "cross-passage-title-scope-resolved-in-inventory",
+    "units": [
+      {
+        "content": {
+          "title": "Read Committed Isolation in PostgreSQL",
+          "body": "Under this isolation level, each statement sees a snapshot taken at the start of the statement rather than the start of the transaction."
+        },
+        "statements": [
+          "Under PostgreSQL's Read Committed isolation level, each statement sees a snapshot taken at the start of the statement rather than the start of the transaction."
+        ],
+        "nonFactualReason": ""
+      }
+    ],
+    "expectedIncomplete": []
   }
 ]

@@ -102,6 +102,8 @@ macro_rules! intro {
 
 mod asks;
 pub(crate) mod confirm;
+#[cfg(any(test, feature = "test-support"))]
+pub mod live_eval;
 mod reading;
 mod receipts;
 #[cfg(test)]
@@ -686,13 +688,6 @@ async fn check_with(
     let texts = lesson.texts();
     let current_course_digest = course_digest(&course);
     let current_parts = part_digests(&parts, &texts);
-    let find_plan = if reported.is_empty() {
-        receipts.as_deref().map_or(FindPlan::Full, |receipts| {
-            receipts.find_plan(&current_course_digest, &current_parts)
-        })
-    } else {
-        FindPlan::Full
-    };
     let planned: Vec<Planned> = items.iter().map(Planned::of).collect();
     let reports: Vec<Reported> = reported
         .iter()
@@ -704,20 +699,62 @@ async fn check_with(
     } else {
         "Checking what the review reported against the course plan"
     });
-    let (taught, found, ruled) = if llm.keeps_read_prompts() {
-        // Local llama-server shares one unified KV pool: run sequentially so
-        // planned, findings, and reports do not evict each other's prefix caches.
-        let taught = ask_planned(llm, &course, &lesson, &planned).await?;
-        let found =
-            ask_findings_for_plan(llm, &course, &lesson, &reports, &parts, &find_plan).await?;
-        let ruled = ask_reports(llm, &lesson, &reports).await?;
-        (taught, found, ruled)
+    let (taught, found, outside) = if reports.is_empty() {
+        let find_plan = receipts.as_deref().map_or(FindPlan::Full, |receipts| {
+            receipts.find_plan(&current_course_digest, &current_parts)
+        });
+        let (taught, found) = if llm.keeps_read_prompts() {
+            // Local llama-server shares one unified KV pool: run sequentially so
+            // planned and findings do not evict each other's prefix caches.
+            let taught = ask_planned(llm, &course, &lesson, &planned).await?;
+            let found =
+                ask_findings_for_plan(llm, &course, &lesson, &[], &parts, &find_plan).await?;
+            (taught, found)
+        } else {
+            futures::try_join!(
+                ask_planned(llm, &course, &lesson, &planned),
+                ask_findings_for_plan(llm, &course, &lesson, &[], &parts, &find_plan),
+            )?
+        };
+        (taught, found, Vec::new())
     } else {
-        futures::try_join!(
-            ask_planned(llm, &course, &lesson, &planned),
-            ask_findings_for_plan(llm, &course, &lesson, &reports, &parts, &find_plan),
-            ask_reports(llm, &lesson, &reports),
-        )?
+        // Decide which reports are in scope before running `ask_findings` and
+        // `confirm::settle`, so out-of-scope reports return immediately without
+        // scanning the whole lesson.
+        let (taught, ruled) = if llm.keeps_read_prompts() {
+            let taught = ask_planned(llm, &course, &lesson, &planned).await?;
+            let ruled = ask_reports(llm, &lesson, &reports).await?;
+            (taught, ruled)
+        } else {
+            futures::try_join!(
+                ask_planned(llm, &course, &lesson, &planned),
+                ask_reports(llm, &lesson, &reports),
+            )?
+        };
+        let outside = outside_of(&ruled);
+        let decided_reports: Vec<Reported> = reports
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !outside.contains(index))
+            .map(|(_, report)| report.clone())
+            .collect();
+        if !check_planned && decided_reports.is_empty() {
+            return Ok(Ruled {
+                findings: Vec::new(),
+                outside,
+            });
+        }
+        let find_plan = if decided_reports.is_empty() {
+            receipts.as_deref().map_or(FindPlan::Full, |receipts| {
+                receipts.find_plan(&current_course_digest, &current_parts)
+            })
+        } else {
+            FindPlan::Full
+        };
+        let found =
+            ask_findings_for_plan(llm, &course, &lesson, &decided_reports, &parts, &find_plan)
+                .await?;
+        (taught, found, outside)
     };
     let (reading, unseen) = read(&items, taught, &found, &parts, &texts);
     let settled = confirm::settle(
@@ -742,7 +779,7 @@ async fn check_with(
     }
     Ok(Ruled {
         findings: findings(&unseen, &settled, candidate, protected),
-        outside: outside_of(&ruled),
+        outside,
     })
 }
 

@@ -80,7 +80,7 @@ impl JudgingModel {
         Self {
             inner: Model::new(),
             proposed_passage,
-            judge_reply: json!({"missingAssertions":missing,"reason":reason}),
+            judge_reply: json!({"analysis":reason,"missingAssertions":missing}),
             watched_claim,
             unsourced: watched_claim == UNSOURCED || watched_claim == FIGURE,
             premise_missed: !missing.is_empty(),

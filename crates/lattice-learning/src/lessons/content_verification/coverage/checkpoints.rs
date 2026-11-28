@@ -8,7 +8,7 @@ use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::protocol::Protocol;
 
 const UNIT_KEYS: Protocol = protocol!("coverage-unit", 2);
-const FIDELITY_KEYS: Protocol = protocol!("coverage-fidelity", 3);
+const FIDELITY_KEYS: Protocol = protocol!("coverage-fidelity", 4);
 
 fn key(llm: &dyn LLMPort, input: &Value) -> String {
     UNIT_KEYS.key(sha256_hex(

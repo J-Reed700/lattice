@@ -110,7 +110,7 @@ async fn non_empty_passages_route_directly_to_fidelity_audit_skipping_verbatim()
 
     let complete_model = scripted_fidelity(|_, task| {
         assert_eq!(task["targetPassage"]["id"], "unit-1-passage-0");
-        json!({"missingAssertions": [], "reason": "Represented."})
+        json!({"analysis": "Represented.", "missingAssertions": []})
     });
     let audited = audit(&complete_model, &content, &inventory, None).await?;
     assert!(audited.units.iter().all(|unit| unit.complete));
@@ -119,8 +119,8 @@ async fn non_empty_passages_route_directly_to_fidelity_audit_skipping_verbatim()
     let gap_model = scripted_fidelity(|_, task| {
         let sentence_id = task["targetPassage"]["sentences"][0]["id"].clone();
         json!({
-            "missingAssertions": [{"sentenceId": sentence_id, "statement": PARAPHRASED}],
-            "reason": "The wording was weakened."
+            "analysis": "The wording was weakened.",
+            "missingAssertions": [{"sentenceId": sentence_id, "statement": PARAPHRASED}]
         })
     });
     let gapped = audit(&gap_model, &content, &inventory, None).await?;
@@ -156,7 +156,7 @@ async fn saved_unit_coverage_is_reused_and_invalidated_when_section_or_claims_ch
         }],
     };
     let asking =
-        || scripted_fidelity(|_, _| json!({"missingAssertions": [], "reason": "Represented."}));
+        || scripted_fidelity(|_, _| json!({"analysis": "Represented.", "missingAssertions": []}));
 
     let first = asking();
     crate::lesson_drafts::run(&db, &repo, &job, &lesson, async {

@@ -1,0 +1,377 @@
+[
+  {
+    "name": "all-outside-style-factual-and-example-requests",
+    "authoringContext": {
+      "priorKnowledge": "Basic HTTP familiarity.",
+      "currentModule": { "title": "Reliable APIs" },
+      "courseSequence": {
+        "curriculum": [],
+        "coursePlan": [
+          {
+            "title": "Idempotent Requests",
+            "position": "this",
+            "ideas": ["Idempotency means repeating a request leaves state unchanged"],
+            "terms": ["idempotent"],
+            "actions": [],
+            "contrast": ""
+          }
+        ]
+      }
+    },
+    "candidate": {
+      "blocks": [
+        {
+          "kind": "explanation",
+          "title": "What Idempotency Means",
+          "body": "An operation is idempotent when executing it once or multiple times leaves the target resource in the same final state. HTTP PUT replaces the resource at a URI, so repeating the exact same PUT request produces the same state."
+        },
+        {
+          "kind": "explanation",
+          "title": "Retries Over Unreliable Networks",
+          "body": "When a network timeout hides the server's response, a client can safely retry an idempotent request without creating duplicate side effects."
+        }
+      ],
+      "questions": []
+    },
+    "reported": [
+      {
+        "site": "section-0",
+        "note": "The opening paragraph feels slightly dry; add a motivating real-world e-commerce anecdote to improve tone and engagement."
+      },
+      {
+        "site": "section-0",
+        "note": "According to RFC 9110 section 9.2.2, HTTP DELETE is also defined as idempotent and should be cited from the RFC."
+      },
+      {
+        "site": "section-1",
+        "note": "Consider splitting the long sentence into two shorter sentences for better readability."
+      }
+    ],
+    "expectedOutside": [0, 1, 2],
+    "expectFindings": false
+  },
+  {
+    "name": "decided-genuine-contradiction",
+    "authoringContext": {
+      "priorKnowledge": "Basic HTTP familiarity.",
+      "currentModule": { "title": "Reliable APIs" },
+      "courseSequence": {
+        "curriculum": [],
+        "coursePlan": [
+          {
+            "title": "Idempotent Requests",
+            "position": "this",
+            "ideas": ["PUT is idempotent"],
+            "terms": ["idempotent"],
+            "actions": [],
+            "contrast": ""
+          }
+        ]
+      }
+    },
+    "candidate": {
+      "blocks": [
+        {
+          "kind": "explanation",
+          "title": "Idempotency Rule",
+          "body": "An idempotent HTTP request never modifies any state on the server under any circumstances."
+        },
+        {
+          "kind": "explanation",
+          "title": "How PUT Works",
+          "body": "HTTP PUT is an idempotent request, and its first call creates or replaces the stored resource state on the server."
+        }
+      ],
+      "questions": []
+    },
+    "reported": [
+      {
+        "site": "section-0",
+        "passage": "An idempotent HTTP request never modifies any state on the server under any circumstances.",
+        "note": "Section 1 says an idempotent HTTP request never modifies server state, which contradicts Section 2 saying PUT is idempotent and modifies the stored resource state on the server."
+      }
+    ],
+    "expectedOutside": [],
+    "expectFindings": true,
+    "expectedNoteSubstrings": ["contradicts"]
+  },
+  {
+    "name": "decided-genuine-used-before-taught",
+    "authoringContext": {
+      "priorKnowledge": "Basic familiarity with sending JSON payloads.",
+      "currentModule": { "title": "Reliable APIs" },
+      "courseSequence": {
+        "curriculum": [],
+        "coursePlan": [
+          {
+            "title": "Conditional Requests",
+            "position": "this",
+            "ideas": ["Optimistic concurrency with ETag"],
+            "terms": ["ETag"],
+            "actions": ["Send a conditional PUT with If-Match"],
+            "contrast": ""
+          }
+        ]
+      }
+    },
+    "candidate": {
+      "blocks": [
+        {
+          "kind": "practice",
+          "title": "Update an Order Safely",
+          "body": "Use curl with an If-Match header carrying the order's current ETag to send a conditional PUT request, and verify that a stale ETag returns 412 Precondition Failed."
+        },
+        {
+          "kind": "explanation",
+          "title": "What ETag and If-Match Are",
+          "body": "An ETag is an opaque version identifier returned by the server in a response header. To perform a conditional PUT with If-Match, first copy the ETag value from a GET response, then run curl -X PUT -H \"If-Match: <etag>\" with your JSON body; the server applies the update and returns 200 OK if the ETag matches, or rejects it with 412 Precondition Failed if another writer updated the resource first."
+        }
+      ],
+      "questions": []
+    },
+    "reported": [
+      {
+        "site": "section-0",
+        "passage": "Use curl with an If-Match header carrying the order's current ETag to send a conditional PUT request, and verify that a stale ETag returns 412 Precondition Failed.",
+        "note": "Section 1 asks the learner to send a conditional PUT with If-Match and ETag before Section 2 defines ETag or shows how to send an If-Match header."
+      }
+    ],
+    "expectedOutside": [],
+    "expectFindings": true,
+    "expectedNoteSubstrings": ["before"]
+  },
+  {
+    "name": "decided-genuine-unseen-reference",
+    "authoringContext": {
+      "priorKnowledge": "Basic HTTP familiarity.",
+      "currentModule": { "title": "Reliable APIs" },
+      "courseSequence": {
+        "curriculum": [],
+        "coursePlan": [
+          {
+            "title": "Idempotent Requests",
+            "position": "this",
+            "ideas": ["Retry safety"],
+            "terms": [],
+            "actions": [],
+            "contrast": ""
+          }
+        ]
+      }
+    },
+    "candidate": {
+      "blocks": [
+        {
+          "kind": "explanation",
+          "title": "Retry Flow",
+          "body": "When a client retries a payment request, it attaches the same key on each attempt. As shown in Step 4 of the companion sequence diagram above, the server replays the stored receipt instead of charging the card twice."
+        }
+      ],
+      "questions": []
+    },
+    "reported": [
+      {
+        "site": "section-0",
+        "passage": "As shown in Step 4 of the companion sequence diagram above, the server replays the stored receipt instead of charging the card twice.",
+        "note": "Section 1 refers to 'Step 4 of the companion sequence diagram above', but no sequence diagram or Step 4 exists anywhere in this lesson."
+      }
+    ],
+    "expectedOutside": [],
+    "expectFindings": true,
+    "expectedNoteSubstrings": ["does not contain", "Step 4"]
+  },
+  {
+    "name": "mixed-one-decided-contradiction-and-two-outside",
+    "authoringContext": {
+      "priorKnowledge": "Basic SQL familiarity.",
+      "currentModule": { "title": "Transactions" },
+      "courseSequence": {
+        "curriculum": [],
+        "coursePlan": [
+          {
+            "title": "Isolation Basics",
+            "position": "this",
+            "ideas": ["Read Committed prevents dirty reads"],
+            "terms": ["dirty read"],
+            "actions": [],
+            "contrast": ""
+          }
+        ]
+      }
+    },
+    "candidate": {
+      "blocks": [
+        {
+          "kind": "explanation",
+          "title": "Read Committed Guarantee",
+          "body": "Under Read Committed isolation, a transaction can never read uncommitted changes written by another active transaction."
+        },
+        {
+          "kind": "explanation",
+          "title": "Concurrent Walkthrough",
+          "body": "In this Read Committed walkthrough, Transaction B reads Transaction A's uncommitted balance update before Transaction A commits."
+        }
+      ],
+      "questions": []
+    },
+    "reported": [
+      {
+        "site": "section-1",
+        "passage": "In this Read Committed walkthrough, Transaction B reads Transaction A's uncommitted balance update before Transaction A commits.",
+        "note": "Section 2 contradicts Section 1: Section 1 states Read Committed never reads uncommitted changes, while Section 2 shows Transaction B reading an uncommitted balance update under Read Committed."
+      },
+      {
+        "site": "section-0",
+        "note": "The heading 'Read Committed Guarantee' would sound punchier if rephrased as a question."
+      },
+      {
+        "site": "section-0",
+        "note": "Add a citation to the ANSI SQL-92 table of isolation anomalies for external completeness."
+      }
+    ],
+    "expectedOutside": [1, 2],
+    "expectFindings": true,
+    "expectedNoteSubstrings": ["contradicts"]
+  },
+  {
+    "name": "decided-false-alarm-compatible-statements",
+    "authoringContext": {
+      "priorKnowledge": "Basic HTTP familiarity.",
+      "currentModule": { "title": "Reliable APIs" },
+      "courseSequence": {
+        "curriculum": [],
+        "coursePlan": [
+          {
+            "title": "Safe vs Idempotent",
+            "position": "this",
+            "ideas": ["Safe and idempotent are distinct properties"],
+            "terms": [],
+            "actions": [],
+            "contrast": ""
+          }
+        ]
+      }
+    },
+    "candidate": {
+      "blocks": [
+        {
+          "kind": "explanation",
+          "title": "Safe Methods",
+          "body": "HTTP GET is a safe method because it does not modify server state."
+        },
+        {
+          "kind": "explanation",
+          "title": "Idempotent Methods",
+          "body": "HTTP DELETE is not safe because it removes a resource, yet it is idempotent because repeating the DELETE leaves the resource absent."
+        }
+      ],
+      "questions": []
+    },
+    "reported": [
+      {
+        "site": "section-1",
+        "passage": "HTTP DELETE is not safe because it removes a resource, yet it is idempotent because repeating the DELETE leaves the resource absent.",
+        "note": "Section 1 and Section 2 contradict each other because Section 1 talks about not modifying state while Section 2 says DELETE modifies state and is still idempotent."
+      }
+    ],
+    "expectedOutside": [],
+    "expectFindings": false
+  },
+  {
+    "name": "decided-false-alarm-covered-by-prior-knowledge",
+    "authoringContext": {
+      "priorKnowledge": "The learner already knows how to run basic curl commands from the terminal to send GET and POST requests.",
+      "currentModule": { "title": "Reliable APIs" },
+      "courseSequence": {
+        "curriculum": [],
+        "coursePlan": [
+          {
+            "title": "Health Checks",
+            "position": "this",
+            "ideas": ["Liveness probes return 200 OK"],
+            "terms": [],
+            "actions": [],
+            "contrast": ""
+          }
+        ]
+      }
+    },
+    "candidate": {
+      "blocks": [
+        {
+          "kind": "explanation",
+          "title": "Checking Liveness",
+          "body": "A liveness endpoint returns HTTP 200 OK when the service process is healthy. Send a GET request to /healthz with curl and confirm the status line reports 200 OK."
+        }
+      ],
+      "questions": []
+    },
+    "reported": [
+      {
+        "site": "section-0",
+        "passage": "Send a GET request to /healthz with curl and confirm the status line reports 200 OK.",
+        "note": "Section 1 asks the learner to send a GET request with curl before the lesson teaches how to use curl."
+      }
+    ],
+    "expectedOutside": [],
+    "expectFindings": false
+  },
+  {
+    "name": "mixed-distractor-false-alarm-and-outside-style",
+    "authoringContext": {
+      "priorKnowledge": "Basic HTTP familiarity.",
+      "currentModule": { "title": "Reliable APIs" },
+      "courseSequence": {
+        "curriculum": [],
+        "coursePlan": [
+          {
+            "title": "Safe Methods",
+            "position": "this",
+            "ideas": ["GET does not mutate server state"],
+            "terms": [],
+            "actions": [],
+            "contrast": ""
+          }
+        ]
+      }
+    },
+    "candidate": {
+      "blocks": [
+        {
+          "kind": "explanation",
+          "title": "Safe Methods",
+          "body": "HTTP GET is a safe method: it retrieves a representation without modifying server state."
+        }
+      ],
+      "questions": [
+        {
+          "kind": "multiple_choice",
+          "prompt": "Which statement accurately describes HTTP GET?",
+          "options": [
+            "GET retrieves a representation without modifying server state.",
+            "GET permanently deletes the target resource on every request."
+          ],
+          "correctIndex": 0,
+          "rationales": [
+            "Correct: GET is defined as a safe, read-only retrieval method.",
+            "Incorrect: GET does not delete resources."
+          ],
+          "explanation": "GET is a safe method that retrieves a representation without mutating server state."
+        }
+      ]
+    },
+    "reported": [
+      {
+        "site": "question-0",
+        "passage": "GET permanently deletes the target resource on every request.",
+        "note": "Question 1's second option says GET permanently deletes the target resource, which contradicts Section 1 saying GET does not modify server state."
+      },
+      {
+        "site": "section-0",
+        "note": "Consider adding a brief transition sentence at the end of Section 1 to introduce the quiz question more warmly."
+      }
+    ],
+    "expectedOutside": [1],
+    "expectFindings": false
+  }
+]
