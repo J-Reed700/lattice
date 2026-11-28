@@ -6,7 +6,7 @@ use crate::features::llm::backend::{
 use crate::features::llm::engine::vision::not_set_up_to_see;
 use crate::features::llm::fitting::{Fitted, OutputLimits, Thinking};
 use crate::features::llm::resend::Resend;
-use crate::features::llm::scheduler::{InferenceScheduler, SchedulerRegistry};
+use crate::features::llm::scheduler::{rejection, InferenceScheduler, SchedulerRegistry};
 use async_trait::async_trait;
 use lattice_core::application::services::model_contract::shape::Schema;
 use lattice_core::application::{
@@ -183,6 +183,11 @@ impl CloudLlm {
             if status == reqwest::StatusCode::BAD_REQUEST {
                 let error = status_error(self.protocol, status, &Value::Null);
                 let reply = response.json::<Value>().await.unwrap_or(Value::Null);
+                let kind = reply
+                    .pointer("/error/type")
+                    .or_else(|| reply.pointer("/error/code"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 let reason = reply
                     .pointer("/error/message")
                     .and_then(Value::as_str)
@@ -191,7 +196,26 @@ impl CloudLlm {
                 if self.protocol.out_of_credit(status, &reply) {
                     return Err(credit_balance_error(self.protocol.shown_name()));
                 }
-                return Err(refusal.unwrap_or(error));
+                if let Some(refusal) = refusal {
+                    return Err(refusal);
+                }
+                if let Some(fault) = rejection::classify_structured_output(kind, reason) {
+                    let description = match fault {
+                        rejection::StructuredOutputFault::CutOff => format!(
+                            "{} truncated the structured output (HTTP {status}).",
+                            self.protocol.shown_name()
+                        ),
+                        rejection::StructuredOutputFault::UnusableOutput => format!(
+                            "{} did not return valid structured output (HTTP {status}).",
+                            self.protocol.shown_name()
+                        ),
+                        rejection::StructuredOutputFault::SchemaRejected => String::new(),
+                    };
+                    if let Some(typed) = fault.into_error(description) {
+                        return Err(typed);
+                    }
+                }
+                return Err(error);
             }
             let retry_after = response
                 .headers()

@@ -432,3 +432,30 @@ fn the_class_contracts_read_what_they_render() {
         });
     }
 }
+
+#[tokio::test]
+async fn verdict_schema_orders_reason_before_verdict_and_uses_1024_token_budget() {
+    let llm = Scripted::new(vec![Reply::Text(
+        json!({"reason": "Matches passages.", "verdict": "consistent"}).to_string(),
+    )]);
+    let _ = ClaimChecker::for_policy(
+        &llm,
+        SamplingOverride::deterministic(),
+        CheckPolicy::Consistency,
+    )
+    .check_consistency("OCR reads pixels into text.", &passages())
+    .await;
+    let sent = llm.sent();
+    let req = &sent[0];
+    assert_eq!(req.max_output_tokens(), Some(VERDICT_ANSWER_TOKENS));
+    assert_eq!(VERDICT_ANSWER_TOKENS, 1024);
+    let schema = req.schema().unwrap().as_json();
+    let keys: Vec<&str> = schema["properties"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(keys, vec!["reason", "verdict"]);
+    assert!(keys[0] < keys[1]);
+}

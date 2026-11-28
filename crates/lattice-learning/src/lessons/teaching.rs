@@ -15,6 +15,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 pub(crate) mod contract;
+#[cfg(any(test, feature = "test-support"))]
+pub use contract::live_eval as contract_eval;
 mod passes;
 mod protected;
 pub(crate) mod quotes;

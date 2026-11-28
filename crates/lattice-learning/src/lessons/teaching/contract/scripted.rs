@@ -131,7 +131,7 @@ enum Old {
     Raw(String),
 }
 
-/// The scripted answers of the check, one for each time it is made. Its asks of a pass are made in the order planned, find, reports.
+/// The scripted answers of the check, one for each time it is made. Its asks of a pass are made in the order planned, reports (when present), find.
 pub(crate) struct Script {
     answers: Vec<Old>,
     finds: AtomicUsize,
@@ -178,8 +178,15 @@ impl Script {
                 }
             }
             Ask::Reports => {
-                let pass = self.finds.load(Ordering::SeqCst).saturating_sub(1);
-                reports(&task, &self.listed(pass, "reports"))
+                let pass = self.finds.load(Ordering::SeqCst);
+                let listed = self.listed(pass, "reports");
+                let any_decided = listed
+                    .iter()
+                    .any(|entry| entry["about"].as_bool() == Some(true));
+                if !any_decided {
+                    self.finds.fetch_add(1, Ordering::SeqCst);
+                }
+                reports(&task, &listed)
             }
             Ask::ConfirmPlanned | Ask::ConfirmUse | Ask::ConfirmClash => nothing(ask, user),
         }
@@ -317,9 +324,10 @@ pub(crate) fn confirm(ask: Ask, old: &str, user: &str) -> String {
                 })
                 .unwrap_or_else(|| "none".to_owned());
             json!({
+                "analysis": "Scripted confirming read.",
                 "taught": if units.is_empty() { "not_taught" } else { "taught" },
                 "units": units,
-                "belongs": belongs,
+                "whereItBelongs": belongs,
             })
             .to_string()
         }
@@ -333,10 +341,11 @@ pub(crate) fn confirm(ask: Ask, old: &str, user: &str) -> String {
                 named.into_iter().partition(|name| name.starts_with('e'));
             let mark = |yes: bool| if yes { "yes" } else { "no" };
             json!({
+                "analysis": "Scripted confirming read.",
                 "asked": mark(old["asked"] == json!(true)),
                 "taught": mark(!units.is_empty() || !given.is_empty()),
                 "units": units,
-                "given": given,
+                "viaEarlier": given,
             })
             .to_string()
         }
@@ -360,10 +369,12 @@ pub(crate) fn nothing(ask: Ask, user: &str) -> String {
         Ask::Find => json!({"items": []}).to_string(),
         Ask::Reports => reports(&task, &[]),
         Ask::ConfirmPlanned => {
-            json!({"taught": "not_taught", "units": [], "belongs": "none"}).to_string()
+            json!({"analysis": "", "taught": "not_taught", "units": [], "whereItBelongs": "none"})
+                .to_string()
         }
         Ask::ConfirmUse => {
-            json!({"asked": "yes", "taught": "no", "units": [], "given": []}).to_string()
+            json!({"analysis": "", "asked": "yes", "taught": "no", "units": [], "viaEarlier": []})
+                .to_string()
         }
         Ask::ConfirmClash => json!({"case": "", "contradict": false}).to_string(),
     }

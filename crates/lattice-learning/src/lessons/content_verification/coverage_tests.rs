@@ -16,13 +16,13 @@ fn the_fidelity_contract_reads_what_it_renders() {
     ] {
         assert_round_trip::<FidelityAudit>(&FidelityFinding {
             missing_assertions,
-            reason: "Judged.".into(),
+            analysis: "Judged.".into(),
         });
     }
 }
 
 fn represented() -> String {
-    json!({"missingAssertions":[],"reason":"Every assertion is represented."}).to_string()
+    json!({"analysis":"Every assertion is represented.","missingAssertions":[]}).to_string()
 }
 /// A judge's answer naming `sentence` as the sentence of each of `statements`.
 fn missing(sentence: &str, statements: &[&str]) -> String {
@@ -30,7 +30,7 @@ fn missing(sentence: &str, statements: &[&str]) -> String {
         .iter()
         .map(|statement| json!({"sentenceId":sentence,"statement":statement}))
         .collect();
-    json!({"missingAssertions":gaps,"reason":"These assertions are absent."}).to_string()
+    json!({"analysis":"These assertions are absent.","missingAssertions":gaps}).to_string()
 }
 fn scripted(outputs: Vec<String>) -> ScriptedModel {
     ScriptedModel {
@@ -198,7 +198,7 @@ async fn a_malformed_judge_answer_is_asked_for_once_more_then_fails_as_unusable(
     let prompts = corrected.prompts.lock().unwrap().clone();
     assert_eq!(prompts.len(), 2);
     let unusable = scripted(vec![
-        json!({"missingAssertions":[{"sentenceId":"a-sentence-0","statement":"   "}],"reason":""})
+        json!({"analysis":"","missingAssertions":[{"sentenceId":"a-sentence-0","statement":"   "}]})
             .to_string(),
         "still not json".into(),
     ]);
@@ -223,7 +223,7 @@ async fn a_long_reason_or_missing_assertion_from_the_judge_is_read_not_asked_for
         "that the passage states under its own condition ".repeat(30)
     );
     let reply =
-        json!({"missingAssertions":[{"sentenceId":"a-sentence-0","statement":statement}],"reason":"The passage states it. ".repeat(40)})
+        json!({"analysis":"The passage states it. ".repeat(40),"missingAssertions":[{"sentenceId":"a-sentence-0","statement":statement}]})
             .to_string();
     let model = scripted(vec![reply.clone(), reply]);
     let checked = check_fidelity(&model, &unit, None).await;
@@ -233,7 +233,7 @@ async fn a_long_reason_or_missing_assertion_from_the_judge_is_read_not_asked_for
 }
 
 #[test]
-fn the_fidelity_schema_orders_reason_before_missing_assertions() {
+fn the_fidelity_schema_orders_analysis_alphabetically_before_missing_assertions() {
     let schema = fidelity_schema(&["a-sentence-0".to_owned()]);
     let keys: Vec<&str> = schema["properties"]
         .as_object()
@@ -241,7 +241,11 @@ fn the_fidelity_schema_orders_reason_before_missing_assertions() {
         .keys()
         .map(String::as_str)
         .collect();
-    assert_eq!(keys, vec!["reason", "missingAssertions"]);
+    assert_eq!(keys, vec!["analysis", "missingAssertions"]);
+    assert!(
+        keys[0] < keys[1],
+        "reasoning key must sort alphabetically before missingAssertions for llama.cpp grammars"
+    );
 }
 
 #[test]
@@ -256,10 +260,10 @@ fn the_fidelity_schema_bounds_no_text_but_a_blank() {
 fn the_fidelity_schema_accepts_only_a_sentence_of_the_passage() {
     let judge =
         jsonschema::JSONSchema::compile(&fidelity_schema(&["a-sentence-0".to_owned()])).unwrap();
-    assert!(judge.is_valid(&json!({"missingAssertions":[],"reason":"Represented."})));
-    assert!(judge.is_valid(&json!({"missingAssertions":[{"sentenceId":"a-sentence-0","statement":"A fact."}],"reason":"Absent."})));
-    assert!(!judge.is_valid(&json!({"missingAssertions":[{"sentenceId":"b-sentence-0","statement":"A fact."}],"reason":"Absent."})));
-    assert!(!judge.is_valid(&json!({"missingAssertions":[{"sentenceId":"a-sentence-0","statement":""}],"reason":"Represented."})));
+    assert!(judge.is_valid(&json!({"analysis":"Represented.","missingAssertions":[]})));
+    assert!(judge.is_valid(&json!({"analysis":"Absent.","missingAssertions":[{"sentenceId":"a-sentence-0","statement":"A fact."}]})));
+    assert!(!judge.is_valid(&json!({"analysis":"Absent.","missingAssertions":[{"sentenceId":"b-sentence-0","statement":"A fact."}]})));
+    assert!(!judge.is_valid(&json!({"analysis":"Represented.","missingAssertions":[{"sentenceId":"a-sentence-0","statement":""}]})));
     assert!(!judge.is_valid(&json!({"verdict":"supported"})));
 }
 

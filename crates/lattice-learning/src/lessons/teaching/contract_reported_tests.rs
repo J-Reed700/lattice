@@ -208,7 +208,13 @@ async fn rule_on_reports_skips_ask_planned_and_whole_lesson_audit_while_preservi
     });
     let ruled = rule_on_reports(&model, &authoring, &candidate, &[], &[&first, &second]).await?;
     assert!(model.of(Ask::Planned).is_empty());
-    assert_eq!(model.of(Ask::Find).len(), 1);
+    let finds = model.of(Ask::Find);
+    assert_eq!(finds.len(), 1);
+    // Only the in-scope (decided) report reaches ask_findings; the outside one is filtered out.
+    assert_eq!(
+        finds[0].1["reported"],
+        json!([{"part":"Section 1","defect":"The kettle is cold."}])
+    );
     assert_eq!(model.of(Ask::Reports).len(), 1);
     assert_eq!(ruled.outside, [1]);
     let drafting = model.drafting.lock().unwrap();
@@ -218,6 +224,30 @@ async fn rule_on_reports_skips_ask_planned_and_whole_lesson_audit_while_preservi
             .any(|said| said.contains(REPORTED_FIND_BRIEF) && !said.contains(FIND_BRIEF)),
         "{drafting:?}"
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn rule_on_reports_skips_find_and_confirm_when_every_report_is_outside() -> Result<()> {
+    let (first, second) = two();
+    let model = Asked::new(vec![false, false]);
+    let authoring = json!({
+        "courseSequence": {
+            "coursePlan": [
+                {"title": "Heating", "position": "this", "ideas": ["Heat rises"], "terms": [], "actions": [], "contrast": ""}
+            ]
+        }
+    });
+    let candidate = json!({
+        "blocks": [{"kind": "explanation", "title": "Heating", "body": "The kettle is full."}],
+        "questions": []
+    });
+    let ruled = rule_on_reports(&model, &authoring, &candidate, &[], &[&first, &second]).await?;
+    assert!(ruled.findings.is_empty());
+    assert_eq!(ruled.outside, [0, 1]);
+    assert_eq!(model.of(Ask::Reports).len(), 1);
+    assert!(model.of(Ask::Planned).is_empty());
+    assert!(model.of(Ask::Find).is_empty());
     Ok(())
 }
 

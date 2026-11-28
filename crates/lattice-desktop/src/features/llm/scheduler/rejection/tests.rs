@@ -187,3 +187,119 @@ fn a_pictures_bytes_are_not_request_text() {
         assert!(!texts.contains(&bytes), "{texts:?}");
     }
 }
+
+#[test]
+fn structured_output_faults_are_classified_generically_across_backends() {
+    for (kind, message) in [
+        (
+            " (structured_output_failed)",
+            "structured output was incomplete (finish_reason=length); increase the output budget",
+        ),
+        (
+            " (500 structured_output_failed)",
+            "structured output truncated at max_tokens",
+        ),
+        (
+            "",
+            "failed to generate valid JSON: EOF while parsing object",
+        ),
+        (
+            "json_validate_failed",
+            "output cut off before closing JSON object",
+        ),
+    ] {
+        assert_eq!(
+            classify_structured_output(kind, message),
+            Some(StructuredOutputFault::CutOff),
+            "kind={kind:?} message={message:?}"
+        );
+    }
+
+    for (kind, message) in [
+        (
+            " (structured_output_failed)",
+            "model did not return valid JSON: duplicate JSON key: plan",
+        ),
+        (
+            " (structured_output_failed)",
+            "schema validation failed: missing required field 'edits'",
+        ),
+        (
+            " (structured_output_failed)",
+            "unexpected token at line 3 column 9",
+        ),
+        (
+            "json_validate_failed",
+            "Failed to generate JSON. Please adjust your prompt.",
+        ),
+        ("", "model did not return valid JSON: trailing comma"),
+    ] {
+        assert_eq!(
+            classify_structured_output(kind, message),
+            Some(StructuredOutputFault::UnusableOutput),
+            "kind={kind:?} message={message:?}"
+        );
+    }
+
+    for (kind, message) in [
+        (" (structured_output_failed)", "grammar compilation error"),
+        (
+            "invalid_request_error",
+            "Invalid schema for response_format 'response': unsupported keyword",
+        ),
+        (
+            "invalid_request_error",
+            "json_schema: Schema is too complex",
+        ),
+        ("grammar_error", "failed to compile"),
+    ] {
+        assert_eq!(
+            classify_structured_output(kind, message),
+            Some(StructuredOutputFault::SchemaRejected),
+            "kind={kind:?} message={message:?}"
+        );
+    }
+
+    for (kind, message) in [
+        (" (500 server_error)", "Compute error."),
+        (" (500)", "Invalid input batch."),
+        (
+            " (400 exceed_context_size_error)",
+            "Context size has been exceeded.",
+        ),
+        (
+            "invalid_request_error",
+            "This model's maximum context length is 8192 tokens.",
+        ),
+        (" (400)", "Unable to generate parser for this template."),
+        (
+            "structured_output_failed",
+            "Context size has been exceeded.",
+        ),
+    ] {
+        assert_eq!(
+            classify_structured_output(kind, message),
+            None,
+            "kind={kind:?} message={message:?}"
+        );
+    }
+}
+
+#[test]
+fn streamed_error_types_infer_http_status_when_code_is_omitted() {
+    assert_eq!(inferred_status(Some(502), "server_error"), Some(502));
+    assert_eq!(inferred_status(None, " (server_error)"), Some(500));
+    assert_eq!(inferred_status(None, " (internal_error)"), Some(500));
+    assert_eq!(inferred_status(None, " (rate_limit_error)"), Some(429));
+    assert_eq!(inferred_status(None, " (overloaded_error)"), Some(503));
+    assert_eq!(inferred_status(None, " (request_timeout)"), Some(408));
+    assert_eq!(
+        inferred_status(None, " (exceed_context_size_error)"),
+        Some(413)
+    );
+    assert_eq!(inferred_status(None, " (invalid_request_error)"), Some(400));
+    assert_eq!(inferred_status(None, " (authentication_error)"), Some(401));
+    assert_eq!(inferred_status(None, " (permission_error)"), Some(403));
+    assert_eq!(inferred_status(None, " (structured_output_failed)"), None);
+    assert_eq!(inferred_status(None, ""), None);
+}

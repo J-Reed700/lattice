@@ -75,7 +75,7 @@ async fn interrupted_coverage_reuses_each_completed_passage() -> Result<()> {
         inner: Model::new(),
         jobs: JobStore::new(db.clone()),
         job: job.clone(),
-        fidelity: format!("{lesson}/coverage-fidelity-v3:"),
+        fidelity: format!("{lesson}/coverage-fidelity-v4:"),
         fidelity_calls: AtomicUsize::new(0),
     };
     let mut content = vec![

@@ -280,22 +280,46 @@ where
         let llm: &dyn LLMPort = &tagging;
         let (showing, request) = render::<C>(llm, scope, &input, call)?;
         let asked = request.clone();
-        let sent = transport.send(llm, request).await?;
-        let mut outcome = new_round::<C>(&input, sent, &showing, &mut standing, &mut left_out);
+        let cut_off_round = |request: GroundedRequest| Round {
+            sent: Sent {
+                request,
+                text: String::new(),
+                finish: Finish::CutOff,
+                usage: Usage::default(),
+            },
+            rest: Some(Why::CutOff),
+            added: 0,
+        };
+        let mut outcome = match transport.send(llm, request).await {
+            Ok(sent) => new_round::<C>(&input, sent, &showing, &mut standing, &mut left_out),
+            Err(AppError::AnswerCutOff(_)) => cut_off_round(asked.clone()),
+            Err(error) => return Err(error),
+        };
         if outcome.added == 0 && outcome.rest.is_some() {
             if outcome.rest == Some(Why::CutOff) {
                 if let Some(larger) = larger_if_room(llm, &outcome.sent).await {
-                    let sent = transport.follow(llm, larger).await?;
-                    outcome = new_round::<C>(&input, sent, &showing, &mut standing, &mut left_out);
+                    let larger_asked = larger.request().clone();
+                    outcome = match transport.follow(llm, larger).await {
+                        Ok(sent) => {
+                            new_round::<C>(&input, sent, &showing, &mut standing, &mut left_out)
+                        }
+                        Err(AppError::AnswerCutOff(_)) => cut_off_round(larger_asked),
+                        Err(error) => return Err(error),
+                    };
                 }
             }
             if outcome.added == 0 && standing.is_empty() {
                 let told = outcome.rest.as_ref().and_then(|why| told(why, ""));
                 if let Some(told) = told {
                     if let Some(again) = correction_for(llm, &outcome.sent, &told).await {
-                        let sent = transport.follow(llm, again).await?;
-                        outcome =
-                            new_round::<C>(&input, sent, &showing, &mut standing, &mut left_out);
+                        let again_asked = again.request().clone();
+                        outcome = match transport.follow(llm, again).await {
+                            Ok(sent) => {
+                                new_round::<C>(&input, sent, &showing, &mut standing, &mut left_out)
+                            }
+                            Err(AppError::AnswerCutOff(_)) => cut_off_round(again_asked),
+                            Err(error) => return Err(error),
+                        };
                     }
                 }
             }

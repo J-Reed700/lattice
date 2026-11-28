@@ -22,6 +22,8 @@ mod course_e2e;
 mod course_eval;
 #[path = "live_small_lesson.rs"]
 mod small;
+#[path = "live_speed_evals.rs"]
+mod speed_evals;
 #[path = "live_web_trace.rs"]
 mod web_trace;
 
@@ -42,6 +44,8 @@ struct ObservedModel {
     inner: Arc<dyn LLMPort>,
     directory: std::path::PathBuf,
     call: std::sync::atomic::AtomicUsize,
+    input_tokens: std::sync::atomic::AtomicU64,
+    output_tokens: std::sync::atomic::AtomicU64,
 }
 
 #[tokio::test]
@@ -291,7 +295,18 @@ impl ObservedModel {
             inner,
             directory,
             call: std::sync::atomic::AtomicUsize::new(first_call),
+            input_tokens: std::sync::atomic::AtomicU64::new(0),
+            output_tokens: std::sync::atomic::AtomicU64::new(0),
         }
+    }
+
+    pub(super) fn usage(&self) -> (usize, u64, u64) {
+        use std::sync::atomic::Ordering::Relaxed;
+        (
+            self.call.load(Relaxed),
+            self.input_tokens.load(Relaxed),
+            self.output_tokens.load(Relaxed),
+        )
     }
 
     fn record(
@@ -300,18 +315,23 @@ impl ObservedModel {
         request: &CompletionRequest,
         response: &CompletionResponse,
     ) -> Result<()> {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.input_tokens.fetch_add(response.input_tokens, Relaxed);
+        self.output_tokens
+            .fetch_add(response.output_tokens, Relaxed);
         std::fs::write(
             self.directory.join(format!("call-{call}.json")),
             serde_json::to_vec_pretty(&serde_json::json!({
                 "model":self.inner.model_name(),
+                "thinking":format!("{:?}", request.thinking),
                 "input":request.input(),"answer":response.text,"finishReason":response.finish_reason,
                 "inputTokens":response.input_tokens,"outputTokens":response.output_tokens,
                 "firstTokenLogprobs":response.first_token_logprobs
             }))?,
         )?;
         println!(
-            "Live call {call} completed: {} input / {} output tokens, {}",
-            response.input_tokens, response.output_tokens, response.finish_reason
+            "Live call {call} completed (thinking={:?}): {} input / {} output tokens, {}",
+            request.thinking, response.input_tokens, response.output_tokens, response.finish_reason
         );
         Ok(())
     }
@@ -382,6 +402,15 @@ impl LLMPort for ObservedModel {
         schema: &lattice_core::application::services::model_contract::shape::Schema,
     ) -> bool {
         self.inner.enforces(schema)
+    }
+    fn thinks_before_answering(&self) -> bool {
+        self.inner.thinks_before_answering()
+    }
+    fn supports_native_thinking(&self) -> bool {
+        self.inner.supports_native_thinking()
+    }
+    fn keeps_read_prompts(&self) -> bool {
+        self.inner.keeps_read_prompts()
     }
 }
 

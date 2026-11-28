@@ -5,8 +5,10 @@ use super::super::shape::{PerItem, Rows, Settled, Why};
 use super::super::shown::{Kind, Picked, Scope};
 use super::super::{tagged, Contract, ContractCall};
 use super::fitting::{correction_for, fitted, larger_if_room, render};
-use super::{handle_of, written, Alone, Answered, Entry, Refusal, Sent, Statement, Transport};
-use crate::application::ports::llm_port::LLMPort;
+use super::{
+    handle_of, written, Alone, Answered, Entry, Refusal, Sent, Statement, Transport, Usage,
+};
+use crate::application::ports::llm_port::{Finish, LLMPort};
 use crate::application::services::grounded_generation::CallOptions;
 use crate::shared::error::{AppError, ErrorClass, Result};
 
@@ -129,20 +131,39 @@ pub(super) async fn alone<C: Answered, P>(
     accept: impl Fn(&P, &Statement<C>) -> std::result::Result<(), Refusal>,
 ) -> Result<Settled<(P, Statement<C>)>> {
     let asked = request.clone();
-    let mut sent = match transport.send(llm, request).await {
-        Ok(sent) => sent,
+    let cut_off_sent = |request: GroundedRequest| Sent {
+        request,
+        text: String::new(),
+        finish: Finish::CutOff,
+        usage: Usage::default(),
+    };
+    let (mut sent, mut settled) = match transport.send(llm, request).await {
+        Ok(sent) => {
+            let settled = settle::<C, P>(&sent, handle, &read, &accept);
+            (sent, settled)
+        }
+        Err(AppError::AnswerCutOff(_)) => (
+            cut_off_sent(asked.clone()),
+            Settled::Unanswered(Why::CutOff),
+        ),
         Err(error) => return failed_send::<C, P>(llm, transport, &asked, handle, error).await,
     };
-    let mut settled = settle::<C, P>(&sent, handle, &read, &accept);
     if matches!(settled, Settled::Unanswered(Why::CutOff)) {
         if let Some(larger) = larger_if_room(llm, &sent).await {
-            sent = match transport.follow(llm, larger).await {
-                Ok(sent) => sent,
-                Err(error) => {
-                    return failed_send::<C, P>(llm, transport, &asked, handle, error).await
+            let larger_asked = larger.request().clone();
+            match transport.follow(llm, larger).await {
+                Ok(reply) => {
+                    sent = reply;
+                    settled = settle::<C, P>(&sent, handle, &read, &accept);
                 }
-            };
-            settled = settle::<C, P>(&sent, handle, &read, &accept);
+                Err(AppError::AnswerCutOff(_)) => {
+                    sent = cut_off_sent(larger_asked);
+                    settled = Settled::Unanswered(Why::CutOff);
+                }
+                Err(error) => {
+                    return failed_send::<C, P>(llm, transport, &asked, handle, error).await;
+                }
+            }
         }
     }
     if !corrected {
@@ -152,13 +173,13 @@ pub(super) async fn alone<C: Answered, P>(
         };
         if let Some(due) = due {
             if let Some(again) = correction_for(llm, &sent, &due).await {
-                let reply = match transport.follow(llm, again).await {
-                    Ok(reply) => reply,
+                match transport.follow(llm, again).await {
+                    Ok(reply) => settled = settle::<C, P>(&reply, handle, &read, &accept),
+                    Err(AppError::AnswerCutOff(_)) => settled = Settled::Unanswered(Why::CutOff),
                     Err(error) => {
-                        return failed_send::<C, P>(llm, transport, &asked, handle, error).await
+                        return failed_send::<C, P>(llm, transport, &asked, handle, error).await;
                     }
-                };
-                settled = settle::<C, P>(&reply, handle, &read, &accept);
+                }
             }
         }
     }

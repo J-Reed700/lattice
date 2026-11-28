@@ -79,10 +79,10 @@ pub(crate) const INTRO: &str = answer_intro!();
 pub(crate) const CLASH_SYSTEM: &str = concat!(answer_intro!(), "Two statements contradict each other when there is a case in which one says something happens or holds and the other says it cannot; statements that can both be true, read with their conditions, do not. A question's wrong options (indices other than correctIndex) are deliberate distractors rather than statements the lesson endorses, so a wrong option does not contradict the lesson. Resolve references such as 'this configuration', 'this syntax choice', or 'this release' strictly against what the lesson text actually states, and do not invent unstated actions, mode switches, or separate instances not in the lesson to reconcile them.");
 
 /// The confirming read of a planned item.
-pub(crate) const PLANNED_SYSTEM: &str = concat!(answer_intro!(), "A planned item is taught when the lesson teaches it. ", taught!(), "\nCite in units the sentences that teach it, by the names they are shown under; units is empty when nothing teaches it.");
+pub(crate) const PLANNED_SYSTEM: &str = concat!(answer_intro!(), "A planned item is taught when the lesson teaches it. ", taught!(), "\nFirst briefly state in analysis which sentences (if any) teach it, then set taught, cite teaching sentences in units by the names they are shown under (empty when nothing teaches it), and if not taught name in whereItBelongs the part where it belongs (or none).");
 
 /// The confirming read of a use.
-pub(crate) const USE_SYSTEM: &str = concat!(answer_intro!(), "A part uses something when its words ask the learner to do or use it, when its practice deliverable needs it, or when it treats it as known. What a part only mentions, and does not ask of the learner, it does not use; then asked is no and units is empty.\nA use is taught when what the part uses has been taught before it or in it. ", use_taught!(), " What the actions and terms of earlierLessons cover, and the learner's priorKnowledge, are taught too.\nCite in units the sentences of the lesson or of priorKnowledge that teach it, and in given the actions and terms of earlierLessons that teach it, by the names they are shown under.");
+pub(crate) const USE_SYSTEM: &str = concat!(answer_intro!(), "A part uses something when its words ask the learner to do or use it, when its practice deliverable needs it, or when it treats it as known. What a part only mentions, and does not ask of the learner, it does not use; then asked is no and units is empty.\nA use is taught when what the part uses has been taught before it or in it. ", use_taught!(), " What the actions and terms of earlierLessons cover, and the learner's priorKnowledge, are taught too.\nFirst briefly state in analysis whether the sentence asks for it and where (if anywhere) it is taught, then set asked and taught, cite in units the sentences of the lesson or of priorKnowledge that teach it, and in viaEarlier the actions and terms of earlierLessons that teach it, by the names they are shown under.");
 
 const PLANNED_BRIEF: &str = "Go through the lesson part by part in order and find the words that teach the item. If there are none, note the part where the item belongs.";
 
@@ -94,7 +94,7 @@ fn asking<'a>(subject: &'a str, brief: &'a str) -> Asking<'a> {
     Asking {
         progress: None,
         reasoning: Some(ReasonFirst {
-            kind: CallKind::Authoring,
+            kind: CallKind::Classifier,
             subject,
             brief,
         }),
@@ -131,17 +131,22 @@ pub(crate) struct Belongs {
 
 impl Authored for Belongs {
     fn form() -> Form {
+        // Keep field names strictly alphabetical (`analysis` < `taught` < `units` < `whereItBelongs`)
+        // so backends whose JSON-schema grammar sorts keys (`llama.cpp`) always emit reasoning
+        // before the verdict and the fallback placement last.
         Form::new()
+            .text("analysis")
             .word::<Verdict>("taught")
             .cite::<Unit>("units")
-            .point_or_none::<Spot>("belongs")
+            .point_or_none::<Spot>("whereItBelongs")
     }
 
     fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        let _analysis = fields.text("analysis")?;
         Some(Self {
             verdict: fields.word("taught")?,
             units: fields.cite("units"),
-            belongs: fields.point_or_none("belongs")?,
+            belongs: fields.point_or_none("whereItBelongs")?,
         })
     }
 }
@@ -168,12 +173,12 @@ impl Answered for ConfirmPlanned {
             .said(&sentence::labelled(&texts, &shown), spots.handles());
         let question = if places.is_empty() {
             format!(
-                "Does this lesson teach the {} '{}'? If it does, cite in units the sentences that teach it.",
+                "Does this lesson teach the {} '{}'? First briefly explain in analysis, then set taught and cite in units the sentences that teach it.",
                 input.kind.0, input.text.0
             )
         } else {
             format!(
-                "Does this lesson teach the {} '{}'? If it does, cite in units the sentences that teach it. If it does not, name in belongs the part where it belongs.",
+                "Does this lesson teach the {} '{}'? First briefly explain in analysis, then set taught and cite in units the sentences that teach it. If it does not, name in whereItBelongs the part where it belongs (or none if taught).",
                 input.kind.0, input.text.0
             )
         };
@@ -270,19 +275,24 @@ pub(crate) struct Standing {
 
 impl Authored for Standing {
     fn form() -> Form {
+        // Keep field names strictly alphabetical (`analysis` < `asked` < `taught` < `units` < `viaEarlier`)
+        // so backends whose JSON-schema grammar sorts keys (`llama.cpp`) always emit reasoning
+        // before the verdicts and citations.
         Form::new()
+            .text("analysis")
             .word::<Mark>("asked")
             .word::<Mark>("taught")
             .cite::<Unit>("units")
-            .cite::<Given>("given")
+            .cite::<Given>("viaEarlier")
     }
 
     fn read(fields: &mut Fields<'_, '_>) -> Option<Self> {
+        let _analysis = fields.text("analysis")?;
         Some(Self {
             asked: fields.word("asked")?,
             taught: fields.word("taught")?,
             units: fields.cite("units"),
-            given: fields.cite("given"),
+            given: fields.cite("viaEarlier"),
         })
     }
 }
@@ -341,7 +351,7 @@ impl Answered for ConfirmUse {
                 )
             })?;
         let question = format!(
-            concat!("Does the sentence {at} ask the learner to do or use {what}, need it for its practice deliverable, or treat it as known? If it does, has the lesson at or before that sentence, or the earlier lessons' actions and terms, or the learner's prior knowledge, taught it: ", each_shown!(), "? Cite in units the sentences that say so, and in given the earlier lessons' actions and terms that do; both are empty when nothing does."),
+            concat!("Does the sentence {at} ask the learner to do or use {what}, need it for its practice deliverable, or treat it as known? If it does, has the lesson at or before that sentence, or the earlier lessons' actions and terms, or the learner's prior knowledge, taught it: ", each_shown!(), "? First briefly explain in analysis, then set asked and taught, cite in units the sentences that say so, and in viaEarlier the earlier lessons' actions and terms that do; both are empty when nothing does."),
             at = at,
             what = input.what.0
         );
@@ -362,7 +372,7 @@ impl Answered for ConfirmUse {
     fn accept(_input: &UseInput, standing: &Standing) -> std::result::Result<(), Refusal> {
         if standing.taught == Mark::Yes && standing.units.is_empty() && standing.given.is_empty() {
             return Err(Refusal(
-                "Cite in units or in given at least one sentence that teaches it. Naming words in your answer does not cite them.".into(),
+                "Cite in units or in viaEarlier at least one sentence that teaches it. Naming words in your answer does not cite them.".into(),
             ));
         }
         Ok(())
@@ -398,13 +408,13 @@ pub(super) struct Unmet<'a> {
 }
 
 /// What the confirming read made of one use.
-enum Read {
+pub(super) enum Read {
     NotAsked,
     Taught,
     Stands,
 }
 
-enum Verdicts<'a> {
+pub(super) enum Verdicts<'a> {
     Taught(Vec<Hit<'a>>),
     Belongs(Option<&'a Part>),
 }
@@ -459,7 +469,7 @@ pub(super) async fn settle<'a>(
 }
 
 /// The contradiction, when the confirming read says its two statements cannot both be true.
-async fn read_clash<'a>(
+pub(super) async fn read_clash<'a>(
     llm: &dyn LLMPort,
     clash: Clash<'a>,
     parts: &[Part],
@@ -488,7 +498,7 @@ async fn read_clash<'a>(
     }))
 }
 
-async fn read_planned<'a>(
+pub(super) async fn read_planned<'a>(
     llm: &dyn LLMPort,
     item: &'a Item,
     parts: &'a [Part],
@@ -613,7 +623,7 @@ fn known(prior: Option<&Value>, earlier: &[Value]) -> (Option<Told<String>>, Vec
 }
 
 /// What the confirming read says of one use of `what`.
-async fn read_use(
+pub(super) async fn read_use(
     llm: &dyn LLMPort,
     what: &str,
     used: &Hit<'_>,
@@ -711,7 +721,7 @@ async fn ask<T: ConfirmQuestion>(
         ANSWER_TOKENS,
         None,
         Some(ReasonFirst {
-            kind: CallKind::Authoring,
+            kind: CallKind::Classifier,
             subject,
             brief,
         }),

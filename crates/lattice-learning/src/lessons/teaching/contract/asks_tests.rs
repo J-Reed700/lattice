@@ -160,7 +160,7 @@ async fn an_item_the_ask_never_answers_goes_to_the_confirming_read() -> Result<(
     let model = on::<LessonContractFind>(model, nothing_found);
     let model = on::<ConfirmPlanned>(model, |sent| {
         let cited = name_of(sent, "typed commands");
-        json!({"taught": "taught", "units": [cited], "belongs": "none"}).to_string()
+        json!({"analysis": "Taught in section 1.", "taught": "taught", "units": [cited], "whereItBelongs": "none"}).to_string()
     });
     let candidate = lesson([
         "A terminal takes typed commands.",
@@ -188,7 +188,7 @@ async fn standing_after_citing(cited: &'static str) -> Result<Vec<ReviewFinding>
     let model = on::<LessonContractFind>(model, using_the_terminal);
     let model = on::<ConfirmUse>(model, move |sent| {
         let units = name_of(sent, cited);
-        json!({"asked": "yes", "taught": "yes", "units": [units]}).to_string()
+        json!({"analysis": "Checked.", "asked": "yes", "taught": "yes", "units": [units], "viaEarlier": []}).to_string()
     });
     let opening = format!("{USING} {TEACHING}");
     let candidate = lesson([&opening, "The list shows names.", "Read the names."]);
@@ -280,7 +280,7 @@ async fn what_an_earlier_lesson_gives_is_cited_under_its_own_letter() -> Result<
     let model = on::<LessonContractCheck>(Layered::new(), nothing_taught);
     let model = on::<LessonContractFind>(model, using_the_terminal);
     let model = on::<ConfirmUse>(model, |sent| {
-        json!({"asked": "yes", "taught": "yes", "units": [], "given": [earlier_name(sent)]})
+        json!({"analysis": "Earlier lesson.", "asked": "yes", "taught": "yes", "units": [], "viaEarlier": [earlier_name(sent)]})
             .to_string()
     });
     let candidate = lesson([USING, "The list shows names.", "Read the names."]);
@@ -301,7 +301,7 @@ async fn the_learners_prior_knowledge_is_cited_as_a_sentence() -> Result<()> {
     let model = on::<LessonContractFind>(model, using_the_terminal);
     let model = on::<ConfirmUse>(model, |sent| {
         let units = name_of(sent, "used a file manager");
-        json!({"asked": "yes", "taught": "yes", "units": [units], "given": []}).to_string()
+        json!({"analysis": "Prior knowledge.", "asked": "yes", "taught": "yes", "units": [units], "viaEarlier": []}).to_string()
     });
     let candidate = lesson([USING, "The list shows names.", "Read the names."]);
     let ruled = run(&model, &context(&[]), &candidate, &[]).await?;
@@ -324,7 +324,7 @@ async fn equal_sentences_of_two_parts_are_two_places() -> Result<()> {
         json!({"items": [{"finding": {"kind": "usedBeforeTaught", "what": "the terminal", "uses": [second], "taughtLater": []}}]}).to_string()
     });
     let model = on::<ConfirmUse>(model, |_| {
-        json!({"asked": "yes", "taught": "no", "units": [], "given": []}).to_string()
+        json!({"analysis": "Not taught.", "asked": "yes", "taught": "no", "units": [], "viaEarlier": []}).to_string()
     });
     let candidate = lesson([USING, USING, "Read the names."]);
     let ruled = run(&model, &context(&[]), &candidate, &[]).await?;
@@ -338,7 +338,7 @@ async fn a_prior_knowledge_of_null_is_no_prior_knowledge() -> Result<()> {
     let model = on::<LessonContractCheck>(Layered::new(), nothing_taught);
     let model = on::<LessonContractFind>(model, using_the_terminal);
     let model = on::<ConfirmUse>(model, |_| {
-        json!({"asked": "yes", "taught": "no", "units": [], "given": []}).to_string()
+        json!({"analysis": "Not taught.", "asked": "yes", "taught": "no", "units": [], "viaEarlier": []}).to_string()
     });
     let mut context = context(&[]);
     context["priorKnowledge"] = Value::Null;
@@ -388,5 +388,50 @@ async fn finding_schema_variants_keep_kind_alphabetically_first() -> Result<()> 
             "every Finding anyOf variant must start alphabetically with `kind`: {branch}"
         );
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn confirm_schemas_keep_fields_in_strictly_alphabetical_reasoning_first_order() -> Result<()>
+{
+    let model = on::<LessonContractCheck>(Layered::new(), nothing_taught);
+    let model = on::<LessonContractFind>(model, using_the_terminal);
+    let model = on::<ConfirmPlanned>(model, |sent| {
+        let cited = name_of(sent, TEACHING);
+        json!({"analysis": "Taught.", "taught": "taught", "units": [cited], "whereItBelongs": "none"})
+            .to_string()
+    });
+    let model = on::<ConfirmUse>(model, |_| {
+        json!({"analysis": "Not taught.", "asked": "yes", "taught": "no", "units": [], "viaEarlier": []})
+            .to_string()
+    });
+    let candidate = lesson([USING, TEACHING, "Read the names."]);
+    let _ = run(&model, &context(&["Typing commands"]), &candidate, &[]).await?;
+
+    let planned_asks = asks::<ConfirmPlanned>(&model);
+    let planned_keys: Vec<&str> = planned_asks[0].request.schema().unwrap().as_json()["properties"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        planned_keys,
+        vec!["analysis", "taught", "units", "whereItBelongs"]
+    );
+    assert!(planned_keys.windows(2).all(|w| w[0] < w[1]));
+
+    let use_asks = asks::<ConfirmUse>(&model);
+    let use_keys: Vec<&str> = use_asks[0].request.schema().unwrap().as_json()["properties"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        use_keys,
+        vec!["analysis", "asked", "taught", "units", "viaEarlier"]
+    );
+    assert!(use_keys.windows(2).all(|w| w[0] < w[1]));
     Ok(())
 }

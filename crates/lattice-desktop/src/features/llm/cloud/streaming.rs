@@ -5,6 +5,7 @@ use super::protocol::{CompletionProtocol, EventDecoder};
 use super::timing::StreamClock;
 use super::{field, CompletionResponse};
 use crate::features::llm::fitting::ResponseBudget;
+use crate::features::llm::scheduler::rejection;
 use futures::{Stream, StreamExt};
 use lattice_core::shared::error::WithCauses;
 use lattice_core::shared::error::{AppError, Result};
@@ -205,6 +206,31 @@ impl Decoder {
         let kind = field(&event, "type").as_str().unwrap_or("");
         if self.events.is_failure(kind) {
             // Provider error text may contain the user's prompt.
+            let error_kind = event
+                .pointer("/error/type")
+                .or_else(|| event.pointer("/error/code"))
+                .or_else(|| event.pointer("/response/error/code"))
+                .and_then(Value::as_str)
+                .unwrap_or(kind);
+            let error_message = event
+                .pointer("/error/message")
+                .or_else(|| event.pointer("/response/error/message"))
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if let Some(fault) = rejection::classify_structured_output(error_kind, error_message) {
+                let description = match fault {
+                    rejection::StructuredOutputFault::CutOff => {
+                        format!("Cloud stream structured output cut off ({kind})")
+                    }
+                    rejection::StructuredOutputFault::UnusableOutput => {
+                        format!("Cloud stream structured output failed ({kind})")
+                    }
+                    rejection::StructuredOutputFault::SchemaRejected => String::new(),
+                };
+                if let Some(typed) = fault.into_error(description) {
+                    return Err(typed);
+                }
+            }
             return Err(AppError::Network(format!("Cloud stream failed ({kind})")));
         }
         self.events.event(&event, kind, on_text, on_reasoning)?;

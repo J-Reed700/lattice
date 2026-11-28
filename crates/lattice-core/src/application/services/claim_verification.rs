@@ -181,8 +181,8 @@ pub const MIN_VERDICT_CONFIDENCE: f32 = 0.75;
 /// passage it cites and the verdict. Evidence fills what the window leaves
 /// past it, alone or in a batch.
 pub const ANSWER_ROOM_TOKENS: usize = 1200;
-/// The most a one-verdict answer (consistency, knowledge) writes: its verdict and reason.
-pub const VERDICT_ANSWER_TOKENS: u32 = 512;
+/// The most a one-verdict answer (consistency, knowledge) writes: its reason and verdict.
+pub const VERDICT_ANSWER_TOKENS: u32 = 1024;
 /// Instructions for the claim judge.
 ///
 /// The evidence is text the user's own documents and fetched pages produced,

@@ -286,6 +286,29 @@ async fn a_cut_off_reply_is_sent_once_more_with_a_larger_allowance() {
 }
 
 #[tokio::test]
+async fn a_backend_answer_cut_off_error_is_sent_once_more_with_a_larger_allowance() {
+    let llm = Recorder::new(vec![
+        Err(AppError::AnswerCutOff(
+            "structured output was incomplete (finish_reason=length)".into(),
+        )),
+        Ok(reply("9", "stop")),
+    ]);
+    let read = answer(
+        &llm,
+        &call(),
+        &Growing,
+        legacy::completion(legacy::Completion::default()),
+        TestContract::read,
+    )
+    .await
+    .unwrap();
+    assert_eq!(read, 9);
+    let sent = llm.sent();
+    assert_eq!(sent.len(), 2);
+    assert_eq!(sent[1].max_output_tokens(), Some(2048));
+}
+
+#[tokio::test]
 async fn a_reply_still_cut_off_after_the_larger_send_is_a_cut_off_answer() {
     let llm = Recorder::new(vec![Ok(reply("1", "length")), Ok(reply("1", "length"))]);
     let error = answer(
