@@ -347,7 +347,7 @@ fn has_contiguous_clause_overlap(prev_words: &[String], next_words: &[String]) -
     let prev_unique: HashSet<&str> = prev_words.iter().map(String::as_str).collect();
     let next_unique: HashSet<&str> = next_words.iter().map(String::as_str).collect();
     let shared = prev_unique.intersection(&next_unique).count();
-    shared >= 6 && shared * 2 >= next_words.len()
+    shared >= 7 && shared * 5 >= next_words.len() * 3
 }
 
 fn ends_terminal_sentence(line: &str) -> bool {

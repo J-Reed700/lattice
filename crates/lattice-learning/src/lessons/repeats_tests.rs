@@ -88,4 +88,7 @@ fn consecutive_repeats_catch_short_duplicates_and_stutters_in_prose_and_list_ite
     let tail_repeats = consecutive_repeats(trailing_clause);
     assert_eq!(tail_repeats.len(), 1, "{tail_repeats:?}");
     assert!(tail_repeats[0].prefix_stutter);
+
+    let shared_context_tag = "Start with a measurable question, identify the comparison, and define the outcome before collecting data in design step 0, pass 0. Explain the assumptions behind the design in design step 0, pass 0.";
+    assert!(consecutive_repeats(shared_context_tag).is_empty());
 }
